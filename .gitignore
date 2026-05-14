@@ -1,0 +1,46 @@
+# devenv
+.devenv/
+.devenv.flake.nix
+devenv.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+backend/.venv/
+backend/uv.lock
+
+# Flutter
+frontend/.dart_tool/
+frontend/.packages
+frontend/build/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/pubspec.lock
+
+# SQLite
+*.db
+*.db-journal
+*.db-wal
+
+# Environment / secrets
+.env
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bark data
+.bark/
+
+# Claude
+.claude/

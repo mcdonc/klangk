@@ -1,0 +1,4 @@
+{
+  "defaultProvider": "ollama-cloud",
+  "defaultModel": "gemma4:31b"
+}
