@@ -215,3 +215,4 @@ Pi's RPC mode supports **host tools** — tools registered by the RPC client tha
 - **Container resource limits**: Add CPU/memory limits to containers to prevent runaway processes.
 - **Multiple LLM providers**: Support selecting different models per workspace.
 - **Syntax highlighting language detection**: Improve code block language detection for unlabeled blocks.
+- **Folder drag-and-drop upload**: Support dropping entire folders (with contents) into the file pane, preserving directory structure. Requires using the browser's File System Access API or `webkitGetAsEntry()` to traverse directory entries recursively.
