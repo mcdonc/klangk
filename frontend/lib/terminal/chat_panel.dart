@@ -76,7 +76,8 @@ class _ChatPanelState extends State<ChatPanel> {
         }
         if (mounted && entries.isNotEmpty) {
           setState(() => _entries.addAll(entries));
-          _scrollToBottom();
+          // Delay scroll to allow layout to fully settle after loading history
+          Future.delayed(const Duration(milliseconds: 200), _scrollToBottom);
         }
       }
     } catch (_) {}

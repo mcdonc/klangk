@@ -97,6 +97,9 @@ async def start_container(
     # Tell the container which ports are available
     env_vars.append(f"BARK_PORT_START={start_port}")
     env_vars.append(f"BARK_PORT_END={end_port}")
+    # Pass host UID/GID so the container can create a matching user
+    env_vars.append(f"BARK_UID={os.getuid()}")
+    env_vars.append(f"BARK_GID={os.getgid()}")
 
     # Build port bindings: map each container port to the same host port
     port_bindings = {}

@@ -1,10 +1,35 @@
 #!/bin/sh
+# Create a non-root user matching the host user's UID/GID.
+# BARK_UID/BARK_GID are passed by container_manager.py from the host.
+BARK_UID="${BARK_UID:-1000}"
+BARK_GID="${BARK_GID:-1000}"
+
+# Remove any existing user at the target UID
+EXISTING_USER=$(getent passwd "$BARK_UID" | cut -d: -f1)
+if [ -n "$EXISTING_USER" ]; then
+  userdel "$EXISTING_USER"
+fi
+
+# Remove any existing group at the target GID (unless it has other members)
+EXISTING_GROUP=$(getent group "$BARK_GID" | cut -d: -f1)
+if [ -n "$EXISTING_GROUP" ]; then
+  groupdel "$EXISTING_GROUP" 2>/dev/null
+fi
+
+groupadd -g "$BARK_GID" bark 2>/dev/null || true
+useradd -u "$BARK_UID" -g "$BARK_GID" -m -d /home/bark -s /bin/sh bark
+
+# Set up Pi agent config in bark's home (copied from build-time /opt/bark)
+PI_AGENT_DIR="/home/bark/.pi/agent"
+mkdir -p "$PI_AGENT_DIR/extensions"
+cp -r /opt/bark/pi-agent/extensions/* "$PI_AGENT_DIR/extensions/" 2>/dev/null
+
 # Build models.json from environment variables
 OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-https://ollama.com/v1}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:31b}"
 OLLAMA_API_KEY="${OLLAMA_API_KEY:-ollama}"
 
-cat > /root/.pi/agent/models.json << EOF
+cat > "$PI_AGENT_DIR/models.json" << EOF
 {
   "providers": {
     "ollama": {
@@ -19,17 +44,27 @@ cat > /root/.pi/agent/models.json << EOF
 }
 EOF
 
-cat > /root/.pi/agent/settings.json << EOF
+cat > "$PI_AGENT_DIR/settings.json" << EOF
 {
   "defaultProvider": "ollama",
   "defaultModel": "$OLLAMA_MODEL"
 }
 EOF
 
+# Ensure workspace session dir exists and is writable
 mkdir -p /workspace/.pi/sessions
 
-# Generate AGENTS.md dynamically: static instructions + registered tools
-cat > /workspace/AGENTS.md << 'STATIC'
+# Fix ownership: bark's home + workspace directory
+chown -R bark:bark /home/bark
+chown bark:bark /workspace
+chown -R bark:bark /workspace/.pi
+
+# Allow bark to use git in /workspace
+su bark -c "git config --global --add safe.directory /workspace" 2>/dev/null
+
+# Build system prompt file with instructions + registered extension tools
+SYSTEM_PROMPT_FILE="$PI_AGENT_DIR/system-prompt.md"
+cat > "$SYSTEM_PROMPT_FILE" << 'STATIC'
 You are a coding agent working in a project workspace directory.
 
 When asked to write code:
@@ -62,17 +97,22 @@ Handling large files (CSV, logs, datasets, etc.):
 Available runtimes: Python 3, Node.js/npm, Dart, Flutter, Rust/Cargo, GCC/G++ (build-essential)
 STATIC
 
-# Append registered extension tools
-if [ -d /root/.pi/agent/extensions ] && [ "$(ls /root/.pi/agent/extensions/*.ts 2>/dev/null)" ]; then
-  echo "" >> /workspace/AGENTS.md
-  echo "Registered extension tools (use these instead of bash when appropriate):" >> /workspace/AGENTS.md
-  for ext in /root/.pi/agent/extensions/*.ts; do
+if [ -d "$PI_AGENT_DIR/extensions" ] && [ "$(ls "$PI_AGENT_DIR/extensions"/*.ts 2>/dev/null)" ]; then
+  echo "" >> "$SYSTEM_PROMPT_FILE"
+  echo "Registered extension tools (use these instead of bash when appropriate):" >> "$SYSTEM_PROMPT_FILE"
+  for ext in "$PI_AGENT_DIR/extensions"/*.ts; do
     name=$(grep -E '^\s+name: "' "$ext" | head -1 | sed 's/.*name: "//;s/".*//')
     desc=$(grep -E '^\s+description: "' "$ext" | head -1 | sed 's/.*description: "//;s/".*//')
     if [ -n "$name" ] && [ -n "$desc" ]; then
-      echo "- \`$name\`: $desc" >> /workspace/AGENTS.md
+      echo "- \`$name\`: $desc" >> "$SYSTEM_PROMPT_FILE"
     fi
   done
 fi
 
-exec pi --mode rpc --session-dir /workspace/.pi/sessions
+# Remove stale AGENTS.md from workspace if left over from older containers
+rm -f /workspace/AGENTS.md
+
+# Drop to bark user and run Pi
+# --no-context-files: don't look for AGENTS.md in workspace
+# --append-system-prompt: inject instructions via system prompt instead
+exec su bark -c "PI_CODING_AGENT_DIR=$PI_AGENT_DIR exec pi --mode rpc --no-context-files --append-system-prompt $SYSTEM_PROMPT_FILE --session-dir /workspace/.pi/sessions"

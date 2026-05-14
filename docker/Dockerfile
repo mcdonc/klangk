@@ -29,22 +29,23 @@ RUN git config --global --add safe.directory /opt/flutter \
     && /opt/flutter/bin/flutter precache --web
 ENV PATH="/opt/flutter/bin:$PATH"
 
-# Rust via rustup
+# Rust via rustup (install to /opt/rust so it's available to any user)
+ENV RUSTUP_HOME=/opt/rust/rustup
+ENV CARGO_HOME=/opt/rust/cargo
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:$PATH"
+ENV PATH="/opt/rust/cargo/bin:$PATH"
 
-RUN mkdir -p /workspace /root/.pi/agent
+RUN mkdir -p /workspace
 WORKDIR /workspace
 
 # Server-side tools
 COPY tools/ /usr/local/bin/bark-tools/
 RUN chmod +x /usr/local/bin/bark-tools/*.py
 
-# Pi extensions (registered as first-class tools the LLM can call)
-COPY extensions/ /root/.pi/agent/extensions/
+# Pi extensions and entrypoint stored in /opt/bark (root-owned, read-only at runtime)
+RUN mkdir -p /opt/bark/pi-agent/extensions
+COPY extensions/ /opt/bark/pi-agent/extensions/
+COPY entrypoint.sh /opt/bark/entrypoint.sh
+RUN chmod +x /opt/bark/entrypoint.sh
 
-# AGENTS.md is generated dynamically by entrypoint.sh
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/opt/bark/entrypoint.sh"]
