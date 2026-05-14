@@ -198,11 +198,16 @@ cd frontend && flutter pub get && flutter build web
 
 Pi's RPC mode supports **host tools** (`set_host_tools`, `host_tool_call`, `host_tool_result`) — tools registered by the RPC client that the LLM can call, with execution delegated back to the caller. We investigated using this to run tools in the Flutter frontend (browser-side Dart).
 
-**Conclusion**: The only real advantage of client-side tools is **privacy** (file content stays in the browser). Speed, library access, and reliability are all better with server-side tools. Since Pi runs inside the container, the container must be running for any tool call — so "works without container" is not an advantage. The LLM still needs an inference step to decide which tool to call and to process the result, so the latency improvement is marginal.
+**Findings**:
+- Speed, library access, and reliability are all better with server-side tools in the container.
+- Since Pi runs inside the container, the container must be running for any tool call regardless.
+- The LLM still needs an inference step to decide which tool to call and to process the result.
+- Privacy is limited: files live on the server (uploaded or created by Pi), so client-side processing still requires downloading the file from the server first.
+- A local-only analysis mode (file never leaves the browser) would require a different UX that doesn't exist yet.
 
-**Recommended approach instead**: Add server-side helper scripts in the container (Python) that Pi can call via `bash`, and improve AGENTS.md guidance to use efficient commands (`head`, `wc`, write-a-script-and-run-it) rather than reading entire large files. This gets 80% of the benefit with 10% of the effort.
+**Current approach**: Improve AGENTS.md guidance to use efficient commands (`head`, `wc`, write-a-script-and-run-it) rather than reading entire large files. Add server-side helper scripts as needed.
 
-Host tool delegation remains viable for privacy-sensitive use cases in the future.
+**Host tool delegation remains interesting** for future use cases — e.g., local-only file analysis without server upload, browser-native capabilities (clipboard, camera, microphone), or offloading work from resource-constrained containers. The Pi RPC protocol supports it whenever we find the right application.
 
 ## TODO
 - **Stop running Pi as root**: Create a non-root user (e.g., `bark`) in the Dockerfile, set ownership of `/workspace` and `/opt/*` to that user, and use `USER bark` before the entrypoint. This improves security and prevents files created by Pi from being owned by root on the host bind mount.
