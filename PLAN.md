@@ -194,8 +194,22 @@ cd frontend && flutter pub get && flutter build web
 - Pi sessions: `workspaces/<user-id>/<workspace-name>/.pi/sessions/`
 - Database persists across restarts and rebuilds
 
+## Client-Side Tools (Planned)
+
+Pi's RPC mode supports **host tools** — tools registered by the RPC client that the LLM can call, with execution delegated back to the caller. This allows the Flutter frontend to handle certain tasks locally in the browser:
+
+**Architecture**: Frontend registers tools via `set_host_tools` RPC command. When the LLM calls a host tool, Pi sends `host_tool_call` back through the backend to the frontend. The frontend executes the tool in Dart and returns the result via `host_tool_result`.
+
+**Initial tools**:
+- `analyze_csv` — Parse CSV, return column names, row count, data types, basic statistics
+- `validate_json` — Validate and summarize JSON structure
+- `count_lines` — Line/word/character count
+
+**Benefits**: Much faster than sending large files to the LLM. A 100KB CSV takes seconds locally vs minutes through the LLM.
+
 ## TODO
 
+- **Client-side tools**: Implement the host tool delegation architecture described above.
 - **Stop running Pi as root**: Create a non-root user (e.g., `bark`) in the Dockerfile, set ownership of `/workspace` and `/opt/*` to that user, and use `USER bark` before the entrypoint. This improves security and prevents files created by Pi from being owned by root on the host bind mount.
 - **Read-only root filesystem**: Use `--read-only` Docker flag to make the container's root filesystem unwritable. Only `/workspace` (bind mount) and necessary tmpfs mounts (`/tmp`, `/root/.pi`) should be writable. This prevents the agent from modifying system files or installing packages outside the workspace.
 - **Container resource limits**: Add CPU/memory limits to containers to prevent runaway processes.
