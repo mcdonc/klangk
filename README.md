@@ -89,6 +89,14 @@ Workspace files on disk
 
 Each workspace gets its own Docker container with a bind-mounted directory. Pi sessions persist across container restarts, and conversation history is stored in SQLite.
 
+### Extension Tools
+
+The agent has custom tools registered as Pi extensions that the LLM can call directly:
+- `word_count` — fast file stats (lines, words, characters, size)
+- `pig_latin` — text to Pig Latin converter
+
+To add your own: create a TypeScript file in `docker/extensions/`, rebuild the Docker image, and the tool will automatically appear in the LLM's tool list and in the dynamically generated `AGENTS.md`.
+
 See [PLAN.md](PLAN.md) for detailed architecture and feature documentation.
 
 ## License
