@@ -55,6 +55,6 @@
       echo "bark-pi Docker image already up to date"
     fi
 
-    echo "Run 'devenv up' to start backend + frontend"
+    echo "Run 'devenv processes up' to start backend + frontend"
   '';
 }
