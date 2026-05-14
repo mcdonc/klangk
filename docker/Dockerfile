@@ -22,12 +22,12 @@ RUN curl -fsSL https://storage.googleapis.com/dart-archive/channels/stable/relea
 ENV PATH="/opt/dart-sdk/bin:$PATH"
 
 # Flutter SDK
-RUN curl -fsSL https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.27.4-stable.tar.xz -o /tmp/flutter.tar.xz \
+RUN git config --global --add safe.directory /opt/flutter \
+    && curl -fsSL https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.27.4-stable.tar.xz -o /tmp/flutter.tar.xz \
     && tar xf /tmp/flutter.tar.xz -C /opt \
     && rm /tmp/flutter.tar.xz \
     && /opt/flutter/bin/flutter precache --web
 ENV PATH="/opt/flutter/bin:$PATH"
-RUN git config --global --add safe.directory /opt/flutter
 
 # Rust via rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

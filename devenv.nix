@@ -34,7 +34,7 @@
   scripts.rebuild.exec = ''
     echo "Rebuilding Bark..."
     echo "==> Docker image"
-    docker build -t bark-pi docker/
+    docker build --platform linux/amd64 -t bark-pi docker/
     echo "==> Flutter web"
     cd frontend && flutter pub get && flutter build web
     rm -f build/web/flutter_service_worker.js
@@ -50,7 +50,7 @@
     if ! docker image inspect bark-pi >/dev/null 2>&1 || \
        [ docker/Dockerfile -nt "$(docker image inspect bark-pi --format='{{.Created}}' 2>/dev/null || echo '0')" ]; then
       echo "Building bark-pi Docker image..."
-      docker build -t bark-pi docker/
+      docker build --platform linux/amd64 -t bark-pi docker/
     else
       echo "bark-pi Docker image already up to date"
     fi

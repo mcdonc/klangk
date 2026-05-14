@@ -31,11 +31,11 @@ EOF
 # Install Nix and devenv (if not already installed)
 ./bootstrap
 
-# Enter dev environment (installs deps, builds Docker image)
+# Make sure Docker is running before this step — devenv shell builds a Docker image on first run
 devenv shell
 
 # Start the app
-devenv up
+devenv processes up
 ```
 
 Open [http://localhost:8997](http://localhost:8997) and log in with `admin`/`admin`.
