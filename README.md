@@ -10,8 +10,9 @@ Bark gives each user their own isolated coding environment with an AI agent that
 
 ### Prerequisites
 
-- [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed
+- [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (run `./bootstrap` to install both)
 - Docker daemon running
+- [Ollama Cloud](https://ollama.com) account with an API key
 
 ### Setup
 
@@ -22,9 +23,13 @@ cd bark
 # Create .env with your Ollama API key
 cat > .env << 'EOF'
 OLLAMA_API_KEY=your-api-key-here
+BARK_JWT_SECRET=change-this-to-a-random-secret
 BARK_DEFAULT_USER=admin
 BARK_DEFAULT_PASSWORD=admin
 EOF
+
+# Install Nix and devenv (if not already installed)
+./bootstrap
 
 # Enter dev environment (installs deps, builds Docker image)
 devenv shell
