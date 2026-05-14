@@ -4,8 +4,11 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from . import auth, container_manager, file_service, user_store, workspace_manager
 from .ws_handler import handle_websocket
@@ -173,3 +176,11 @@ async def upload_file(
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await handle_websocket(ws)
+
+
+# --- Static files (Flutter Web) ---
+# Must be last so API routes take priority
+
+_frontend_dir = Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
+if _frontend_dir.exists():
+    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")

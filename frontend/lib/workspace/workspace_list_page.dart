@@ -15,7 +15,7 @@ class WorkspaceListPage extends StatefulWidget {
 }
 
 class _WorkspaceListPageState extends State<WorkspaceListPage> {
-  static const _baseUrl = 'http://localhost:8996';
+  static const _baseUrl = '';
   List<Map<String, dynamic>> _workspaces = [];
   bool _loading = true;
 
@@ -50,7 +50,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load workspaces: $e')),
+          SnackBar(duration: const Duration(seconds: 30), showCloseIcon: true, content: Text('Failed to load workspaces: $e')),
         );
       }
     } finally {
@@ -101,14 +101,14 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         final error = jsonDecode(response.body);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(error['detail'] ?? 'Failed to create workspace')),
+            SnackBar(duration: const Duration(seconds: 30), showCloseIcon: true, content: Text(error['detail'] ?? 'Failed to create workspace')),
           );
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          SnackBar(duration: const Duration(seconds: 30), showCloseIcon: true, content: Text('Error: $e')),
         );
       }
     }
@@ -142,7 +142,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          SnackBar(duration: const Duration(seconds: 30), showCloseIcon: true, content: Text('Error: $e')),
         );
       }
     }

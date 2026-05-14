@@ -9,7 +9,7 @@ Bark is a multi-user web app that gives each user their own isolated Pi coding a
 ```
 Browser (Flutter Web + Chat UI + AG-UI)
     ↕ AG-UI events over WebSocket (authenticated)
-Python/FastAPI backend (port 8996)
+Python/FastAPI backend (port 8997, serves API + frontend)
     ├── Auth (JWT sessions, SQLite user store)
     ├── Workspace registry (user → [workspace] → container)
     ├── Pi-to-AG-UI translator (Pi RPC events → AG-UI events)
@@ -30,7 +30,7 @@ $DEVENV_STATE/.bark/workspaces/<user-id>/<workspace-name>/
 
 - **AG-UI Protocol**: Standardized agent-user interaction protocol for event streaming
 - **Pi Coding Agent**: Minimal terminal coding harness (pi.dev) running in RPC mode with native session persistence
-- **Ollama Cloud**: LLM provider (Gemma 4 31B) via ollama.com API
+- **Ollama**: LLM provider — supports both Ollama Cloud and self-hosted instances, configurable model via `OLLAMA_MODEL` env var
 - **devenv**: Nix-based development environment with auto-setup
 
 ## Project Structure
@@ -47,7 +47,7 @@ bark/
 
   docker/
     Dockerfile                  # Pi agent image: node:22-slim + Pi + Python3 + Dart + Flutter + Rust + build-essential
-    models.json                 # Ollama cloud provider config
+    models.json                 # Ollama provider config (generated from env vars at startup)
     settings.json               # Default model selection
     entrypoint.sh               # Injects API key, copies AGENTS.md, starts Pi in RPC mode
     AGENTS.md                   # Default agent instructions (write files, run code, test before reporting)
@@ -174,8 +174,7 @@ open http://localhost:8997
 ```
 
 ### Ports
-- `8996`: Backend (FastAPI/uvicorn)
-- `8997`: Frontend (Flutter Web via Python HTTP server)
+- `8997`: Web UI + API (single FastAPI/uvicorn server)
 - `9000+`: User app ports (5 per workspace)
 
 ### Rebuild

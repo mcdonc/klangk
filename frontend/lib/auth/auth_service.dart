@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService extends ChangeNotifier {
   static const _tokenKey = 'bark_jwt';
-  static const _baseUrl = 'http://localhost:8996';
+  static const _baseUrl = '';
 
   String? _token;
   bool _loading = false;

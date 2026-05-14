@@ -24,7 +24,7 @@ class WorkspacePage extends StatefulWidget {
 }
 
 class _WorkspacePageState extends State<WorkspacePage> {
-  static const _baseUrl = 'http://localhost:8996';
+  static const _baseUrl = '';
   bool _connecting = true;
   String? _error;
   String _workspaceName = '';

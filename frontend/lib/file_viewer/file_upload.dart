@@ -21,7 +21,7 @@ class FileDropZone extends StatefulWidget {
 }
 
 class _FileDropZoneState extends State<FileDropZone> {
-  static const _baseUrl = 'http://localhost:8996';
+  static const _baseUrl = '';
   bool _dragging = false;
   bool _uploading = false;
 

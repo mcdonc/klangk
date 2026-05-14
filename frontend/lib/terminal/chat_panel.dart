@@ -44,7 +44,7 @@ class _ChatPanelState extends State<ChatPanel> {
     if (widget.workspaceId == null || widget.authToken == null) return;
     try {
       final response = await http.get(
-        Uri.parse('http://localhost:8996/workspaces/${widget.workspaceId}/messages'),
+        Uri.parse('/workspaces/${widget.workspaceId}/messages'),
         headers: {'Authorization': 'Bearer ${widget.authToken}'},
       );
       if (response.statusCode == 200) {

@@ -23,7 +23,7 @@ class FileViewerPanel extends StatefulWidget {
 }
 
 class _FileViewerPanelState extends State<FileViewerPanel> {
-  static const _baseUrl = 'http://localhost:8996';
+  static const _baseUrl = '';
   List<Map<String, dynamic>> _entries = [];
   String _currentPath = '.';
   String? _selectedFile;

@@ -8,7 +8,11 @@ import 'agui_events.dart';
 /// Manages WebSocket connection to the Bark backend, sending commands
 /// and streaming AG-UI events.
 class AguiClient extends ChangeNotifier {
-  static const _wsBaseUrl = 'ws://localhost:8996/ws';
+  static String get _wsBaseUrl {
+    final loc = Uri.base;
+    final wsScheme = loc.scheme == 'https' ? 'wss' : 'ws';
+    return '$wsScheme://${loc.host}:${loc.port}/ws';
+  }
 
   WebSocketChannel? _channel;
   AuthService? _auth;

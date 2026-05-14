@@ -17,15 +17,12 @@
   ];
 
   processes = {
-    backend.exec = "cd backend && uv run uvicorn backend.main:app --reload --port 8996";
-    frontend.exec = ''
-      cd frontend
-      if [ ! -d build/web ]; then
-        flutter pub get && flutter build web
+    backend.exec = ''
+      # Build frontend if not already built
+      if [ ! -d frontend/build/web ]; then
+        cd frontend && flutter pub get && flutter build web && rm -f build/web/flutter_service_worker.js && cd ..
       fi
-      # Remove service worker to prevent aggressive caching during dev
-      rm -f build/web/flutter_service_worker.js
-      python3 -m http.server 8997 --bind 0.0.0.0 --directory build/web
+      cd backend && uv run uvicorn backend.main:app --reload --host 0.0.0.0 --port 8997
     '';
   };
 
