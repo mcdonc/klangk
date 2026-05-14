@@ -10,6 +10,7 @@ import '../auth/auth_service.dart';
 import '../utils/backend_url.dart';
 import '../utils/page_title.dart';
 import '../widgets/bark_logo.dart';
+import '../widgets/confetti.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../layout/ide_layout.dart';
 import '../output/output_panel.dart';
@@ -30,6 +31,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String? _error;
   String _workspaceName = '';
   bool _agentRunning = false;
+  bool _showConfetti = false;
   StreamSubscription? _eventSub;
 
   @override
@@ -84,12 +86,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // Listen for workspace_ready
     aguiClient.addListener(_onClientUpdate);
 
-    // Track agent running state for abort button
+    // Track agent running state and celebrate events
     _eventSub = aguiClient.events.listen((event) {
       if (event.type == AguiEventType.runStarted) {
         if (mounted) setState(() => _agentRunning = true);
       } else if (event.type == AguiEventType.runFinished || event.type == AguiEventType.runError) {
         if (mounted) setState(() => _agentRunning = false);
+      } else if (event.type == AguiEventType.toolCallStart && event.toolCallName == 'celebrate') {
+        if (mounted) setState(() => _showConfetti = true);
       }
     });
 
@@ -195,18 +199,28 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ),
         ],
       ),
-      body: IdeLayout(
-        terminal: ChatPanel(
-          aguiClient: aguiClient,
-          workspaceId: widget.workspaceId,
-          authToken: authToken,
-        ),
-        fileViewer: FileViewerPanel(
-          aguiClient: aguiClient,
-          workspaceId: widget.workspaceId,
-          authToken: authToken,
-        ),
-        output: OutputPanel(aguiClient: aguiClient),
+      body: Stack(
+        children: [
+          IdeLayout(
+            terminal: ChatPanel(
+              aguiClient: aguiClient,
+              workspaceId: widget.workspaceId,
+              authToken: authToken,
+            ),
+            fileViewer: FileViewerPanel(
+              aguiClient: aguiClient,
+              workspaceId: widget.workspaceId,
+              authToken: authToken,
+            ),
+            output: OutputPanel(aguiClient: aguiClient),
+          ),
+          if (_showConfetti)
+            Positioned.fill(
+              child: ConfettiOverlay(
+                onComplete: () => setState(() => _showConfetti = false),
+              ),
+            ),
+        ],
       ),
     );
   }

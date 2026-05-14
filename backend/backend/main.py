@@ -181,6 +181,21 @@ async def websocket_endpoint(ws: WebSocket):
 # --- Static files (Flutter Web) ---
 # Must be last so API routes take priority
 
+from starlette.middleware import Middleware
+from starlette.responses import Response
+
 _frontend_dir = Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
 if _frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
+    _static_app = StaticFiles(directory=str(_frontend_dir), html=True)
+
+    @app.middleware("http")
+    async def add_no_cache_headers(request, call_next):
+        response = await call_next(request)
+        # Add no-cache headers for HTML and JS files served from frontend
+        if request.url.path.endswith((".html", ".js")) or request.url.path == "/":
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+    app.mount("/", _static_app, name="frontend")

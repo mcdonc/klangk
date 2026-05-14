@@ -55,7 +55,7 @@ class _ChatPanelState extends State<ChatPanel> {
           final type = msg['entry_type'] as String;
           final content = msg['content'] as String? ?? '';
           if (type == 'user') {
-            entries.add(_ChatEntry(type: _EntryType.user, content: content));
+            entries.add(_ChatEntry(type: _EntryType.user, content: content, isQueued: msg['is_queued'] as bool? ?? false));
           } else if (type == 'assistant') {
             entries.add(_ChatEntry(type: _EntryType.assistant, content: content));
           } else if (type == 'tool_call') {
@@ -86,7 +86,10 @@ class _ChatPanelState extends State<ChatPanel> {
 
       case AguiEventType.runFinished:
         _finalizeAssistantMessage();
-        setState(() => _agentRunning = false);
+        setState(() {
+          _agentRunning = false;
+          _unqueueEntries();
+        });
         break;
 
       case AguiEventType.runError:
@@ -190,6 +193,10 @@ class _ChatPanelState extends State<ChatPanel> {
         }
         break;
     }
+  }
+
+  void _unqueueEntries() {
+    // No-op: we keep isQueued true for the label, but dimming is controlled by _agentRunning
   }
 
   void _finalizeAssistantMessage() {
@@ -337,7 +344,7 @@ class _ChatPanelState extends State<ChatPanel> {
   }
 
   Widget _buildUserMessage(_ChatEntry entry) {
-    final opacity = entry.isQueued ? 0.5 : 1.0;
+    final opacity = (entry.isQueued && _agentRunning) ? 0.5 : 1.0;
     return Opacity(
       opacity: opacity,
       child: Align(

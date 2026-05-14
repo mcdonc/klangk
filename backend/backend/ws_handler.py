@@ -185,8 +185,9 @@ async def _handle_prompt(ws: WebSocket, state: dict, msg: dict) -> None:
         if pi_client is None or not pi_client.is_alive:
             raise RuntimeError("Pi client is dead or missing")
         container_manager.record_activity(state["container_id"])
+        is_queued = state.get("agent_running", False)
         if workspace_id:
-            await user_store.save_message(workspace_id, "user", text)
+            await user_store.save_message(workspace_id, "user", text, is_queued=is_queued)
         # Show prompt in debug pane
         preview = text[:80] + ("..." if len(text) > 80 else "")
         await ws.send_json({"type": "event", "event": {
@@ -194,7 +195,7 @@ async def _handle_prompt(ws: WebSocket, state: dict, msg: dict) -> None:
             "name": "query_prompt",
             "value": {"text": preview},
         }})
-        if state.get("agent_running"):
+        if is_queued:
             await pi_client.follow_up(text)
             await ws.send_json({"type": "event", "event": {
                 "type": "CUSTOM",

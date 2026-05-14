@@ -51,6 +51,7 @@ async def init_db() -> None:
                 tool_args TEXT,
                 tool_output TEXT,
                 is_complete INTEGER NOT NULL DEFAULT 0,
+                is_queued INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
@@ -58,6 +59,11 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_messages_workspace
             ON messages(workspace_id, id)
         """)
+        # Migration: add is_queued column if missing
+        try:
+            await db.execute("ALTER TABLE messages ADD COLUMN is_queued INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # Column already exists
         await db.commit()
     finally:
         await db.close()
@@ -223,13 +229,13 @@ async def is_token_blocklisted(jti: str) -> bool:
 
 async def save_message(workspace_id: str, entry_type: str, content: str,
                        tool_args: str | None = None, tool_output: str | None = None,
-                       is_complete: bool = False) -> int:
+                       is_complete: bool = False, is_queued: bool = False) -> int:
     db = await _get_db()
     try:
         cursor = await db.execute(
-            """INSERT INTO messages (workspace_id, entry_type, content, tool_args, tool_output, is_complete)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (workspace_id, entry_type, content, tool_args, tool_output, 1 if is_complete else 0),
+            """INSERT INTO messages (workspace_id, entry_type, content, tool_args, tool_output, is_complete, is_queued)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (workspace_id, entry_type, content, tool_args, tool_output, 1 if is_complete else 0, 1 if is_queued else 0),
         )
         await db.commit()
         return cursor.lastrowid
@@ -241,7 +247,7 @@ async def get_messages(workspace_id: str) -> list[dict]:
     db = await _get_db()
     try:
         cursor = await db.execute(
-            """SELECT id, entry_type, content, tool_args, tool_output, is_complete, created_at
+            """SELECT id, entry_type, content, tool_args, tool_output, is_complete, is_queued, created_at
                FROM messages WHERE workspace_id = ? ORDER BY id""",
             (workspace_id,),
         )
@@ -254,6 +260,7 @@ async def get_messages(workspace_id: str) -> list[dict]:
                 "tool_args": row["tool_args"],
                 "tool_output": row["tool_output"],
                 "is_complete": bool(row["is_complete"]),
+                "is_queued": bool(row["is_queued"]),
                 "created_at": row["created_at"],
             }
             for row in rows
