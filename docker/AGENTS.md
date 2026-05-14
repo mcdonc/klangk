@@ -20,4 +20,10 @@ Testing and running:
 - For web apps, start the server and report which port it's running on
 - Available ports for user apps: check $BARK_PORT_START to $BARK_PORT_END
 
+Handling large files (CSV, logs, datasets, etc.):
+- Do NOT read entire large files and send them to the LLM — this is extremely slow
+- Instead, use `bash` to inspect files: `head -20 file.csv`, `wc -l file.csv`, `cut -d, -f1 file.csv | head`
+- For data analysis, write a Python script that processes the file locally and prints a summary
+- Only read small files (< 10KB) directly with the `read` tool
+
 Available runtimes: Python 3, Node.js/npm, Dart, Flutter, Rust/Cargo, GCC/G++ (build-essential)

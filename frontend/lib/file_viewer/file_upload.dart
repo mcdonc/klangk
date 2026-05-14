@@ -40,11 +40,18 @@ class _FileDropZoneState extends State<FileDropZone> {
           request.headers['Authorization'] = 'Bearer ${widget.authToken}';
         }
         request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: file.name));
-        await request.send();
-      } catch (_) {}
+        final response = await request.send();
+        if (response.statusCode != 200) {
+          debugPrint('Upload failed: ${response.statusCode} for ${file.name}');
+        }
+      } catch (e) {
+        debugPrint('Upload error: $e');
+      }
     }
 
     setState(() => _uploading = false);
+    // Small delay to let the backend finish writing
+    await Future.delayed(const Duration(milliseconds: 500));
     widget.onUploadComplete();
   }
 

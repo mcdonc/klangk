@@ -48,6 +48,7 @@ class _FileViewerPanelState extends State<FileViewerPanel> {
       };
 
   Future<void> _loadFiles() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final response = await http.get(
@@ -56,9 +57,12 @@ class _FileViewerPanelState extends State<FileViewerPanel> {
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as List;
-        setState(() => _entries = data.cast<Map<String, dynamic>>());
+        if (mounted) setState(() => _entries = data.cast<Map<String, dynamic>>());
+      } else {
+        debugPrint('File listing failed: ${response.statusCode}');
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('File listing error: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

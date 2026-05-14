@@ -149,7 +149,7 @@ def translate_event(pi_event: dict, workspace_id: str) -> list[dict]:
 
 
 _FILE_CREATING_PATTERNS = [
-    "mkdir", "touch", "cp ", "mv ", "ln ",
+    "mkdir", "touch", "cp ", "mv ", "ln ", "rm ",
     "cat <<", "cat>", "cat >", "tee ",
     "echo >", "echo>>", "printf >",
     "cargo new", "cargo init",
