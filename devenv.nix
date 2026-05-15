@@ -146,7 +146,7 @@
 
   scripts.update-plugins.exec = ''
     cd $DEVENV_ROOT
-    python3 scripts/update_plugins.py
+    python3 scripts/update_plugins.py "$@"
   '';
 
   enterShell = ''

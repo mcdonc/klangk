@@ -25,24 +25,35 @@ LOCK_PATH = os.path.join(PLUGINS_DIR, "plugins.lock")
 DEFAULT_TEMPLATE = """\
 # Bark plugins configuration
 # Run 'update-plugins' to fetch plugins listed here.
+# Each entry requires: name, git. Optional: path, ref.
 plugins:
   # Default plugins (from the Bark repo)
-  - git: git@github.com:mcdonc/bark.git
+  - name: celebrate
+    git: git@github.com:mcdonc/bark.git
     path: default-plugins/celebrate
     ref: main
-  - git: git@github.com:mcdonc/bark.git
+  - name: beep
+    git: git@github.com:mcdonc/bark.git
     path: default-plugins/beep
     ref: main
-  - git: git@github.com:mcdonc/bark.git
+  - name: pig-latin
+    git: git@github.com:mcdonc/bark.git
     path: default-plugins/pig-latin
     ref: main
-  - git: git@github.com:mcdonc/bark.git
+  - name: word-count
+    git: git@github.com:mcdonc/bark.git
     path: default-plugins/word-count
     ref: main
-  # Add more plugins below:
-  # - git: git@github.com:mcdonc/bark.git-plugins
-  #   path: soliplex
-  #   ref: v1.0.0
+  # Soliplex knowledge base integration
+  - name: soliplex
+    git: git@github.com:soliplex/soliplex.git
+    path: bark-plugin
+    ref: main
+  # Add more plugins:
+  # - name: my-plugin
+  #   git: git@github.com:user/repo.git
+  #   path: subdir              # optional: subdirectory within the repo
+  #   ref: main                 # branch, tag, or commit SHA
 """
 
 
@@ -69,13 +80,7 @@ def fetch_plugin(plugin, plugins_dir):
     ref = plugin.get("ref", "main")
     subpath = plugin.get("path", "")
 
-    # Determine plugin name from path or repo name
-    if subpath:
-        name = os.path.basename(subpath)
-    else:
-        name = os.path.basename(git_url.rstrip("/"))
-        if name.endswith(".git"):
-            name = name[:-4]
+    name = plugin["name"]
 
     dest = os.path.join(plugins_dir, name)
 
@@ -135,7 +140,26 @@ def write_lock(entries, lock_path):
         yaml.dump({"plugins": entries}, f, default_flow_style=False, sort_keys=False)
 
 
+def plugin_name(plugin):
+    """Get the plugin name from a plugins.yaml entry. Name is required."""
+    name = plugin.get("name")
+    if not name:
+        raise ValueError(f"Plugin entry missing required 'name' field: {plugin}")
+    return name
+
+
+def read_lock():
+    """Read existing lock entries as a dict keyed by name."""
+    if not os.path.exists(LOCK_PATH):
+        return {}
+    with open(LOCK_PATH) as f:
+        data = yaml.safe_load(f)
+    return {e["name"]: e for e in (data or {}).get("plugins", [])}
+
+
 def main():
+    only = sys.argv[1] if len(sys.argv) > 1 else None
+
     # Create plugins/ with template if it doesn't exist
     if not os.path.exists(YAML_PATH):
         os.makedirs(PLUGINS_DIR, exist_ok=True)
@@ -154,19 +178,29 @@ def main():
         print("No plugins listed in plugins.yaml")
         return
 
-    print(f"Fetching {len(plugins)} plugins...")
+    # Filter to a single plugin if requested
+    if only:
+        matched = [p for p in plugins if plugin_name(p) == only]
+        if not matched:
+            print(f"Plugin '{only}' not found in plugins.yaml", file=sys.stderr)
+            sys.exit(1)
+        plugins = matched
 
-    lock_entries = []
+    print(f"Fetching {len(plugins)} plugin{'s' if len(plugins) != 1 else ''}...")
+
+    # Preserve existing lock entries when updating a single plugin
+    lock_map = read_lock()
+
     for plugin in plugins:
         if "git" not in plugin:
             print(f"  SKIP: entry missing 'git' key: {plugin}", file=sys.stderr)
             continue
         entry = fetch_plugin(plugin, PLUGINS_DIR)
         if entry:
-            lock_entries.append(entry)
+            lock_map[entry["name"]] = entry
 
-    write_lock(lock_entries, LOCK_PATH)
-    print(f"Wrote {LOCK_PATH} with {len(lock_entries)} plugins")
+    write_lock(list(lock_map.values()), LOCK_PATH)
+    print(f"Wrote {LOCK_PATH} with {len(lock_map)} plugins")
 
 
 if __name__ == "__main__":
