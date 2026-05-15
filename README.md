@@ -102,15 +102,18 @@ devenv shell -- update-plugins soliplex  # fetch/update a single plugin
 devenv up                                # builds and starts
 ```
 
-Default plugins (celebrate, beep, pig-latin, word-count) and the Soliplex knowledge base integration are included in the generated template. Default plugin source lives in `plugins/` in this repo.
+Sample plugins (celebrate, beep, pig-latin, word-count) are included in the generated template. Sample plugin source lives in `plugins/` in this repo.
 
-To change the plugins directory, create `devenv.local.nix` (gitignored):
+By defaul, plugins will be placed in `~/.bark/plugins`.  To change the plugins directory using devenv, create `devenv.local.nix`
+(gitignored):
 
 ```nix
 { lib, ... }: {
   env.BARK_PLUGINS_DIR = lib.mkForce "/path/to/my/plugins";
 }
 ```
+
+If you aren't using devenv, just set the environment variable before running `update-plugins`.
 
 Each plugin directory can contain:
 
