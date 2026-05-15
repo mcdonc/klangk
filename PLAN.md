@@ -58,7 +58,7 @@ bark/
     pig-latin/                  # Text to Pig Latin converter (server-side)
     word-count/                 # Fast file stats (server-side)
   scripts/
-    gen_plugins.py              # Codegen: scans plugins, generates plugins_generated.dart
+    import_plugins.py              # Codegen: scans plugins, generates plugins_generated.dart
     update_plugins.py           # Fetches plugins from git repos, writes plugins.lock
 
   docker/
@@ -96,7 +96,7 @@ bark/
       tools/
         tool_plugin.dart        # ToolPlugin base class and ToolPluginRegistry
         plugins_generated.dart  # Generated: imports and registers all plugins with plugin.dart
-        plugins/                # Generated: .dart files copied from $BARK_PLUGINS_DIR by gen_plugins.py
+        plugins/                # Generated: .dart files copied from $BARK_PLUGINS_DIR by import_plugins.py
       auth/
         auth_service.dart       # JWT storage, login/register/logout, async init
         login_page.dart         # Login/register form
@@ -256,7 +256,7 @@ All plugins live in `$BARK_PLUGINS_DIR/<name>/` directories. A plugin can contai
 A plugin needs at minimum an `extension.ts`. The `plugin.dart` is only needed for client-side tools that delegate execution to the browser via `ctx.ui.input("HOST_TOOL_REQUEST", ...)`.
 
 **Build integration:**
-- `scripts/gen_plugins.py` scans `$BARK_PLUGINS_DIR/*/plugin.dart`, copies `.dart` files into `frontend/lib/tools/plugins/`, and generates `plugins_generated.dart`
+- `scripts/import_plugins.py` scans `$BARK_PLUGINS_DIR/*/plugin.dart`, copies `.dart` files into `frontend/lib/tools/plugins/`, and generates `plugins_generated.dart`
 - `dockerbuild` collects `extension.ts` and `tools/` files from all plugins into the Docker build context
 - `flutterbuildweb` runs the codegen before compiling
 - Both are triggered automatically by `devenv up` via `execIfModified`
@@ -371,9 +371,10 @@ nginx reverse proxy (port 8995)
 
 ## TODO
 
+- **Extract devenv scripts**: Move inline shell code from `devenv.nix` script definitions into standalone scripts in `scripts/`. Candidates: `flutterbuildweb` (plugin auto-fetch, codegen, flutter build), `dockerbuild` (plugin auto-fetch, collect extensions/tools, docker build, container cleanup), and `nginx` process (config generation and exec). This would make the logic easier to read, test, and reuse outside devenv.
 - **Configurable backend port**: The backend port (8997) is hardcoded in the uvicorn command and the nginx proxy_pass in `devenv.nix`. Extract it into a variable so both reference the same value and it can be overridden via `devenv.local.nix`.
 - **Configurable data directory**: Allow `BARK_DATA_DIR` to be set by the user instead of hardcoding it to `$DEVENV_STATE/.bark`. This would let Bark store its database, workspace files, and Pi sessions in a user-chosen location, similar to how `BARK_PLUGINS_DIR` works for plugins. Useful for deployments outside devenv or when data should persist independently of the devenv state directory.
-- **Plugin directory structure**: Consider whether each plugin should have explicit subdirectories for different file types (e.g., `dart/` for Flutter code, `extension/` for TypeScript, `tools/` for server-side scripts) instead of the current flat layout where `gen_plugins.py` copies all `*.dart` files and `dockerbuild` picks up `extension.ts` by name. Subdirectories would simplify the copying logic and make it clearer what goes where.
+- **Plugin directory structure**: Consider whether each plugin should have explicit subdirectories for different file types (e.g., `dart/` for Flutter code, `extension/` for TypeScript, `tools/` for server-side scripts) instead of the current flat layout where `import_plugins.py` copies all `*.dart` files and `dockerbuild` picks up `extension.ts` by name. Subdirectories would simplify the copying logic and make it clearer what goes where.
 - **Plugin version numbers**: Plugins may want their own version numbers (in `plugin.yaml` or similar metadata) for compatibility checking, display in the UI, and meaningful pinning beyond git refs.
 - **Read-only root filesystem**: Use `--read-only` Docker flag to make the container's root filesystem unwritable. Only `/workspace` (bind mount) and necessary tmpfs mounts (`/tmp`, `/root/.pi`) should be writable. This prevents the agent from modifying system files or installing packages outside the workspace.
 - **Container resource limits**: Add CPU/memory limits to containers to prevent runaway processes.

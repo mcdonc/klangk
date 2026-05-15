@@ -121,7 +121,7 @@
       echo "No plugins.lock found, running update-plugins..."
       python3 scripts/update_plugins.py
     fi
-    python3 scripts/gen_plugins.py
+    python3 scripts/import_plugins.py
     cd frontend && flutter pub get && flutter build web --base-href=/bark/
     rm -f build/web/flutter_service_worker.js
   '';

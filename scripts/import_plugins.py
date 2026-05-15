@@ -59,7 +59,7 @@ def find_and_copy_plugins():
 
 def generate(plugins):
     lines = [
-        "// GENERATED — do not edit. Run `python scripts/gen_plugins.py` to regenerate.",
+        "// GENERATED — do not edit. Run `python scripts/import_plugins.py` to regenerate.",
         "import 'tool_plugin.dart';",
         "",
     ]
