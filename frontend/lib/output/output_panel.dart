@@ -207,11 +207,13 @@ class _OutputPanelState extends State<OutputPanel> {
         Expanded(
           child: _entries.isEmpty
               ? const Center(child: Text('No output yet', style: TextStyle(fontSize: 12)))
-              : ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(4),
-                  itemCount: _entries.length,
-                  itemBuilder: (context, index) => _buildEntry(_entries[index]),
+              : SelectionArea(
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(4),
+                    itemCount: _entries.length,
+                    itemBuilder: (context, index) => _buildEntry(_entries[index]),
+                  ),
                 ),
         ),
       ],
@@ -239,7 +241,7 @@ class _OutputPanelState extends State<OutputPanel> {
         children: [
           Row(
             children: [
-              SelectableText(
+              Text(
                 entry.title,
                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
               ),
@@ -251,7 +253,7 @@ class _OutputPanelState extends State<OutputPanel> {
             ],
           ),
           if (entry.content.isNotEmpty)
-            SelectableText(
+            Text(
               entry.content.length > 500
                   ? '${entry.content.substring(0, 500)}...'
                   : entry.content,
