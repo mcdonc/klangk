@@ -55,6 +55,7 @@ RUN find /usr/local/bin/bark-tools/ -name '*.py' -exec chmod +x {} + 2>/dev/null
 # Pi extensions and entrypoint stored in /opt/bark (root-owned, read-only at runtime)
 RUN mkdir -p /opt/bark/pi-agent/extensions
 COPY extensions/ /opt/bark/pi-agent/extensions/
+COPY system-prompt.md /opt/bark/system-prompt.md
 COPY entrypoint.sh /opt/bark/entrypoint.sh
 RUN chmod +x /opt/bark/entrypoint.sh
 

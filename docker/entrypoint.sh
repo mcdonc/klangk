@@ -2,17 +2,23 @@
 # bark user is created at build time with the host UID/GID.
 # This entrypoint runs as root, sets up Pi config, then drops to bark.
 
+# Don't hardcode any secrets here, its copied to the container fs.
+
 # Set up Pi agent config in bark's home (copied from build-time /opt/bark)
 PI_AGENT_DIR="/home/bark/.pi/agent"
 mkdir -p "$PI_AGENT_DIR/extensions"
 cp -r /opt/bark/pi-agent/extensions/* "$PI_AGENT_DIR/extensions/" 2>/dev/null
 
-# Build models.json from environment variables
-OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-https://ollama.com/v1}"
-OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:31b}"
-OLLAMA_API_KEY="${OLLAMA_API_KEY:-ollama}"
-
-cat > "$PI_AGENT_DIR/models.json" << EOF
+# models.json contains the API key, so we use a FIFO to prevent the bark user
+# from reading it after Pi has loaded. Pi calls readFileSync on models.json at
+# startup, which blocks on the FIFO until we write to it. After Pi reads it,
+# the FIFO remains but is empty — cat on it blocks forever (no writer).
+# Environment variables ({OLLAMA|ANTHROPIC|OPENAI|GOOGLE|GROQ|MISTRAL}_*, etc.)
+# are passed by container_manager.py from the host .env.
+MODELS_JSON="$PI_AGENT_DIR/models.json"
+mkfifo "$MODELS_JSON"
+chown bark:bark "$MODELS_JSON"
+MODELS_CONTENT=$(cat << EOF
 {
   "providers": {
     "ollama": {
@@ -26,13 +32,9 @@ cat > "$PI_AGENT_DIR/models.json" << EOF
   }
 }
 EOF
+)
 
-cat > "$PI_AGENT_DIR/settings.json" << EOF
-{
-  "defaultProvider": "ollama",
-  "defaultModel": "$OLLAMA_MODEL"
-}
-EOF
+# settings.json not needed — we pass --provider and --model on the command line
 
 # Fix ownership: bark's home + workspace directory
 # /home/bark/.pi/sessions is bind-mounted from the host by container_manager
@@ -42,40 +44,9 @@ chown bark:bark /workspace
 # Allow bark to use git in /workspace
 su bark -c "git config --global --add safe.directory /workspace" 2>/dev/null
 
-# Build system prompt file with instructions + registered extension tools
+# Build system prompt file from static template + registered extension tools
 SYSTEM_PROMPT_FILE="$PI_AGENT_DIR/system-prompt.md"
-cat > "$SYSTEM_PROMPT_FILE" << 'STATIC'
-You are a coding agent working in a project workspace directory.
-
-When asked to write code:
-- Always use the `write` tool to create files directly in the workspace
-- Always use the `edit` tool to modify existing files
-- Never ask the user to copy and paste code — write it to files yourself
-- Use `bash` to run commands, install dependencies, and test code
-- Use `read` to examine existing files before modifying them
-
-When creating a project:
-- Create proper directory structure
-- Include any necessary configuration files (e.g., requirements.txt, package.json, Cargo.toml)
-- Write all source files directly to disk
-- Install dependencies using bash (pip install, npm install, cargo build, etc.)
-
-Testing and running:
-- The user does NOT have direct shell access to this system
-- Always run and test code yourself using bash before telling the user it's done
-- If something fails, fix it and try again
-- For web apps, start the server and report which port it's running on
-- Available ports for user apps: check $BARK_PORT_START to $BARK_PORT_END
-
-Handling large files (CSV, logs, datasets, etc.):
-- Do NOT read entire large files and send them to the LLM — this is extremely slow
-- Prefer registered tools over bash for file inspection when an appropriate tool is available
-- When using bash and the full file content is not necessary, read only portions (e.g., `head -20`, column headers) rather than the entire file
-- For deeper analysis, write a Python script that processes the file locally and prints a summary
-- Only read small files (< 10KB) directly with the `read` tool
-
-Available runtimes: Python 3, Node.js/npm, Dart, Flutter, Rust/Cargo, GCC/G++ (build-essential)
-STATIC
+cp /opt/bark/system-prompt.md "$SYSTEM_PROMPT_FILE"
 
 if [ -d "$PI_AGENT_DIR/extensions" ] && [ "$(ls "$PI_AGENT_DIR/extensions"/*.ts 2>/dev/null)" ]; then
   echo "" >> "$SYSTEM_PROMPT_FILE"
@@ -89,7 +60,19 @@ if [ -d "$PI_AGENT_DIR/extensions" ] && [ "$(ls "$PI_AGENT_DIR/extensions"/*.ts 
   done
 fi
 
-# Drop to bark user and run Pi
+# Feed models.json to Pi via the FIFO in the background, then remove it.
+# Pi's readFileSync blocks until this write completes.
+(echo "$MODELS_CONTENT" > "$MODELS_JSON" && rm -f "$MODELS_JSON") &
+
+# Drop to bark user and run Pi, stripping API keys from the environment.
+# The keys were already captured in MODELS_CONTENT above.
 # --no-context-files: don't look for AGENTS.md in workspace
 # --append-system-prompt: inject instructions via system prompt instead
-exec su bark -c "PI_CODING_AGENT_DIR=$PI_AGENT_DIR exec pi --mode rpc --no-context-files --append-system-prompt $SYSTEM_PROMPT_FILE --session-dir /home/bark/.pi/sessions"
+# Build a list of env vars to strip (all provider-related vars)
+STRIP_VARS=""
+for var in $(env | grep -oE '^(OLLAMA|ANTHROPIC|OPENAI|GOOGLE|GROQ|MISTRAL)_[^=]+'); do
+  STRIP_VARS="$STRIP_VARS -u $var" # unsets
+done
+
+exec env $STRIP_VARS \
+  su bark -c "PI_CODING_AGENT_DIR=$PI_AGENT_DIR exec pi --mode rpc --provider ollama --model $OLLAMA_MODEL --no-context-files --append-system-prompt $SYSTEM_PROMPT_FILE --session-dir /home/bark/.pi/sessions"

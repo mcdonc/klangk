@@ -63,9 +63,8 @@ bark/
 
   docker/
     Dockerfile                  # Pi agent image: node:22-slim + Pi + Python3 + Dart + Flutter + Rust + build-essential
-    entrypoint.sh               # Generates models.json, settings.json, AGENTS.md; starts Pi in RPC mode
-    models.json                 # Generated at startup from env vars
-    settings.json               # Generated at startup from env vars
+    entrypoint.sh               # Sets up Pi config (FIFO for models.json, system prompt), starts Pi in RPC mode
+    system-prompt.md            # Static system prompt for Pi (copied into image)
     extensions/                 # Generated: collected from $BARK_PLUGINS_DIR/*/extension.ts at build time
     tools/                      # Generated: collected from $BARK_PLUGINS_DIR/*/tools/ at build time
 
@@ -141,7 +140,10 @@ bark/
 - Native Pi session persistence (JSONL files in workspace `.pi/sessions/`)
 - Session resume on reconnect via `switch_session` RPC command
 - 5 TCP ports allocated per workspace (9000-9004, 9005-9009, etc.) for user apps
-- API keys and LLM config passed via environment variables
+- LLM provider/model passed via `--provider` and `--model` CLI flags
+- API key delivered via FIFO (models.json is a named pipe, written once at startup, deleted after Pi reads it — key never persists on disk)
+- All provider env vars (`OLLAMA_*`, `ANTHROPIC_*`, etc.) stripped from Pi's process environment before exec
+- System prompt stored as `docker/system-prompt.md`, copied into image at build time
 - 15-minute idle timeout with automatic container stop and debug notification
 - All user containers stopped on logout and backend shutdown
 - Read-only root filesystem (`ReadonlyRootfs: True`) — the agent cannot modify system files or install packages outside the workspace. Writable paths:
