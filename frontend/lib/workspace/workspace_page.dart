@@ -29,6 +29,7 @@ class WorkspacePage extends StatefulWidget {
 
 class _WorkspacePageState extends State<WorkspacePage> {
   String get _baseUrl => baseUrl;
+  final _terminalKey = GlobalKey<ContainerTerminalState>();
   bool _connecting = true;
   String? _error;
   String _workspaceName = '';
@@ -254,7 +255,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
               workspaceId: widget.workspaceId,
               authToken: authToken,
             ),
-            terminal: ContainerTerminal(aguiClient: aguiClient),
+            terminal: ContainerTerminal(key: _terminalKey, aguiClient: aguiClient),
+            terminalKey: _terminalKey,
             output: OutputPanel(aguiClient: aguiClient),
           ),
           for (final plugin in _plugins)

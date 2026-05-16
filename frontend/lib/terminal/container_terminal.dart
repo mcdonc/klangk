@@ -36,11 +36,12 @@ class ContainerTerminal extends StatefulWidget {
   const ContainerTerminal({super.key, required this.aguiClient});
 
   @override
-  State<ContainerTerminal> createState() => _ContainerTerminalState();
+  State<ContainerTerminal> createState() => ContainerTerminalState();
 }
 
-class _ContainerTerminalState extends State<ContainerTerminal> {
+class ContainerTerminalState extends State<ContainerTerminal> {
   late final Terminal _terminal;
+  final _focusNode = FocusNode();
   StreamSubscription<String>? _outputSub;
   bool _started = false;
 
@@ -68,8 +69,13 @@ class _ContainerTerminalState extends State<ContainerTerminal> {
     );
   }
 
+  void requestFocus() {
+    _focusNode.requestFocus();
+  }
+
   @override
   void dispose() {
+    _focusNode.dispose();
     _outputSub?.cancel();
     if (_started) {
       widget.aguiClient.sendTerminalStop();
@@ -94,6 +100,7 @@ class _ContainerTerminalState extends State<ContainerTerminal> {
         fontSize: 14,
         fontFamily: GoogleFonts.robotoMono().fontFamily!,
       ),
+      focusNode: _focusNode,
       autofocus: false,
       autoResize: true,
       hardwareKeyboardOnly: true,
