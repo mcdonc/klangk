@@ -88,8 +88,18 @@ async def _start_workspace_container(ws: WebSocket, state: dict, workspace_id: s
     user = state["user"]
     host_path = str(workspace_manager.get_workspace_host_path(user["id"], workspace_id))
     sessions_path = str(workspace_manager.get_sessions_host_path(user["id"], workspace_id))
+
+    # Find the most recent session file to resume (if any)
+    import glob  # noqa: E402
+    session_files = sorted(glob.glob(f"{sessions_path}/**/*.jsonl", recursive=True))
+    resume_session = None
+    if session_files:
+        most_recent = session_files[-1]
+        resume_session = most_recent.replace(sessions_path, "/home/bark/.pi/sessions")
+
     container_id, container_status = await container_manager.start_container(
-        workspace_id, host_path, sessions_path, workspace.get("container_id")
+        workspace_id, host_path, sessions_path, workspace.get("container_id"),
+        resume_session=resume_session,
     )
     state["container_status"] = container_status
 
@@ -120,8 +130,11 @@ async def _start_workspace_container(ws: WebSocket, state: dict, workspace_id: s
     # Cache workspace info for auto-restart
     state["workspace"] = workspace
 
-    asyncio.create_task(_resume_pi_session(ws, pi_client, workspace_id, user["id"], state))
-    logger.info("Container ready for workspace %s", workspace_id)
+    state["resume_session"] = resume_session
+    if resume_session:
+        logger.info("Container started with session resume: %s for workspace %s", resume_session, workspace_id)
+    else:
+        logger.info("Container ready (new session) for workspace %s", workspace_id)
 
 
 async def _handle_workspace_connect(ws: WebSocket, state: dict, msg: dict) -> None:
@@ -149,6 +162,9 @@ async def _handle_workspace_connect(ws: WebSocket, state: dict, msg: dict) -> No
         "restarted": f"Restarted stopped container (ports {port_info['startPort']}-{port_info['endPort']})" if port_info else "Restarted stopped container",
         "created": f"Created new container (ports {port_info['startPort']}-{port_info['endPort']})" if port_info else "Created new container",
     }.get(status, "Container ready")
+
+    if state.get("resume_session"):
+        status_msg += " (session resumed)"
 
     await ws.send_json({
         "type": "workspace_ready",
@@ -292,42 +308,6 @@ async def _handle_abort(state: dict) -> None:
         return
     await pi_client.abort()
 
-
-async def _resume_pi_session(ws: WebSocket, pi_client: PiRpcClient, workspace_id: str, user_id: str, state: dict) -> None:
-    """Resume Pi's most recent native session if one exists in the workspace."""
-    import glob
-    try:
-        await asyncio.sleep(1)  # Give Pi a moment to finish startup
-
-        # Find the most recent session file in the sessions dir
-        sessions_host = str(workspace_manager.get_sessions_host_path(user_id, workspace_id))
-        session_files = sorted(glob.glob(f"{sessions_host}/**/*.jsonl", recursive=True))
-
-        if not session_files:
-            logger.info("No Pi sessions to resume for workspace %s", workspace_id)
-            return
-
-        # Resume the most recent session
-        most_recent = session_files[-1]
-        # Convert host path to container path
-        container_path = most_recent.replace(sessions_host, "/home/bark/.pi/sessions")
-
-        await pi_client.send_command({
-            "type": "switch_session",
-            "sessionPath": container_path,
-        })
-        logger.info("Resumed Pi session %s for workspace %s", container_path, workspace_id)
-
-        try:
-            await ws.send_json({"type": "event", "event": {
-                "type": "CUSTOM",
-                "name": "session_resume",
-                "value": {"reason": "Session resumed."},
-            }})
-        except Exception:
-            pass
-    except Exception as e:
-        logger.warning("Failed to resume Pi session: %s", e)
 
 
 async def _forward_events(ws: WebSocket, pi_client: PiRpcClient, workspace_id: str, state: dict) -> None:

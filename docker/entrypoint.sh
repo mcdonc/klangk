@@ -34,7 +34,17 @@ MODELS_CONTENT=$(cat << EOF
 EOF
 )
 
-# settings.json not needed — we pass --provider and --model on the command line
+# settings.json via FIFO (same approach — no secrets, but keeps it consistent)
+SETTINGS_JSON="$PI_AGENT_DIR/settings.json"
+mkfifo "$SETTINGS_JSON"
+chown bark:bark "$SETTINGS_JSON"
+SETTINGS_CONTENT=$(cat << EOF
+{
+  "defaultProvider": "ollama",
+  "defaultModel": "$OLLAMA_MODEL"
+}
+EOF
+)
 
 # Fix ownership: bark's home + workspace directory
 # /home/bark/.pi/sessions is bind-mounted from the host by container_manager
@@ -60,19 +70,25 @@ if [ -d "$PI_AGENT_DIR/extensions" ] && [ "$(ls "$PI_AGENT_DIR/extensions"/*.ts 
   done
 fi
 
-# Feed models.json to Pi via the FIFO in the background, then remove it.
-# Pi's readFileSync blocks until this write completes.
-(echo "$MODELS_CONTENT" > "$MODELS_JSON" && rm -f "$MODELS_JSON") &
+# Write config content to temp files, then use nohup to feed them to the FIFOs.
+# Pi reads settings.json first (SettingsManager.create), then models.json (ModelRegistry.create).
+# nohup ensures the writer survives the exec below.
+echo "$SETTINGS_CONTENT" > /tmp/settings-content
+echo "$MODELS_CONTENT" > /tmp/models-content
+nohup sh -c "cat /tmp/settings-content > $SETTINGS_JSON && rm -f $SETTINGS_JSON /tmp/settings-content && cat /tmp/models-content > $MODELS_JSON && rm -f $MODELS_JSON /tmp/models-content" >/dev/null 2>&1 &
 
-# Drop to bark user and run Pi, stripping API keys from the environment.
-# The keys were already captured in MODELS_CONTENT above.
-# --no-context-files: don't look for AGENTS.md in workspace
-# --append-system-prompt: inject instructions via system prompt instead
 # Build a list of env vars to strip (all provider-related vars)
 STRIP_VARS=""
 for var in $(env | grep -oE '^(OLLAMA|ANTHROPIC|OPENAI|GOOGLE|GROQ|MISTRAL)_[^=]+'); do
-  STRIP_VARS="$STRIP_VARS -u $var" # unsets
+  STRIP_VARS="$STRIP_VARS -u $var"
 done
 
-exec env $STRIP_VARS \
-  su bark -c "PI_CODING_AGENT_DIR=$PI_AGENT_DIR exec pi --mode rpc --provider ollama --model $OLLAMA_MODEL --no-context-files --append-system-prompt $SYSTEM_PROMPT_FILE --session-dir /home/bark/.pi/sessions"
+# Build Pi command line
+PI_CMD="exec pi --mode rpc --no-context-files --append-system-prompt $SYSTEM_PROMPT_FILE --session-dir /home/bark/.pi/sessions"
+if [ -n "$BARK_RESUME_SESSION" ]; then
+  PI_CMD="$PI_CMD --session $BARK_RESUME_SESSION"
+fi
+
+# Drop to bark user and run Pi (exec replaces this shell so Pi gets PID 1's stdio)
+exec env $STRIP_VARS -u BARK_RESUME_SESSION \
+  su bark -c "PI_CODING_AGENT_DIR=$PI_AGENT_DIR $PI_CMD"

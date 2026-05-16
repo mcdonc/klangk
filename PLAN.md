@@ -75,10 +75,10 @@ bark/
       auth.py                   # Register/login/logout, JWT, bcrypt password hashing
       user_store.py             # SQLite: users, workspaces, token blocklist, message history
       workspace_manager.py      # Workspace CRUD + host directory management
-      container_manager.py      # Docker lifecycle, port allocation, idle timeout, shutdown cleanup
-      pi_rpc_client.py          # docker attach subprocess for Pi stdin/stdout JSON-RPC
+      container_manager.py      # Docker lifecycle, port allocation, idle timeout, session resume env, shutdown cleanup
+      pi_rpc_client.py          # docker attach subprocess for Pi stdin/stdout JSON-RPC (chunked reads for large events)
       agui_translator.py        # Pi RPC events → AG-UI events mapping, file-change detection
-      ws_handler.py             # WebSocket auth, workspace routing, AG-UI streaming, auto-restart
+      ws_handler.py             # WebSocket auth, workspace routing, AG-UI streaming, session resume, auto-restart
       file_service.py           # Host-side file read/write with path traversal protection
 
   frontend/
@@ -138,10 +138,11 @@ bark/
 - Container communicates via stdin/stdout JSON-RPC (docker attach subprocess)
 - Pi RPC events translated to AG-UI events in real-time
 - Native Pi session persistence (JSONL files in workspace `.pi/sessions/`)
-- Session resume on reconnect via `switch_session` RPC command
+- Session resume on reconnect via `--session` CLI flag (passed as `BARK_RESUME_SESSION` env var to the container; avoids `switch_session` RPC which would re-read the FIFO)
 - 5 TCP ports allocated per workspace (9000-9004, 9005-9009, etc.) for user apps
-- LLM provider/model passed via `--provider` and `--model` CLI flags
-- API key delivered via FIFO (models.json is a named pipe, written once at startup, deleted after Pi reads it — key never persists on disk)
+- LLM provider/model configured via `settings.json` FIFO (sets `defaultProvider` and `defaultModel`)
+- API key delivered via `models.json` FIFO (named pipe, written once at startup, deleted after Pi reads it — key never persists on disk)
+- Both config FIFOs written by a `nohup` background process that survives the `exec` to Pi — settings.json is written first (Pi's SettingsManager reads it), then models.json (Pi's ModelRegistry reads it)
 - All provider env vars (`OLLAMA_*`, `ANTHROPIC_*`, etc.) stripped from Pi's process environment before exec
 - System prompt stored as `docker/system-prompt.md`, copied into image at build time
 - 15-minute idle timeout with automatic container stop and debug notification
@@ -407,4 +408,5 @@ nginx reverse proxy (port 8995)
 - **Container terminal pane**: Add a terminal panel (xterm.dart) that gives the user direct shell access to the workspace container via `docker exec`. Would allow users to run commands, inspect processes, debug code, and interact with running servers without going through the AI agent.
 - **Same-workspace multi-window**: Opening the same workspace in two browser windows simultaneously has undefined behavior — both WebSocket connections share one Pi container/session, and prompts from either window could collide or interleave unpredictably. Consider either locking a workspace to one connection at a time, or multiplexing both windows onto the same event stream.
 - **Workspace disk quotas**: Limit how much disk space each workspace can consume. Options: use filesystem quotas (XFS/ext4 project quotas on the host), overlay2 with size limits, or a loopback-mounted filesystem per workspace with a fixed size. Should also surface current disk usage in the UI (file viewer header or workspace list) so users can see how much space they've used.
+- **Expose Pi's `/compact` command in the UI**: Pi has built-in context compaction — both automatic (triggers when context tokens approach the window limit) and manual via the `{"type": "compact"}` RPC command. Auto-compaction is already working silently for Bark users. Add a "Compact" button in the chat UI that sends the `compact` RPC command to Pi, letting users manually trigger summarization of older context. Could also surface compaction events in the debug pane and expose settings for `reserveTokens`/`keepRecentTokens` thresholds.
 - **Investigate running Pi under bubblewrap**: Explore using [bubblewrap](https://github.com/containers/bubblewrap) (bwrap) as an alternative to Docker for sandboxing Pi. Bubblewrap is lighter-weight than Docker — no daemon, no image builds, no container overhead — and provides namespace-based isolation (mount, PID, network, user). This could significantly reduce startup time and resource usage. Trade-offs: no pre-built image caching, need to manage tool installations on the host, less isolation than full container. Could be offered as an alternative backend alongside Docker.

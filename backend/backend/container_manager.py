@@ -64,6 +64,7 @@ async def start_container(
     host_path: str,
     sessions_path: str,
     existing_container_id: str | None = None,
+    resume_session: str | None = None,
 ) -> tuple[str, str]:
     """Start (or restart) a Pi container for a workspace.
 
@@ -98,6 +99,8 @@ async def start_container(
     # Tell the container which ports are available
     env_vars.append(f"BARK_PORT_START={start_port}")
     env_vars.append(f"BARK_PORT_END={end_port}")
+    if resume_session:
+        env_vars.append(f"BARK_RESUME_SESSION={resume_session}")
 
     # Build port bindings: map each container port to the same host port
     port_bindings = {}

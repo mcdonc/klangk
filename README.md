@@ -106,7 +106,7 @@ Workspace files on disk
 - **Agent**: Pi coding agent in RPC mode with Ollama (cloud or self-hosted, configurable model)
 - **Protocol**: [AG-UI](https://docs.ag-ui.com/) for standardized agent-user communication
 
-Each workspace gets its own Docker container with a bind-mounted directory. Pi sessions persist across container restarts, and conversation history is stored in SQLite.
+Each workspace gets its own Docker container with a bind-mounted directory. Pi sessions persist across container restarts (resumed automatically via `--session` flag), and conversation history is stored in SQLite. API keys are delivered via FIFO (named pipe) so they never persist on disk inside the container.
 
 ### Plugins
 

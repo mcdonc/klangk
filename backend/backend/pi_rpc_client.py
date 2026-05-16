@@ -31,20 +31,29 @@ class PiRpcClient:
         logger.info("Attached to container %s via docker attach", self.container_id)
 
     async def _read_loop(self) -> None:
-        """Read newline-delimited JSON events from stdout."""
+        """Read newline-delimited JSON events from stdout.
+
+        Uses chunked reads instead of readline() to avoid buffer limits —
+        Pi can emit very large JSON lines (e.g., message_update events that
+        include the full accumulated message content).
+        """
+        buf = b""
         try:
             while self._running and self._proc and self._proc.stdout:
-                line = await self._proc.stdout.readline()
-                if not line:
+                chunk = await self._proc.stdout.read(65536)
+                if not chunk:
                     break
-                text = line.decode("utf-8", errors="replace").strip()
-                if not text:
-                    continue
-                try:
-                    event = json.loads(text)
-                    await self._event_queue.put(event)
-                except json.JSONDecodeError:
-                    logger.warning("Non-JSON line from Pi: %s", text[:200])
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = line.decode("utf-8", errors="replace").strip()
+                    if not text:
+                        continue
+                    try:
+                        event = json.loads(text)
+                        await self._event_queue.put(event)
+                    except json.JSONDecodeError:
+                        logger.warning("Non-JSON line from Pi: %s", text[:200])
         except Exception as e:
             logger.error("Pi RPC read error: %s", e)
         finally:
