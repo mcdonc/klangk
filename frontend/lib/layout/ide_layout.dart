@@ -62,14 +62,12 @@ class _IdeLayoutState extends State<IdeLayout>
         final totalHeight = constraints.maxHeight;
         const bar = 6.0;
 
-        final usableWidth = totalWidth - bar * 3;
+        final usableWidth = totalWidth - bar;
         final leftWidth = usableWidth * _horizontalRatio;
         final rightWidth = usableWidth - leftWidth;
 
         return Row(
           children: [
-            // Left edge bar
-            Container(width: bar, decoration: _bar3d),
             // Chat panel (left)
             Container(
               width: leftWidth,
@@ -92,65 +90,58 @@ class _IdeLayoutState extends State<IdeLayout>
             ),
             // Right column: tabbed panel
             SizedBox(
-              width: rightWidth + bar,
-              child: Row(
+              width: rightWidth,
+              child: Column(
                 children: [
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Container(
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            boxShadow: const [
-                              BoxShadow(
-                                  color: Color(0x30000000),
-                                  blurRadius: 2,
-                                  offset: Offset(0, 1)),
-                            ],
-                          ),
-                          child: TabBar(
-                            controller: _tabController,
-                            labelStyle: const TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.bold),
-                            unselectedLabelStyle:
-                                const TextStyle(fontSize: 12),
-                            indicatorSize: TabBarIndicatorSize.tab,
-                            tabs: const [
-                              Tab(text: 'Files'),
-                              Tab(text: 'Terminal'),
-                              Tab(text: 'Debug'),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: ListenableBuilder(
-                            listenable: _tabController,
-                            builder: (context, _) => IndexedStack(
-                              index: _tabController.index,
-                              children: [
-                                Container(
-                                  color: const Color(0xFFFFFEFC),
-                                  child: widget.fileViewer,
-                                ),
-                                Container(
-                                  color: const Color(0xFFF0EFE9),
-                                  child: widget.terminal,
-                                ),
-                                Container(
-                                  color: const Color(0xFFF0EFE9),
-                                  child: widget.output,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                  Container(
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                      boxShadow: const [
+                        BoxShadow(
+                            color: Color(0x30000000),
+                            blurRadius: 2,
+                            offset: Offset(0, 1)),
+                      ],
+                    ),
+                    child: TabBar(
+                      controller: _tabController,
+                      labelStyle: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.bold),
+                      unselectedLabelStyle:
+                          const TextStyle(fontSize: 12),
+                      indicatorSize: TabBarIndicatorSize.tab,
+                      tabs: const [
+                        Tab(text: 'Files'),
+                        Tab(text: 'Terminal'),
+                        Tab(text: 'Debug'),
                       ],
                     ),
                   ),
-                  Container(width: bar, decoration: _bar3d),
+                  Expanded(
+                    child: ListenableBuilder(
+                      listenable: _tabController,
+                      builder: (context, _) => IndexedStack(
+                        index: _tabController.index,
+                        children: [
+                          Container(
+                            color: const Color(0xFFFFFEFC),
+                            child: widget.fileViewer,
+                          ),
+                          Container(
+                            color: const Color(0xFFF0EFE9),
+                            child: widget.terminal,
+                          ),
+                          Container(
+                            color: const Color(0xFFF0EFE9),
+                            child: widget.output,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),

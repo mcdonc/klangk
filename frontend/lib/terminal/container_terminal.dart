@@ -42,6 +42,7 @@ class ContainerTerminal extends StatefulWidget {
 class ContainerTerminalState extends State<ContainerTerminal> {
   late final Terminal _terminal;
   final _focusNode = FocusNode();
+  final _scrollController = ScrollController();
   StreamSubscription<String>? _outputSub;
   bool _started = false;
 
@@ -76,6 +77,7 @@ class ContainerTerminalState extends State<ContainerTerminal> {
   @override
   void dispose() {
     _focusNode.dispose();
+    _scrollController.dispose();
     _outputSub?.cancel();
     if (_started) {
       widget.aguiClient.sendTerminalStop();
@@ -93,17 +95,29 @@ class ContainerTerminalState extends State<ContainerTerminal> {
     }
     // Start on first build when workspace is connected
     WidgetsBinding.instance.addPostFrameCallback((_) => _startTerminal());
-    return TerminalView(
-      _terminal,
-      theme: _theme,
-      textStyle: TerminalStyle(
-        fontSize: 14,
-        fontFamily: GoogleFonts.robotoMono().fontFamily!,
+    return ScrollbarTheme(
+      data: const ScrollbarThemeData(
+        thumbColor: WidgetStatePropertyAll(Color(0x80C5C8C6)),
+        thickness: WidgetStatePropertyAll(8.0),
+        radius: Radius.circular(4),
       ),
-      focusNode: _focusNode,
-      autofocus: false,
-      autoResize: true,
-      hardwareKeyboardOnly: true,
+      child: Scrollbar(
+        controller: _scrollController,
+        thumbVisibility: true,
+        child: TerminalView(
+        _terminal,
+        theme: _theme,
+        textStyle: TerminalStyle(
+          fontSize: 14,
+          fontFamily: GoogleFonts.robotoMono().fontFamily!,
+        ),
+        focusNode: _focusNode,
+        scrollController: _scrollController,
+        autofocus: false,
+        autoResize: true,
+        hardwareKeyboardOnly: true,
+      ),
+    ),
     );
   }
 }
