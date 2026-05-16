@@ -10,28 +10,18 @@ const _bar3d = BoxDecoration(
   ],
 );
 
-const _bar3dHorizontal = BoxDecoration(
-  gradient: LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [Color(0xFFD0D0D0), Color(0xFFE8E8E8), Color(0xFFD0D0D0)],
-  ),
-  boxShadow: [
-    BoxShadow(color: Color(0x30000000), blurRadius: 2, offset: Offset(0, -1)),
-    BoxShadow(color: Color(0x30000000), blurRadius: 2, offset: Offset(0, 1)),
-  ],
-);
-
-/// Split-pane IDE layout with resizable dividers and 3D edge bars.
+/// Split-pane IDE layout: chat on left, tabbed panel on right.
 class IdeLayout extends StatefulWidget {
-  final Widget terminal;
+  final Widget chat;
   final Widget fileViewer;
+  final Widget terminal;
   final Widget output;
 
   const IdeLayout({
     super.key,
-    required this.terminal,
+    required this.chat,
     required this.fileViewer,
+    required this.terminal,
     required this.output,
   });
 
@@ -39,9 +29,22 @@ class IdeLayout extends StatefulWidget {
   State<IdeLayout> createState() => _IdeLayoutState();
 }
 
-class _IdeLayoutState extends State<IdeLayout> {
-  double _horizontalRatio = 0.5;
-  double _verticalRatio = 1.0; // debug pane collapsed by default, drag to open
+class _IdeLayoutState extends State<IdeLayout>
+    with SingleTickerProviderStateMixin {
+  double _horizontalRatio = 0.38;
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,17 +54,9 @@ class _IdeLayoutState extends State<IdeLayout> {
         final totalHeight = constraints.maxHeight;
         const bar = 6.0;
 
-        // Account for: left bar + center divider + right bar = 3 bars horizontally
         final usableWidth = totalWidth - bar * 3;
         final leftWidth = usableWidth * _horizontalRatio;
         final rightWidth = usableWidth - leftWidth;
-
-        // Account for: horizontal divider + bottom bar = 2 bars vertically
-        // Reserve minimum height for the debug pane header even when collapsed
-        const minBottom = 28.0;
-        final usableHeight = totalHeight - bar * 2;
-        final topHeight = (usableHeight - minBottom) * _verticalRatio;
-        final bottomHeight = usableHeight - topHeight;
 
         return Row(
           children: [
@@ -71,8 +66,8 @@ class _IdeLayoutState extends State<IdeLayout> {
             Container(
               width: leftWidth,
               height: totalHeight,
-              color: const Color(0xFFF7F6F2), // cool bone (was chat)
-              child: widget.terminal,
+              color: const Color(0xFFF7F6F2),
+              child: widget.chat,
             ),
             // Center divider
             GestureDetector(
@@ -87,48 +82,67 @@ class _IdeLayoutState extends State<IdeLayout> {
                 child: Container(width: bar, decoration: _bar3d),
               ),
             ),
-            // Right column
+            // Right column: tabbed panel
             SizedBox(
-              width: rightWidth + bar, // include right edge bar
-              child: Column(
+              width: rightWidth + bar,
+              child: Row(
                 children: [
-                  // File viewer
-                  Container(
-                    height: topHeight,
-                    color: const Color(0xFFFFFEFC), // warm white (was files)
-                    child: Row(
+                  Expanded(
+                    child: Column(
                       children: [
-                        Expanded(child: widget.fileViewer),
-                        Container(width: bar, decoration: _bar3d),
+                        Container(
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            boxShadow: const [
+                              BoxShadow(
+                                  color: Color(0x30000000),
+                                  blurRadius: 2,
+                                  offset: Offset(0, 1)),
+                            ],
+                          ),
+                          child: TabBar(
+                            controller: _tabController,
+                            labelStyle: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold),
+                            unselectedLabelStyle:
+                                const TextStyle(fontSize: 12),
+                            indicatorSize: TabBarIndicatorSize.tab,
+                            tabs: const [
+                              Tab(text: 'Files'),
+                              Tab(text: 'Terminal'),
+                              Tab(text: 'Debug'),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: ListenableBuilder(
+                            listenable: _tabController,
+                            builder: (context, _) => IndexedStack(
+                              index: _tabController.index,
+                              children: [
+                                Container(
+                                  color: const Color(0xFFFFFEFC),
+                                  child: widget.fileViewer,
+                                ),
+                                Container(
+                                  color: const Color(0xFFF0EFE9),
+                                  child: widget.terminal,
+                                ),
+                                Container(
+                                  color: const Color(0xFFF0EFE9),
+                                  child: widget.output,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  // Horizontal divider
-                  GestureDetector(
-                    onVerticalDragUpdate: (details) {
-                      setState(() {
-                        _verticalRatio += details.delta.dy / usableHeight;
-                        _verticalRatio = _verticalRatio.clamp(0.2, 1.0);
-                      });
-                    },
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.resizeRow,
-                      child: Container(height: bar, decoration: _bar3dHorizontal),
-                    ),
-                  ),
-                  // Output panel
-                  Container(
-                    height: bottomHeight,
-                    color: const Color(0xFFF0EFE9),
-                    child: Row(
-                      children: [
-                        Expanded(child: widget.output),
-                        Container(width: bar, decoration: _bar3d),
-                      ],
-                    ),
-                  ),
-                  // Bottom bar
-                  Container(height: bar, decoration: _bar3dHorizontal),
+                  Container(width: bar, decoration: _bar3d),
                 ],
               ),
             ),

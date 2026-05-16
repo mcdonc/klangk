@@ -9,6 +9,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from . import auth, container_manager, user_store, workspace_manager
 from .agui_translator import translate_event
 from .pi_rpc_client import PiRpcClient
+from .terminal_manager import TerminalSession
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ async def handle_websocket(ws: WebSocket) -> None:
         return
 
     await ws.accept()
-    conn_state: dict = {"user": user, "pi_client": None, "container_id": None, "event_task": None, "agent_running": False}
+    conn_state: dict = {"user": user, "pi_client": None, "container_id": None, "event_task": None, "agent_running": False, "terminal_session": None, "terminal_task": None}
     _connections[ws] = conn_state
 
     try:
@@ -65,6 +66,14 @@ async def handle_websocket(ws: WebSocket) -> None:
                     }})
             elif cmd == "extension_ui_response":
                 await _handle_extension_ui_response(conn_state, msg)
+            elif cmd == "terminal_start":
+                await _handle_terminal_start(ws, conn_state, msg)
+            elif cmd == "terminal_input":
+                await _handle_terminal_input(conn_state, msg)
+            elif cmd == "terminal_resize":
+                await _handle_terminal_resize(conn_state, msg)
+            elif cmd == "terminal_stop":
+                await _handle_terminal_stop(conn_state)
             else:
                 await _send_error(ws, f"Unknown command: {cmd}")
 
@@ -309,6 +318,65 @@ async def _handle_abort(state: dict) -> None:
     await pi_client.abort()
 
 
+async def _handle_terminal_start(ws: WebSocket, state: dict, msg: dict) -> None:
+    container_id = state.get("container_id")
+    if not container_id:
+        return
+    # Stop existing terminal if any
+    await _stop_terminal(state)
+    cols = msg.get("cols", 80)
+    rows = msg.get("rows", 24)
+    session = TerminalSession(container_id)
+    await session.start(cols, rows)
+    state["terminal_session"] = session
+    state["terminal_task"] = asyncio.create_task(
+        _forward_terminal_output(ws, session, state)
+    )
+    container_manager.record_activity(container_id)
+
+
+async def _handle_terminal_input(state: dict, msg: dict) -> None:
+    session: TerminalSession | None = state.get("terminal_session")
+    if session is None or not session.is_alive:
+        return
+    container_manager.record_activity(state["container_id"])
+    await session.write(msg.get("data", ""))
+
+
+async def _handle_terminal_resize(state: dict, msg: dict) -> None:
+    session: TerminalSession | None = state.get("terminal_session")
+    if session is None:
+        return
+    await session.resize(msg.get("cols", 80), msg.get("rows", 24))
+
+
+async def _handle_terminal_stop(state: dict) -> None:
+    await _stop_terminal(state)
+
+
+async def _stop_terminal(state: dict) -> None:
+    task = state.get("terminal_task")
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        state["terminal_task"] = None
+    session: TerminalSession | None = state.get("terminal_session")
+    if session:
+        await session.stop()
+        state["terminal_session"] = None
+
+
+async def _forward_terminal_output(ws: WebSocket, session: TerminalSession, state: dict) -> None:
+    """Forward terminal output to the frontend via WebSocket."""
+    try:
+        async for data in session.output():
+            await ws.send_json({"type": "terminal_output", "data": data})
+    except Exception as e:
+        logger.error("Terminal output forwarding error: %s", e)
+
 
 async def _forward_events(ws: WebSocket, pi_client: PiRpcClient, workspace_id: str, state: dict) -> None:
     """Forward Pi RPC events as AG-UI events over WebSocket, saving to history."""
@@ -374,6 +442,8 @@ async def _cleanup_connection(ws: WebSocket, state: dict) -> None:
     pi_client: PiRpcClient | None = state.get("pi_client")
     if pi_client:
         await pi_client.disconnect()
+
+    await _stop_terminal(state)
 
 
 async def _send_error(ws: WebSocket, message: str) -> None:

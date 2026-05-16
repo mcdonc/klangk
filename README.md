@@ -51,7 +51,8 @@ Open [http://localhost:8997](http://localhost:8997) and log in with `admin`/`adm
 3. **The agent writes files directly** — no copy-paste needed
 4. **The agent runs and tests code** — it has shell access inside the container
 5. **View files** in the file viewer panel, drag-and-drop files or folders to upload, right-click to download, rename, or delete
-6. **Monitor activity** in the debug panel
+6. **Use the terminal** for direct shell access to the container (bash with tab completion and colors)
+7. **Monitor activity** in the debug panel
 
 ### Environment Variables
 
@@ -101,7 +102,7 @@ Pi coding agent (Docker container)
 Workspace files on disk
 ```
 
-- **Frontend**: Flutter Web with markdown rendering, syntax-highlighted code blocks, file viewer, debug panel
+- **Frontend**: Flutter Web with markdown rendering, syntax-highlighted code blocks, file viewer, container terminal, debug panel
 - **Backend**: FastAPI serving both API and frontend static files on a single port
 - **Agent**: Pi coding agent in RPC mode with Ollama (cloud or self-hosted, configurable model)
 - **Protocol**: [AG-UI](https://docs.ag-ui.com/) for standardized agent-user communication

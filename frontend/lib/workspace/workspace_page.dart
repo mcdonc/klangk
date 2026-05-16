@@ -13,6 +13,7 @@ import '../widgets/bark_logo.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../layout/ide_layout.dart';
 import '../output/output_panel.dart';
+import '../terminal/container_terminal.dart';
 import '../terminal/chat_panel.dart';
 import '../tools/tool_plugin.dart';
 import '../tools/plugins_generated.dart';
@@ -243,7 +244,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       body: Stack(
         children: [
           IdeLayout(
-            terminal: ChatPanel(
+            chat: ChatPanel(
               aguiClient: aguiClient,
               workspaceId: widget.workspaceId,
               authToken: authToken,
@@ -253,6 +254,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
               workspaceId: widget.workspaceId,
               authToken: authToken,
             ),
+            terminal: ContainerTerminal(aguiClient: aguiClient),
             output: OutputPanel(aguiClient: aguiClient),
           ),
           for (final plugin in _plugins)

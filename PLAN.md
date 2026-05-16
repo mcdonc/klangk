@@ -80,6 +80,7 @@ bark/
       agui_translator.py        # Pi RPC events → AG-UI events mapping, file-change detection
       ws_handler.py             # WebSocket auth, workspace routing, AG-UI streaming, session resume, auto-restart
       file_service.py           # Host-side file read/write/delete/rename with path traversal protection
+      terminal_manager.py      # Docker exec PTY subprocess for interactive shell access
 
   frontend/
     pubspec.yaml                # Flutter deps: flutter_markdown, flutter_highlight, go_router, etc.
@@ -107,6 +108,7 @@ bark/
         agui_events.dart        # AG-UI event type definitions
       terminal/
         chat_panel.dart         # Chat UI: markdown, syntax highlighting, tool cards, history loading
+        container_terminal.dart # xterm.dart terminal widget with dark theme, PTY via WebSocket
       file_viewer/
         file_viewer_panel.dart  # File tree + content viewer (16pt JetBrains Mono)
         file_upload.dart        # Drag-and-drop upload
@@ -154,6 +156,22 @@ bark/
   - `/tmp` — tmpfs (scratch space)
   - `/run`, `/var/log` — tmpfs (runtime)
 - `bark` user baked into the image at build time with the host UID/GID (passed as Docker build args)
+- Root escalation prevented: root password locked, suid removed from `su`/`chsh`/`chfn`/`newgrp`
+
+### Container Terminal
+- Direct shell access to the workspace container via the Terminal tab in the right panel
+- Uses xterm.dart (pure Flutter terminal emulator) with a dark theme (Tomorrow Night palette)
+- Backend spawns `docker exec` subprocess with PTY (`os.openpty`) piped over the existing WebSocket
+- Runs as `bark` user in `/workspace` with bash, tab completion, readline, and colored prompt/ls
+- Terminal interaction bumps the container idle timeout via `record_activity()`
+- On-demand: subprocess starts when user clicks the Terminal tab
+- State preserved across tab switches (IndexedStack keeps all panels alive)
+- Cleaned up on workspace disconnect or WebSocket close
+
+### Right Panel Layout
+- Tabbed panel with Files, Terminal, and Debug tabs
+- All tabs stay alive across switches (IndexedStack, not TabBarView)
+- Debug pane receives events from the start, even before first viewed
 
 ### Pi Extensions (Tools)
 - Extensions are TypeScript files collected from `$BARK_PLUGINS_DIR/*/extension.ts` into `docker/extensions/` at build time
@@ -204,10 +222,10 @@ bark/
 - Harvest-inspired light theme (warm off-white, green accents, medium gray header)
 - Orange Bark logo (paw icon + "Bark" text)
 - 3D edges on all dividers, panel headers, and borders
-- Three panes with subtly different background shades
+- Two-column layout: chat (left, 38%) and tabbed panel (right, 62%) with resizable divider
+- Right panel tabs: Files, Terminal, Debug — all kept alive via IndexedStack
 - Dark blue back/logout buttons
 - Browser tab title updates per page ("Bark - Login", "Bark - Workspaces", "Bark - workspace-name")
-- Resizable split panes with drag handles (70/30 default for files/debug)
 
 ### Hosting
 - Single-port architecture: FastAPI serves both API and Flutter frontend static files
@@ -411,7 +429,6 @@ nginx reverse proxy (port 8995)
 - **Container network isolation**: Restrict container network access to prevent use as an attack platform. Use a custom Docker network with limited egress — allow only the Ollama API endpoint (cloud or self-hosted) and block all other outbound traffic. Consider using `--network=none` with a proxy sidecar for allowlisted domains only.
 - **Multiple LLM providers**: Support selecting different models per workspace.
 - **Syntax highlighting language detection**: Improve code block language detection for unlabeled blocks.
-- **Container terminal pane**: Add a terminal panel using xterm.dart (already in pubspec.yaml) in a tabbed bottom-right panel alongside Debug. Backend spawns `docker exec` subprocess with PTY (`os.openpty`), pipes stdin/stdout over the existing WebSocket via `terminal_start/input/resize/stop` commands. On-demand: subprocess starts when user clicks Terminal tab. Terminal interaction should bump the container idle timeout via `record_activity()`. Uses xterm.dart's `TerminalTheme`/`TerminalStyle` for styling consistent with Bark's theme (JetBrains Mono, warm colors).
 - **Same-workspace multi-window**: Opening the same workspace in two browser windows simultaneously has undefined behavior — both WebSocket connections share one Pi container/session, and prompts from either window could collide or interleave unpredictably. Consider either locking a workspace to one connection at a time, or multiplexing both windows onto the same event stream.
 - **Workspace disk quotas**: Limit how much disk space each workspace can consume. Options: use filesystem quotas (XFS/ext4 project quotas on the host), overlay2 with size limits, or a loopback-mounted filesystem per workspace with a fixed size. Should also surface current disk usage in the UI (file viewer header or workspace list) so users can see how much space they've used.
 - **Expose Pi's `/compact` command in the UI**: Pi has built-in context compaction — both automatic (triggers when context tokens approach the window limit) and manual via the `{"type": "compact"}` RPC command. Auto-compaction is already working silently for Bark users. Add a "Compact" button in the chat UI that sends the `compact` RPC command to Pi, letting users manually trigger summarization of older context. Could also surface compaction events in the debug pane and expose settings for `reserveTokens`/`keepRecentTokens` thresholds.

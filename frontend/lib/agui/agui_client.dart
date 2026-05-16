@@ -22,9 +22,11 @@ class AguiClient extends ChangeNotifier {
 
   final _eventController = StreamController<AguiEvent>.broadcast();
   final _errorController = StreamController<String>.broadcast();
+  final _terminalOutputController = StreamController<String>.broadcast();
 
   Stream<AguiEvent> get events => _eventController.stream;
   Stream<String> get errors => _errorController.stream;
+  Stream<String> get terminalOutput => _terminalOutputController.stream;
   bool get connected => _connected;
   String? get currentWorkspaceId => _currentWorkspaceId;
 
@@ -62,6 +64,8 @@ class AguiClient extends ChangeNotifier {
           } else if (type == 'workspace_ready') {
             _currentWorkspaceId = json['workspaceId'] as String?;
             notifyListeners();
+          } else if (type == 'terminal_output') {
+            _terminalOutputController.add(json['data'] as String? ?? '');
           } else if (type == 'error') {
             _errorController.add(json['message'] as String? ?? 'Unknown error');
           }
@@ -133,11 +137,28 @@ class AguiClient extends ChangeNotifier {
     _send({'cmd': 'abort'});
   }
 
+  void sendTerminalStart({int cols = 80, int rows = 24}) {
+    _send({'cmd': 'terminal_start', 'cols': cols, 'rows': rows});
+  }
+
+  void sendTerminalInput(String data) {
+    _send({'cmd': 'terminal_input', 'data': data});
+  }
+
+  void sendTerminalResize(int cols, int rows) {
+    _send({'cmd': 'terminal_resize', 'cols': cols, 'rows': rows});
+  }
+
+  void sendTerminalStop() {
+    _send({'cmd': 'terminal_stop'});
+  }
+
   @override
   void dispose() {
     disconnect();
     _eventController.close();
     _errorController.close();
+    _terminalOutputController.close();
     super.dispose();
   }
 }

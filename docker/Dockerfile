@@ -60,4 +60,9 @@ COPY system-prompt.md /opt/bark/system-prompt.md
 COPY entrypoint.sh /opt/bark/entrypoint.sh
 RUN chmod +x /opt/bark/entrypoint.sh
 
+# Prevent bark user from escalating to root
+RUN passwd -l root \
+    && chmod u-s /usr/bin/su /usr/bin/chsh /usr/bin/chfn /usr/bin/newgrp \
+    && rm -f /usr/bin/sudo 2>/dev/null || true
+
 ENTRYPOINT ["/opt/bark/entrypoint.sh"]
