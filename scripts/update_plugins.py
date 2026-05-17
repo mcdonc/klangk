@@ -18,7 +18,9 @@ except ImportError:
     sys.exit(1)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGINS_DIR = os.environ.get("BARK_PLUGINS_DIR") or os.path.join(os.path.expanduser("~"), ".bark", "plugins")
+PLUGINS_DIR = os.environ.get("BARK_PLUGINS_DIR") or os.path.join(
+    os.path.expanduser("~"), ".bark", "plugins"
+)
 YAML_PATH = os.path.join(PLUGINS_DIR, "plugins.yaml")
 LOCK_PATH = os.path.join(PLUGINS_DIR, "plugins.lock")
 
@@ -57,7 +59,9 @@ def resolve_ref(git_url, ref):
     try:
         result = subprocess.run(
             ["git", "ls-remote", git_url, ref],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         for line in result.stdout.strip().splitlines():
             sha, _name = line.split("\t", 1)
@@ -92,28 +96,35 @@ def fetch_plugin(plugin, plugins_dir):
         clone_dir = os.path.join(tmpdir, "repo")
         result = subprocess.run(
             ["git", "clone", "--depth=1", "--branch", ref, git_url, clone_dir],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0:
             # ref might be a SHA, try full clone
             result = subprocess.run(
                 ["git", "clone", git_url, clone_dir],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode != 0:
-                print(f"  ERROR: git clone failed: {result.stderr.strip()}",
-                      file=sys.stderr)
+                print(
+                    f"  ERROR: git clone failed: {result.stderr.strip()}",
+                    file=sys.stderr,
+                )
                 return None
             subprocess.run(
                 ["git", "checkout", ref],
-                cwd=clone_dir, capture_output=True, text=True,
+                cwd=clone_dir,
+                capture_output=True,
+                text=True,
             )
 
         source = os.path.join(clone_dir, subpath) if subpath else clone_dir
 
         if not os.path.isdir(source):
-            print(f"  ERROR: path '{subpath}' not found in {git_url}",
-                  file=sys.stderr)
+            print(f"  ERROR: path '{subpath}' not found in {git_url}", file=sys.stderr)
             return None
 
         # Remove old version and copy

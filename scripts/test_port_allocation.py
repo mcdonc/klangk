@@ -4,7 +4,7 @@ import asyncio
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from backend import user_store, container_manager
 
@@ -22,6 +22,7 @@ async def main():
     existing = await user_store.get_user_by_username("test-port-user")
     if existing is None:
         import bcrypt
+
         pw = bcrypt.hashpw(b"test", bcrypt.gensalt()).decode()
         await user_store.create_user("test-port-user", pw)
         existing = await user_store.get_user_by_username("test-port-user")
@@ -41,7 +42,9 @@ async def main():
     print("\n=== Test 2: Increasing num_ports allocates more ===")
     existing_ports = await container_manager.get_workspace_ports(workspace_id)
     if len(existing_ports) < 8:
-        new_ports = await container_manager.allocate_ports(workspace_id, 8 - len(existing_ports))
+        new_ports = await container_manager.allocate_ports(
+            workspace_id, 8 - len(existing_ports)
+        )
         existing_ports.extend(new_ports)
     ports = await user_store.get_workspace_ports(workspace_id)
     print(f"  Ports after increase: {ports}")

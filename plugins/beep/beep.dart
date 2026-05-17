@@ -5,7 +5,8 @@ external JSAny? _eval(JSString code);
 
 /// Play a beep tone using the Web Audio API.
 void playBeep({double frequency = 440, int durationMs = 600}) {
-  final code = '''
+  final code =
+      '''
     (function() {
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       var osc = ctx.createOscillator();

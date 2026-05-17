@@ -51,3 +51,8 @@ frontend/lib/tools/plugins/
 # Claude
 .claude/
 .coverage
+
+# Generated config (created by devenv enterShell)
+.prettierignore
+.yamllint.yml
+.pre-commit-config.yaml

@@ -42,7 +42,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(duration: const Duration(days: 1), showCloseIcon: true, content: Text('Failed to load workspaces: $e')),
+          SnackBar(
+              duration: const Duration(days: 1),
+              showCloseIcon: true,
+              content: Text('Failed to load workspaces: $e')),
         );
       }
     } finally {
@@ -90,14 +93,20 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         final error = jsonDecode(response.body);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(duration: const Duration(days: 1), showCloseIcon: true, content: Text(error['detail'] ?? 'Failed to create workspace')),
+            SnackBar(
+                duration: const Duration(days: 1),
+                showCloseIcon: true,
+                content: Text(error['detail'] ?? 'Failed to create workspace')),
           );
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(duration: const Duration(days: 1), showCloseIcon: true, content: Text('Error: $e')),
+          SnackBar(
+              duration: const Duration(days: 1),
+              showCloseIcon: true,
+              content: Text('Error: $e')),
         );
       }
     }
@@ -108,12 +117,16 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Workspace'),
-        content: const Text('This will delete the workspace and all its files. Continue?'),
+        content: const Text(
+            'This will delete the workspace and all its files. Continue?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error),
             child: const Text('Delete'),
           ),
         ],
@@ -128,7 +141,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(duration: const Duration(days: 1), showCloseIcon: true, content: Text('Error: $e')),
+          SnackBar(
+              duration: const Duration(days: 1),
+              showCloseIcon: true,
+              content: Text('Error: $e')),
         );
       }
     }

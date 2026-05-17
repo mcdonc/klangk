@@ -105,7 +105,75 @@
     python3 scripts/update_plugins.py "$@"
   '';
 
+  scripts.test-backend.exec = ''
+    cd $DEVENV_ROOT
+    exec python -m pytest tests/unit/backend -v "$@"
+  '';
+
+  scripts.test-e2e.exec = ''
+    cd $DEVENV_ROOT/tests/playwright
+    exec npx playwright test "$@"
+  '';
+
+  # --- Pre-commit hooks ---
+  git-hooks.hooks = {
+    # Python: ruff lint + format
+    ruff-lint = {
+      enable = true;
+      name = "ruff check";
+      entry = "${pkgs.ruff}/bin/ruff check --fix";
+      files = "\\.py$";
+      language = "system";
+      pass_filenames = true;
+    };
+    ruff-format = {
+      enable = true;
+      name = "ruff format";
+      entry = "${pkgs.ruff}/bin/ruff format";
+      files = "\\.py$";
+      language = "system";
+      pass_filenames = true;
+    };
+    # Dart
+    dart-format = {
+      enable = true;
+      name = "dart format";
+      entry = "dart format";
+      files = "\\.dart$";
+      language = "system";
+      pass_filenames = true;
+    };
+    # TypeScript / JavaScript / YAML: prettier
+    prettier = {
+      enable = true;
+      settings.write = true;
+      excludes = [
+        "node_modules/"
+        "frontend/build/"
+        "\\.devenv/"
+      ];
+    };
+    # YAML lint
+    yamllint.enable = true;
+  };
+
   enterShell = ''
     mkdir -p "$BARK_DATA_DIR"
+
+    # Generate prettierignore (not committed)
+    cat > "$DEVENV_ROOT/.prettierignore" <<'PRETTIER'
+    node_modules/
+    frontend/build/
+    .devenv/
+    *.lock
+    PRETTIER
+
+    # Generate yamllint config (not committed)
+    cat > "$DEVENV_ROOT/.yamllint.yml" <<'YAMLLINT'
+    extends: relaxed
+    rules:
+      line-length:
+        max: 200
+    YAMLLINT
   '';
 }

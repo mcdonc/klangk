@@ -148,54 +148,67 @@ class ContainerTerminalState extends State<ContainerTerminal> {
         controller: _scrollController,
         thumbVisibility: true,
         child: TerminalView(
-        _terminal,
-        controller: _controller,
-        theme: _theme,
-        textStyle: TerminalStyle(
-          fontSize: 14,
-          fontFamily: GoogleFonts.robotoMono().fontFamily!,
-        ),
-        focusNode: _focusNode,
-        scrollController: _scrollController,
-        autofocus: false,
-        autoResize: true,
-        onSecondaryTapDown: (details, offset) {
-          // Suppress the browser context menu for this click
-          void suppress(html.Event e) { e.preventDefault(); }
-          html.document.addEventListener('contextmenu', suppress);
-          Future.delayed(const Duration(milliseconds: 100), () {
-            html.document.removeEventListener('contextmenu', suppress);
-          });
-          // Build menu items based on whether text is selected
-          final hasSelection = _controller.selection != null;
-          final items = <PopupMenuEntry<String>>[
-            if (hasSelection)
-              const PopupMenuItem(value: 'copy', child: ListTile(dense: true, leading: Icon(Icons.copy, size: 18), title: Text('Copy'))),
-            const PopupMenuItem(value: 'paste', child: ListTile(dense: true, leading: Icon(Icons.paste, size: 18), title: Text('Paste'))),
-          ];
-          final pos = details.globalPosition;
-          showMenu<String>(
-            context: context,
-            position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-            items: items,
-          ).then((action) {
-            if (action == 'copy') {
-              final selection = _controller.selection;
-              if (selection != null) {
-                final text = _terminal.buffer.getText(selection);
-                Clipboard.setData(ClipboardData(text: text));
-              }
-            } else if (action == 'paste') {
-              Clipboard.getData(Clipboard.kTextPlain).then((data) {
-                if (data?.text != null) {
-                  _terminal.paste(data!.text!);
-                }
-              });
+          _terminal,
+          controller: _controller,
+          theme: _theme,
+          textStyle: TerminalStyle(
+            fontSize: 14,
+            fontFamily: GoogleFonts.robotoMono().fontFamily!,
+          ),
+          focusNode: _focusNode,
+          scrollController: _scrollController,
+          autofocus: false,
+          autoResize: true,
+          onSecondaryTapDown: (details, offset) {
+            // Suppress the browser context menu for this click
+            void suppress(html.Event e) {
+              e.preventDefault();
             }
-          });
-        },
+
+            html.document.addEventListener('contextmenu', suppress);
+            Future.delayed(const Duration(milliseconds: 100), () {
+              html.document.removeEventListener('contextmenu', suppress);
+            });
+            // Build menu items based on whether text is selected
+            final hasSelection = _controller.selection != null;
+            final items = <PopupMenuEntry<String>>[
+              if (hasSelection)
+                const PopupMenuItem(
+                    value: 'copy',
+                    child: ListTile(
+                        dense: true,
+                        leading: Icon(Icons.copy, size: 18),
+                        title: Text('Copy'))),
+              const PopupMenuItem(
+                  value: 'paste',
+                  child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.paste, size: 18),
+                      title: Text('Paste'))),
+            ];
+            final pos = details.globalPosition;
+            showMenu<String>(
+              context: context,
+              position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
+              items: items,
+            ).then((action) {
+              if (action == 'copy') {
+                final selection = _controller.selection;
+                if (selection != null) {
+                  final text = _terminal.buffer.getText(selection);
+                  Clipboard.setData(ClipboardData(text: text));
+                }
+              } else if (action == 'paste') {
+                Clipboard.getData(Clipboard.kTextPlain).then((data) {
+                  if (data?.text != null) {
+                    _terminal.paste(data!.text!);
+                  }
+                });
+              }
+            });
+          },
+        ),
       ),
-    ),
     );
 
     if (!_containerStopped && !_restarting) return terminalView;

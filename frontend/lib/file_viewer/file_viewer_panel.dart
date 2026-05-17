@@ -49,7 +49,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   }
 
   Map<String, String> get _headers => {
-        if (widget.authToken != null) 'Authorization': 'Bearer ${widget.authToken}',
+        if (widget.authToken != null)
+          'Authorization': 'Bearer ${widget.authToken}',
       };
 
   Future<void> _loadFiles() async {
@@ -57,12 +58,14 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     setState(() => _loading = true);
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/workspaces/${widget.workspaceId}/files?path=$_currentPath'),
+        Uri.parse(
+            '$_baseUrl/workspaces/${widget.workspaceId}/files?path=$_currentPath'),
         headers: _headers,
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as List;
-        if (mounted) setState(() => _entries = data.cast<Map<String, dynamic>>());
+        if (mounted)
+          setState(() => _entries = data.cast<Map<String, dynamic>>());
       } else {
         debugPrint('File listing failed: ${response.statusCode}');
       }
@@ -76,7 +79,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Future<void> _readFile(String path) async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/workspaces/${widget.workspaceId}/files/content?path=$path'),
+        Uri.parse(
+            '$_baseUrl/workspaces/${widget.workspaceId}/files/content?path=$path'),
         headers: _headers,
       );
       if (response.statusCode == 200) {
@@ -105,7 +109,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         title: Text('Delete ${isDir ? "folder" : "file"}'),
         content: Text('Delete "$name"? This cannot be undone.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -117,7 +123,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     if (confirmed != true) return;
     try {
       final response = await http.delete(
-        Uri.parse('$_baseUrl/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(path)}'),
+        Uri.parse(
+            '$_baseUrl/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(path)}'),
         headers: _headers,
       );
       if (response.statusCode == 200) {
@@ -151,8 +158,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           onSubmitted: (value) => Navigator.pop(ctx, value),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Rename')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, controller.text),
+              child: const Text('Rename')),
         ],
       ),
     );
@@ -160,7 +170,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     if (newName == null || newName.isEmpty || newName == name) return;
 
     // Build new path: replace the last component
-    final parentDir = path.contains('/') ? '${path.substring(0, path.lastIndexOf("/"))}/' : '';
+    final parentDir = path.contains('/')
+        ? '${path.substring(0, path.lastIndexOf("/"))}/'
+        : '';
     final newPath = '$parentDir$newName';
 
     try {
@@ -175,7 +187,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         if (mounted) {
           final body = jsonDecode(response.body);
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Rename failed: ${body["detail"] ?? response.statusCode}')),
+            SnackBar(
+                content: Text(
+                    'Rename failed: ${body["detail"] ?? response.statusCode}')),
           );
         }
       }
@@ -189,7 +203,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   }
 
   Future<void> _downloadPath(String path, String name, bool isDir) async {
-    final url = '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}';
+    final url =
+        '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}';
     try {
       final response = await http.get(Uri.parse(url), headers: _headers);
       if (response.statusCode != 200) {
@@ -218,11 +233,27 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   void _showContextMenu(Offset position, String path, String name, bool isDir) {
     showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      position: RelativeRect.fromLTRB(
+          position.dx, position.dy, position.dx, position.dy),
       items: [
-        const PopupMenuItem(value: 'download', child: ListTile(dense: true, leading: Icon(Icons.download, size: 18), title: Text('Download'))),
-        const PopupMenuItem(value: 'rename', child: ListTile(dense: true, leading: Icon(Icons.edit, size: 18), title: Text('Rename'))),
-        const PopupMenuItem(value: 'delete', child: ListTile(dense: true, leading: Icon(Icons.delete, size: 18, color: Colors.red), title: Text('Delete', style: TextStyle(color: Colors.red)))),
+        const PopupMenuItem(
+            value: 'download',
+            child: ListTile(
+                dense: true,
+                leading: Icon(Icons.download, size: 18),
+                title: Text('Download'))),
+        const PopupMenuItem(
+            value: 'rename',
+            child: ListTile(
+                dense: true,
+                leading: Icon(Icons.edit, size: 18),
+                title: Text('Rename'))),
+        const PopupMenuItem(
+            value: 'delete',
+            child: ListTile(
+                dense: true,
+                leading: Icon(Icons.delete, size: 18, color: Colors.red),
+                title: Text('Delete', style: TextStyle(color: Colors.red)))),
       ],
     ).then((action) {
       if (action == 'download') {
@@ -262,7 +293,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         alignment: PlaceholderAlignment.middle,
         child: InkWell(
           onTap: () => _navigateTo(path),
-          child: Text(parts[i], style: const TextStyle(fontWeight: FontWeight.bold)),
+          child: Text(parts[i],
+              style: const TextStyle(fontWeight: FontWeight.bold)),
         ),
       ));
       // Trailing slash — navigates to the parent of the next segment
@@ -285,7 +317,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return SuppressBrowserContextMenu(child: FileDropZone(
+    return SuppressBrowserContextMenu(
+        child: FileDropZone(
       workspaceId: widget.workspaceId,
       authToken: widget.authToken,
       currentPath: _currentPath,
@@ -299,7 +332,10 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               boxShadow: const [
-                BoxShadow(color: Color(0x30000000), blurRadius: 2, offset: Offset(0, 1)),
+                BoxShadow(
+                    color: Color(0x30000000),
+                    blurRadius: 2,
+                    offset: Offset(0, 1)),
               ],
             ),
             child: Row(
@@ -315,7 +351,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
                     icon: const Icon(Icons.arrow_upward, size: 16),
                     onPressed: () {
                       final parent = _currentPath.contains('/')
-                          ? _currentPath.substring(0, _currentPath.lastIndexOf('/'))
+                          ? _currentPath.substring(
+                              0, _currentPath.lastIndexOf('/'))
                           : '.';
                       _navigateTo(parent);
                     },
@@ -336,9 +373,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           ),
           // File list or content
           Expanded(
-            child: _selectedFile != null
-                ? _buildFileContent()
-                : _buildFileList(),
+            child:
+                _selectedFile != null ? _buildFileContent() : _buildFileList(),
           ),
         ],
       ),
@@ -350,44 +386,50 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_entries.isEmpty) {
-      return const Center(child: Text('Empty directory\nDrag files or folders here to upload'));
+      return const Center(
+          child: Text('Empty directory\nDrag files or folders here to upload'));
     }
     return Column(
       children: [
         Expanded(
           child: ListView.builder(
-      itemCount: _entries.length,
-      itemBuilder: (context, index) {
-        final entry = _entries[index];
-        final isDir = entry['is_dir'] as bool;
-        final name = entry['name'] as String;
-        final path = entry['path'] as String;
-        return GestureDetector(
-          onSecondaryTapDown: (details) {
-            _showContextMenu(details.globalPosition, path, name, isDir);
-          },
-          child: ListTile(
-            dense: true,
-            leading: Icon(isDir ? Icons.folder : Icons.insert_drive_file, size: 18),
-            title: Text(name, style: const TextStyle(fontSize: 13)),
-            subtitle: isDir ? null : Text('${entry['size'] ?? 0} bytes', style: const TextStyle(fontSize: 11)),
-            onTap: () {
-              if (isDir) {
-                _navigateTo(path);
-              } else {
-                _readFile(path);
-              }
+            itemCount: _entries.length,
+            itemBuilder: (context, index) {
+              final entry = _entries[index];
+              final isDir = entry['is_dir'] as bool;
+              final name = entry['name'] as String;
+              final path = entry['path'] as String;
+              return GestureDetector(
+                onSecondaryTapDown: (details) {
+                  _showContextMenu(details.globalPosition, path, name, isDir);
+                },
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(isDir ? Icons.folder : Icons.insert_drive_file,
+                      size: 18),
+                  title: Text(name, style: const TextStyle(fontSize: 13)),
+                  subtitle: isDir
+                      ? null
+                      : Text('${entry['size'] ?? 0} bytes',
+                          style: const TextStyle(fontSize: 11)),
+                  onTap: () {
+                    if (isDir) {
+                      _navigateTo(path);
+                    } else {
+                      _readFile(path);
+                    }
+                  },
+                ),
+              );
             },
           ),
-        );
-      },
-    ),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Text(
             'Drag files or folders here to upload',
-            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.outline),
+            style: TextStyle(
+                fontSize: 11, color: Theme.of(context).colorScheme.outline),
           ),
         ),
       ],
@@ -410,7 +452,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
                 child: const Icon(Icons.arrow_back, size: 16),
               ),
               const SizedBox(width: 8),
-              Expanded(child: Text(_selectedFile!, style: const TextStyle(fontSize: 12))),
+              Expanded(
+                  child: Text(_selectedFile!,
+                      style: const TextStyle(fontSize: 12))),
             ],
           ),
         ),
@@ -421,7 +465,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
               width: double.infinity,
               child: SelectableText(
                 _fileContent ?? 'Loading...',
-                style: const TextStyle(fontFamily: 'JetBrains Mono', fontSize: 16),
+                style:
+                    const TextStyle(fontFamily: 'JetBrains Mono', fontSize: 16),
                 textAlign: TextAlign.left,
               ),
             ),

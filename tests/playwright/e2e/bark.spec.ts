@@ -1,9 +1,9 @@
-import { test, expect, Page, APIRequestContext } from '@playwright/test';
-import AdmZip from 'adm-zip';
+import { test, expect, Page, APIRequestContext } from "@playwright/test";
+import AdmZip from "adm-zip";
 
-const USER = process.env.BARK_TEST_USER || 'admin';
-const PASS = process.env.BARK_TEST_PASS || 'admin';
-const API_BASE = process.env.BARK_API_URL || 'http://localhost:8997';
+const USER = process.env.BARK_TEST_USER || "admin";
+const PASS = process.env.BARK_TEST_PASS || "admin";
+const API_BASE = process.env.BARK_API_URL || "http://localhost:8997";
 
 async function getAuthToken(request: APIRequestContext): Promise<string> {
   const resp = await request.post(`${API_BASE}/auth/login`, {
@@ -14,7 +14,10 @@ async function getAuthToken(request: APIRequestContext): Promise<string> {
   return data.access_token;
 }
 
-async function getFirstWorkspaceId(request: APIRequestContext, token: string): Promise<string> {
+async function getFirstWorkspaceId(
+  request: APIRequestContext,
+  token: string,
+): Promise<string> {
   const resp = await request.get(`${API_BASE}/workspaces`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -30,14 +33,14 @@ async function getFirstWorkspaceId(request: APIRequestContext, token: string): P
 
 async function waitForFlutter(page: Page) {
   await page.waitForFunction(
-    () => !document.body.textContent?.includes('Loading, please wait'),
+    () => !document.body.textContent?.includes("Loading, please wait"),
     { timeout: 30_000 },
   );
   await page.waitForTimeout(1000);
 }
 
 function fv(page: Page) {
-  return page.locator('flutter-view');
+  return page.locator("flutter-view");
 }
 
 function vp(page: Page) {
@@ -45,7 +48,7 @@ function vp(page: Page) {
 }
 
 async function login(page: Page) {
-  await page.goto('');
+  await page.goto("");
   await waitForFlutter(page);
 
   const { width, height } = vp(page);
@@ -84,16 +87,16 @@ async function openFirstWorkspace(page: Page) {
 // Debug bar: bottom of right panel
 // Back button: x ~25, y ~28
 
-test.describe('Bark E2E', () => {
-  test.describe.configure({ mode: 'serial' });
+test.describe("Bark E2E", () => {
+  test.describe.configure({ mode: "serial" });
 
-  test('login with default credentials', async ({ page }) => {
+  test("login with default credentials", async ({ page }) => {
     await login(page);
     await expect(page).toHaveTitle(/Workspaces/i);
   });
 
-  test('login with wrong password fails', async ({ page }) => {
-    await page.goto('');
+  test("login with wrong password fails", async ({ page }) => {
+    await page.goto("");
     await waitForFlutter(page);
 
     const { width, height } = vp(page);
@@ -106,7 +109,7 @@ test.describe('Bark E2E', () => {
 
     await f.click({ position: { x: cx, y: height * 0.55 }, force: true });
     await page.waitForTimeout(300);
-    await page.keyboard.type('wrongpassword');
+    await page.keyboard.type("wrongpassword");
 
     await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
     await page.waitForTimeout(3000);
@@ -115,7 +118,7 @@ test.describe('Bark E2E', () => {
     await expect(page).toHaveTitle(/Login/i);
   });
 
-  test('navigate to workspace and see IDE layout', async ({ page }) => {
+  test("navigate to workspace and see IDE layout", async ({ page }) => {
     test.setTimeout(90_000);
     await login(page);
     await openFirstWorkspace(page);
@@ -126,86 +129,107 @@ test.describe('Bark E2E', () => {
     expect(title).not.toMatch(/Workspaces/i);
   });
 
-  test('workspace shows terminal tab', async ({ page }) => {
+  test("workspace shows terminal tab", async ({ page }) => {
     test.setTimeout(90_000);
     await login(page);
     await openFirstWorkspace(page);
 
     // Terminal is the default tab — canvas should be present (xterm.dart)
-    const canvas = page.locator('canvas');
+    const canvas = page.locator("canvas");
     await expect(canvas.first()).toBeVisible();
   });
 
-  test('switch to Files tab and back', async ({ page }) => {
+  test("switch to Files tab and back", async ({ page, request }) => {
     test.setTimeout(90_000);
     await login(page);
     await openFirstWorkspace(page);
 
+    const token = await getAuthToken(request);
+    const workspaceId = await getFirstWorkspaceId(request, token);
+    const headers = { Authorization: `Bearer ${token}` };
+
     const { width } = vp(page);
     const f = fv(page);
-    // Right panel tab bar: Terminal tab ~x 790, Files tab ~x 1190, y ~16
     const rightCenter = (492 + width) / 2;
 
     // Click Files tab (right side of tab bar)
     await f.click({ position: { x: rightCenter + 200, y: 16 }, force: true });
     await page.waitForTimeout(1000);
-    // Take screenshot to verify files tab is showing
-    await page.screenshot({ path: 'test-results/files-tab.png' });
+
+    // Verify files API works (the tab switch triggers a refresh)
+    const listResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
+      { headers },
+    );
+    expect(listResp.ok()).toBeTruthy();
 
     // Click Terminal tab (left side of tab bar)
     await f.click({ position: { x: rightCenter - 200, y: 16 }, force: true });
     await page.waitForTimeout(1000);
-    await page.screenshot({ path: 'test-results/terminal-tab.png' });
+
+    // Verify terminal still works after tab switch by running a command
+    const termX = rightCenter;
+    const termY = 200;
+    await f.click({ position: { x: termX, y: termY }, force: true });
+    await page.waitForTimeout(500);
+    await page.keyboard.type("echo tab-switch-ok > /workspace/.tab-test");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(2000);
+
+    const readResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/files/content?path=.tab-test`,
+      { headers },
+    );
+    expect(readResp.ok()).toBeTruthy();
+    const data = await readResp.json();
+    expect(data.content).toContain("tab-switch-ok");
+
+    await request.delete(
+      `${API_BASE}/workspaces/${workspaceId}/files?path=.tab-test`,
+      { headers },
+    );
   });
 
-  test('terminal accepts keyboard input', async ({ page }) => {
+  test("terminal accepts keyboard input", async ({ page, request }) => {
     test.setTimeout(90_000);
     await login(page);
     await openFirstWorkspace(page);
 
-    // Terminal should be active — click in the terminal area
+    const token = await getAuthToken(request);
+    const workspaceId = await getFirstWorkspaceId(request, token);
+    const headers = { Authorization: `Bearer ${token}` };
+
     const { width, height } = vp(page);
     const f = fv(page);
     const termX = (492 + width) / 2;
     const termY = height / 2;
 
+    // Click in terminal area and type a command that creates a marker file
     await f.click({ position: { x: termX, y: termY }, force: true });
     await page.waitForTimeout(500);
-
-    // Type a command
-    await page.keyboard.type('echo hello-playwright');
-    await page.keyboard.press('Enter');
+    await page.keyboard.type(
+      "echo playwright-terminal-test > /workspace/.term-test",
+    );
+    await page.keyboard.press("Enter");
     await page.waitForTimeout(2000);
 
-    // Take screenshot — should show the command and output
-    await page.screenshot({ path: 'test-results/terminal-input.png' });
+    // Verify the file was created via API
+    const readResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/files/content?path=.term-test`,
+      { headers },
+    );
+    expect(readResp.ok()).toBeTruthy();
+    const data = await readResp.json();
+    expect(data.content).toContain("playwright-terminal-test");
+
+    // Clean up
+    await request.delete(
+      `${API_BASE}/workspaces/${workspaceId}/files?path=.term-test`,
+      { headers },
+    );
   });
 
-  test('chat input accepts text', async ({ page }) => {
-    test.setTimeout(90_000);
-    await login(page);
-    await openFirstWorkspace(page);
-
-    const { height } = vp(page);
-    const f = fv(page);
-    // Chat input is at the bottom of the left panel
-    const chatInputX = 240;
-    const chatInputY = height - 30;
-
-    await f.click({ position: { x: chatInputX, y: chatInputY }, force: true });
-    await page.waitForTimeout(500);
-    await page.keyboard.type('test message from playwright');
-    await page.waitForTimeout(500);
-
-    // Take screenshot — should show text in the chat input
-    await page.screenshot({ path: 'test-results/chat-input.png' });
-
-    // Clear the input without sending (select all + delete)
-    await page.keyboard.press('Control+a');
-    await page.keyboard.press('Backspace');
-  });
-
-  test('navigate back to workspaces', async ({ page }) => {
+  test("navigate back to workspaces", async ({ page }) => {
     test.setTimeout(90_000);
     await login(page);
     await openFirstWorkspace(page);
@@ -215,13 +239,15 @@ test.describe('Bark E2E', () => {
     await expect(page).toHaveTitle(/Workspaces/i, { timeout: 15_000 });
   });
 
-  test('create and delete workspace', async ({ request }) => {
+  test("create and delete workspace", async ({ request }) => {
     const token = await getAuthToken(request);
     const headers = { Authorization: `Bearer ${token}` };
-    const wsName = 'e2e-test-workspace';
+    const wsName = "e2e-test-workspace";
 
     // Clean up any leftover workspace with the same name
-    const existingResp = await request.get(`${API_BASE}/workspaces`, { headers });
+    const existingResp = await request.get(`${API_BASE}/workspaces`, {
+      headers,
+    });
     if (existingResp.ok()) {
       for (const ws of await existingResp.json()) {
         if (ws.name === wsName) {
@@ -259,7 +285,10 @@ test.describe('Bark E2E', () => {
     expect(workspaces.some((ws: any) => ws.id === created.id)).toBeFalsy();
   });
 
-  test('terminal command creates file visible via API', async ({ page, request }) => {
+  test("terminal command creates file visible via API", async ({
+    page,
+    request,
+  }) => {
     test.setTimeout(90_000);
     await login(page);
     await openFirstWorkspace(page);
@@ -275,7 +304,7 @@ test.describe('Bark E2E', () => {
 
     // Type command to create a file
     await page.keyboard.type('echo "foo" > /workspace/foo.txt');
-    await page.keyboard.press('Enter');
+    await page.keyboard.press("Enter");
     await page.waitForTimeout(2000);
 
     // Verify file exists via API
@@ -290,7 +319,7 @@ test.describe('Bark E2E', () => {
     expect(listResp.ok()).toBeTruthy();
     const files = await listResp.json();
     const names = files.map((f: any) => f.name);
-    expect(names).toContain('foo.txt');
+    expect(names).toContain("foo.txt");
 
     // Verify content
     const readResp = await request.get(
@@ -299,7 +328,7 @@ test.describe('Bark E2E', () => {
     );
     expect(readResp.ok()).toBeTruthy();
     const data = await readResp.json();
-    expect(data.content.trim()).toBe('foo');
+    expect(data.content.trim()).toBe("foo");
 
     // Clean up
     await request.delete(
@@ -308,13 +337,13 @@ test.describe('Bark E2E', () => {
     );
   });
 
-  test('file upload, rename, and delete', async ({ request }) => {
+  test("file upload, rename, and delete", async ({ request }) => {
     const token = await getAuthToken(request);
     const workspaceId = await getFirstWorkspaceId(request, token);
     const headers = { Authorization: `Bearer ${token}` };
-    const fileName = 'playwright-test.txt';
-    const renamedName = 'playwright-renamed.txt';
-    const fileContent = 'hello from playwright e2e tests';
+    const fileName = "playwright-test.txt";
+    const renamedName = "playwright-renamed.txt";
+    const fileContent = "hello from playwright e2e tests";
 
     // Upload
     const uploadResp = await request.post(
@@ -324,7 +353,7 @@ test.describe('Bark E2E', () => {
         multipart: {
           file: {
             name: fileName,
-            mimeType: 'text/plain',
+            mimeType: "text/plain",
             buffer: Buffer.from(fileContent),
           },
         },
@@ -382,16 +411,16 @@ test.describe('Bark E2E', () => {
     expect(names).not.toContain(renamedName);
   });
 
-  test('folder upload and zip download round-trip', async ({ request }) => {
+  test("folder upload and zip download round-trip", async ({ request }) => {
     const token = await getAuthToken(request);
     const workspaceId = await getFirstWorkspaceId(request, token);
     const headers = { Authorization: `Bearer ${token}` };
-    const folder = 'test-folder';
+    const folder = "test-folder";
 
     const testFiles: Record<string, string> = {
-      [`${folder}/readme.txt`]: 'This is a readme file.',
-      [`${folder}/data.csv`]: 'name,age\nAlice,30\nBob,25',
-      [`${folder}/sub/nested.txt`]: 'Nested file content here.',
+      [`${folder}/readme.txt`]: "This is a readme file.",
+      [`${folder}/data.csv`]: "name,age\nAlice,30\nBob,25",
+      [`${folder}/sub/nested.txt`]: "Nested file content here.",
     };
 
     // Upload each file into the folder structure
@@ -402,8 +431,8 @@ test.describe('Bark E2E', () => {
           headers,
           multipart: {
             file: {
-              name: filePath.split('/').pop()!,
-              mimeType: 'text/plain',
+              name: filePath.split("/").pop()!,
+              mimeType: "text/plain",
               buffer: Buffer.from(content),
             },
           },
@@ -436,14 +465,16 @@ test.describe('Bark E2E', () => {
     const zipFiles: Record<string, string> = {};
     for (const entry of zipEntries) {
       if (!entry.isDirectory) {
-        zipFiles[entry.entryName] = entry.getData().toString('utf8');
+        zipFiles[entry.entryName] = entry.getData().toString("utf8");
       }
     }
 
     // Zip paths are relative to the downloaded folder
-    expect(zipFiles['readme.txt']).toBe(testFiles[`${folder}/readme.txt`]);
-    expect(zipFiles['data.csv']).toBe(testFiles[`${folder}/data.csv`]);
-    expect(zipFiles['sub/nested.txt']).toBe(testFiles[`${folder}/sub/nested.txt`]);
+    expect(zipFiles["readme.txt"]).toBe(testFiles[`${folder}/readme.txt`]);
+    expect(zipFiles["data.csv"]).toBe(testFiles[`${folder}/data.csv`]);
+    expect(zipFiles["sub/nested.txt"]).toBe(
+      testFiles[`${folder}/sub/nested.txt`],
+    );
     expect(Object.keys(zipFiles)).toHaveLength(3);
 
     // Clean up — delete the folder
@@ -454,7 +485,7 @@ test.describe('Bark E2E', () => {
     expect(delResp.ok()).toBeTruthy();
   });
 
-  test('agent creates pong game with hosted URL', async ({ page, request }) => {
+  test("agent creates pong game with hosted URL", async ({ page, request }) => {
     test.setTimeout(300_000); // LLM interaction can be slow
 
     const token = await getAuthToken(request);
@@ -481,13 +512,16 @@ test.describe('Bark E2E', () => {
       const chatInputX = 240;
       const chatInputY = height - 30;
 
-      await f.click({ position: { x: chatInputX, y: chatInputY }, force: true });
+      await f.click({
+        position: { x: chatInputX, y: chatInputY },
+        force: true,
+      });
       await page.waitForTimeout(500);
       await page.keyboard.type(
-        'write me a javascript application that creates a pong game and serve it through a node web server',
+        "write me a javascript application that creates a pong game and serve it through a node web server",
       );
       await page.waitForTimeout(300);
-      await page.keyboard.press('Enter');
+      await page.keyboard.press("Enter");
 
       // Poll until files appear (agent wrote code into the empty workspace)
       let hasFiles = false;
@@ -518,8 +552,10 @@ test.describe('Bark E2E', () => {
           const messages = await msgResp.json();
           const match = messages.find(
             (m: any) =>
-              m.entry_type === 'assistant' &&
-              /https?:\/\/localhost:\d+\/(bark\/)?hosted\//.test(m.content ?? ''),
+              m.entry_type === "assistant" &&
+              /https?:\/\/localhost:\d+\/(bark\/)?hosted\//.test(
+                m.content ?? "",
+              ),
           );
           if (match) {
             hostedUrl = true;
@@ -531,11 +567,13 @@ test.describe('Bark E2E', () => {
       expect(hostedUrl).toBeTruthy();
     } finally {
       // Clean up: delete the test workspace
-      await request.delete(`${API_BASE}/workspaces/${workspaceId}`, { headers });
+      await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+        headers,
+      });
     }
   });
 
-  test('logout returns to login page', async ({ page }) => {
+  test("logout returns to login page", async ({ page }) => {
     test.setTimeout(60_000);
     await login(page);
 

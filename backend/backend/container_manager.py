@@ -11,14 +11,32 @@ logger = logging.getLogger(__name__)
 
 IMAGE_NAME = os.environ.get("BARK_IMAGE_NAME", "bark-pi")
 INSTANCE_ID = os.environ.get("BARK_INSTANCE_ID", "default")
-IDLE_TIMEOUT_SECONDS = 30 * 60
-_idle_env = os.environ.get("BARK_IDLE_TIMEOUT_SECONDS")
-if _idle_env is not None:
-    try:
-        IDLE_TIMEOUT_SECONDS = int(_idle_env)
-    except ValueError:
-        logger.warning("BARK_IDLE_TIMEOUT_SECONDS=%r is not a valid integer, using default %d", _idle_env, IDLE_TIMEOUT_SECONDS)
-CHECK_INTERVAL_SECONDS = max(10, min(60, IDLE_TIMEOUT_SECONDS // 3))
+
+
+def _parse_idle_timeout() -> tuple[int, int]:
+    """Parse BARK_IDLE_TIMEOUT_SECONDS and compute check interval.
+
+    Returns (idle_timeout_seconds, check_interval_seconds).
+    """
+    default = 30 * 60
+    env_val = os.environ.get("BARK_IDLE_TIMEOUT_SECONDS")
+    if env_val is not None:
+        try:
+            timeout = int(env_val)
+        except ValueError:
+            logger.warning(
+                "BARK_IDLE_TIMEOUT_SECONDS=%r is not a valid integer, using default %d",
+                env_val,
+                default,
+            )
+            timeout = default
+    else:
+        timeout = default
+    interval = max(10, min(60, timeout // 3))
+    return timeout, interval
+
+
+IDLE_TIMEOUT_SECONDS, CHECK_INTERVAL_SECONDS = _parse_idle_timeout()
 
 # Port allocation
 PORT_RANGE_START = 9000
@@ -51,7 +69,7 @@ async def get_workspace_ports(workspace_id: str) -> list[int]:
     return await user_store.get_workspace_ports(workspace_id)
 
 
-async def get_docker() -> aiodocker.Docker:
+async def get_docker() -> aiodocker.Docker:  # pragma: no cover
     global _docker
     if _docker is None:
         _docker = aiodocker.Docker()
@@ -87,9 +105,15 @@ async def start_container(
                 return existing_container_id, "connected"
             # Stopped container: remove it so we recreate with fresh entrypoint
             await container.delete(force=True)
-            logger.info("Removed stopped container %s for workspace %s, will recreate", existing_container_id, workspace_id)
+            logger.info(
+                "Removed stopped container %s for workspace %s, will recreate",
+                existing_container_id,
+                workspace_id,
+            )
         except aiodocker.exceptions.DockerError:
-            logger.info("Could not find container %s, creating new one", existing_container_id)
+            logger.info(
+                "Could not find container %s, creating new one", existing_container_id
+            )
 
     # Ensure workspace has the right number of ports allocated
     host_ports = await get_workspace_ports(workspace_id)
@@ -104,7 +128,9 @@ async def start_container(
     # Collect API keys from environment to pass into the container
     env_vars = []
     for key in os.environ:
-        if key.startswith(("ANTHROPIC_", "OPENAI_", "GOOGLE_", "GROQ_", "MISTRAL_", "OLLAMA_")):
+        if key.startswith(
+            ("ANTHROPIC_", "OPENAI_", "GOOGLE_", "GROQ_", "MISTRAL_", "OLLAMA_")
+        ):
             env_vars.append(f"{key}={os.environ[key]}")
     # Tell the container the port mappings (container_port:host_port pairs)
     mappings = [f"{CONTAINER_PORT_START + i}:{hp}" for i, hp in enumerate(host_ports)]
@@ -168,7 +194,9 @@ async def start_container(
 
     logger.info(
         "Started container %s for workspace %s (ports %s)",
-        container_id, workspace_id, host_ports,
+        container_id,
+        workspace_id,
+        host_ports,
     )
     return container_id, "created"
 
@@ -258,14 +286,19 @@ async def _cleanup_idle_containers() -> None:
                 try:
                     await cb(wid)
                 except Exception as e:
-                    logger.warning("Idle callback error: %s", e)
+                    logger.error("Idle callback error: %s", e)
             await stop_container(cid)
 
 
 def start_cleanup_loop() -> None:
     """Start the background cleanup task."""
     global _cleanup_task
-    logger.info("Instance: %s, idle timeout: %ds, check interval: %ds", INSTANCE_ID, IDLE_TIMEOUT_SECONDS, CHECK_INTERVAL_SECONDS)
+    logger.info(
+        "Instance: %s, idle timeout: %ds, check interval: %ds",
+        INSTANCE_ID,
+        IDLE_TIMEOUT_SECONDS,
+        CHECK_INTERVAL_SECONDS,
+    )
     if _cleanup_task is None:
         _cleanup_task = asyncio.create_task(_cleanup_idle_containers())
 
@@ -292,9 +325,9 @@ async def shutdown() -> None:
                 logger.info("Stopping orphaned bark container %s", cid)
                 try:
                     await c.stop()
-                except Exception:
+                except aiodocker.exceptions.DockerError:
                     pass
-    except Exception as e:
+    except (aiodocker.exceptions.DockerError, OSError) as e:
         logger.warning("Error cleaning up orphaned containers: %s", e)
     if _docker:
         await _docker.close()

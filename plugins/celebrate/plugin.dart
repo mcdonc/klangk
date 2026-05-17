@@ -6,9 +6,7 @@ class CelebratePlugin extends ToolPlugin with ChangeNotifier {
   bool _showConfetti = false;
 
   @override
-  Map<String, ToolHandler> get handlers => {
-        'celebrate': _handle,
-      };
+  Map<String, ToolHandler> get handlers => {'celebrate': _handle};
 
   Future<String> _handle(Map<String, dynamic> request) async {
     _showConfetti = true;

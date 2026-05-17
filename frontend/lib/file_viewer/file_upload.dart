@@ -37,7 +37,9 @@ class _FileDropZoneState extends State<FileDropZone> {
   List<(String, DropItem)> _collectFiles(List<DropItem> items, String prefix) {
     final result = <(String, DropItem)>[];
     for (final item in items) {
-      final path = prefix.isEmpty ? (item.name ?? 'unnamed') : '$prefix/${item.name ?? 'unnamed'}';
+      final path = prefix.isEmpty
+          ? (item.name ?? 'unnamed')
+          : '$prefix/${item.name ?? 'unnamed'}';
       if (item is DropItemDirectory) {
         result.addAll(_collectFiles(item.children, path));
       } else {
@@ -49,7 +51,8 @@ class _FileDropZoneState extends State<FileDropZone> {
 
   Future<void> _uploadFiles(DropDoneDetails details) async {
     // Check for name conflicts with existing entries
-    final existingNames = widget.currentEntries.map((e) => e['name'] as String).toSet();
+    final existingNames =
+        widget.currentEntries.map((e) => e['name'] as String).toSet();
     final conflicts = <String>[];
     for (final item in details.files) {
       final name = item.name ?? 'unnamed';
@@ -60,7 +63,8 @@ class _FileDropZoneState extends State<FileDropZone> {
     if (conflicts.isNotEmpty && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Already exist${conflicts.length == 1 ? "s" : ""}: ${conflicts.join(", ")}'),
+          content: Text(
+              'Already exist${conflicts.length == 1 ? "s" : ""}: ${conflicts.join(", ")}'),
           duration: const Duration(seconds: 4),
         ),
       );
@@ -81,12 +85,14 @@ class _FileDropZoneState extends State<FileDropZone> {
         final bytes = await file.readAsBytes();
         final request = http.MultipartRequest(
           'POST',
-          Uri.parse('$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(widget.currentPath == '.' ? path : '${widget.currentPath}/$path')}'),
+          Uri.parse(
+              '$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(widget.currentPath == '.' ? path : '${widget.currentPath}/$path')}'),
         );
         if (widget.authToken != null) {
           request.headers['Authorization'] = 'Bearer ${widget.authToken}';
         }
-        request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: file.name ?? 'unnamed'));
+        request.files.add(http.MultipartFile.fromBytes('file', bytes,
+            filename: file.name ?? 'unnamed'));
         final response = await request.send();
         if (response.statusCode != 200) {
           debugPrint('Upload failed: ${response.statusCode} for $path');

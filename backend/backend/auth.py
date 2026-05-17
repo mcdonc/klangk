@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -61,9 +61,13 @@ async def register(req: RegisterRequest) -> TokenResponse:
     if existing is not None:
         raise HTTPException(status_code=400, detail="Username already taken")
     if len(req.username) < 3:
-        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+        raise HTTPException(
+            status_code=400, detail="Username must be at least 3 characters"
+        )
     if len(req.password) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+        raise HTTPException(
+            status_code=400, detail="Password must be at least 4 characters"
+        )
 
     password_hash = _hash_password(req.password)
     user = await user_store.create_user(req.username, password_hash)

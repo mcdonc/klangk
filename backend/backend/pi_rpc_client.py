@@ -21,7 +21,10 @@ class PiRpcClient:
     async def connect(self) -> None:
         """Attach to the container via `docker attach` subprocess."""
         self._proc = await asyncio.create_subprocess_exec(
-            "docker", "attach", "--no-stdin=false", self.container_id,
+            "docker",
+            "attach",
+            "--no-stdin=false",
+            self.container_id,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -58,7 +61,7 @@ class PiRpcClient:
                         await self._event_queue.put(event)
                     except json.JSONDecodeError:
                         logger.warning("Non-JSON line from Pi: %s", text[:200])
-        except Exception as e:
+        except (OSError, ConnectionError, asyncio.IncompleteReadError) as e:
             logger.error("Pi RPC read error: %s", e)
         finally:
             await self._event_queue.put(None)

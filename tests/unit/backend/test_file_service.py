@@ -53,6 +53,28 @@ class TestWriteAndRead:
         big_file.write_bytes(b"x" * 1_100_000)
         assert file_service.read_file(uid, wid, "big.bin") is None
 
+    async def test_read_directory_returns_none(self, workspace_dir):
+        uid, wid, path = workspace_dir
+        (path / "adir").mkdir()
+        assert file_service.read_file(uid, wid, "adir") is None
+
+    async def test_read_binary_with_replacement(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        file_service.write_file(uid, wid, "bin.dat", b"\x80\x81\x82")
+        content = file_service.read_file(uid, wid, "bin.dat")
+        assert content is not None
+        assert "\ufffd" in content  # replacement character
+
+    async def test_read_unreadable_file_returns_none(self, workspace_dir):
+        uid, wid, path = workspace_dir
+        f = path / "noperm.txt"
+        f.write_bytes(b"secret")
+        f.chmod(0o000)
+        try:
+            assert file_service.read_file(uid, wid, "noperm.txt") is None
+        finally:
+            f.chmod(0o644)  # restore for cleanup
+
 
 class TestListFiles:
     async def test_list_empty_dir(self, workspace_dir):
@@ -75,6 +97,51 @@ class TestListFiles:
         entries = file_service.list_files(uid, wid, ".")
         dirs = [e for e in entries if e["is_dir"]]
         assert any(d["name"] == "subdir" for d in dirs)
+
+    async def test_list_nonexistent_dir(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        entries = file_service.list_files(uid, wid, "no_such_dir")
+        assert entries == []
+
+    async def test_list_file_as_dir(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        file_service.write_file(uid, wid, "afile.txt", b"data")
+        entries = file_service.list_files(uid, wid, "afile.txt")
+        assert entries == []
+
+    async def test_list_entry_has_size(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        file_service.write_file(uid, wid, "sized.txt", b"12345")
+        entries = file_service.list_files(uid, wid, ".")
+        entry = [e for e in entries if e["name"] == "sized.txt"][0]
+        assert entry["size"] == 5
+        assert entry["is_dir"] is False
+
+    async def test_list_dir_entry_has_no_size(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        file_service.write_file(uid, wid, "d/f.txt", b"x")
+        entries = file_service.list_files(uid, wid, ".")
+        entry = [e for e in entries if e["name"] == "d"][0]
+        assert entry["size"] is None
+        assert entry["is_dir"] is True
+
+    async def test_list_entries_sorted(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        file_service.write_file(uid, wid, "c.txt", b"c")
+        file_service.write_file(uid, wid, "a.txt", b"a")
+        file_service.write_file(uid, wid, "b.txt", b"b")
+        entries = file_service.list_files(uid, wid, ".")
+        names = [e["name"] for e in entries]
+        assert names == sorted(names)
+
+    async def test_list_subdirectory(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        file_service.write_file(uid, wid, "sub/one.txt", b"1")
+        file_service.write_file(uid, wid, "sub/two.txt", b"2")
+        entries = file_service.list_files(uid, wid, "sub")
+        names = [e["name"] for e in entries]
+        assert "one.txt" in names
+        assert "two.txt" in names
 
 
 class TestDelete:
@@ -125,3 +192,36 @@ class TestRename:
         file_service.write_file(uid, wid, "file.txt", b"data")
         file_service.rename_path(uid, wid, "file.txt", "sub/file.txt")
         assert file_service.read_file(uid, wid, "sub/file.txt") == "data"
+
+    async def test_rename_directory(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        file_service.write_file(uid, wid, "olddir/f.txt", b"x")
+        file_service.rename_path(uid, wid, "olddir", "newdir")
+        assert file_service.read_file(uid, wid, "newdir/f.txt") == "x"
+        entries = file_service.list_files(uid, wid, ".")
+        names = [e["name"] for e in entries]
+        assert "olddir" not in names
+        assert "newdir" in names
+
+
+class TestWriteFile:
+    async def test_write_returns_relative_path(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        result = file_service.write_file(uid, wid, "out.txt", b"data")
+        assert result == "out.txt"
+
+    async def test_write_nested_returns_full_relative_path(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        result = file_service.write_file(uid, wid, "a/b/c.txt", b"deep")
+        assert result == "a/b/c.txt"
+
+    async def test_write_overwrites_existing(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        file_service.write_file(uid, wid, "f.txt", b"old")
+        file_service.write_file(uid, wid, "f.txt", b"new")
+        assert file_service.read_file(uid, wid, "f.txt") == "new"
+
+    async def test_write_traversal_rejected(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        with pytest.raises(ValueError, match="traversal"):
+            file_service.write_file(uid, wid, "../../evil.txt", b"bad")

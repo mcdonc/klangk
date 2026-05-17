@@ -17,7 +17,8 @@ class ChatPanel extends StatefulWidget {
   final String? workspaceId;
   final String? authToken;
 
-  const ChatPanel({super.key, required this.aguiClient, this.workspaceId, this.authToken});
+  const ChatPanel(
+      {super.key, required this.aguiClient, this.workspaceId, this.authToken});
 
   @override
   State<ChatPanel> createState() => _ChatPanelState();
@@ -60,9 +61,13 @@ class _ChatPanelState extends State<ChatPanel> {
           final type = msg['entry_type'] as String;
           final content = msg['content'] as String? ?? '';
           if (type == 'user') {
-            entries.add(_ChatEntry(type: _EntryType.user, content: content, isQueued: msg['is_queued'] as bool? ?? false));
+            entries.add(_ChatEntry(
+                type: _EntryType.user,
+                content: content,
+                isQueued: msg['is_queued'] as bool? ?? false));
           } else if (type == 'assistant') {
-            entries.add(_ChatEntry(type: _EntryType.assistant, content: content));
+            entries
+                .add(_ChatEntry(type: _EntryType.assistant, content: content));
           } else if (type == 'tool_call') {
             entries.add(_ChatEntry(
               type: _EntryType.toolCall,
@@ -121,7 +126,8 @@ class _ChatPanelState extends State<ChatPanel> {
           _currentAssistantText += delta;
           // Update or add streaming entry
           setState(() {
-            if (_entries.isNotEmpty && _entries.last.type == _EntryType.assistantStreaming) {
+            if (_entries.isNotEmpty &&
+                _entries.last.type == _EntryType.assistantStreaming) {
               _entries[_entries.length - 1] = _ChatEntry(
                 type: _EntryType.assistantStreaming,
                 content: _currentAssistantText,
@@ -159,11 +165,11 @@ class _ChatPanelState extends State<ChatPanel> {
         final delta = event.delta;
         if (delta != null && delta.isNotEmpty) {
           _updateLastToolCall((last) => _ChatEntry(
-            type: _EntryType.toolCall,
-            content: last.content,
-            toolArgs: last.toolArgs,
-            toolOutput: (last.toolOutput ?? '') + delta,
-          ));
+                type: _EntryType.toolCall,
+                content: last.content,
+                toolArgs: last.toolArgs,
+                toolOutput: (last.toolOutput ?? '') + delta,
+              ));
         }
         break;
 
@@ -171,12 +177,12 @@ class _ChatPanelState extends State<ChatPanel> {
         final content = event.content;
         if (content != null && content.isNotEmpty) {
           _updateLastToolCall((last) => _ChatEntry(
-            type: _EntryType.toolCall,
-            content: last.content,
-            toolArgs: last.toolArgs,
-            toolOutput: content.toString(),
-            isComplete: true,
-          ));
+                type: _EntryType.toolCall,
+                content: last.content,
+                toolArgs: last.toolArgs,
+                toolOutput: content.toString(),
+                isComplete: true,
+              ));
         }
         _scrollToBottom();
         break;
@@ -186,7 +192,8 @@ class _ChatPanelState extends State<ChatPanel> {
           // Mark the last user entry as queued
           setState(() {
             for (int i = _entries.length - 1; i >= 0; i--) {
-              if (_entries[i].type == _EntryType.user && !_entries[i].isQueued) {
+              if (_entries[i].type == _EntryType.user &&
+                  !_entries[i].isQueued) {
                 _entries[i] = _ChatEntry(
                   type: _EntryType.user,
                   content: _entries[i].content,
@@ -209,7 +216,8 @@ class _ChatPanelState extends State<ChatPanel> {
     if (_currentAssistantText.isNotEmpty) {
       setState(() {
         // Replace streaming entry with final
-        if (_entries.isNotEmpty && _entries.last.type == _EntryType.assistantStreaming) {
+        if (_entries.isNotEmpty &&
+            _entries.last.type == _EntryType.assistantStreaming) {
           _entries[_entries.length - 1] = _ChatEntry(
             type: _EntryType.assistant,
             content: _currentAssistantText,
@@ -268,14 +276,16 @@ class _ChatPanelState extends State<ChatPanel> {
       } else {
         // Back to saved input
         _inputController.text = _savedInput;
-        _inputController.selection = TextSelection.collapsed(offset: _savedInput.length);
+        _inputController.selection =
+            TextSelection.collapsed(offset: _savedInput.length);
         _historyIndex = -1;
         return;
       }
     }
 
     _inputController.text = history[_historyIndex];
-    _inputController.selection = TextSelection.collapsed(offset: history[_historyIndex].length);
+    _inputController.selection =
+        TextSelection.collapsed(offset: history[_historyIndex].length);
   }
 
   void _sendPrompt() {
@@ -342,7 +352,8 @@ class _ChatPanelState extends State<ChatPanel> {
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant)),
+            border: Border(
+                top: BorderSide(color: theme.colorScheme.outlineVariant)),
           ),
           child: Row(
             children: [
@@ -368,9 +379,13 @@ class _ChatPanelState extends State<ChatPanel> {
                     autofocus: true,
                     style: const TextStyle(fontSize: 16),
                     decoration: InputDecoration(
-                      hintText: _agentRunning ? 'Agent is thinking...' : 'Type a message...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      hintText: _agentRunning
+                          ? 'Agent is thinking...'
+                          : 'Type a message...',
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
                       isDense: true,
                     ),
                     maxLines: null,
@@ -400,7 +415,9 @@ class _ChatPanelState extends State<ChatPanel> {
   Widget _buildEntry(_ChatEntry entry) {
     return switch (entry.type) {
       _EntryType.user => _buildUserMessage(entry),
-      _EntryType.assistant || _EntryType.assistantStreaming => _buildAssistantMessage(entry),
+      _EntryType.assistant ||
+      _EntryType.assistantStreaming =>
+        _buildAssistantMessage(entry),
       _EntryType.toolCall => _buildToolCall(entry),
       _EntryType.error => _buildError(entry),
     };
@@ -413,7 +430,8 @@ class _ChatPanelState extends State<ChatPanel> {
       child: Align(
         alignment: Alignment.centerRight,
         child: Container(
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.35),
+          constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.35),
           margin: const EdgeInsets.symmetric(vertical: 4),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
@@ -428,7 +446,8 @@ class _ChatPanelState extends State<ChatPanel> {
                 style: const TextStyle(fontSize: 16),
               ),
               if (entry.isQueued)
-                const Text('queued', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                const Text('queued',
+                    style: TextStyle(fontSize: 10, color: Colors.grey)),
             ],
           ),
         ),
@@ -458,7 +477,10 @@ class _ChatPanelState extends State<ChatPanel> {
             },
             syntaxHighlighter: _MonokaiSyntaxHighlighter(),
             styleSheet: MarkdownStyleSheet(
-              a: const TextStyle(fontSize: 16, color: Color(0xFF1565C0), decoration: TextDecoration.underline),
+              a: const TextStyle(
+                  fontSize: 16,
+                  color: Color(0xFF1565C0),
+                  decoration: TextDecoration.underline),
               p: const TextStyle(fontSize: 16, height: 1.5),
               code: TextStyle(
                 fontSize: 15,
@@ -512,12 +534,20 @@ class _ChatPanelState extends State<ChatPanel> {
         ),
         title: Text(
           entry.content,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'JetBrains Mono'),
+          style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'JetBrains Mono'),
         ),
         subtitle: subtitle != null
             ? Text(
-                subtitle.length > 80 ? '${subtitle.substring(0, 80)}...' : subtitle,
-                style: TextStyle(fontSize: 12, fontFamily: 'JetBrains Mono', color: Colors.grey[400]),
+                subtitle.length > 80
+                    ? '${subtitle.substring(0, 80)}...'
+                    : subtitle,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'JetBrains Mono',
+                    color: Colors.grey[400]),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               )
@@ -531,11 +561,16 @@ class _ChatPanelState extends State<ChatPanel> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Arguments', style: TextStyle(fontSize: 11, color: Colors.grey[500], fontWeight: FontWeight.bold)),
+                  Text('Arguments',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[500],
+                          fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
                   SelectableText(
                     entry.toolArgs!,
-                    style: const TextStyle(fontSize: 12, fontFamily: 'JetBrains Mono'),
+                    style: const TextStyle(
+                        fontSize: 12, fontFamily: 'JetBrains Mono'),
                   ),
                 ],
               ),
@@ -548,13 +583,18 @@ class _ChatPanelState extends State<ChatPanel> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Result', style: TextStyle(fontSize: 11, color: Colors.grey[500], fontWeight: FontWeight.bold)),
+                  Text('Result',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[500],
+                          fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
                   SelectableText(
                     entry.toolOutput!.length > 2000
                         ? '${entry.toolOutput!.substring(0, 2000)}...'
                         : entry.toolOutput!,
-                    style: const TextStyle(fontSize: 12, fontFamily: 'JetBrains Mono'),
+                    style: const TextStyle(
+                        fontSize: 12, fontFamily: 'JetBrains Mono'),
                   ),
                 ],
               ),

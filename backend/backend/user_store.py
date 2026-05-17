@@ -38,16 +38,6 @@ async def init_db() -> None:
                 UNIQUE(user_id, name)
             )
         """)
-        # Migration: add num_ports column to existing tables
-        try:
-            await db.execute("ALTER TABLE workspaces ADD COLUMN num_ports INTEGER NOT NULL DEFAULT 5")
-        except Exception:
-            pass
-        # Recreate port_allocations if schema changed (migrate from old range-based table)
-        cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='port_allocations'")
-        row = await cursor.fetchone()
-        if row and 'port_start' in row['sql']:
-            await db.execute("DROP TABLE port_allocations")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,
@@ -106,7 +96,11 @@ async def get_user_by_username(username: str) -> dict | None:
         row = await cursor.fetchone()
         if row is None:
             return None
-        return {"id": row["id"], "username": row["username"], "password_hash": row["password_hash"]}
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "password_hash": row["password_hash"],
+        }
     finally:
         await db.close()
 
@@ -128,6 +122,7 @@ async def get_user_by_id(user_id: str) -> dict | None:
 
 # Workspace operations
 
+
 async def create_workspace(user_id: str, name: str) -> dict:
     db = await _get_db()
     try:
@@ -138,7 +133,13 @@ async def create_workspace(user_id: str, name: str) -> dict:
         )
         await db.commit()
         from . import container_manager
-        return {"id": workspace_id, "user_id": user_id, "name": name, "num_ports": container_manager.DEFAULT_PORTS_PER_WORKSPACE}
+
+        return {
+            "id": workspace_id,
+            "user_id": user_id,
+            "name": name,
+            "num_ports": container_manager.DEFAULT_PORTS_PER_WORKSPACE,
+        }
     finally:
         await db.close()
 
@@ -152,7 +153,12 @@ async def list_workspaces(user_id: str) -> list[dict]:
         )
         rows = await cursor.fetchall()
         return [
-            {"id": row["id"], "name": row["name"], "container_id": row["container_id"], "created_at": row["created_at"]}
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "container_id": row["container_id"],
+                "created_at": row["created_at"],
+            }
             for row in rows
         ]
     finally:
@@ -169,7 +175,13 @@ async def get_workspace(workspace_id: str, user_id: str) -> dict | None:
         row = await cursor.fetchone()
         if row is None:
             return None
-        return {"id": row["id"], "user_id": row["user_id"], "name": row["name"], "container_id": row["container_id"], "num_ports": row["num_ports"]}
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "name": row["name"],
+            "container_id": row["container_id"],
+            "num_ports": row["num_ports"],
+        }
     finally:
         await db.close()
 
@@ -240,7 +252,9 @@ async def delete_workspace(workspace_id: str, user_id: str) -> bool:
         await db.close()
 
 
-async def update_workspace_container(workspace_id: str, container_id: str | None) -> None:
+async def update_workspace_container(
+    workspace_id: str, container_id: str | None
+) -> None:
     db = await _get_db()
     try:
         await db.execute(
@@ -266,6 +280,7 @@ async def get_user_workspaces_with_containers(user_id: str) -> list[dict]:
 
 
 # Token blocklist
+
 
 async def blocklist_token(jti: str, expires_at: str) -> None:
     db = await _get_db()
@@ -294,15 +309,30 @@ async def is_token_blocklisted(jti: str) -> bool:
 
 # Message history
 
-async def save_message(workspace_id: str, entry_type: str, content: str,
-                       tool_args: str | None = None, tool_output: str | None = None,
-                       is_complete: bool = False, is_queued: bool = False) -> int:
+
+async def save_message(
+    workspace_id: str,
+    entry_type: str,
+    content: str,
+    tool_args: str | None = None,
+    tool_output: str | None = None,
+    is_complete: bool = False,
+    is_queued: bool = False,
+) -> int:
     db = await _get_db()
     try:
         cursor = await db.execute(
             """INSERT INTO messages (workspace_id, entry_type, content, tool_args, tool_output, is_complete, is_queued)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (workspace_id, entry_type, content, tool_args, tool_output, 1 if is_complete else 0, 1 if is_queued else 0),
+            (
+                workspace_id,
+                entry_type,
+                content,
+                tool_args,
+                tool_output,
+                1 if is_complete else 0,
+                1 if is_queued else 0,
+            ),
         )
         await db.commit()
         return cursor.lastrowid

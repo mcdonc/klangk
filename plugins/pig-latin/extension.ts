@@ -20,7 +20,8 @@ function convert(text: string): string {
 export default function (pi: any) {
   pi.registerTool({
     name: "pig_latin",
-    description: "Convert text to Pig Latin. Use when the user asks for Pig Latin translation.",
+    description:
+      "Convert text to Pig Latin. Use when the user asks for Pig Latin translation.",
     parameters: Type.Object({
       text: Type.String({ description: "The text to convert to Pig Latin" }),
     }),

@@ -96,9 +96,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
     _eventSub = aguiClient.events.listen((event) {
       if (event.type == AguiEventType.runStarted) {
         if (mounted) setState(() => _agentRunning = true);
-      } else if (event.type == AguiEventType.runFinished || event.type == AguiEventType.runError) {
+      } else if (event.type == AguiEventType.runFinished ||
+          event.type == AguiEventType.runError) {
         if (mounted) setState(() => _agentRunning = false);
-      } else if (event.type == AguiEventType.custom && event.customName == 'extension_ui_request') {
+      } else if (event.type == AguiEventType.custom &&
+          event.customName == 'extension_ui_request') {
         _handleExtensionUiRequest(event);
       }
     });
@@ -155,7 +157,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // since we don't have a UI for them yet
     aguiClient.sendExtensionUiResponse(id, cancelled: true);
   }
-
 
   @override
   void deactivate() {
@@ -257,7 +258,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
               workspaceId: widget.workspaceId,
               authToken: authToken,
             ),
-            terminal: ContainerTerminal(key: _terminalKey, aguiClient: aguiClient),
+            terminal:
+                ContainerTerminal(key: _terminalKey, aguiClient: aguiClient),
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
             output: OutputPanel(aguiClient: aguiClient),

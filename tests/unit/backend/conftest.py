@@ -1,9 +1,5 @@
 """Shared fixtures for backend unit tests."""
 
-import os
-import tempfile
-from pathlib import Path
-
 import pytest
 
 
@@ -26,6 +22,7 @@ def temp_data_dir(tmp_path, monkeypatch):
 async def db(temp_data_dir):
     """Initialize a fresh database."""
     import backend.user_store as us
+
     await us.init_db()
     return temp_data_dir
 

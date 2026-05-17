@@ -79,7 +79,8 @@ bark/
   backend/
     pyproject.toml              # Python deps: fastapi, aiodocker, aiosqlite, bcrypt, python-jose
     backend/
-      main.py                   # FastAPI app, lifespan, routes, hosted app proxy, default user seeding, static file serving
+      main.py                   # FastAPI app, lifespan, hosted app proxy, default user seeding, static file serving
+      api.py                    # API route handlers (auth, workspaces, files, messages) via APIRouter
       auth.py                   # Register/login/logout, JWT, bcrypt password hashing
       user_store.py             # SQLite: users, workspaces, token blocklist, message history
       workspace_manager.py      # Workspace CRUD + host directory management
@@ -130,12 +131,14 @@ bark/
 ## Features
 
 ### Authentication
+
 - Username/password with bcrypt hashing
 - JWT tokens (24hr expiry, secret configurable via BARK_JWT_SECRET) with token blocklist for logout
 - Default user auto-seeded on startup (configurable via BARK_DEFAULT_USER/PASSWORD in .env)
 - Session persists across page reloads (async token loading before routing)
 
 ### Workspaces
+
 - Multiple workspaces per user
 - Each workspace gets its own Docker container + bind-mounted directory
 - URL-based workspace routing (survives page reload via hash URL reading)
@@ -145,6 +148,7 @@ bark/
 - Container lifecycle visible in debug panel
 
 ### Pi Agent Integration
+
 - One Docker container per workspace running Pi in RPC mode
 - Container communicates via stdin/stdout JSON-RPC (docker attach subprocess)
 - Pi RPC events translated to AG-UI events in real-time
@@ -172,6 +176,7 @@ bark/
 - `Init: True` (Docker `--init`) runs `tini` as PID 1 to reap zombie processes from terminal sessions and tool executions
 
 ### Container Terminal
+
 - Direct shell access to the workspace container via the Terminal tab in the right panel
 - Uses xterm.dart (pure Flutter terminal emulator) with a dark theme (Tomorrow Night palette)
 - Backend spawns `docker exec` subprocess with PTY (`os.openpty`) piped over the existing WebSocket
@@ -185,12 +190,14 @@ bark/
 - Cleaned up on workspace disconnect or WebSocket close
 
 ### Right Panel Layout
+
 - Two-part split: tabbed panel on top (Terminal, Files tabs) and slidable Debug panel on bottom
 - Debug panel collapsed by default, expandable via draggable horizontal divider
 - All panels stay alive across switches (IndexedStack for tabs, always-mounted Debug)
 - Debug pane receives events from the start, even before first viewed
 
 ### Pi Extensions (Tools)
+
 - Extensions are TypeScript files collected from `$BARK_PLUGINS_DIR/*/extension.ts` into `docker/extensions/` at build time
 - The LLM sees them in its tool list alongside built-in tools (read, write, edit, bash)
 - Extensions can be server-side (run code inside the container) or client-side (delegate to the browser via the Extension UI Sub-Protocol)
@@ -202,6 +209,7 @@ bark/
   - `beep` — plays an audible beep tone via Web Audio API (client-side, via Extension UI Sub-Protocol)
 
 ### Chat Interface
+
 - Markdown rendering for assistant responses (flutter_markdown_plus)
 - Syntax-highlighted code blocks (Monokai Sublime theme, highlight.dart, JetBrains Mono)
 - Collapsible tool call cards showing arguments and results
@@ -216,6 +224,7 @@ bark/
 - Clickable URLs open in a new browser tab
 
 ### File Viewer
+
 - Directory tree with file sizes
 - Click to view file contents (16pt JetBrains Mono, left-aligned)
 - Auto-refresh when Pi writes/edits files or runs file-creating/deleting bash commands
@@ -230,6 +239,7 @@ bark/
 - nginx `sub_filter` rewrites `<base href>` for subpath hosting (`/bark/`)
 
 ### Debug Panel
+
 - Container lifecycle events (starting, ready with port info and status, idle stop, restart)
 - Session resume notifications
 - Query text shown for each prompt sent
@@ -240,6 +250,7 @@ bark/
 - Clear button
 
 ### UI/Theme
+
 - Harvest-inspired light theme (warm off-white, green accents, medium gray header)
 - Orange Bark logo (paw icon + "Bark" text)
 - 3D edges on all dividers, panel headers, and borders
@@ -250,6 +261,7 @@ bark/
 - Browser tab title updates per page ("Bark - Login", "Bark - Workspaces", "Bark - workspace-name")
 
 ### Hosting
+
 - Single-port architecture: FastAPI serves both API and Flutter frontend static files
 - Subpath hosting behind nginx (e.g., `/bark/`) via `sub_filter` for `<base href>` rewriting
 - Frontend derives API URLs from `<base href>` — works on both root and subpath
@@ -259,11 +271,13 @@ bark/
 ## Development
 
 ### Prerequisites
+
 - Nix with devenv installed (run `./bootstrap` to install both)
 - Docker daemon running
 - Ollama — either a Cloud account with API key, or a self-hosted instance
 
 ### Setup & Run
+
 ```bash
 # Create .env
 cat > .env << 'EOF'
@@ -295,28 +309,29 @@ open http://localhost:8997
 
 All settings can be overridden in `.env`. Defaults (where appropriate) are provided in `devenv.nix` at low priority so `.env` values take precedence.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BARK_PORT` | `8997` | Backend (FastAPI/uvicorn) port |
-| `BARK_NGINX_PORT` | `8995` | nginx reverse proxy port |
-| `BARK_SOLIPLEX_PORT` | `8555` | Soliplex backend port (for nginx proxy) |
-| `BARK_DATA_DIR` | `~/.bark/data` | Database, workspaces, Pi sessions |
-| `BARK_PLUGINS_DIR` | `~/.bark/plugins` | Fetched plugins (outside repo for `execIfModified`) |
-| `BARK_IMAGE_NAME` | `bark-pi` | Docker image name for workspace containers |
-| `BARK_INSTANCE_ID` | `default` | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup |
-| `BARK_HOSTING_HOSTNAME` | (from `Host` header) | Hostname for user-facing app URLs. Auto-derived from `X-Forwarded-Host` or `Host` WebSocket header if not set |
-| `BARK_HOSTING_PROTO` | (from `X-Forwarded-Proto` or `http`) | Protocol for user-facing app URLs. Auto-derived from request headers if not set |
-| `BARK_HOSTING_BASE_PATH` | (from `X-Forwarded-Prefix` or empty) | Base path prefix for user-facing app URLs (e.g., `/bark`). Auto-derived from nginx `X-Forwarded-Prefix` header if not set |
-| `BARK_IDLE_TIMEOUT_SECONDS` | `1800` | Container idle timeout in seconds (check interval auto-computed as timeout/3, clamped 10–60s) |
-| `SOLIPLEX_URL` | (empty) | Soliplex base URL as seen by browser (empty = same origin) |
-| `OLLAMA_API_KEY` | | Ollama Cloud API key |
-| `OLLAMA_BASE_URL` | | Ollama API URL (cloud or self-hosted) |
-| `OLLAMA_MODEL` | | LLM model name |
-| `BARK_JWT_SECRET` | | JWT signing secret |
-| `BARK_DEFAULT_USER` | | Auto-seeded user on startup |
-| `BARK_DEFAULT_PASSWORD` | | Auto-seeded password on startup |
+| Variable                    | Default                              | Description                                                                                                               |
+| --------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `BARK_PORT`                 | `8997`                               | Backend (FastAPI/uvicorn) port                                                                                            |
+| `BARK_NGINX_PORT`           | `8995`                               | nginx reverse proxy port                                                                                                  |
+| `BARK_SOLIPLEX_PORT`        | `8555`                               | Soliplex backend port (for nginx proxy)                                                                                   |
+| `BARK_DATA_DIR`             | `~/.bark/data`                       | Database, workspaces, Pi sessions                                                                                         |
+| `BARK_PLUGINS_DIR`          | `~/.bark/plugins`                    | Fetched plugins (outside repo for `execIfModified`)                                                                       |
+| `BARK_IMAGE_NAME`           | `bark-pi`                            | Docker image name for workspace containers                                                                                |
+| `BARK_INSTANCE_ID`          | `default`                            | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup             |
+| `BARK_HOSTING_HOSTNAME`     | (from `Host` header)                 | Hostname for user-facing app URLs. Auto-derived from `X-Forwarded-Host` or `Host` WebSocket header if not set             |
+| `BARK_HOSTING_PROTO`        | (from `X-Forwarded-Proto` or `http`) | Protocol for user-facing app URLs. Auto-derived from request headers if not set                                           |
+| `BARK_HOSTING_BASE_PATH`    | (from `X-Forwarded-Prefix` or empty) | Base path prefix for user-facing app URLs (e.g., `/bark`). Auto-derived from nginx `X-Forwarded-Prefix` header if not set |
+| `BARK_IDLE_TIMEOUT_SECONDS` | `1800`                               | Container idle timeout in seconds (check interval auto-computed as timeout/3, clamped 10–60s)                             |
+| `SOLIPLEX_URL`              | (empty)                              | Soliplex base URL as seen by browser (empty = same origin)                                                                |
+| `OLLAMA_API_KEY`            |                                      | Ollama Cloud API key                                                                                                      |
+| `OLLAMA_BASE_URL`           |                                      | Ollama API URL (cloud or self-hosted)                                                                                     |
+| `OLLAMA_MODEL`              |                                      | LLM model name                                                                                                            |
+| `BARK_JWT_SECRET`           |                                      | JWT signing secret                                                                                                        |
+| `BARK_DEFAULT_USER`         |                                      | Auto-seeded user on startup                                                                                               |
+| `BARK_DEFAULT_PASSWORD`     |                                      | Auto-seeded password on startup                                                                                           |
 
 ### Ports
+
 - `BARK_PORT` (default `8997`): Web UI + API (single FastAPI/uvicorn server)
 - `BARK_NGINX_PORT` (default `8995`): nginx reverse proxy
 - `9000+`: User app ports (5 per workspace)
@@ -330,35 +345,66 @@ devenv shell -- rebuild
 ```
 
 Then restart the processes. On normal startup, Flutter and Docker builds run automatically when their source files have changed (via devenv `execIfModified` content hashing). Watched paths:
+
 - **Flutter**: `frontend/lib`, `frontend/web`, `frontend/pubspec.yaml`, `frontend/pubspec.lock`, `$BARK_PLUGINS_DIR/**/*.dart`, `$BARK_PLUGINS_DIR/plugins.lock`
 - **Docker**: `docker/Dockerfile`, `docker/entrypoint.sh`, `docker/*.md`, `docker/builtin-extensions/*.ts`, `$BARK_PLUGINS_DIR/**/*.ts`, `$BARK_PLUGINS_DIR/**/tools/**`, `$BARK_PLUGINS_DIR/plugins.lock`
 
 ### Testing
 
 **Unit tests** (backend, no Docker required):
+
 ```bash
+# Run all backend tests (devenv script)
+devenv shell -- test-backend
+
+# Or directly with pytest
 devenv shell -- python -m pytest tests/unit/backend -v
+
+# Run a single test file
+devenv shell -- test-backend tests/unit/backend/test_auth.py
+
+# Run a single test by name
+devenv shell -- test-backend -k 'test_login_success'
 ```
-Tests cover auth (password hashing, JWT, login/register, token blocklisting), user_store (users, workspaces, messages, port allocations, cascading deletes), file_service (read, write, list, delete, rename, path traversal protection), and agui_translator (Pi RPC → AG-UI event mapping, bash file detection). Coverage report is printed automatically.
+
+402 tests with 100% line coverage across all backend modules: auth, user_store, workspace_manager, container_manager, file_service, agui_translator, pi_rpc_client, terminal_manager, ws_handler, api, and main. Tests use real SQLite databases in pytest temp directories (no mocking of the database layer). Docker and subprocess interactions are mocked. Each test gets its own isolated temp directory — multiple test processes can run in parallel without conflicts. Coverage report is printed automatically.
 
 **E2E tests** (Playwright, requires running devenv processes):
+
 ```bash
 # Install browsers (first time only)
 devenv shell -- bash -c "cd tests/playwright && npm run install-browsers"
 
-# Run all tests
-devenv shell -- bash -c "cd tests/playwright && npx playwright test"
+# Run all tests (devenv script)
+devenv shell -- test-e2e
 
 # Run a single test by name
-devenv shell -- bash -c "cd tests/playwright && npx playwright test -g 'login with default credentials'"
+devenv shell -- test-e2e -g 'login with default credentials'
 
-# Run with headed browser (visible)
-devenv shell -- bash -c "cd tests/playwright && npx playwright test --headed"
+# Run with headed browser (visible) — useful for debugging coordinate-based clicks
+devenv shell -- test-e2e --headed
 
 # Run with verbose output
-devenv shell -- bash -c "cd tests/playwright && npx playwright test --reporter=list"
+devenv shell -- test-e2e --reporter=list
 ```
-Tests run against `http://localhost:8997` using system Chrome. They cover login (success and failure), workspace creation/deletion, terminal input, file tab switching, chat input, file upload/rename/delete via API, folder upload with zip download round-trip, an LLM integration test (agent builds a pong game and returns a hosted URL), and logout. Flutter Web renders to canvas, so UI interaction uses coordinate-based clicks on `<flutter-view>`. The agent integration test creates a fresh workspace and cleans it up afterward; it requires a working LLM provider and can take 1–3 minutes.
+
+Tests run against `http://localhost:8997` using system Chrome. They cover login (success and failure), workspace creation/deletion, terminal input, file tab switching, file upload/rename/delete via API, folder upload with zip download round-trip, an LLM integration test (agent builds a pong game and returns a hosted URL), and logout. Flutter Web renders to canvas, so UI interaction uses coordinate-based clicks on `<flutter-view>`. The agent integration test creates a fresh workspace and cleans it up afterward; it requires a working LLM provider and can take 1–3 minutes.
+
+### Pre-commit Hooks
+
+Pre-commit hooks run automatically on `git commit` via [git-hooks.nix](https://github.com/cachix/git-hooks.nix):
+
+- **ruff check --fix** — Python linting with auto-fix
+- **ruff format** — Python formatting
+- **dart format** — Dart formatting
+- **prettier** — TypeScript, JavaScript, and YAML formatting
+- **yamllint** — YAML linting
+
+Hooks are installed automatically when entering the devenv shell.
+
+### CI
+
+Backend tests run automatically on GitHub Actions (`.github/workflows/backend-tests.yml`) for PRs and pushes to main that touch `backend/`, `tests/unit/backend/`, or `pytest.ini`.
 
 ### Plugin System
 
@@ -372,6 +418,7 @@ All plugins live in `$BARK_PLUGINS_DIR/<name>/` directories. A plugin can contai
 A plugin needs at minimum an `extension.ts`. The `plugin.dart` is only needed for client-side tools that delegate execution to the browser via `ctx.ui.input("HOST_TOOL_REQUEST", ...)`.
 
 **Build integration:**
+
 - `scripts/import_plugins.py` scans `$BARK_PLUGINS_DIR/*/plugin.dart`, copies `.dart` files into `frontend/lib/tools/plugins/`, and generates `plugins_generated.dart`
 - `dockerbuild` collects `extension.ts` and `tools/` files from all plugins into the Docker build context
 - `flutterbuildweb` runs the codegen before compiling
@@ -380,7 +427,8 @@ A plugin needs at minimum an `extension.ts`. The `plugin.dart` is only needed fo
 **Adding a plugin:**
 
 For local development, create files directly in `$BARK_PLUGINS_DIR`:
-1. Create `$BARK_PLUGINS_DIR/<name>/extension.ts` with `pi.registerTool()` 
+
+1. Create `$BARK_PLUGINS_DIR/<name>/extension.ts` with `pi.registerTool()`
 2. For client-side tools, add `plugin.dart` extending `ToolPlugin` with action handlers
 3. For server-side scripts, add files in `$BARK_PLUGINS_DIR/<name>/tools/`
 4. `devenv up` rebuilds automatically when `$BARK_PLUGINS_DIR` changes
@@ -425,6 +473,7 @@ plugins:
 - Since `$BARK_PLUGINS_DIR` is outside the repo, there are no `.gitignore` conflicts with devenv's `execIfModified`.
 
 ### Data
+
 - All data stored in `$BARK_DATA_DIR` (defaults to `~/.bark/data`)
 - SQLite database: `bark.db` (users, workspaces, messages, token blocklist)
 - Workspace files: `workspaces/<user-id>/data/<workspace-id>/`
@@ -461,7 +510,7 @@ LLM calls tool → Pi extension execute()
 
 ### Soliplex integration
 
-Soliplex has its own Bark plugins currently hosted on the `bark-integration` branch of the Soliplex repository within `bark-plugin`.  The `bark` repository has some sops to Soliplex integration, namely that it starts an nginx service that is unnecessary for non-integraion scenarios.
+Soliplex has its own Bark plugins currently hosted on the `bark-integration` branch of the Soliplex repository within `bark-plugin`. The `bark` repository has some sops to Soliplex integration, namely that it starts an nginx service that is unnecessary for non-integraion scenarios.
 
 The Soliplex tools run entirely in the browser, which has the user's Soliplex authentication cookies. When deployed behind nginx on the same domain, the browser can call Soliplex APIs directly with no CORS issues. Set `SOLIPLEX_URL` in `.env` to tell the frontend where Soliplex is (served via the `/api/config` endpoint). Leave it empty when Bark and Soliplex share the same origin (the typical nginx setup). Cross-origin setups require CORS configuration on the Soliplex side.
 
@@ -478,8 +527,6 @@ nginx reverse proxy (port 8995)
     └── /          → Soliplex backend (port 8555)
 ```
 
-
-
 ## TODO
 
 - **Local files pane**: Add a browser-side file pane where users can upload files into an in-browser-memory filesystem (e.g., using the File System Access API or an in-memory store). These files would be accessible to client-side plugins and could be passed to the REPL as context without uploading to the server. Useful for working with sensitive files that shouldn't leave the browser, or for quick one-off analysis without persisting to the workspace.
@@ -494,3 +541,4 @@ nginx reverse proxy (port 8995)
 - **Workspace disk quotas**: Limit how much disk space each workspace can consume. Options: use filesystem quotas (XFS/ext4 project quotas on the host), overlay2 with size limits, or a loopback-mounted filesystem per workspace with a fixed size. Should also surface current disk usage in the UI (file viewer header or workspace list) so users can see how much space they've used.
 - **User dotfile customization**: Allow users to customize their container shell environment (`.bashrc`, `.vimrc`, `.emacs`, `.gitconfig`, etc.). Options: bind-mount a per-user dotfiles directory from the host into `/home/bark`, or provide a UI for editing dotfiles that persist across container restarts. Currently `/home/bark` is a tmpfs regenerated each start, so any customization is lost.
 - **Investigate running Pi under bubblewrap**: Explore using [bubblewrap](https://github.com/containers/bubblewrap) (bwrap) as an alternative to Docker for sandboxing Pi. Bubblewrap is lighter-weight than Docker — no daemon, no image builds, no container overhead — and provides namespace-based isolation (mount, PID, network, user). This could significantly reduce startup time and resource usage. Trade-offs: no pre-built image caching, need to manage tool installations on the host, less isolation than full container. Could be offered as an alternative backend alongside Docker.
+- **Remove leading underscores from internal functions**: Functions like `_handle_prompt`, `_forward_events`, `_cleanup_connection`, `_derive_hosting_info`, etc. in `ws_handler.py` and helper functions in other modules use leading underscores to signal "module-private". Since these are now tested directly via imports, the underscores are unnecessary and make the test imports look odd. Rename to drop the underscores.

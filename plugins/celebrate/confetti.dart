@@ -33,17 +33,15 @@ class _ConfettiOverlayState extends State<ConfettiOverlay>
   void initState() {
     super.initState();
     _particles = List.generate(80, (_) => _Particle(_random));
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 3),
-    )
-      ..addListener(() => setState(() {}))
-      ..addStatusListener((status) {
-        if (status == AnimationStatus.completed) {
-          widget.onComplete();
-        }
-      })
-      ..forward();
+    _controller =
+        AnimationController(vsync: this, duration: const Duration(seconds: 3))
+          ..addListener(() => setState(() {}))
+          ..addStatusListener((status) {
+            if (status == AnimationStatus.completed) {
+              widget.onComplete();
+            }
+          })
+          ..forward();
   }
 
   @override
@@ -77,15 +75,15 @@ class _Particle {
   final double rotation;
 
   _Particle(Random r)
-      : x = r.nextDouble(),
-        startY = -r.nextDouble() * 0.3,
-        speed = 0.5 + r.nextDouble() * 0.8,
-        wobbleSpeed = 2 + r.nextDouble() * 6,
-        wobbleAmount = 10 + r.nextDouble() * 20,
-        size = 4 + r.nextDouble() * 8,
-        color = _ConfettiOverlayState._colors[
-            r.nextInt(_ConfettiOverlayState._colors.length)],
-        rotation = r.nextDouble() * pi * 2;
+    : x = r.nextDouble(),
+      startY = -r.nextDouble() * 0.3,
+      speed = 0.5 + r.nextDouble() * 0.8,
+      wobbleSpeed = 2 + r.nextDouble() * 6,
+      wobbleAmount = 10 + r.nextDouble() * 20,
+      size = 4 + r.nextDouble() * 8,
+      color = _ConfettiOverlayState
+          ._colors[r.nextInt(_ConfettiOverlayState._colors.length)],
+      rotation = r.nextDouble() * pi * 2;
 }
 
 class _ConfettiPainter extends CustomPainter {
@@ -114,7 +112,11 @@ class _ConfettiPainter extends CustomPainter {
       canvas.translate(px, py);
       canvas.rotate(p.rotation + progress * 5);
       canvas.drawRect(
-        Rect.fromCenter(center: Offset.zero, width: p.size, height: p.size * 0.6),
+        Rect.fromCenter(
+          center: Offset.zero,
+          width: p.size,
+          height: p.size * 0.6,
+        ),
         paint,
       );
       canvas.restore();
@@ -122,5 +124,6 @@ class _ConfettiPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _ConfettiPainter old) => old.progress != progress;
+  bool shouldRepaint(covariant _ConfettiPainter old) =>
+      old.progress != progress;
 }

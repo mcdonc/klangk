@@ -82,8 +82,9 @@ class _LoginPageState extends State<LoginPage> {
                       labelText: 'Username',
                       border: OutlineInputBorder(),
                     ),
-                    validator: (v) =>
-                        (v == null || v.trim().length < 3) ? 'Min 3 characters' : null,
+                    validator: (v) => (v == null || v.trim().length < 3)
+                        ? 'Min 3 characters'
+                        : null,
                     onFieldSubmitted: (_) => _submit(),
                   ),
                   const SizedBox(height: 16),
@@ -96,14 +97,17 @@ class _LoginPageState extends State<LoginPage> {
                     obscureText: true,
                     validator: (v) {
                       if (v == null || v.isEmpty) return 'Required';
-                      if (_isRegister && v.length < 4) return 'Min 4 characters';
+                      if (_isRegister && v.length < 4)
+                        return 'Min 4 characters';
                       return null;
                     },
                     onFieldSubmitted: (_) => _submit(),
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
-                    Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    Text(_error!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error)),
                   ],
                   const SizedBox(height: 24),
                   SizedBox(

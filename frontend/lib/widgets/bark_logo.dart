@@ -23,7 +23,8 @@ class BarkLogo extends StatelessWidget {
           colors: [Color(0xFFFF8C00), Color(0xFFE06800)],
         ),
         boxShadow: const [
-          BoxShadow(color: Color(0x30000000), blurRadius: 3, offset: Offset(1, 1)),
+          BoxShadow(
+              color: Color(0x30000000), blurRadius: 3, offset: Offset(1, 1)),
         ],
       ),
       child: Column(

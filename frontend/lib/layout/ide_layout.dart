@@ -106,9 +106,8 @@ class _IdeLayoutState extends State<IdeLayout>
                   Container(
                     height: 32,
                     decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest,
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
                       boxShadow: const [
                         BoxShadow(
                             color: Color(0x30000000),
@@ -120,8 +119,7 @@ class _IdeLayoutState extends State<IdeLayout>
                       controller: _tabController,
                       labelStyle: const TextStyle(
                           fontSize: 12, fontWeight: FontWeight.bold),
-                      unselectedLabelStyle:
-                          const TextStyle(fontSize: 12),
+                      unselectedLabelStyle: const TextStyle(fontSize: 12),
                       indicatorSize: TabBarIndicatorSize.tab,
                       tabs: const [
                         Tab(text: 'Terminal'),
@@ -160,7 +158,8 @@ class _IdeLayoutState extends State<IdeLayout>
               child: GestureDetector(
                 onVerticalDragUpdate: (details) {
                   setState(() {
-                    _verticalRatio += details.delta.dy / (rightHeight - bar - minDebug);
+                    _verticalRatio +=
+                        details.delta.dy / (rightHeight - bar - minDebug);
                     _verticalRatio = _verticalRatio.clamp(0.2, 1.0);
                   });
                 },

@@ -58,22 +58,23 @@ Open [http://localhost:8997](http://localhost:8997) and log in with `admin`/`adm
 
 All settings can be overridden in `.env`. Defaults are provided in `devenv.nix` at low priority so `.env` values take precedence.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BARK_PORT` | `8997` | Backend (FastAPI/uvicorn) port |
-| `BARK_NGINX_PORT` | `8995` | nginx reverse proxy port |
-| `BARK_SOLIPLEX_PORT` | `8555` | Soliplex backend port (for nginx proxy) |
-| `BARK_DATA_DIR` | `~/.bark/data` | Database, workspaces, Pi sessions |
-| `BARK_PLUGINS_DIR` | `~/.bark/plugins` | Fetched plugins (outside repo for `execIfModified`) |
-| `SOLIPLEX_URL` | (empty) | Soliplex base URL as seen by browser (empty = same origin) |
-| `OLLAMA_API_KEY` | | Ollama Cloud API key |
-| `OLLAMA_BASE_URL` | | Ollama API URL (cloud or self-hosted) |
-| `OLLAMA_MODEL` | | LLM model name |
-| `BARK_JWT_SECRET` | | JWT signing secret |
-| `BARK_DEFAULT_USER` | | Auto-seeded user on startup |
-| `BARK_DEFAULT_PASSWORD` | | Auto-seeded password on startup |
+| Variable                | Default           | Description                                                |
+| ----------------------- | ----------------- | ---------------------------------------------------------- |
+| `BARK_PORT`             | `8997`            | Backend (FastAPI/uvicorn) port                             |
+| `BARK_NGINX_PORT`       | `8995`            | nginx reverse proxy port                                   |
+| `BARK_SOLIPLEX_PORT`    | `8555`            | Soliplex backend port (for nginx proxy)                    |
+| `BARK_DATA_DIR`         | `~/.bark/data`    | Database, workspaces, Pi sessions                          |
+| `BARK_PLUGINS_DIR`      | `~/.bark/plugins` | Fetched plugins (outside repo for `execIfModified`)        |
+| `SOLIPLEX_URL`          | (empty)           | Soliplex base URL as seen by browser (empty = same origin) |
+| `OLLAMA_API_KEY`        |                   | Ollama Cloud API key                                       |
+| `OLLAMA_BASE_URL`       |                   | Ollama API URL (cloud or self-hosted)                      |
+| `OLLAMA_MODEL`          |                   | LLM model name                                             |
+| `BARK_JWT_SECRET`       |                   | JWT signing secret                                         |
+| `BARK_DEFAULT_USER`     |                   | Auto-seeded user on startup                                |
+| `BARK_DEFAULT_PASSWORD` |                   | Auto-seeded password on startup                            |
 
 ### Ports
+
 - `BARK_PORT` (default `8997`): Web UI + API (single FastAPI/uvicorn server)
 - `BARK_NGINX_PORT` (default `8995`): nginx reverse proxy
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
@@ -88,7 +89,7 @@ To force-rebuild the Docker image and Flutter web app:
 devenv shell -- rebuild
 ```
 
-Then restart the processes. 
+Then restart the processes.
 
 ## Architecture
 
@@ -125,12 +126,12 @@ Sample plugins (celebrate, beep, pig-latin, word-count) are included in the gene
 
 Each plugin directory can contain:
 
-| File | Purpose |
-|------|---------|
-| `extension.ts` | Pi extension (TypeScript) — registered as an LLM-callable tool |
-| `plugin.dart` | Dart plugin class — handles client-side execution and optional UI |
-| `*.dart` | Supporting Dart files (widgets, utilities) |
-| `tools/` | Server-side scripts copied into the Docker image |
+| File           | Purpose                                                           |
+| -------------- | ----------------------------------------------------------------- |
+| `extension.ts` | Pi extension (TypeScript) — registered as an LLM-callable tool    |
+| `plugin.dart`  | Dart plugin class — handles client-side execution and optional UI |
+| `*.dart`       | Supporting Dart files (widgets, utilities)                        |
+| `tools/`       | Server-side scripts copied into the Docker image                  |
 
 **Client-side plugins** use Pi's Extension UI Sub-Protocol to delegate execution to the browser. This enables tools that need browser authentication (e.g., Soliplex cookies) or browser-native capabilities (audio, animations).
 

@@ -56,7 +56,8 @@ class _OutputPanelState extends State<OutputPanel> {
         final delta = event.delta;
         if (delta != null && delta.isNotEmpty) {
           // Append to existing reasoning entry or create new
-          if (_entries.isNotEmpty && _entries.last.type == _EntryType.reasoning) {
+          if (_entries.isNotEmpty &&
+              _entries.last.type == _EntryType.reasoning) {
             setState(() {
               _entries.last = _entries.last.copyWith(
                 content: _entries.last.content + delta,
@@ -91,8 +92,7 @@ class _OutputPanelState extends State<OutputPanel> {
             content: text.toString(),
             timestamp: DateTime.now(),
           );
-        } else
-        if (event.customName == 'container_restart') {
+        } else if (event.customName == 'container_restart') {
           final value = event.customValue;
           final reason = value is Map ? (value['reason'] ?? '') : '';
           entry = _OutputEntry(
@@ -135,7 +135,8 @@ class _OutputPanelState extends State<OutputPanel> {
           entry = _OutputEntry(
             type: _EntryType.toolCall,
             title: 'Extension UI: $method',
-            content: title.length > 100 ? '${title.substring(0, 100)}...' : title,
+            content:
+                title.length > 100 ? '${title.substring(0, 100)}...' : title,
             timestamp: DateTime.now(),
           );
         } else if (event.customName == 'container_stopped') {
@@ -185,14 +186,18 @@ class _OutputPanelState extends State<OutputPanel> {
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             boxShadow: const [
-              BoxShadow(color: Color(0x30000000), blurRadius: 2, offset: Offset(0, 1)),
+              BoxShadow(
+                  color: Color(0x30000000),
+                  blurRadius: 2,
+                  offset: Offset(0, 1)),
             ],
           ),
           child: Row(
             children: [
               const Icon(Icons.terminal, size: 16),
               const SizedBox(width: 4),
-              const Text('Debug', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              const Text('Debug',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.clear_all, size: 16),
@@ -206,13 +211,15 @@ class _OutputPanelState extends State<OutputPanel> {
         ),
         Expanded(
           child: _entries.isEmpty
-              ? const Center(child: Text('No output yet', style: TextStyle(fontSize: 12)))
+              ? const Center(
+                  child: Text('No output yet', style: TextStyle(fontSize: 12)))
               : SelectionArea(
                   child: ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.all(4),
                     itemCount: _entries.length,
-                    itemBuilder: (context, index) => _buildEntry(_entries[index]),
+                    itemBuilder: (context, index) =>
+                        _buildEntry(_entries[index]),
                   ),
                 ),
         ),
@@ -243,7 +250,8 @@ class _OutputPanelState extends State<OutputPanel> {
             children: [
               Text(
                 entry.title,
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
+                style: TextStyle(
+                    fontSize: 11, fontWeight: FontWeight.bold, color: color),
               ),
               const Spacer(),
               Text(

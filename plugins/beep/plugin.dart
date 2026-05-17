@@ -3,9 +3,7 @@ import 'beep.dart';
 
 class BeepPlugin extends ToolPlugin {
   @override
-  Map<String, ToolHandler> get handlers => {
-        'beep': _handle,
-      };
+  Map<String, ToolHandler> get handlers => {'beep': _handle};
 
   Future<String> _handle(Map<String, dynamic> request) async {
     final freq = (request['frequency'] as num?)?.toDouble() ?? 440;

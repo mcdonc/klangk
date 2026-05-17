@@ -10,7 +10,9 @@ import re
 import shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGINS_DIR = os.environ.get("BARK_PLUGINS_DIR") or os.path.join(os.path.expanduser("~"), ".bark", "plugins")
+PLUGINS_DIR = os.environ.get("BARK_PLUGINS_DIR") or os.path.join(
+    os.path.expanduser("~"), ".bark", "plugins"
+)
 DEST_DIR = os.path.join(ROOT, "frontend", "lib", "tools", "plugins")
 OUTPUT = os.path.join(ROOT, "frontend", "lib", "tools", "plugins_generated.dart")
 
@@ -48,11 +50,13 @@ def find_and_copy_plugins():
                 shutil.copy2(os.path.join(plugin_dir, fname), dest)
 
         for class_name in matches:
-            plugins.append({
-                "dir": name,
-                "class_name": class_name,
-                "import_path": f"plugins/{name}/plugin.dart",
-            })
+            plugins.append(
+                {
+                    "dir": name,
+                    "class_name": class_name,
+                    "import_path": f"plugins/{name}/plugin.dart",
+                }
+            )
 
     return plugins
 

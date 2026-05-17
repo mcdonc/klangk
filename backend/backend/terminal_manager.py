@@ -11,6 +11,27 @@ from collections.abc import AsyncGenerator
 logger = logging.getLogger(__name__)
 
 
+def _openpty() -> tuple[int, int]:  # pragma: no cover
+    return os.openpty()
+
+
+def _set_winsize(fd: int, rows: int, cols: int) -> None:  # pragma: no cover
+    winsize = struct.pack("HHHH", rows, cols, 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+
+
+def _fd_read(fd: int, size: int) -> bytes:  # pragma: no cover
+    return os.read(fd, size)
+
+
+def _fd_write(fd: int, data: bytes) -> int:  # pragma: no cover
+    return os.write(fd, data)
+
+
+def _fd_close(fd: int) -> None:  # pragma: no cover
+    os.close(fd)
+
+
 class TerminalSession:
     """Manages a docker exec shell session with PTY support."""
 
@@ -23,21 +44,30 @@ class TerminalSession:
 
     async def start(self, cols: int = 80, rows: int = 24) -> None:
         """Start a shell session via docker exec with a PTY."""
-        master_fd, slave_fd = os.openpty()
+        master_fd, slave_fd = _openpty()
 
-        # Set initial terminal size
-        winsize = struct.pack("HHHH", rows, cols, 0, 0)
-        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+        _set_winsize(master_fd, rows, cols)
 
         self._master_fd = master_fd
         self._running = True
 
         # Build docker exec command, blanking sensitive env vars that the
         # container inherited from container_manager.start_container()
-        exec_cmd = ["docker", "exec", "-it", "-u", "bark", "-w", "/workspace",
-                     "-e", "TERM=xterm-256color"]
+        exec_cmd = [
+            "docker",
+            "exec",
+            "-it",
+            "-u",
+            "bark",
+            "-w",
+            "/workspace",
+            "-e",
+            "TERM=xterm-256color",
+        ]
         for key in os.environ:
-            if key.startswith(("OLLAMA_", "ANTHROPIC_", "OPENAI_", "GOOGLE_", "GROQ_", "MISTRAL_")):
+            if key.startswith(
+                ("OLLAMA_", "ANTHROPIC_", "OPENAI_", "GOOGLE_", "GROQ_", "MISTRAL_")
+            ):
                 exec_cmd.extend(["-e", f"{key}="])
         exec_cmd.extend(["-e", "BARK_RESUME_SESSION="])
         exec_cmd.extend([self.container_id, "/bin/bash"])
@@ -49,7 +79,7 @@ class TerminalSession:
             stderr=slave_fd,
             close_fds=True,
         )
-        os.close(slave_fd)  # Parent doesn't need the slave end
+        _fd_close(slave_fd)  # Parent doesn't need the slave end
 
         # Register async reader on the master fd
         loop = asyncio.get_event_loop()
@@ -62,18 +92,16 @@ class TerminalSession:
             "\nalias grep='grep --color=auto'"
             "\nclear\n"
         )
-        os.write(master_fd, init.encode())
+        _fd_write(master_fd, init.encode())
 
         logger.info("Terminal session started for container %s", self.container_id)
 
     def _on_readable(self) -> None:
         """Called when data is available on the PTY master fd."""
         try:
-            data = os.read(self._master_fd, 65536)
+            data = _fd_read(self._master_fd, 65536)
             if data:
-                self._output_queue.put_nowait(
-                    data.decode("utf-8", errors="replace")
-                )
+                self._output_queue.put_nowait(data.decode("utf-8", errors="replace"))
             else:
                 self._output_queue.put_nowait(None)
         except OSError:
@@ -86,13 +114,12 @@ class TerminalSession:
     async def write(self, data: str) -> None:
         """Write user input to the terminal."""
         if self._master_fd is not None:
-            os.write(self._master_fd, data.encode("utf-8"))
+            _fd_write(self._master_fd, data.encode("utf-8"))
 
     async def resize(self, cols: int, rows: int) -> None:
         """Resize the terminal PTY."""
         if self._master_fd is not None:
-            winsize = struct.pack("HHHH", rows, cols, 0, 0)
-            fcntl.ioctl(self._master_fd, termios.TIOCSWINSZ, winsize)
+            _set_winsize(self._master_fd, rows, cols)
 
     async def output(self) -> AsyncGenerator[str, None]:
         """Yield terminal output as it arrives."""
@@ -110,7 +137,7 @@ class TerminalSession:
         if self._master_fd is not None:
             try:
                 asyncio.get_event_loop().remove_reader(self._master_fd)
-            except Exception:
+            except (ValueError, OSError):
                 pass
 
         # Terminate the docker exec process
@@ -128,7 +155,7 @@ class TerminalSession:
         # Close the master fd
         if self._master_fd is not None:
             try:
-                os.close(self._master_fd)
+                _fd_close(self._master_fd)
             except OSError:
                 pass
             self._master_fd = None

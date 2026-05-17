@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Analyze a text file: line count, word count, character count, file size."""
+
 import sys
 import os
+
 
 def analyze(path):
     if not os.path.exists(path):
@@ -9,10 +11,10 @@ def analyze(path):
         sys.exit(1)
 
     size = os.path.getsize(path)
-    with open(path, 'r', errors='replace') as f:
+    with open(path, "r", errors="replace") as f:
         content = f.read()
 
-    lines = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+    lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
     words = len(content.split())
     chars = len(content)
 
@@ -22,7 +24,8 @@ def analyze(path):
     print(f"Words: {words}")
     print(f"Characters: {chars}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: word_count <file>")
         sys.exit(1)
