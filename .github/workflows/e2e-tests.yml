@@ -35,6 +35,17 @@ jobs:
             /usr/local/powershell /usr/local/.ghcup \
             /usr/local/julia* &
 
+      - name: Create .env
+        run: |
+          cat > .env << EOF
+          OLLAMA_API_KEY=${{ secrets.OLLAMA_API_KEY }}
+          OLLAMA_BASE_URL=${{ secrets.OLLAMA_BASE_URL }}
+          OLLAMA_MODEL=${{ secrets.OLLAMA_MODEL }}
+          BARK_JWT_SECRET=e2e-test-secret
+          BARK_DEFAULT_USER=admin
+          BARK_DEFAULT_PASSWORD=admin
+          EOF
+
       - name: Install devenv
         run: ./bootstrap --unattended
 
