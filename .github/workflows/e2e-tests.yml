@@ -62,6 +62,7 @@ jobs:
               exit 0
             fi
             echo "Waiting for server... (attempt $i, status=$code)"
+            tail -1 /tmp/devenv-up.log 2>/dev/null || true
             sleep 5
           done
           echo "Server failed to start after 10 minutes, logs:"

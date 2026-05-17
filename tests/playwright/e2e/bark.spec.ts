@@ -90,6 +90,17 @@ async function openFirstWorkspace(page: Page) {
 test.describe("Bark E2E", () => {
   test.describe.configure({ mode: "serial" });
 
+  // Ensure a default workspace exists (CI starts with an empty database)
+  test.beforeAll(async ({ request }) => {
+    const token = await getAuthToken(request);
+    const headers = { Authorization: `Bearer ${token}` };
+    const listResp = await request.get(`${API_BASE}/workspaces`, { headers });
+    const workspaces = await listResp.json();
+    if (workspaces.length === 0) {
+      await request.post(`${API_BASE}/workspaces?name=default`, { headers });
+    }
+  });
+
   test("login with default credentials", async ({ page }) => {
     await login(page);
     await expect(page).toHaveTitle(/Workspaces/i);
