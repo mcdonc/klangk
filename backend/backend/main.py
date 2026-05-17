@@ -134,9 +134,10 @@ async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
 # --- Static files (Flutter Web) ---
 # Must be last so API routes take priority
 
-_frontend_dir = Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
-if _frontend_dir.exists():
-    _static_app = StaticFiles(directory=str(_frontend_dir), html=True)
+
+def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
+    """Mount Flutter Web static files and add no-cache middleware."""
+    static_app = StaticFiles(directory=str(frontend_dir), html=True)
 
     @app.middleware("http")
     async def add_no_cache_headers(request, call_next):
@@ -147,4 +148,9 @@ if _frontend_dir.exists():
             response.headers["Expires"] = "0"
         return response
 
-    app.mount("/", _static_app, name="frontend")
+    app.mount("/", static_app, name="frontend")
+
+
+_frontend_dir = Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
+if _frontend_dir.exists():  # pragma: no cover
+    setup_static_files(app, _frontend_dir)

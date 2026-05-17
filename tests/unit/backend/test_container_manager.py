@@ -270,6 +270,24 @@ class TestStartContainer:
         env = call_kwargs[1]["config"]["Env"]
         assert any("BARK_RESUME_SESSION=/path/to/session.jsonl" in e for e in env)
 
+    async def test_provider_env_vars_forwarded(self, workspace, monkeypatch):
+        monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-2")
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("cid")
+        mock_docker.containers.create_or_replace = AsyncMock(return_value=mock_c)
+
+        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+            await container_manager.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/sessions",
+            )
+        call_kwargs = mock_docker.containers.create_or_replace.call_args
+        env = call_kwargs[1]["config"]["Env"]
+        assert "OLLAMA_API_KEY=test-key" in env
+        assert "ANTHROPIC_API_KEY=test-key-2" in env
+
     async def test_hosting_env_vars(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")

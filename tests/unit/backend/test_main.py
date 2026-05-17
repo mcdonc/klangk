@@ -186,6 +186,59 @@ class TestProxy:
         assert build_kwargs["content"] == b'{"data":1}'
 
 
+# --- Static files ---
+
+
+class TestSetupStaticFiles:
+    async def test_mounts_static_files_and_adds_middleware(self, tmp_path):
+        # Create a fake frontend directory with an index.html
+        (tmp_path / "index.html").write_text("<html>hello</html>")
+
+        test_app = FastAPI()
+        main.setup_static_files(test_app, tmp_path)
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/index.html")
+        assert resp.status_code == 200
+        assert b"hello" in resp.content
+
+    async def test_no_cache_headers_on_html(self, tmp_path):
+        (tmp_path / "index.html").write_text("<html>hi</html>")
+
+        test_app = FastAPI()
+        main.setup_static_files(test_app, tmp_path)
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/index.html")
+        assert resp.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+        assert resp.headers["Pragma"] == "no-cache"
+        assert resp.headers["Expires"] == "0"
+
+    async def test_no_cache_headers_on_js(self, tmp_path):
+        (tmp_path / "app.js").write_text("console.log('hi')")
+
+        test_app = FastAPI()
+        main.setup_static_files(test_app, tmp_path)
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/app.js")
+        assert resp.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+
+    async def test_no_cache_headers_not_on_other_files(self, tmp_path):
+        (tmp_path / "image.png").write_bytes(b"\x89PNG")
+
+        test_app = FastAPI()
+        main.setup_static_files(test_app, tmp_path)
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/image.png")
+        assert "Cache-Control" not in resp.headers
+
+
 async def _async_iter(items):
     for item in items:
         yield item

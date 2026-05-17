@@ -1,6 +1,15 @@
 """Shared fixtures for backend unit tests."""
 
+import bcrypt
+
 import pytest
+
+# Pre-computed bcrypt hash for "testpass" with minimal rounds (4) to avoid
+# ~0.5s per test from the default 12 rounds.
+_TEST_PASSWORD = "testpass"
+_TEST_PASSWORD_HASH = bcrypt.hashpw(
+    _TEST_PASSWORD.encode(), bcrypt.gensalt(rounds=4)
+).decode()
 
 
 @pytest.fixture(autouse=True)
@@ -31,10 +40,8 @@ async def db(temp_data_dir):
 async def user(db):
     """Create a test user and return it."""
     import backend.user_store as us
-    import backend.auth as auth
 
-    password_hash = auth._hash_password("testpass")
-    user = await us.create_user("testuser", password_hash)
+    user = await us.create_user("testuser", _TEST_PASSWORD_HASH)
     return user
 
 
