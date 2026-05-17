@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:html' as html;
 import '../agui/agui_client.dart';
 import '../utils/backend_url.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.html) '../utils/web_helpers_web.dart';
 import '../agui/agui_events.dart';
 import 'file_upload.dart';
 import '../utils/suppress_browser_menu.dart';
@@ -216,11 +217,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         return;
       }
       final filename = isDir ? '$name.zip' : name;
-      final blob = html.Blob([response.bodyBytes]);
-      final blobUrl = html.Url.createObjectUrlFromBlob(blob);
-      final anchor = html.AnchorElement(href: blobUrl)..download = filename;
-      anchor.click();
-      html.Url.revokeObjectUrl(blobUrl);
+      downloadBytes(response.bodyBytes, filename);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -8,6 +7,8 @@ import 'package:flutter_highlight/themes/monokai-sublime.dart';
 import 'package:highlight/highlight.dart' show highlight, Node;
 import 'package:http/http.dart' as http;
 import '../utils/backend_url.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.html) '../utils/web_helpers_web.dart';
 import '../agui/agui_client.dart';
 import '../agui/agui_events.dart';
 
@@ -472,7 +473,7 @@ class _ChatPanelState extends State<ChatPanel> {
             selectable: true,
             onTapLink: (text, href, title) {
               if (href != null) {
-                html.window.open(href, '_blank');
+                openUrl(href);
               }
             },
             syntaxHighlighter: _MonokaiSyntaxHighlighter(),

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import 'package:web/web.dart' as web;
+import 'utils/web_helpers_stub.dart'
+    if (dart.library.html) 'utils/web_helpers_web.dart';
 import 'auth/auth_service.dart';
 import 'auth/login_page.dart';
 import 'workspace/workspace_list_page.dart';
@@ -34,7 +35,7 @@ class _BarkAppState extends State<BarkApp> {
         // Create router once after auth is initialized
         if (_router == null) {
           // Read initial location from browser hash fragment
-          final hash = web.window.location.hash;
+          final hash = getLocationHash();
           final initialLoc = (hash.length > 1) ? hash.substring(1) : '/';
           _router = _createRouter(auth, initialLoc);
         }

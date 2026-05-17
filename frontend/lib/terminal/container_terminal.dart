@@ -5,7 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:xterm/xterm.dart';
 import '../agui/agui_client.dart';
 import '../agui/agui_events.dart';
-import 'dart:html' as html;
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.html) '../utils/web_helpers_web.dart';
 
 const _theme = TerminalTheme(
   cursor: Color(0xFF5B8C5A),
@@ -160,15 +161,7 @@ class ContainerTerminalState extends State<ContainerTerminal> {
           autofocus: false,
           autoResize: true,
           onSecondaryTapDown: (details, offset) {
-            // Suppress the browser context menu for this click
-            void suppress(html.Event e) {
-              e.preventDefault();
-            }
-
-            html.document.addEventListener('contextmenu', suppress);
-            Future.delayed(const Duration(milliseconds: 100), () {
-              html.document.removeEventListener('contextmenu', suppress);
-            });
+            suppressContextMenuBriefly();
             // Build menu items based on whether text is selected
             final hasSelection = _controller.selection != null;
             final items = <PopupMenuEntry<String>>[

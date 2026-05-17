@@ -115,6 +115,11 @@
     exec npx playwright test "$@"
   '';
 
+  scripts.test-frontend.exec = ''
+    cd $DEVENV_ROOT/frontend
+    exec flutter test "$@"
+  '';
+
   # --- Pre-commit hooks ---
   git-hooks.hooks = {
     # Python: ruff lint + format

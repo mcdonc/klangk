@@ -367,7 +367,7 @@ devenv shell -- test-backend tests/unit/backend/test_auth.py
 devenv shell -- test-backend -k 'test_login_success'
 ```
 
-402 tests with 100% line coverage across all backend modules: auth, user_store, workspace_manager, container_manager, file_service, agui_translator, pi_rpc_client, terminal_manager, ws_handler, api, and main. Tests use real SQLite databases in pytest temp directories (no mocking of the database layer). Docker and subprocess interactions are mocked. Each test gets its own isolated temp directory — multiple test processes can run in parallel without conflicts. Coverage report is printed automatically.
+100% line coverage across all backend modules. Tests use real SQLite databases in pytest temp directories (no mocking of the database layer). Docker and subprocess interactions are mocked. Each test gets its own isolated temp directory — multiple test processes can run in parallel without conflicts. Coverage report is printed automatically.
 
 **E2E tests** (Playwright, requires running devenv processes):
 
@@ -390,6 +390,18 @@ devenv shell -- test-e2e --reporter=list
 
 Tests run against `http://localhost:8997` using system Chrome. They cover login (success and failure), workspace creation/deletion, terminal input, file tab switching, file upload/rename/delete via API, folder upload with zip download round-trip, an LLM integration test (agent builds a pong game and returns a hosted URL), and logout. Flutter Web renders to canvas, so UI interaction uses coordinate-based clicks on `<flutter-view>`. The agent integration test creates a fresh workspace and cleans it up afterward; it requires a working LLM provider and can take 1–3 minutes.
 
+**Frontend unit tests** (Dart/Flutter, no browser required):
+
+```bash
+# Run all frontend tests (devenv script)
+devenv shell -- test-frontend
+
+# Run a single test file
+devenv shell -- test-frontend test/agui_events_test.dart
+```
+
+Tests cover agui events, tool plugin registry, auth service, output panel, IDE layout, agui client, login page, file upload, file viewer panel, chat panel, container terminal, workspace list page, and bark logo. Browser-only APIs (`dart:html`, `dart:js_interop`) are abstracted via conditional imports (`web_helpers_stub.dart`/`web_helpers_web.dart`) so tests run in VM mode without a browser.
+
 ### Pre-commit Hooks
 
 Pre-commit hooks run automatically on `git commit` via [git-hooks.nix](https://github.com/cachix/git-hooks.nix):
@@ -404,7 +416,10 @@ Hooks are installed automatically when entering the devenv shell.
 
 ### CI
 
-Backend tests run automatically on GitHub Actions (`.github/workflows/backend-tests.yml`) for PRs and pushes to main that touch `backend/`, `tests/unit/backend/`, or `pytest.ini`.
+GitHub Actions run automatically on PRs and pushes to main:
+
+- **Backend tests** (`.github/workflows/backend-tests.yml`) — triggered by changes to `backend/`, `tests/unit/backend/`, or `pytest.ini`
+- **Frontend tests** (`.github/workflows/frontend-tests.yml`) — triggered by changes to `frontend/lib/`, `frontend/test/`, or `frontend/pubspec.yaml`
 
 ### Plugin System
 
@@ -542,3 +557,8 @@ nginx reverse proxy (port 8995)
 - **User dotfile customization**: Allow users to customize their container shell environment (`.bashrc`, `.vimrc`, `.emacs`, `.gitconfig`, etc.). Options: bind-mount a per-user dotfiles directory from the host into `/home/bark`, or provide a UI for editing dotfiles that persist across container restarts. Currently `/home/bark` is a tmpfs regenerated each start, so any customization is lost.
 - **Investigate running Pi under bubblewrap**: Explore using [bubblewrap](https://github.com/containers/bubblewrap) (bwrap) as an alternative to Docker for sandboxing Pi. Bubblewrap is lighter-weight than Docker — no daemon, no image builds, no container overhead — and provides namespace-based isolation (mount, PID, network, user). This could significantly reduce startup time and resource usage. Trade-offs: no pre-built image caching, need to manage tool installations on the host, less isolation than full container. Could be offered as an alternative backend alongside Docker.
 - **Remove leading underscores from internal functions**: Functions like `_handle_prompt`, `_forward_events`, `_cleanup_connection`, `_derive_hosting_info`, etc. in `ws_handler.py` and helper functions in other modules use leading underscores to signal "module-private". Since these are now tested directly via imports, the underscores are unnecessary and make the test imports look odd. Rename to drop the underscores.
+- **Dart/Flutter unit tests**: Add widget and unit tests for the Flutter frontend. Key areas to cover: `AguiClient` (WebSocket connection, event parsing), `AuthService` (token storage, login/logout), `ToolPluginRegistry` (plugin dispatch), `FileViewerPanelState` (navigation, refresh, breadcrumbs), and `ChatPanel` (message rendering, input handling). Use `flutter test` with `mockito` or manual mocks for WebSocket and HTTP dependencies.
+- **Rename backend package**: Change the Python package name from `backend` to `bark_backend` for consistency with the frontend (`bark_frontend`) and to avoid conflicts with generic module names. Move backend tests from `tests/unit/backend/` to `tests/backend/`.
+- **Test workspace_page.dart and app.dart**: `workspace_page.dart` imports the gitignored `plugins_generated.dart`, making it untestable on a clean checkout. Options: commit a stub `plugins_generated.dart` that returns `[]` (codegen overwrites it), or make the import conditional. `app.dart` needs GoRouter/navigation mocking.
+- **Clipboard image paste in chat**: Investigate whether Pi supports image inputs and, if so, allow pasting images from the clipboard into the chat input field. Would need to intercept paste events, detect image MIME types, convert to a format Pi can accept (base64 or URL), and pass via the `images` parameter of `prompt()`.
+- **Hosted app URLs should respect external headers**: The `get_hosted_url` tool generates URLs using `BARK_HOSTING_*` env vars passed to the container. These are derived from `X-Forwarded-Host`/`X-Forwarded-Proto` headers at WebSocket connect time, but if the hosting environment changes (e.g., different reverse proxy), the container's cached values become stale. Consider re-deriving hosting info on each `get_hosted_url` call or providing a mechanism to update the container's env vars without restart.
