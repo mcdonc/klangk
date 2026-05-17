@@ -1,4 +1,5 @@
 import { test, expect, Page, APIRequestContext } from '@playwright/test';
+import AdmZip from 'adm-zip';
 
 const USER = process.env.BARK_TEST_USER || 'admin';
 const PASS = process.env.BARK_TEST_PASS || 'admin';
@@ -373,6 +374,159 @@ test.describe('Bark E2E', () => {
     files = await listResp.json();
     names = files.map((f: any) => f.name);
     expect(names).not.toContain(renamedName);
+  });
+
+  test('folder upload and zip download round-trip', async ({ request }) => {
+    const token = await getAuthToken(request);
+    const workspaceId = await getFirstWorkspaceId(request, token);
+    const headers = { Authorization: `Bearer ${token}` };
+    const folder = 'test-folder';
+
+    const testFiles: Record<string, string> = {
+      [`${folder}/readme.txt`]: 'This is a readme file.',
+      [`${folder}/data.csv`]: 'name,age\nAlice,30\nBob,25',
+      [`${folder}/sub/nested.txt`]: 'Nested file content here.',
+    };
+
+    // Upload each file into the folder structure
+    for (const [filePath, content] of Object.entries(testFiles)) {
+      const resp = await request.post(
+        `${API_BASE}/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(filePath)}`,
+        {
+          headers,
+          multipart: {
+            file: {
+              name: filePath.split('/').pop()!,
+              mimeType: 'text/plain',
+              buffer: Buffer.from(content),
+            },
+          },
+        },
+      );
+      expect(resp.ok()).toBeTruthy();
+    }
+
+    // Verify folder appears in listing
+    const listResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
+      { headers },
+    );
+    expect(listResp.ok()).toBeTruthy();
+    const entries = await listResp.json();
+    const names = entries.map((e: any) => e.name);
+    expect(names).toContain(folder);
+
+    // Download folder as zip
+    const dlResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(folder)}`,
+      { headers },
+    );
+    expect(dlResp.ok()).toBeTruthy();
+    const zipBuf = Buffer.from(await dlResp.body());
+
+    // Parse zip and verify contents match
+    const zip = new AdmZip(zipBuf);
+    const zipEntries = zip.getEntries();
+    const zipFiles: Record<string, string> = {};
+    for (const entry of zipEntries) {
+      if (!entry.isDirectory) {
+        zipFiles[entry.entryName] = entry.getData().toString('utf8');
+      }
+    }
+
+    // Zip paths are relative to the downloaded folder
+    expect(zipFiles['readme.txt']).toBe(testFiles[`${folder}/readme.txt`]);
+    expect(zipFiles['data.csv']).toBe(testFiles[`${folder}/data.csv`]);
+    expect(zipFiles['sub/nested.txt']).toBe(testFiles[`${folder}/sub/nested.txt`]);
+    expect(Object.keys(zipFiles)).toHaveLength(3);
+
+    // Clean up — delete the folder
+    const delResp = await request.delete(
+      `${API_BASE}/workspaces/${workspaceId}/files?path=${encodeURIComponent(folder)}`,
+      { headers },
+    );
+    expect(delResp.ok()).toBeTruthy();
+  });
+
+  test('agent creates pong game with hosted URL', async ({ page, request }) => {
+    test.setTimeout(300_000); // LLM interaction can be slow
+
+    const token = await getAuthToken(request);
+    const headers = { Authorization: `Bearer ${token}` };
+
+    // Create a fresh workspace for this test
+    const createResp = await request.post(
+      `${API_BASE}/workspaces?name=e2e-pong-test`,
+      { headers },
+    );
+    expect(createResp.ok()).toBeTruthy();
+    const workspace = await createResp.json();
+    const workspaceId = workspace.id;
+
+    try {
+      // Navigate to the new workspace
+      await login(page);
+      await page.goto(`#/workspace/${workspaceId}`);
+      await page.waitForTimeout(10000); // wait for container to start
+
+      // Click chat input and type the prompt
+      const { height } = vp(page);
+      const f = fv(page);
+      const chatInputX = 240;
+      const chatInputY = height - 30;
+
+      await f.click({ position: { x: chatInputX, y: chatInputY }, force: true });
+      await page.waitForTimeout(500);
+      await page.keyboard.type(
+        'write me a javascript application that creates a pong game and serve it through a node web server',
+      );
+      await page.waitForTimeout(300);
+      await page.keyboard.press('Enter');
+
+      // Poll until files appear (agent wrote code into the empty workspace)
+      let hasFiles = false;
+      for (let i = 0; i < 60; i++) {
+        await page.waitForTimeout(5000);
+        const listResp = await request.get(
+          `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
+          { headers },
+        );
+        if (listResp.ok()) {
+          const entries = await listResp.json();
+          if (entries.length > 0) {
+            hasFiles = true;
+            break;
+          }
+        }
+      }
+      expect(hasFiles).toBeTruthy();
+
+      // Poll messages for an assistant response containing a hosted URL
+      let hostedUrl = false;
+      for (let i = 0; i < 60; i++) {
+        const msgResp = await request.get(
+          `${API_BASE}/workspaces/${workspaceId}/messages`,
+          { headers },
+        );
+        if (msgResp.ok()) {
+          const messages = await msgResp.json();
+          const match = messages.find(
+            (m: any) =>
+              m.entry_type === 'assistant' &&
+              /https?:\/\/localhost:\d+\/(bark\/)?hosted\//.test(m.content ?? ''),
+          );
+          if (match) {
+            hostedUrl = true;
+            break;
+          }
+        }
+        await page.waitForTimeout(5000);
+      }
+      expect(hostedUrl).toBeTruthy();
+    } finally {
+      // Clean up: delete the test workspace
+      await request.delete(`${API_BASE}/workspaces/${workspaceId}`, { headers });
+    }
   });
 
   test('logout returns to login page', async ({ page }) => {
