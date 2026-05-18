@@ -86,7 +86,7 @@ async def delete_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     if workspace.get("container_id"):
-        await container_manager.remove_container(workspace["container_id"])
+        await container_manager.stop_and_remove_container(workspace["container_id"])
 
     deleted = await workspace_manager.delete_workspace(workspace_id, user["id"])
     if not deleted:  # pragma: no cover — race between get and delete

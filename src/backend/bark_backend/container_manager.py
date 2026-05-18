@@ -209,29 +209,16 @@ async def attach_container(container_id: str) -> aiodocker.stream.Stream:
     return stream
 
 
-async def stop_container(container_id: str) -> None:
-    """Stop a running container. Ports are kept allocated for restart."""
-    docker = await get_docker()
-    try:
-        container = await docker.containers.get(container_id)
-        await container.stop()
-        logger.info("Stopped container %s", container_id)
-    except aiodocker.exceptions.DockerError as e:
-        logger.warning("Failed to stop container %s: %s", container_id, e)
-
-    _containers.pop(container_id, None)
-
-
-async def remove_container(container_id: str) -> None:
-    """Stop and remove a container."""
+async def stop_and_remove_container(container_id: str) -> None:
+    """Stop and remove a container. Ports are kept allocated for restart."""
     docker = await get_docker()
     try:
         container = await docker.containers.get(container_id)
         await container.stop()
         await container.delete(force=True)
-        logger.info("Removed container %s", container_id)
+        logger.info("Stopped container %s", container_id)
     except aiodocker.exceptions.DockerError as e:
-        logger.warning("Failed to remove container %s: %s", container_id, e)
+        logger.warning("Failed to stop container %s: %s", container_id, e)
 
     _containers.pop(container_id, None)
 
@@ -241,7 +228,7 @@ async def stop_user_containers(user_id: str) -> None:
     workspaces = await user_store.get_user_workspaces_with_containers(user_id)
     for ws in workspaces:
         if ws["container_id"]:
-            await stop_container(ws["container_id"])
+            await stop_and_remove_container(ws["container_id"])
 
 
 def _track_activity(container_id: str, workspace_id: str) -> None:
@@ -287,7 +274,7 @@ async def _cleanup_idle_containers() -> None:
                     await cb(wid)
                 except Exception as e:
                     logger.error("Idle callback error: %s", e)
-            await stop_container(cid)
+            await stop_and_remove_container(cid)
 
 
 def start_cleanup_loop() -> None:
@@ -310,7 +297,7 @@ async def shutdown() -> None:
         _cleanup_task.cancel()
         _cleanup_task = None
     # Stop all tracked containers in parallel
-    tasks = [stop_container(cid) for cid in list(_containers.keys())]
+    tasks = [stop_and_remove_container(cid) for cid in list(_containers.keys())]
     # Also stop any orphaned bark containers (not in _containers but have our label)
     try:
         docker = await get_docker()
@@ -319,8 +306,8 @@ async def shutdown() -> None:
         )
         for c in containers:
             if c.id not in _containers:
-                logger.info("Stopping orphaned bark container %s", c.id)
-                tasks.append(c.stop())
+                logger.info("Removing orphaned bark container %s", c.id)
+                tasks.append(c.delete(force=True))
     except (aiodocker.exceptions.DockerError, OSError) as e:
         logger.warning("Error listing orphaned containers: %s", e)
     if tasks:

@@ -120,7 +120,7 @@ class TestWorkspaceRoutes:
         ws_id = create_resp.json()["id"]
 
         with patch.object(
-            api.container_manager, "remove_container", new_callable=AsyncMock
+            api.container_manager, "stop_and_remove_container", new_callable=AsyncMock
         ):
             resp = await client.delete(f"/workspaces/{ws_id}", headers=headers)
         assert resp.status_code == 200
@@ -141,7 +141,7 @@ class TestWorkspaceRoutes:
         await user_store.update_workspace_container(ws_id, "fake-container-id")
 
         with patch.object(
-            api.container_manager, "remove_container", new_callable=AsyncMock
+            api.container_manager, "stop_and_remove_container", new_callable=AsyncMock
         ) as mock_rm:
             resp = await client.delete(f"/workspaces/{ws_id}", headers=headers)
         assert resp.status_code == 200

@@ -40,14 +40,14 @@ async function globalTeardown() {
     }
   }
 
-  // Stop any containers that survived shutdown
+  // Remove any containers that survived shutdown (including stopped ones holding ports)
   try {
-    const ids = execSync('docker ps --filter "label=bark.managed=true" -q')
+    const ids = execSync('docker ps -a --filter "label=bark.managed=true" -q')
       .toString()
       .trim();
     if (ids) {
-      execSync(`docker stop ${ids}`);
-      console.log("Stopped leftover bark containers");
+      execSync(`docker rm -f ${ids}`);
+      console.log("Removed leftover bark containers");
     }
   } catch {
     // Docker not available or no containers

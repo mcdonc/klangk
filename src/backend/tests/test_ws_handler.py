@@ -962,7 +962,9 @@ class TestHandleWorkspaceDisconnect:
         state["container_id"] = "cid"
         state["workspace_id"] = "ws-1"
 
-        with patch.object(container_manager, "stop_container", new_callable=AsyncMock):
+        with patch.object(
+            container_manager, "stop_and_remove_container", new_callable=AsyncMock
+        ):
             await _handle_workspace_disconnect(ws, state)
 
         assert state["workspace_id"] is None
@@ -1243,7 +1245,7 @@ class TestHandleWebsocketDispatch:
             ),
             patch.object(container_manager, "get_workspace_ports", return_value=[]),
             patch.object(
-                container_manager, "stop_container", new_callable=AsyncMock
+                container_manager, "stop_and_remove_container", new_callable=AsyncMock
             ) as mock_stop,
         ):
             await handle_websocket(ws)
@@ -1278,7 +1280,7 @@ class TestHandleWebsocketDispatch:
             patch.object(container_manager, "get_workspace_ports", return_value=[]),
             patch.object(
                 container_manager,
-                "stop_container",
+                "stop_and_remove_container",
                 new_callable=AsyncMock,
                 side_effect=OSError("stop failed"),
             ),
@@ -1456,7 +1458,9 @@ class TestHandleWebsocket:
                 ws_handler, "_start_workspace_container", side_effect=fake_start
             ),
             patch.object(container_manager, "get_workspace_ports", return_value=[]),
-            patch.object(container_manager, "stop_container", new_callable=AsyncMock),
+            patch.object(
+                container_manager, "stop_and_remove_container", new_callable=AsyncMock
+            ),
         ):
             await handle_websocket(ws)
 

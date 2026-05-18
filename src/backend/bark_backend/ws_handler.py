@@ -102,7 +102,7 @@ async def handle_websocket(ws: WebSocket) -> None:
         await _cleanup_connection(ws, conn_state)
         if container_id:
             try:
-                await container_manager.stop_container(container_id)
+                await container_manager.stop_and_remove_container(container_id)
             except (OSError, RuntimeError, ConnectionError) as e:
                 logger.error("Error stopping container on disconnect: %s", e)
         _connections.pop(ws, None)
@@ -263,7 +263,7 @@ async def _handle_workspace_disconnect(ws: WebSocket, state: dict) -> None:
     container_id = state.get("container_id")
     await _cleanup_connection(ws, state)
     if container_id:
-        await container_manager.stop_container(container_id)
+        await container_manager.stop_and_remove_container(container_id)
     state["workspace_id"] = None
     state["container_id"] = None
     state["pi_client"] = None

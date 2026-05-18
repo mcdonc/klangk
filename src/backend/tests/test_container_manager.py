@@ -393,7 +393,7 @@ class TestStopContainer:
         }
 
         with patch.object(container_manager, "get_docker", return_value=mock_docker):
-            await container_manager.stop_container("cid")
+            await container_manager.stop_and_remove_container("cid")
         mock_c.stop.assert_awaited_once()
         assert "cid" not in container_manager._containers
 
@@ -408,7 +408,7 @@ class TestStopContainer:
         }
 
         with patch.object(container_manager, "get_docker", return_value=mock_docker):
-            await container_manager.stop_container("cid")
+            await container_manager.stop_and_remove_container("cid")
         # Should still remove from tracking
         assert "cid" not in container_manager._containers
 
@@ -430,7 +430,7 @@ class TestRemoveContainer:
         }
 
         with patch.object(container_manager, "get_docker", return_value=mock_docker):
-            await container_manager.remove_container("cid")
+            await container_manager.stop_and_remove_container("cid")
         mock_c.stop.assert_awaited_once()
         mock_c.delete.assert_awaited_once_with(force=True)
         assert "cid" not in container_manager._containers
@@ -446,7 +446,7 @@ class TestRemoveContainer:
         }
 
         with patch.object(container_manager, "get_docker", return_value=mock_docker):
-            await container_manager.remove_container("cid")
+            await container_manager.stop_and_remove_container("cid")
         assert "cid" not in container_manager._containers
 
 
@@ -518,7 +518,7 @@ class TestShutdown:
         with patch.object(container_manager, "get_docker", return_value=mock_docker):
             container_manager._docker = mock_docker
             await container_manager.shutdown()
-        orphan.stop.assert_awaited_once()
+        orphan.delete.assert_awaited_once()
 
     async def test_shutdown_cancels_cleanup_task(self):
         mock_docker = _mock_docker()
@@ -552,20 +552,20 @@ class TestShutdown:
             await container_manager.shutdown()
         assert container_manager._cleanup_task is None
 
-    async def test_shutdown_orphan_stop_error(self):
-        """Orphan container that raises on stop is handled gracefully."""
+    async def test_shutdown_orphan_delete_error(self):
+        """Orphan container that raises on delete is handled gracefully."""
         mock_docker = _mock_docker()
         orphan = _mock_container("orphan-cid")
-        orphan.stop = AsyncMock(
-            side_effect=aiodocker.exceptions.DockerError(500, "stop failed")
+        orphan.delete = AsyncMock(
+            side_effect=aiodocker.exceptions.DockerError(500, "delete failed")
         )
         mock_docker.containers.list = AsyncMock(return_value=[orphan])
 
         with patch.object(container_manager, "get_docker", return_value=mock_docker):
             container_manager._docker = mock_docker
             await container_manager.shutdown()
-        # Should have attempted to stop and not raised
-        orphan.stop.assert_awaited_once()
+        # Should have attempted to delete and not raised
+        orphan.delete.assert_awaited_once()
         mock_docker.close.assert_awaited_once()
 
 

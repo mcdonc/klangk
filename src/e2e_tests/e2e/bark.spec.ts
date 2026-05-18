@@ -60,6 +60,24 @@ function vp(page: Page) {
   return page.viewportSize() || { width: 1280, height: 720 };
 }
 
+/** Click the terminal area, wait for it to be interactive, then type a command and press Enter. */
+async function terminalType(
+  page: Page,
+  command: string,
+  termX?: number,
+  termY?: number,
+) {
+  const { width, height } = vp(page);
+  const x = termX ?? (492 + width) / 2;
+  const y = termY ?? height / 2;
+  const f = fv(page);
+
+  await f.click({ position: { x, y }, force: true });
+  await page.waitForTimeout(2000);
+  await page.keyboard.type(command);
+  await page.keyboard.press("Enter");
+}
+
 async function login(page: Page) {
   await page.goto("");
   await waitForFlutter(page);
@@ -262,10 +280,12 @@ test.describe("Bark E2E", () => {
 
       const termX = rightCenter;
       const termY = 200;
-      await f.click({ position: { x: termX, y: termY }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type("echo tab-switch-ok > /workspace/.tab-test");
-      await page.keyboard.press("Enter");
+      await terminalType(
+        page,
+        "echo tab-switch-ok > /workspace/.tab-test",
+        termX,
+        termY,
+      );
       await waitForFile(request, workspaceId, ".tab-test", headers);
 
       const readResp = await request.get(
@@ -294,12 +314,12 @@ test.describe("Bark E2E", () => {
       const termX = (492 + width) / 2;
       const termY = height / 2;
 
-      await f.click({ position: { x: termX, y: termY }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type(
+      await terminalType(
+        page,
         "echo playwright-terminal-test > /workspace/.term-test",
+        termX,
+        termY,
       );
-      await page.keyboard.press("Enter");
       await waitForFile(request, workspaceId, ".term-test", headers);
 
       const readResp = await request.get(
@@ -389,10 +409,7 @@ test.describe("Bark E2E", () => {
       const termX = (492 + width) / 2;
       const termY = height / 2;
 
-      await f.click({ position: { x: termX, y: termY }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type('echo "foo" > /workspace/foo.txt');
-      await page.keyboard.press("Enter");
+      await terminalType(page, 'echo "foo" > /workspace/foo.txt', termX, termY);
       await waitForFile(request, workspaceId, "foo.txt", headers);
 
       const readResp = await request.get(
@@ -846,14 +863,13 @@ test.describe("Bark E2E", () => {
       const termY = height / 2;
 
       // Click in terminal
-      await f.click({ position: { x: termX, y: termY }, force: true });
-      await page.waitForTimeout(500);
-
       // Run a multi-command sequence
-      await page.keyboard.type(
+      await terminalType(
+        page,
         "mkdir -p /workspace/.e2e-multitest/sub && echo done > /workspace/.e2e-multitest/sub/result.txt",
+        termX,
+        termY,
       );
-      await page.keyboard.press("Enter");
       await waitForFile(
         request,
         workspaceId,
@@ -904,12 +920,12 @@ test.describe("Bark E2E", () => {
       // Terminal should still work — run a command
       const termX = rightCenter;
       const termY = 200;
-      await f.click({ position: { x: termX, y: termY }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type(
+      await terminalType(
+        page,
         "echo tab-survive-test > /workspace/.tab-survive",
+        termX,
+        termY,
       );
-      await page.keyboard.press("Enter");
       await waitForFile(request, workspaceId, ".tab-survive", headers);
 
       const readResp = await request.get(
@@ -1170,12 +1186,12 @@ test.describe("Bark E2E", () => {
       const { width, height } = vp(page);
       const f = fv(page);
       const termX = (492 + width) / 2;
-      await f.click({ position: { x: termX, y: 200 }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type(
+      await terminalType(
+        page,
         "mkdir -p /workspace/.e2e-nav/inner && echo nav-test > /workspace/.e2e-nav/inner/file.txt",
+        termX,
+        200,
       );
-      await page.keyboard.press("Enter");
       await waitForFile(
         request,
         workspaceId,
