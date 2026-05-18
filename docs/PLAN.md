@@ -62,13 +62,13 @@ bark/
     update_plugins.py          # Fetches plugins from git repos, writes plugins.lock
     stub_dart_plugins.sh       # Creates minimal bark_plugins stub for first-time checkout / CI
     flutterbuildweb.sh         # Flutter build: plugin auto-fetch, codegen, flutter build web
-    dockerbuild.sh             # Docker build: plugin staging, container cleanup, workspace image build (named build contexts)
+    dockerbuild.sh             # Docker build: pull latest base image, plugin staging, container cleanup, workspace image build (named build contexts)
     dockerbuild-base.sh        # Build and push base Docker image to GHCR
     nginx.sh                   # nginx reverse proxy: config generation and exec
 
   src/dockerimage/
     Dockerfile                  # Workspace image: FROM bark-pi-base + plugin extensions + tools + entrypoint
-    Dockerfile.base             # Base image: node:22-slim + Pi + Python3 + build-essential + SQLite + vim + emacs + net tools (pushed to GHCR)
+    Dockerfile.base             # Base image: node:22-slim + Pi + Python3 + build-essential + SQLite + vim + emacs + net tools + /bin/sh→bash (pushed to GHCR)
     entrypoint.sh               # Sets up Pi config (FIFO for models.json, system prompt), starts Pi in RPC mode
     system-prompt.md            # Static system prompt for Pi (copied into image)
     builtin-extensions/         # Built-in Pi extensions (port-map.ts, etc.) — not from plugins
@@ -165,7 +165,8 @@ bark/
 - API key delivered via `models.json` FIFO (named pipe, written once at startup, deleted after Pi reads it — key never persists on disk)
 - Both config FIFOs written by a `nohup` background process that survives the `exec` to Pi — settings.json is written first (Pi's SettingsManager reads it), then models.json (Pi's ModelRegistry reads it)
 - All provider env vars (`OLLAMA_*`, `ANTHROPIC_*`, etc.) stripped from Pi's process environment before exec
-- System prompt stored as `src/dockerimage/system-prompt.md`, copied into image at build time
+- `/bin/sh` symlinked to `/bin/bash` in the base image so Pi's bash tool supports bashisms (`source`, etc.)
+- System prompt (`src/dockerimage/system-prompt.md`) copied into image at build time. Instructs the agent to: create virtualenvs for Python projects, run `npm init` for Node projects, background long-running servers, always use `get_hosted_url` for fresh URLs, show full URLs as link text, and warn users that container restarts kill running processes
 - 30-minute idle timeout (configurable via `BARK_IDLE_TIMEOUT_SECONDS`) with automatic container stop, debug notification, and terminal overlay with restart button. Activity is recorded on user actions (prompt, steer, terminal input) and on every Pi event (tool calls, text streaming), so containers stay alive during long-running LLM requests as long as events are flowing. Stuck tool executions (e.g., foreground server) produce no events and will eventually time out.
 - All user containers stopped on logout and backend shutdown
 - Read-only root filesystem (`ReadonlyRootfs: True`) — the agent cannot modify system files or install packages outside the workspace. Writable paths:
