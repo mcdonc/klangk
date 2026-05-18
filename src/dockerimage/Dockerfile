@@ -16,20 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim \
     emacs-nox \
     sqlite3 \
-    postgresql \
     unzip \
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Node/npm already present from base image
 RUN npm install -g @mariozechner/pi-coding-agent
-
-# Rust via rustup — minimal profile (no docs, clippy, or rustfmt)
-ENV RUSTUP_HOME=/opt/rust/rustup
-ENV CARGO_HOME=/opt/rust/cargo
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
-    && rm -rf /opt/rust/rustup/downloads /opt/rust/rustup/tmp
-ENV PATH="/opt/rust/cargo/bin:$PATH"
 
 # Create bark user with host UID/GID (passed as build args)
 ARG BARK_UID=1000
