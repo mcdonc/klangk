@@ -59,5 +59,46 @@ void main() {
       expect(find.text('testuser'), findsOneWidget);
       expect(find.text('testpass'), findsOneWidget);
     });
+
+    testWidgets('toggle switches between login and register', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Login'), findsWidgets);
+
+      await tester.tap(find.textContaining('Register'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Register'), findsWidgets);
+      expect(find.textContaining('Login'), findsWidgets);
+    });
+
+    testWidgets('shows Bark logo', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.pets), findsOneWidget);
+    });
+
+    testWidgets('shows Web Coding Agent subtitle', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Web Coding Agent'), findsOneWidget);
+    });
+
+    testWidgets('username validation requires 3 chars', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'ab');
+      await tester.enterText(fields.last, 'password');
+
+      await tester.tap(find.text('Login'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Min 3'), findsOneWidget);
+    });
   });
 }

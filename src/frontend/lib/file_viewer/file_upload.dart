@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 
+/// Override for testing — intercepts multipart upload requests.
+/// Return a status code. If null, uses real HTTP.
+Future<int> Function(String url, Map<String, String> headers, String filename,
+    List<int> bytes)? testUploadOverride;
+
 class FileDropZone extends StatefulWidget {
   final String workspaceId;
   final String? authToken;
@@ -22,10 +27,10 @@ class FileDropZone extends StatefulWidget {
   });
 
   @override
-  State<FileDropZone> createState() => _FileDropZoneState();
+  FileDropZoneState createState() => FileDropZoneState();
 }
 
-class _FileDropZoneState extends State<FileDropZone> {
+class FileDropZoneState extends State<FileDropZone> {
   String get _baseUrl => baseUrl;
   bool _dragging = false;
   bool _uploading = false;
@@ -34,14 +39,14 @@ class _FileDropZoneState extends State<FileDropZone> {
 
   /// Recursively collect all files from drop items, preserving directory paths.
   /// Returns a list of (relativePath, DropItem) pairs.
-  List<(String, DropItem)> _collectFiles(List<DropItem> items, String prefix) {
+  List<(String, DropItem)> collectFiles(List<DropItem> items, String prefix) {
     final result = <(String, DropItem)>[];
     for (final item in items) {
       final path = prefix.isEmpty
           ? (item.name ?? 'unnamed')
           : '$prefix/${item.name ?? 'unnamed'}';
       if (item is DropItemDirectory) {
-        result.addAll(_collectFiles(item.children, path));
+        result.addAll(collectFiles(item.children, path));
       } else {
         result.add((path, item));
       }
@@ -49,7 +54,7 @@ class _FileDropZoneState extends State<FileDropZone> {
     return result;
   }
 
-  Future<void> _uploadFiles(DropDoneDetails details) async {
+  Future<void> uploadFiles(DropDoneDetails details) async {
     // Check for name conflicts with existing entries
     final existingNames =
         widget.currentEntries.map((e) => e['name'] as String).toSet();
@@ -71,7 +76,7 @@ class _FileDropZoneState extends State<FileDropZone> {
       return;
     }
 
-    final files = _collectFiles(details.files, '');
+    final files = collectFiles(details.files, '');
     if (files.isEmpty) return;
 
     setState(() {
@@ -83,19 +88,28 @@ class _FileDropZoneState extends State<FileDropZone> {
     for (final (path, file) in files) {
       try {
         final bytes = await file.readAsBytes();
-        final request = http.MultipartRequest(
-          'POST',
-          Uri.parse(
-              '$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(widget.currentPath == '.' ? path : '${widget.currentPath}/$path')}'),
-        );
+        final uploadPath =
+            widget.currentPath == '.' ? path : '${widget.currentPath}/$path';
+        final url =
+            '$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(uploadPath)}';
+        final headers = <String, String>{};
         if (widget.authToken != null) {
-          request.headers['Authorization'] = 'Bearer ${widget.authToken}';
+          headers['Authorization'] = 'Bearer ${widget.authToken}';
         }
-        request.files.add(http.MultipartFile.fromBytes('file', bytes,
-            filename: file.name ?? 'unnamed'));
-        final response = await request.send();
-        if (response.statusCode != 200) {
-          debugPrint('Upload failed: ${response.statusCode} for $path');
+        int statusCode;
+        if (testUploadOverride != null) {
+          statusCode = await testUploadOverride!(
+              url, headers, file.name ?? 'unnamed', bytes);
+        } else {
+          final request = http.MultipartRequest('POST', Uri.parse(url));
+          request.headers.addAll(headers);
+          request.files.add(http.MultipartFile.fromBytes('file', bytes,
+              filename: file.name ?? 'unnamed'));
+          final response = await request.send();
+          statusCode = response.statusCode;
+        }
+        if (statusCode != 200) {
+          debugPrint('Upload failed: $statusCode for $path');
         }
       } catch (e) {
         debugPrint('Upload error for $path: $e');
@@ -117,7 +131,7 @@ class _FileDropZoneState extends State<FileDropZone> {
       onDragExited: (_) => setState(() => _dragging = false),
       onDragDone: (details) {
         setState(() => _dragging = false);
-        _uploadFiles(details);
+        uploadFiles(details);
       },
       child: Stack(
         children: [

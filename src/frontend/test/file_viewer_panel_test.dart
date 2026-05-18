@@ -175,5 +175,195 @@ void main() {
       expect(callCount, greaterThan(initialCalls));
       client.close();
     });
+
+    testWidgets('clicking folder navigates into it', (tester) async {
+      testHttpClientOverride = MockClient((request) async {
+        final path = request.url.queryParameters['path'] ?? '.';
+        if (path == '.') {
+          return http.Response(
+            jsonEncode([
+              {
+                'name': 'subdir',
+                'path': 'subdir',
+                'is_dir': true,
+                'size': null
+              },
+            ]),
+            200,
+          );
+        } else if (path == 'subdir') {
+          return http.Response(
+            jsonEncode([
+              {
+                'name': 'inner.txt',
+                'path': 'subdir/inner.txt',
+                'is_dir': false,
+                'size': 5
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FileViewerPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Click on the folder
+      await tester.tap(find.text('subdir'));
+      await tester.pumpAndSettle();
+
+      // Should now show the inner file
+      expect(find.text('inner.txt'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('clicking file shows content', (tester) async {
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/content')) {
+          return http.Response(
+            jsonEncode({'path': 'test.txt', 'content': 'file content here'}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/files')) {
+          return http.Response(
+            jsonEncode([
+              {
+                'name': 'test.txt',
+                'path': 'test.txt',
+                'is_dir': false,
+                'size': 17
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FileViewerPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('test.txt'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('file content here'), findsOneWidget);
+      // Back button should appear
+      expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('shows file sizes', (tester) async {
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/files')) {
+          return http.Response(
+            jsonEncode([
+              {
+                'name': 'big.txt',
+                'path': 'big.txt',
+                'is_dir': false,
+                'size': 1024
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FileViewerPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('1024'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('shows folder icon for directories', (tester) async {
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/files')) {
+          return http.Response(
+            jsonEncode([
+              {'name': 'mydir', 'path': 'mydir', 'is_dir': true, 'size': null},
+              {'name': 'myfile', 'path': 'myfile', 'is_dir': false, 'size': 10},
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FileViewerPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Should have folder icons for dirs and file icons for files
+      expect(find.byIcon(Icons.folder), findsWidgets);
+      expect(find.byIcon(Icons.insert_drive_file), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('shows upload hint', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FileViewerPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('upload'), findsWidgets);
+      client.close();
+    });
   });
 }

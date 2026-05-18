@@ -126,12 +126,13 @@ Sample plugins (celebrate, beep, pig-latin, word-count) are included in the gene
 
 Each plugin directory can contain:
 
-| File           | Purpose                                                           |
-| -------------- | ----------------------------------------------------------------- |
-| `extension.ts` | Pi extension (TypeScript) — registered as an LLM-callable tool    |
-| `plugin.dart`  | Dart plugin class — handles client-side execution and optional UI |
-| `*.dart`       | Supporting Dart files (widgets, utilities)                        |
-| `tools/`       | Server-side scripts copied into the Docker image                  |
+| File                   | Purpose                                                           |
+| ---------------------- | ----------------------------------------------------------------- |
+| `extension.ts`         | Pi extension (TypeScript) — registered as an LLM-callable tool    |
+| `dart/lib/plugin.dart` | Dart plugin class — handles client-side execution and optional UI |
+| `dart/lib/*.dart`      | Supporting Dart files (widgets, utilities)                        |
+| `dart/pubspec.yaml`    | Dart package definition, depends on `bark_plugin_api`             |
+| `tools/`               | Server-side scripts copied into the Docker image                  |
 
 **Client-side plugins** use Pi's Extension UI Sub-Protocol to delegate execution to the browser. This enables tools that need browser authentication (e.g., Soliplex cookies) or browser-native capabilities (audio, animations).
 

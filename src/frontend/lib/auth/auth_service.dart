@@ -4,9 +4,14 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 
+/// Override for testing — set to intercept all HTTP calls in AuthService.
+http.Client? testAuthHttpClientOverride;
+
 class AuthService extends ChangeNotifier {
   static const _tokenKey = 'bark_jwt';
   String get _baseUrl => baseUrl;
+
+  http.Client get _client => testAuthHttpClientOverride ?? http.Client();
 
   String? _token;
   bool _loading = false;
@@ -51,7 +56,7 @@ class AuthService extends ChangeNotifier {
     _loading = true;
     notifyListeners();
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('$_baseUrl/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'username': username, 'password': password}),
@@ -75,7 +80,7 @@ class AuthService extends ChangeNotifier {
     _loading = true;
     notifyListeners();
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('$_baseUrl/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'username': username, 'password': password}),
@@ -98,7 +103,7 @@ class AuthService extends ChangeNotifier {
   /// Make an authenticated HTTP request. If the response is 401,
   /// clear the token (router will redirect to login).
   Future<http.Response> authGet(String path) async {
-    final response = await http.get(
+    final response = await _client.get(
       Uri.parse('$_baseUrl$path'),
       headers: _authHeaders,
     );
@@ -107,7 +112,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<http.Response> authPost(String path, {String? body}) async {
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse('$_baseUrl$path'),
       headers: _authHeaders,
       body: body,
@@ -117,7 +122,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<http.Response> authDelete(String path) async {
-    final response = await http.delete(
+    final response = await _client.delete(
       Uri.parse('$_baseUrl$path'),
       headers: _authHeaders,
     );
@@ -127,7 +132,7 @@ class AuthService extends ChangeNotifier {
 
   Future<void> logout() async {
     try {
-      await http.post(
+      await _client.post(
         Uri.parse('$_baseUrl/auth/logout'),
         headers: _authHeaders,
       );

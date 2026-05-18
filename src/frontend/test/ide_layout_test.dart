@@ -85,5 +85,73 @@ void main() {
 
       expect(find.byType(IdeLayout), findsOneWidget);
     });
+
+    testWidgets('has two tabs: Terminal and Files', (tester) async {
+      await tester.pumpWidget(buildLayout());
+
+      final tabBar = find.byType(TabBar);
+      expect(tabBar, findsOneWidget);
+
+      expect(
+        find.descendant(of: tabBar, matching: find.text('Terminal')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: tabBar, matching: find.text('Files')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('uses IndexedStack for tab content', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      expect(find.byType(IndexedStack), findsOneWidget);
+    });
+
+    testWidgets('output widget is always visible', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        output: const Text('DEBUG_OUTPUT'),
+      ));
+
+      expect(find.text('DEBUG_OUTPUT'), findsOneWidget);
+
+      // Switch to Files tab — output should still be visible
+      final filesTab = find.descendant(
+        of: find.byType(TabBar),
+        matching: find.text('Files'),
+      );
+      await tester.tap(filesTab);
+      await tester.pumpAndSettle();
+
+      expect(find.text('DEBUG_OUTPUT'), findsOneWidget);
+    });
+
+    testWidgets('horizontal divider has resize cursor', (tester) async {
+      await tester.pumpWidget(buildLayout());
+
+      final mouseRegions = tester.widgetList<MouseRegion>(
+        find.byType(MouseRegion),
+      );
+
+      final resizeColumn = mouseRegions
+          .where((m) => m.cursor == SystemMouseCursors.resizeColumn);
+      final resizeRow =
+          mouseRegions.where((m) => m.cursor == SystemMouseCursors.resizeRow);
+
+      expect(resizeColumn.length, 1);
+      expect(resizeRow.length, 1);
+    });
+
+    testWidgets('chat panel is on the left', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        chat: const Text('CHAT_LEFT'),
+      ));
+
+      expect(find.text('CHAT_LEFT'), findsOneWidget);
+    });
+
+    testWidgets('uses LayoutBuilder for responsive sizing', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      expect(find.byType(LayoutBuilder), findsOneWidget);
+    });
   });
 }

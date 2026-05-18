@@ -48,8 +48,6 @@ bark/
   .env                          # Secrets: OLLAMA_API_KEY, OLLAMA_BASE_URL, OLLAMA_MODEL, BARK_JWT_SECRET, etc.
   .gitignore
   README.md
-  PLAN.md
-  synctoarctor.sh               # Deploy script for arctor.repoze.org
   bootstrap                     # Install Nix + devenv
 
   plugins/              # Starter plugins (source of truth, fetched into $BARK_PLUGINS_DIR by update-plugins)
@@ -58,23 +56,18 @@ bark/
     pig-latin/                  # Text to Pig Latin converter (server-side)
     word-count/                 # Fast file stats (server-side)
   scripts/
-    import_dart_plugins.py              # Codegen: generates $BARK_PLUGINS_DIR/.dart/ package with plugin deps
-    update_plugins.py           # Fetches plugins from git repos, writes plugins.lock
-    test_port_allocation.py    # Tests port allocation lifecycle: create, increase, decrease, delete
+    import_dart_plugins.py     # Codegen: generates $BARK_PLUGINS_DIR/.dart/ package with plugin deps
+    update_plugins.py          # Fetches plugins from git repos, writes plugins.lock
     flutterbuildweb.sh         # Flutter build: plugin auto-fetch, codegen, flutter build web
-    dockerbuild.sh             # Docker build: plugin collection, container cleanup, image build
+    dockerbuild.sh             # Docker build: plugin staging, container cleanup, image build (named build contexts)
     nginx.sh                   # nginx reverse proxy: config generation and exec
-  tests/
-    (tests live in src/backend/tests/)
-    (E2E tests live in src/e2e_tests/)
-
+    synctoarctor.sh            # Deploy script for arctor.repoze.org
   src/dockerimage/
     Dockerfile                  # Pi agent image: node:22-slim + Pi + Python3 + Dart + Flutter + Rust + build-essential + PostgreSQL + SQLite + vim + emacs + net tools
     entrypoint.sh               # Sets up Pi config (FIFO for models.json, system prompt), starts Pi in RPC mode
     system-prompt.md            # Static system prompt for Pi (copied into image)
     builtin-extensions/         # Built-in Pi extensions (port-map.ts, etc.) — not from plugins
-    extensions/                 # Generated: collected from $BARK_PLUGINS_DIR/*/extension.ts at build time
-    tools/                      # Generated: collected from $BARK_PLUGINS_DIR/*/tools/ at build time
+    # Plugin extensions and tools are staged at $BARK_PLUGINS_DIR/.docker/ at build time via named Docker build contexts
 
   src/backend/
     pyproject.toml              # Python deps: fastapi, aiodocker, aiosqlite, bcrypt, python-jose
@@ -90,6 +83,7 @@ bark/
       ws_handler.py             # WebSocket auth, workspace routing, AG-UI streaming, session resume, auto-restart
       file_service.py           # Host-side file read/write/delete/rename with path traversal protection
       terminal_manager.py      # Docker exec PTY subprocess for interactive shell access
+    tests/                      # pytest unit tests (100% coverage, parallel via xdist)
 
   src/frontend/
     pubspec.yaml                # Flutter deps: flutter_markdown_plus, flutter_highlight, go_router, etc.
@@ -124,6 +118,13 @@ bark/
         output_panel.dart       # Debug panel: container lifecycle, queries, tool calls, errors
       layout/
         ide_layout.dart         # Split layout: chat left, Terminal+Files tabs + slidable Debug right
+    test/                       # Dart unit tests (VM-mode, no browser required)
+
+  src/e2e_tests/                # Playwright E2E tests with isolated test server
+    e2e/bark.spec.ts            # E2E test specs
+    global-setup.ts             # Starts isolated Bark server for E2E
+    global-teardown.ts          # Stops test server, cleans up temp data
+    playwright.config.ts        # Playwright configuration
 ```
 
 ## Features
@@ -196,7 +197,7 @@ bark/
 
 ### Pi Extensions (Tools)
 
-- Extensions are TypeScript files collected from `$BARK_PLUGINS_DIR/*/extension.ts` into `src/dockerimage/extensions/` at build time
+- Extensions are TypeScript files collected from `$BARK_PLUGINS_DIR/*/extension.ts` and staged at `$BARK_PLUGINS_DIR/.docker/extensions/` at build time (injected via named Docker build contexts)
 - The LLM sees them in its tool list alongside built-in tools (read, write, edit, bash)
 - Extensions can be server-side (run code inside the container) or client-side (delegate to the browser via the Extension UI Sub-Protocol)
 - AGENTS.md is generated dynamically on each container start, listing all registered extension tools
@@ -398,7 +399,7 @@ devenv shell -- test-frontend
 devenv shell -- test-frontend test/agui_events_test.dart
 ```
 
-Tests cover agui events, tool plugin registry, auth service, output panel, IDE layout, agui client, login page, file upload, file viewer panel, chat panel, container terminal, workspace list page, and bark logo. Browser-only APIs (`dart:html`, `dart:js_interop`) are abstracted via conditional imports (`web_helpers_stub.dart`/`web_helpers_web.dart`) so tests run in VM mode without a browser.
+Tests cover agui events, agui client, auth service, chat panel, container terminal, file upload (conflict detection, upload paths, auth headers, error handling, directory flattening), file viewer panel (navigation, breadcrumbs, refresh), IDE layout (tabs, dividers, IndexedStack), login page, output panel, tool plugin registry, workspace list page (CRUD dialogs, loading/error states), and bark logo. Every test has at least one assertion. Browser-only APIs (`dart:html`, `dart:js_interop`) are abstracted via conditional imports (`web_helpers_stub.dart`/`web_helpers_web.dart`) so tests run in VM mode without a browser.
 
 ### Pre-commit Hooks
 
@@ -429,14 +430,14 @@ All plugins live in `$BARK_PLUGINS_DIR/<name>/` directories. A plugin can contai
   - `dart/pubspec.yaml` — Package definition, depends on `bark_plugin_api` (git)
   - `dart/lib/plugin.dart` — Class extending `ToolPlugin` with action handlers
   - `dart/lib/*.dart` — Supporting Dart files (widgets, utilities)
-- `tools/` — Server-side scripts. Everything in this subdirectory is copied to `/usr/local/bin/bark-tools/` in the Docker image.
+- `tools/` — Server-side scripts. Everything in this subdirectory is copied to `/opt/bark/plugin-tools/<name>/` in the Docker image.
 
 A plugin needs at minimum an `extension.ts`. The `dart/` subdirectory is only needed for client-side tools that delegate execution to the browser via `ctx.ui.input("HOST_TOOL_REQUEST", ...)`.
 
 **Build integration:**
 
 - `scripts/import_dart_plugins.py` scans `$BARK_PLUGINS_DIR/*/dart/` for plugin Dart packages and generates `$BARK_PLUGINS_DIR/.dart/` (the `bark_plugins` package with path deps and `createAllPlugins()`)
-- `dockerbuild` collects `extension.ts` and `tools/` files from all plugins into the Docker build context
+- `dockerbuild` stages `extension.ts` and `tools/` files from all plugins into `$BARK_PLUGINS_DIR/.docker/` and passes them via named Docker build contexts (`plugin-extensions`, `plugin-tools`)
 - `flutterbuildweb` runs the codegen before compiling
 - Both are triggered automatically by `devenv up` via `execIfModified`
 
@@ -561,8 +562,13 @@ nginx reverse proxy (port 8995)
 - **User dotfile customization**: Allow users to customize their container shell environment (`.bashrc`, `.vimrc`, `.emacs`, `.gitconfig`, etc.). Options: bind-mount a per-user dotfiles directory from the host into `/home/bark`, or provide a UI for editing dotfiles that persist across container restarts. Currently `/home/bark` is a tmpfs regenerated each start, so any customization is lost.
 - **Investigate running Pi under bubblewrap**: Explore using [bubblewrap](https://github.com/containers/bubblewrap) (bwrap) as an alternative to Docker for sandboxing Pi. Bubblewrap is lighter-weight than Docker — no daemon, no image builds, no container overhead — and provides namespace-based isolation (mount, PID, network, user). This could significantly reduce startup time and resource usage. Trade-offs: no pre-built image caching, need to manage tool installations on the host, less isolation than full container. Could be offered as an alternative backend alongside Docker.
 - **Remove leading underscores from internal functions**: Functions like `_handle_prompt`, `_forward_events`, `_cleanup_connection`, `_derive_hosting_info`, etc. in `ws_handler.py` and helper functions in other modules use leading underscores to signal "module-private". Since these are now tested directly via imports, the underscores are unnecessary and make the test imports look odd. Rename to drop the underscores.
-- **Dart/Flutter unit tests**: Add widget and unit tests for the Flutter frontend. Key areas to cover: `AguiClient` (WebSocket connection, event parsing), `AuthService` (token storage, login/logout), `ToolPluginRegistry` (plugin dispatch), `FileViewerPanelState` (navigation, refresh, breadcrumbs), and `ChatPanel` (message rendering, input handling). Use `flutter test` with `mockito` or manual mocks for WebSocket and HTTP dependencies.
+- **Improve Dart unit test coverage**: Most widgets now have thorough tests including `AuthService` (mock HTTP for login/register/logout, 401 token clearing), `AguiClient` (mock WebSocket, message parsing), `FileViewerPanel` (navigation, breadcrumbs, refresh), `FileDropZone` (upload paths, auth headers, conflict detection, error handling, directory flattening), `WorkspaceListPage` (CRUD dialogs, loading/error states), `IdeLayout` (tabs, dividers, IndexedStack), `ChatPanel` (message streaming, input history), `ContainerTerminal` (lifecycle, restart overlay). Still to do: `workspace_page.dart` and `app.dart`.
 - **Test workspace_page.dart and app.dart**: `workspace_page.dart` depends on the `bark_plugins` package (generated by `import_dart_plugins.py`), so tests require codegen to have run first. `app.dart` needs GoRouter/navigation mocking.
 - **Clipboard image paste in chat**: Investigate whether Pi supports image inputs and, if so, allow pasting images from the clipboard into the chat input field. Would need to intercept paste events, detect image MIME types, convert to a format Pi can accept (base64 or URL), and pass via the `images` parameter of `prompt()`.
 - **Simplify deploy script**: Consider replacing `synctoarctor.sh` with a plain `rsync` of the entire project directory instead of the current approach of syncing specific files and directories individually. Would be simpler to maintain and less likely to miss new files.
 - **Hosted app URLs should respect external headers**: The `get_hosted_url` tool generates URLs using `BARK_HOSTING_*` env vars passed to the container. These are derived from `X-Forwarded-Host`/`X-Forwarded-Proto` headers at WebSocket connect time, but if the hosting environment changes (e.g., different reverse proxy), the container's cached values become stale. Consider re-deriving hosting info on each `get_hosted_url` call or providing a mechanism to update the container's env vars without restart.
+- **Backend busy loop during Pi/WS comms**: The backend occasionally goes into a busy loop during Pi RPC or WebSocket communication. Investigate and fix the root cause.
+- **E2E: eliminate .env.e2e**: Instead of writing a special `.env.e2e` file, pass necessary env vars as exports to the devenv shell command, e.g. `devenv shell -- bash -c 'export FOO=bar; test-e2e'`. Simplifies setup/teardown and avoids file-based side effects.
+- **E2E: use UI instead of API for setup/teardown**: E2E tests currently use the API directly to upload files, delete workspaces, etc. These should use the UI instead to better test real user flows and catch UI-level regressions.
+- **E2E: reduce CI run time**: The E2E CI workflow spends significant time bootstrapping Nix/devenv. Investigate caching the bootstrap results, using a GitHub-supplied Nix runner image, or pre-built devenv shell caching to reduce wall-clock time.
+- **E2E: redirect backend logs to file**: During E2E test runs, have the backend send logging output to a file instead of stdout to reduce noise in test output and make failures easier to read.

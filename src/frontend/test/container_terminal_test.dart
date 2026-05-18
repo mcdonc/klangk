@@ -11,6 +11,10 @@ class _MockAguiClient extends AguiClient {
       StreamController<AguiEvent>.broadcast();
   final StreamController<String> _terminalController =
       StreamController<String>.broadcast();
+  final List<String> sentCommands = [];
+  final bool hasWorkspace;
+
+  _MockAguiClient({this.hasWorkspace = true});
 
   @override
   Stream<AguiEvent> get events => _controller.stream;
@@ -18,9 +22,29 @@ class _MockAguiClient extends AguiClient {
   @override
   Stream<String> get terminalOutput => _terminalController.stream;
 
-  void emit(AguiEvent event) => _controller.add(event);
+  @override
+  String? get currentWorkspaceId => hasWorkspace ? 'ws-1' : null;
 
+  void emit(AguiEvent event) => _controller.add(event);
   void emitTerminal(String data) => _terminalController.add(data);
+
+  @override
+  void sendTerminalStart({int cols = 80, int rows = 24}) =>
+      sentCommands.add('terminal_start');
+
+  @override
+  void sendTerminalStop() => sentCommands.add('terminal_stop');
+
+  @override
+  void sendTerminalInput(String data) =>
+      sentCommands.add('terminal_input:$data');
+
+  @override
+  void sendTerminalResize(int cols, int rows) =>
+      sentCommands.add('terminal_resize:${cols}x$rows');
+
+  @override
+  void sendRestartContainer() => sentCommands.add('restart_container');
 
   void close() {
     _controller.close();
@@ -28,45 +52,217 @@ class _MockAguiClient extends AguiClient {
   }
 }
 
-void main() {
-  setUp(() {
-    testBaseUrlOverride = 'http://localhost:8997';
-  });
+Widget _buildTerminal(_MockAguiClient client,
+    {GlobalKey<ContainerTerminalState>? key}) {
+  return MaterialApp(
+    home: Scaffold(
+      body: ContainerTerminal(key: key, aguiClient: client),
+    ),
+  );
+}
 
-  tearDown(() {
-    testBaseUrlOverride = null;
-  });
+void main() {
+  setUp(() => testBaseUrlOverride = 'http://localhost:8997');
+  tearDown(() => testBaseUrlOverride = null);
 
   group('ContainerTerminal', () {
-    testWidgets('renders terminal widget', (tester) async {
+    testWidgets('renders when workspace connected', (tester) async {
       final client = _MockAguiClient();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: ContainerTerminal(aguiClient: client),
-          ),
-        ),
-      );
-
+      await tester.pumpWidget(_buildTerminal(client));
       expect(find.byType(ContainerTerminal), findsOneWidget);
       client.close();
     });
 
-    testWidgets('has a requestFocus method via key', (tester) async {
+    testWidgets('shows connect message when no workspace', (tester) async {
+      final client = _MockAguiClient(hasWorkspace: false);
+      await tester.pumpWidget(_buildTerminal(client));
+      expect(find.textContaining('Connect to a workspace'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('sends terminal_start on first build', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+      expect(client.sentCommands, contains('terminal_start'));
+      client.close();
+    });
+
+    testWidgets('only sends terminal_start once', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+      final count =
+          client.sentCommands.where((c) => c == 'terminal_start').length;
+      expect(count, 1);
+      client.close();
+    });
+
+    testWidgets('sends terminal_stop on dispose', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+      client.sentCommands.clear();
+
+      await tester
+          .pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox())));
+      expect(client.sentCommands, contains('terminal_stop'));
+      client.close();
+    });
+
+    testWidgets('requestFocus via GlobalKey', (tester) async {
       final client = _MockAguiClient();
       final key = GlobalKey<ContainerTerminalState>();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: ContainerTerminal(key: key, aguiClient: client),
-          ),
-        ),
-      );
-
-      // requestFocus should not throw
+      await tester.pumpWidget(_buildTerminal(client, key: key));
       key.currentState!.requestFocus();
       await tester.pump();
       expect(find.byType(ContainerTerminal), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('shows stop overlay on container_stopped', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {
+          'name': 'container_stopped',
+          'value': {'reason': 'idle timeout'},
+        },
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.textContaining('Container stopped'), findsOneWidget);
+      expect(find.textContaining('idle timeout'), findsOneWidget);
+      expect(find.text('Restart Terminal'), findsOneWidget);
+      expect(find.byIcon(Icons.refresh), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('stop without reason shows generic message', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {'name': 'container_stopped', 'value': {}},
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Container stopped'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('restart button sends command and shows spinner',
+        (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {'name': 'container_stopped', 'value': {}},
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      client.sentCommands.clear();
+      await tester.tap(find.text('Restart Terminal'));
+      await tester.pump();
+
+      expect(client.sentCommands, contains('restart_container'));
+      expect(find.textContaining('Restarting'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('container_ready after restart clears overlay', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+
+      // Stop
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {'name': 'container_stopped', 'value': {}},
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      // Restart
+      await tester.tap(find.text('Restart Terminal'));
+      await tester.pump();
+
+      // Ready
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {'name': 'container_ready', 'value': {}},
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Restart Terminal'), findsNothing);
+      expect(find.textContaining('Restarting'), findsNothing);
+      // Should have sent terminal_start again
+      expect(
+        client.sentCommands.where((c) => c == 'terminal_start').length,
+        greaterThanOrEqualTo(2),
+      );
+      client.close();
+    });
+
+    testWidgets('ignores duplicate container_stopped events', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {
+          'name': 'container_stopped',
+          'value': {'reason': 'first'},
+        },
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {
+          'name': 'container_stopped',
+          'value': {'reason': 'second'},
+        },
+      ));
+      await tester.pump();
+
+      expect(find.textContaining('first'), findsOneWidget);
+      expect(find.textContaining('second'), findsNothing);
+      client.close();
+    });
+
+    testWidgets('container_ready without restart does nothing', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(_buildTerminal(client));
+      await tester.pumpAndSettle();
+      final startCount =
+          client.sentCommands.where((c) => c == 'terminal_start').length;
+
+      // container_ready without prior restart should be ignored
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {'name': 'container_ready', 'value': {}},
+      ));
+      await tester.pump();
+
+      // No extra terminal_start
+      expect(
+        client.sentCommands.where((c) => c == 'terminal_start').length,
+        startCount,
+      );
       client.close();
     });
   });
