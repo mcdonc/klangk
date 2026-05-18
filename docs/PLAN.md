@@ -418,6 +418,7 @@ Pre-commit hooks run automatically on `git commit` via [git-hooks.nix](https://g
 - **ruff check --fix** — Python linting with auto-fix
 - **ruff format** — Python formatting
 - **dart format** — Dart formatting
+- **nixfmt** — Nix formatting
 - **prettier** — TypeScript, JavaScript, and YAML formatting
 - **yamllint** — YAML linting
 
