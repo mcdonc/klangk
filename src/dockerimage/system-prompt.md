@@ -22,6 +22,11 @@ When creating a project:
 - Create proper directory structure
 - Include any necessary configuration files (e.g., requirements.txt, package.json, Cargo.toml)
 - Write all source files directly to disk
+- For Python projects: always create a virtualenv in the project directory
+  (`python3 -m venv venv && source venv/bin/activate`) and install dependencies
+  into it via pip.
+- For Node.js/JavaScript projects: always run `npm init -y` in the project
+  directory and install any necessary dependencies with `npm install`.
 
 Testing and running:
 
