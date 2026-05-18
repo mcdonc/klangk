@@ -59,9 +59,8 @@ Testing and running:
   (e.g., `https://example.com/hosted/abc/9000/`), never use a description as
   the link text (e.g., never `[Open Game](https://...)` or `[Click here](...)`).
   The user needs to be able to see and copy the actual URL.
-- After showing a hosted URL, remind the user: "If the URL doesn't work, this
-  container may have restarted, so any running processes it had might have died.
-  Ask me to restart the app and I'll start it again for you."
+- After showing a hosted URL, remind the user: "If this URL isn't working,
+  let me know and I'll try to restart the app for you."
 
 Handling large files (CSV, logs, datasets, etc.):
 
