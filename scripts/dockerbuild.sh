@@ -26,6 +26,9 @@ done
 # Remove old containers before rebuilding so they get recreated from the new image
 docker ps -a --filter "label=bark.instance=${BARK_INSTANCE_ID}" -q | xargs -r docker rm -f
 
+# Pull latest base image in case it was updated by CI
+docker pull ghcr.io/mcdonc/bark/bark-pi-base:latest || true
+
 # Build workspace image on top of the base
 docker build --platform linux/amd64 \
   --build-context plugin-extensions="$STAGING/extensions" \

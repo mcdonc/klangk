@@ -33,6 +33,9 @@ RUN EXISTING_USER=$(getent passwd $BARK_UID | cut -d: -f1) \
     && groupadd -g $BARK_GID bark 2>/dev/null || true \
     && useradd -u $BARK_UID -g $BARK_GID -m -d /home/bark -s /bin/sh bark
 
+# Make /bin/sh point to bash so Pi's bash tool supports bashisms (source, etc.)
+RUN ln -sf /bin/bash /bin/sh
+
 RUN mkdir -p /workspace && chown bark:bark /workspace
 WORKDIR /workspace
 
