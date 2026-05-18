@@ -1,14 +1,10 @@
 { pkgs, config, lib, ... }: {
-  languages.dart = {
-    enable = true;
-    package = pkgs.flutter;
-  };
   languages.javascript = {
     enable = true;
     npm.enable = true;
     npm.install.enable = true;
     directory = "./src/e2e_tests";
-    corepack.enable = false;
+    corepack.enable = false; # disinclude dev version of node, squash warnings
   };
   languages.python = {
     enable = true;
@@ -22,6 +18,7 @@
 
   packages = with pkgs; [
     docker-client
+    flutter
     nginx
   ];
 
