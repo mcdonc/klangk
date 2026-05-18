@@ -17,6 +17,8 @@ jobs:
 
       - name: Check for recent commits
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "should_run=true" >> $GITHUB_OUTPUT
@@ -29,8 +31,8 @@ jobs:
             echo "Commits found in the last hour"
             echo "should_run=true" >> $GITHUB_OUTPUT
           else
-            echo "No commits in the last hour, skipping"
-            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "No commits in the last hour, cancelling"
+            gh run cancel ${{ github.run_id }}
           fi
 
   test:
