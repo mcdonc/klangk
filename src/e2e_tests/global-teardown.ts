@@ -1,12 +1,9 @@
-import { rmSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 
 async function globalTeardown() {
   const projectRoot = join(__dirname, "..", "..");
 
-  // Kill the devenv process directly by PID. We don't use
-  // "devenv processes down" because the foreground "devenv up"
-  // process may use a different PID file than "down" expects.
   const pid = process.env.BARK_E2E_PID;
   if (pid) {
     const numPid = Number(pid);
@@ -31,6 +28,12 @@ async function globalTeardown() {
         break; // dead
       }
     }
+  }
+
+  // Print backend log location (log persists until dataDir cleanup)
+  const logPath = process.env.BARK_E2E_LOG;
+  if (logPath && existsSync(logPath)) {
+    console.log(`Backend log: ${logPath}`);
   }
 
   // Clean up temp data directory

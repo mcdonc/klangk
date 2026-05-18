@@ -112,4 +112,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: playwright-results
-          path: src/e2e_tests/test-results/
+          path: |
+            src/e2e_tests/test-results/
+            src/e2e_tests/backend.log

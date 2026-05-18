@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { mkdtempSync } from "fs";
+import { createWriteStream, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -37,12 +37,12 @@ async function globalSetup() {
 
   process.env.BARK_E2E_PID = String(backendProcess.pid);
 
-  backendProcess.stdout?.on("data", (data: Buffer) => {
-    process.stdout.write(`[bark] ${data}`);
-  });
-  backendProcess.stderr?.on("data", (data: Buffer) => {
-    process.stderr.write(`[bark] ${data}`);
-  });
+  // Write backend output to a log file to keep Playwright output clean
+  const logPath = join(projectRoot, "src", "e2e_tests", "backend.log");
+  const logStream = createWriteStream(logPath);
+  process.env.BARK_E2E_LOG = logPath;
+  backendProcess.stdout?.pipe(logStream);
+  backendProcess.stderr?.pipe(logStream);
 
   const baseUrl = `http://localhost:${backendPort}`;
   const maxWait = 600;
