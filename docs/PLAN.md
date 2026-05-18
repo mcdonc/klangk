@@ -58,7 +58,7 @@ bark/
     pig-latin/                  # Text to Pig Latin converter (server-side)
     word-count/                 # Fast file stats (server-side)
   scripts/
-    import_plugins.py              # Codegen: scans plugins, generates plugins_generated.dart
+    import_dart_plugins.py              # Codegen: generates $BARK_PLUGINS_DIR/.dart/ package with plugin deps
     update_plugins.py           # Fetches plugins from git repos, writes plugins.lock
     test_port_allocation.py    # Tests port allocation lifecycle: create, increase, decrease, delete
     flutterbuildweb.sh         # Flutter build: plugin auto-fetch, codegen, flutter build web
@@ -103,10 +103,8 @@ bark/
         suppress_browser_menu.dart  # Widget to suppress browser context menu per-panel
       widgets/
         bark_logo.dart          # Bark logo widget (orange paw icon)
-      tools/
-        tool_plugin.dart        # ToolPlugin base class and ToolPluginRegistry
-        plugins_generated.dart  # Generated: imports and registers all plugins with plugin.dart
-        plugins/                # Generated: .dart files copied from $BARK_PLUGINS_DIR by import_plugins.py
+      (ToolPlugin and ToolPluginRegistry are in the bark_plugin_api package)
+      (Plugin registration is in the bark_plugins package at $BARK_PLUGINS_DIR/.dart/)
       auth/
         auth_service.dart       # JWT storage, login/register/logout, async init
         login_page.dart         # Login/register form
@@ -427,15 +425,17 @@ GitHub Actions run automatically on PRs and pushes to main (all also support `wo
 All plugins live in `$BARK_PLUGINS_DIR/<name>/` directories. A plugin can contain:
 
 - `extension.ts` — Pi extension with `pi.registerTool()`. Copied to `src/dockerimage/extensions/` at build time.
-- `plugin.dart` — Dart class extending `ToolPlugin` for client-side action handling. Must export a class with `extends ToolPlugin`.
-- `*.dart` — Supporting Dart files (widgets, utilities). All `.dart` files are copied alongside `plugin.dart`.
+- `dart/` — Optional Dart package for client-side tools:
+  - `dart/pubspec.yaml` — Package definition, depends on `bark_plugin_api` (git)
+  - `dart/lib/plugin.dart` — Class extending `ToolPlugin` with action handlers
+  - `dart/lib/*.dart` — Supporting Dart files (widgets, utilities)
 - `tools/` — Server-side scripts. Everything in this subdirectory is copied to `/usr/local/bin/bark-tools/` in the Docker image.
 
-A plugin needs at minimum an `extension.ts`. The `plugin.dart` is only needed for client-side tools that delegate execution to the browser via `ctx.ui.input("HOST_TOOL_REQUEST", ...)`.
+A plugin needs at minimum an `extension.ts`. The `dart/` subdirectory is only needed for client-side tools that delegate execution to the browser via `ctx.ui.input("HOST_TOOL_REQUEST", ...)`.
 
 **Build integration:**
 
-- `scripts/import_plugins.py` scans `$BARK_PLUGINS_DIR/*/plugin.dart`, copies `.dart` files into `src/frontend/lib/tools/plugins/`, and generates `plugins_generated.dart`
+- `scripts/import_dart_plugins.py` scans `$BARK_PLUGINS_DIR/*/dart/` for plugin Dart packages and generates `$BARK_PLUGINS_DIR/.dart/` (the `bark_plugins` package with path deps and `createAllPlugins()`)
 - `dockerbuild` collects `extension.ts` and `tools/` files from all plugins into the Docker build context
 - `flutterbuildweb` runs the codegen before compiling
 - Both are triggered automatically by `devenv up` via `execIfModified`
@@ -445,7 +445,7 @@ A plugin needs at minimum an `extension.ts`. The `plugin.dart` is only needed fo
 For local development, create files directly in `$BARK_PLUGINS_DIR`:
 
 1. Create `$BARK_PLUGINS_DIR/<name>/extension.ts` with `pi.registerTool()`
-2. For client-side tools, add `plugin.dart` extending `ToolPlugin` with action handlers
+2. For client-side tools, add `dart/pubspec.yaml` (depends on `bark_plugin_api`) and `dart/lib/plugin.dart` extending `ToolPlugin`
 3. For server-side scripts, add files in `$BARK_PLUGINS_DIR/<name>/tools/`
 4. `devenv up` rebuilds automatically when `$BARK_PLUGINS_DIR` changes
 
@@ -550,8 +550,7 @@ nginx reverse proxy (port 8995)
 - **Don't stop container on tab navigation**: `workspace_page.dart`'s `deactivate()` calls `disconnectWorkspace()`, which stops the container. This means switching browser tabs or navigating within the app kills the container. The container should only stop on explicit logout, workspace switch, or idle timeout — not on widget deactivation from tab changes. Alternatively (or additionally), the hosted app proxy could auto-start the container before proxying if it's not running.
 
 - **Parallelize Playwright E2E tests**: Tests are now independent (no serial mode, each creates its own workspace), but still run with 1 worker. Setting `workers > 1` would require verifying that concurrent Docker container starts, port allocations, and workspace operations don't conflict on a single Bark server.
-- **Clean up stale plugin build artifacts**: When a plugin is removed from `plugins.yaml`/`plugins.lock`, `update-plugins` removes the plugin directory from `$BARK_PLUGINS_DIR`, but the build artifacts remain: `.dart` files in `src/frontend/lib/tools/plugins/`, `.ts` files in `src/dockerimage/extensions/`, and tool scripts in `src/dockerimage/tools/`. Stale files accumulate and can cause build errors. The build scripts (`import_plugins.py`, `dockerbuild.sh`) should delete any plugin-originated files that don't correspond to a current plugin in `$BARK_PLUGINS_DIR` before copying fresh ones.
-- **Plugin directory structure**: Consider whether each plugin should have explicit subdirectories for different file types (e.g., `dart/` for Flutter code, `extension/` for TypeScript, `tools/` for server-side scripts) instead of the current flat layout where `import_plugins.py` copies all `*.dart` files and `dockerbuild` picks up `extension.ts` by name. Subdirectories would simplify the copying logic and make it clearer what goes where.
+- **Clean up stale Docker plugin artifacts**: When a plugin is removed from `plugins.yaml`/`plugins.lock`, `update-plugins` removes the plugin directory from `$BARK_PLUGINS_DIR`, but `.ts` files in `src/dockerimage/extensions/` and tool scripts in `src/dockerimage/tools/` may remain from previous builds. `dockerbuild.sh` already does `rm -rf` before copying, so this is mostly cosmetic.
 - **Plugin version numbers**: Plugins may want their own version numbers (in `plugin.yaml` or similar metadata) for compatibility checking, display in the UI, and meaningful pinning beyond git refs.
 - **Entrypoint nohup zombie**: The `nohup sh -c "cat ... > FIFO ..."` writer in `entrypoint.sh` (line 78) leaves one `[sh] <defunct>` zombie per container start. Its parent is the `su` process which doesn't call `wait()`. Harmless but cosmetic. Fix by restructuring the entrypoint so the writer finishes before the final `exec`, or by using a different mechanism to feed the FIFOs.
 - **Container resource limits**: Add CPU/memory limits to containers to prevent runaway processes.

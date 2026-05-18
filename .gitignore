@@ -19,6 +19,7 @@ src/frontend/build/
 src/frontend/.flutter-plugins
 src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec.lock
+src/frontend/pubspec_overrides.yaml
 
 # SQLite
 *.db
@@ -45,8 +46,6 @@ Thumbs.db
 
 src/dockerimage/extensions/
 src/dockerimage/tools/
-src/frontend/lib/tools/plugins_generated.dart
-src/frontend/lib/tools/plugins/
 
 # Claude
 .claude/

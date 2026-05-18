@@ -15,7 +15,7 @@ import '../layout/ide_layout.dart';
 import '../output/output_panel.dart';
 import '../terminal/container_terminal.dart';
 import '../terminal/chat_panel.dart';
-import '../tools/plugins_generated.dart';
+import 'package:bark_plugins/bark_plugins.dart';
 
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;

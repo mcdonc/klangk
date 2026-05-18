@@ -25,15 +25,9 @@ dependencies:
   bark_plugin_api:
     git:
       url: https://github.com/mcdonc/bark-plugin-api.git
-
-  # BEGIN BARK PLUGINS (managed by import_plugins.py)
-  bark_plugin_beep:
-    path: /home/chrism/.bark/plugins/beep/dart
-  bark_plugin_celebrate:
-    path: /home/chrism/.bark/plugins/celebrate/dart
-  bark_plugin_soliplex:
-    path: /home/chrism/.bark/plugins/soliplex/dart
-  # END BARK PLUGINS
+  # Path set by import_plugins.py — do not edit this line
+  bark_plugins:
+    path: PLACEHOLDER
 
 dev_dependencies:
   flutter_test:

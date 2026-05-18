@@ -51,6 +51,14 @@ plugins:
   #   git: git@github.com:user/repo.git
   #   path: subdir              # optional: subdirectory within the repo
   #   ref: main                 # branch, tag, or commit SHA
+  #
+  # Plugin structure:
+  #   extension.ts              # required: Pi extension (TypeScript)
+  #   dart/                     # optional: Dart package for client-side tools
+  #     pubspec.yaml            #   depends on bark_plugin_api
+  #     lib/
+  #       plugin.dart           #   class extending ToolPlugin
+  #   tools/                    # optional: server-side scripts
 """
 
 
