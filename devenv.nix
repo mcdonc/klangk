@@ -1,4 +1,10 @@
-{ pkgs, config, lib, ... }: {
+{
+  pkgs,
+  config,
+  lib,
+  ...
+}:
+{
   languages.javascript = {
     enable = true;
     npm.enable = true;
@@ -156,6 +162,8 @@
         "\\.devenv/"
       ];
     };
+    # Nix
+    nixfmt-rfc-style.enable = true;
     # YAML lint
     yamllint.enable = true;
   };
