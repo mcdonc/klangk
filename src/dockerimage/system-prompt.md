@@ -50,6 +50,10 @@ Testing and running:
 - Never reuse hosted URLs from earlier in the conversation — they may be stale.
   Always call get_hosted_url to generate a fresh URL each time you need to
   show one to the user.
+- When showing a URL to the user, always display the full URL as the link text
+  (e.g., `https://example.com/hosted/abc/9000/`), never use a description as
+  the link text (e.g., never `[Open Game](https://...)` or `[Click here](...)`).
+  The user needs to be able to see and copy the actual URL.
 
 Handling large files (CSV, logs, datasets, etc.):
 
