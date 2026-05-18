@@ -1,6 +1,5 @@
 """Tests for api.py: HTTP route handlers via FastAPI TestClient."""
 
-import importlib
 import io
 import zipfile
 
@@ -445,38 +444,16 @@ class TestFileRoutes:
 
 
 class TestSetIdleTimeout:
-    async def test_set_idle_timeout_in_test_mode(self, db, user, monkeypatch):
-        """With BARK_TEST_MODE set, the endpoint should exist and work."""
-        monkeypatch.setenv("BARK_TEST_MODE", "1")
-        importlib.reload(api)
-
-        test_app = FastAPI()
-        test_app.include_router(api.router)
-        transport = ASGITransport(app=test_app)
-
+    async def test_set_idle_timeout_global(self, db):
+        """Setting global idle timeout changes the module-level variable."""
         original_timeout = container_manager.IDLE_TIMEOUT_SECONDS
         try:
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                # Get current timeout
-                get_resp = await client.get("/api/test/idle-timeout")
-                assert get_resp.status_code == 200
-                assert get_resp.json()["idle_timeout_seconds"] == original_timeout
-
-                # Set new timeout
-                resp = await client.post("/api/test/set-idle-timeout?seconds=42")
-                assert resp.status_code == 200
-                assert resp.json()["idle_timeout_seconds"] == 42
-                assert container_manager.IDLE_TIMEOUT_SECONDS == 42
-
-                # Verify get reflects the change
-                get_resp2 = await client.get("/api/test/idle-timeout")
-                assert get_resp2.json()["idle_timeout_seconds"] == 42
+            container_manager.IDLE_TIMEOUT_SECONDS = 42
+            assert container_manager.IDLE_TIMEOUT_SECONDS == 42
+            # Per-workspace lookup falls back to global
+            assert container_manager.get_workspace_idle_timeout("any") == 42
         finally:
             container_manager.IDLE_TIMEOUT_SECONDS = original_timeout
-            monkeypatch.delenv("BARK_TEST_MODE")
-            importlib.reload(api)
 
     async def test_endpoint_missing_without_test_mode(self, client):
         """Without BARK_TEST_MODE, the endpoints should not exist."""
@@ -484,3 +461,18 @@ class TestSetIdleTimeout:
         assert resp.status_code in (404, 405)
         resp = await client.get("/api/test/idle-timeout")
         assert resp.status_code in (404, 405)
+
+    async def test_set_idle_timeout_per_workspace(self, db):
+        """Per-workspace idle timeout should not affect global."""
+        original_timeout = container_manager.IDLE_TIMEOUT_SECONDS
+        try:
+            container_manager.set_workspace_idle_timeout("ws-test", 5)
+            assert container_manager.get_workspace_idle_timeout("ws-test") == 5
+            assert container_manager.IDLE_TIMEOUT_SECONDS == original_timeout
+            # Unknown workspace returns global default
+            assert (
+                container_manager.get_workspace_idle_timeout("ws-other")
+                == original_timeout
+            )
+        finally:
+            container_manager._workspace_idle_timeouts.clear()

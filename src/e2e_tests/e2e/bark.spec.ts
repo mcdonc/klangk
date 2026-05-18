@@ -161,19 +161,6 @@ async function createAndOpenWorkspace(
   };
 }
 
-/** Ensure idle timeout is at least the default (1800s). */
-async function ensureSafeIdleTimeout(
-  request: APIRequestContext,
-): Promise<void> {
-  const resp = await request.get(`${API_BASE}/api/test/idle-timeout`);
-  if (resp.ok()) {
-    const current = (await resp.json()).idle_timeout_seconds;
-    if (current < 1800) {
-      await request.post(`${API_BASE}/api/test/set-idle-timeout?seconds=1800`);
-    }
-  }
-}
-
 function dockerContainersForWorkspace(workspaceId: string): string[] {
   const output = execSync(
     `docker ps --filter "label=bark.workspace-id=${workspaceId}" --format "{{.ID}}"`,
@@ -580,23 +567,10 @@ test.describe("Bark E2E", () => {
   });
 
   test("agent creates pong game with hosted URL", async ({ page, request }) => {
-    test.setTimeout(300_000); // LLM interaction can be slow
+    test.setTimeout(600_000); // LLM interaction can be slow, especially on CI
 
     const token = await getAuthToken(request);
     const headers = { Authorization: `Bearer ${token}` };
-
-    // Ensure idle timeout is at least 30 minutes (a previous test
-    // may have set it low via the test API)
-    const DEFAULT_TIMEOUT = 1800;
-    const timeoutResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
-    if (timeoutResp.ok()) {
-      const current = (await timeoutResp.json()).idle_timeout_seconds;
-      if (current < DEFAULT_TIMEOUT) {
-        await request.post(
-          `${API_BASE}/api/test/set-idle-timeout?seconds=${DEFAULT_TIMEOUT}`,
-        );
-      }
-    }
 
     // Clean up any leftover workspace with the same name
     const existingResp = await request.get(`${API_BASE}/workspaces`, {
@@ -946,7 +920,7 @@ test.describe("Bark E2E", () => {
     const token = await getAuthToken(request);
     const headers = { Authorization: `Bearer ${token}` };
 
-    // Check if test mode is enabled and stash original timeout
+    // Check if test mode is enabled
     const getResp = await request.get(`${API_BASE}/api/test/idle-timeout`, {
       headers,
     });
@@ -954,79 +928,70 @@ test.describe("Bark E2E", () => {
       test.skip(true, "BARK_TEST_MODE not enabled");
       return;
     }
-    const originalTimeout = (await getResp.json()).idle_timeout_seconds;
 
-    await request.post(`${API_BASE}/api/test/set-idle-timeout?seconds=5`, {
+    // Create a workspace first, then set per-workspace idle timeout
+    const existingResp = await request.get(`${API_BASE}/workspaces`, {
       headers,
     });
+    for (const ws of await existingResp.json()) {
+      if (ws.name === "e2e-idle-test") {
+        await request.delete(`${API_BASE}/workspaces/${ws.id}`, { headers });
+      }
+    }
+    const createResp = await request.post(
+      `${API_BASE}/workspaces?name=e2e-idle-test`,
+      { headers },
+    );
+    expect(createResp.ok()).toBeTruthy();
+    const workspace = await createResp.json();
+    const workspaceId = workspace.id;
+
+    // Set a short idle timeout for this workspace only
+    await request.post(
+      `${API_BASE}/api/test/set-idle-timeout?seconds=5&workspace_id=${workspaceId}`,
+      { headers },
+    );
 
     try {
-      // Create a workspace and open it to start a container
-      const existingResp = await request.get(`${API_BASE}/workspaces`, {
-        headers,
-      });
-      for (const ws of await existingResp.json()) {
-        if (ws.name === "e2e-idle-test") {
-          await request.delete(`${API_BASE}/workspaces/${ws.id}`, { headers });
-        }
-      }
-      const createResp = await request.post(
-        `${API_BASE}/workspaces?name=e2e-idle-test`,
-        { headers },
-      );
-      expect(createResp.ok()).toBeTruthy();
-      const workspace = await createResp.json();
-      const workspaceId = workspace.id;
+      await login(page);
+      await page.goto(`#/workspace/${workspaceId}`);
+      await page.waitForTimeout(10000);
 
-      try {
-        await login(page);
-        await page.goto(`#/workspace/${workspaceId}`);
-        await page.waitForTimeout(10000);
+      // Wait for the container to idle out (5s timeout + check interval)
+      await page.waitForTimeout(15000);
 
-        // Wait for the container to idle out (5s timeout + check interval)
-        await page.waitForTimeout(15000);
+      // Send a prompt — it should trigger a container restart
+      const { height } = vp(page);
+      const f = fv(page);
+      await f.click({ position: { x: 240, y: height - 30 }, force: true });
+      await page.waitForTimeout(500);
+      await page.keyboard.type("say hello");
+      await page.waitForTimeout(300);
+      await page.keyboard.press("Enter");
 
-        // Send a prompt — it should trigger a container restart
-        const { height } = vp(page);
-        const f = fv(page);
-        await f.click({ position: { x: 240, y: height - 30 }, force: true });
-        await page.waitForTimeout(500);
-        await page.keyboard.type("say hello");
-        await page.waitForTimeout(300);
-        await page.keyboard.press("Enter");
-
-        // Poll for a response — the container should restart and respond
-        let found = false;
-        for (let i = 0; i < 30; i++) {
-          await page.waitForTimeout(3000);
-          const msgResp = await request.get(
-            `${API_BASE}/workspaces/${workspaceId}/messages`,
-            { headers },
-          );
-          if (msgResp.ok()) {
-            const messages = await msgResp.json();
-            if (
-              messages.some(
-                (m: any) => m.entry_type === "assistant" && m.content,
-              )
-            ) {
-              found = true;
-              break;
-            }
+      // Poll for a response — the container should restart and respond
+      let found = false;
+      for (let i = 0; i < 30; i++) {
+        await page.waitForTimeout(3000);
+        const msgResp = await request.get(
+          `${API_BASE}/workspaces/${workspaceId}/messages`,
+          { headers },
+        );
+        if (msgResp.ok()) {
+          const messages = await msgResp.json();
+          if (
+            messages.some((m: any) => m.entry_type === "assistant" && m.content)
+          ) {
+            found = true;
+            break;
           }
         }
-        expect(found).toBeTruthy();
-      } finally {
-        await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
-          headers,
-        });
       }
+      expect(found).toBeTruthy();
     } finally {
-      // Restore original timeout
-      await request.post(
-        `${API_BASE}/api/test/set-idle-timeout?seconds=${originalTimeout}`,
-        { headers },
-      );
+      await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+        headers,
+      });
     }
   });
 
@@ -1038,18 +1003,6 @@ test.describe("Bark E2E", () => {
 
     const token = await getAuthToken(request);
     const headers = { Authorization: `Bearer ${token}` };
-
-    // Ensure idle timeout is at least 30 minutes
-    const DEFAULT_TIMEOUT = 1800;
-    const timeoutResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
-    if (timeoutResp.ok()) {
-      const current = (await timeoutResp.json()).idle_timeout_seconds;
-      if (current < DEFAULT_TIMEOUT) {
-        await request.post(
-          `${API_BASE}/api/test/set-idle-timeout?seconds=${DEFAULT_TIMEOUT}`,
-        );
-      }
-    }
 
     // Create a fresh workspace
     const existingResp = await request.get(`${API_BASE}/workspaces`, {
@@ -1226,18 +1179,6 @@ test.describe("Bark E2E", () => {
     const token = await getAuthToken(request);
     const headers = { Authorization: `Bearer ${token}` };
 
-    // Ensure idle timeout is safe
-    const DEFAULT_TIMEOUT = 1800;
-    const timeoutResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
-    if (timeoutResp.ok()) {
-      const current = (await timeoutResp.json()).idle_timeout_seconds;
-      if (current < DEFAULT_TIMEOUT) {
-        await request.post(
-          `${API_BASE}/api/test/set-idle-timeout?seconds=${DEFAULT_TIMEOUT}`,
-        );
-      }
-    }
-
     // Create a fresh workspace
     const existingResp = await request.get(`${API_BASE}/workspaces`, {
       headers,
@@ -1315,18 +1256,6 @@ test.describe("Bark E2E", () => {
 
     const token = await getAuthToken(request);
     const headers = { Authorization: `Bearer ${token}` };
-
-    // Ensure idle timeout is safe
-    const DEFAULT_TIMEOUT = 1800;
-    const timeoutResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
-    if (timeoutResp.ok()) {
-      const current = (await timeoutResp.json()).idle_timeout_seconds;
-      if (current < DEFAULT_TIMEOUT) {
-        await request.post(
-          `${API_BASE}/api/test/set-idle-timeout?seconds=${DEFAULT_TIMEOUT}`,
-        );
-      }
-    }
 
     // Create a fresh workspace
     const existingResp = await request.get(`${API_BASE}/workspaces`, {

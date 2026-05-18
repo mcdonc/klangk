@@ -47,6 +47,8 @@ DEFAULT_PORTS_PER_WORKSPACE = 5
 _containers: dict[str, dict] = {}
 # Callbacks for idle timeout notifications: workspace_id -> [async_callback]
 _idle_callbacks: dict[str, list] = {}
+# Per-workspace idle timeout overrides: workspace_id -> seconds
+_workspace_idle_timeouts: dict[str, int] = {}
 _docker: aiodocker.Docker | None = None
 _cleanup_task: asyncio.Task | None = None
 # Serializes port allocation to prevent races between concurrent workspace
@@ -244,6 +246,16 @@ def record_activity(container_id: str) -> None:
         _containers[container_id]["last_activity"] = time.time()
 
 
+def set_workspace_idle_timeout(workspace_id: str, seconds: int) -> None:
+    """Set a per-workspace idle timeout override."""
+    _workspace_idle_timeouts[workspace_id] = seconds
+
+
+def get_workspace_idle_timeout(workspace_id: str) -> int:
+    """Get the idle timeout for a workspace (per-workspace override or global default)."""
+    return _workspace_idle_timeouts.get(workspace_id, IDLE_TIMEOUT_SECONDS)
+
+
 def on_idle_stop(workspace_id: str, callback) -> None:
     """Register a callback to be called when a workspace container is stopped due to idle timeout."""
     _idle_callbacks.setdefault(workspace_id, []).append(callback)
@@ -263,7 +275,8 @@ async def _cleanup_idle_containers() -> None:
         now = time.time()
         to_stop = []
         for cid, info in list(_containers.items()):
-            if now - info["last_activity"] > IDLE_TIMEOUT_SECONDS:
+            timeout = get_workspace_idle_timeout(info["workspace_id"])
+            if now - info["last_activity"] > timeout:
                 to_stop.append((cid, info["workspace_id"]))
 
         for cid, wid in to_stop:

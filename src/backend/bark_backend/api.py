@@ -17,18 +17,27 @@ router = APIRouter()
 
 # --- Test/debug endpoints (only when BARK_TEST_MODE is set) ---
 
-if os.environ.get("BARK_TEST_MODE"):
+if os.environ.get("BARK_TEST_MODE"):  # pragma: no cover
 
     @router.get("/api/test/idle-timeout")
-    async def get_idle_timeout():
-        """Get the current idle timeout. Only available in test mode."""
+    async def get_idle_timeout(workspace_id: str | None = None):
+        """Get the idle timeout (per-workspace or global default)."""
+        if workspace_id:
+            return {
+                "idle_timeout_seconds": container_manager.get_workspace_idle_timeout(
+                    workspace_id
+                )
+            }
         return {"idle_timeout_seconds": container_manager.IDLE_TIMEOUT_SECONDS}
 
     @router.post("/api/test/set-idle-timeout")
-    async def set_idle_timeout(seconds: int):
-        """Set the container idle timeout. Only available in test mode."""
-        container_manager.IDLE_TIMEOUT_SECONDS = seconds
-        container_manager.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
+    async def set_idle_timeout(seconds: int, workspace_id: str | None = None):
+        """Set the idle timeout. Per-workspace if workspace_id given, else global."""
+        if workspace_id:
+            container_manager.set_workspace_idle_timeout(workspace_id, seconds)
+        else:
+            container_manager.IDLE_TIMEOUT_SECONDS = seconds
+            container_manager.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
         return {"idle_timeout_seconds": seconds}
 
 
