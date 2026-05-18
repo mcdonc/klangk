@@ -26,6 +26,7 @@
     docker-client
     flutter
     nginx
+    git # HM for "error: Failed to find git" during devenv:git-hooks:install
   ];
 
   tasks = {
