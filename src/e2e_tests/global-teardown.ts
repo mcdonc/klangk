@@ -8,6 +8,10 @@ async function globalTeardown() {
   const pid = process.env.BARK_E2E_PID;
   if (pid) {
     const numPid = Number(pid);
+    // Brief delay to let any test finally blocks (cleanup) finish before
+    // we kill the server — Playwright fires globalTeardown as soon as the
+    // last test's assertions pass, but finally blocks may still be running.
+    await new Promise((r) => setTimeout(r, 3000));
     console.log(`Stopping E2E server (PID ${numPid})...`);
 
     // Kill the process group (spawned with detached: true)

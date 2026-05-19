@@ -271,7 +271,15 @@ def remove_idle_callback(workspace_id: str, callback) -> None:
 async def _cleanup_idle_containers() -> None:
     """Periodically stop idle containers."""
     while True:
-        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+        # Sleep interval adapts to the shortest active per-workspace timeout
+        # so containers with short timeouts are cleaned up promptly without
+        # polling too aggressively when only long timeouts are active.
+        if _workspace_idle_timeouts:
+            min_timeout = min(_workspace_idle_timeouts.values())
+            interval = max(2, min_timeout // 2)
+        else:
+            interval = CHECK_INTERVAL_SECONDS
+        await asyncio.sleep(interval)
         now = time.time()
         to_stop = []
         for cid, info in list(_containers.items()):

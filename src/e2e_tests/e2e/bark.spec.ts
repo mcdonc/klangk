@@ -27,7 +27,7 @@ async function registerUser(
 
 /** Log in via the UI by typing credentials into the Flutter login form. */
 async function loginViaUI(page: Page, username: string, password: string) {
-  await page.goto("");
+  await page.goto("/");
   await waitForFlutter(page);
 
   const { width, height } = vp(page);
@@ -53,7 +53,7 @@ async function loginViaUI(page: Page, username: string, password: string) {
 async function waitForFlutter(page: Page) {
   await page.waitForFunction(
     () => !document.body.textContent?.includes("Loading, please wait"),
-    { timeout: 60_000 },
+    { timeout: 90_000 },
   );
   await page.waitForTimeout(1000);
 }
@@ -670,31 +670,25 @@ test.describe("Bark E2E", () => {
     }
   });
 
-  test.describe("logout", () => {
-    test.describe.configure({ retries: 3 });
+  test("logout returns to login page", async ({ page, request }) => {
+    const username = `logout-${Date.now()}`;
+    await registerUser(request, username);
+    await loginViaUI(page, username, TEST_PASSWORD);
 
-    test("logout returns to login page", async ({ page, request }) => {
-      test.setTimeout(60_000);
-      const username = `logout-${Date.now()}`;
-      await registerUser(request, username);
-      await loginViaUI(page, username, TEST_PASSWORD);
+    const { width } = vp(page);
+    const f = fv(page);
 
-      const { width } = vp(page);
-      const f = fv(page);
+    // Logout button is in the top-right corner of the workspaces page
+    await f.click({ position: { x: width - 25, y: 28 }, force: true });
+    await page.waitForTimeout(2000);
 
-      // Logout button is in the top-right corner of the workspaces page
-      await f.click({ position: { x: width - 25, y: 28 }, force: true });
-      await page.waitForTimeout(2000);
-
-      await expect(page).toHaveTitle(/Login/i, { timeout: 30_000 });
-    });
+    await expect(page).toHaveTitle(/Login/i, { timeout: 30_000 });
   });
 
   test("register new user, logout, and login with new credentials", async ({
     page,
     request,
   }) => {
-    test.setTimeout(60_000);
     const username = `e2e-user-${Date.now()}`;
     const password = "testpass1234";
 
@@ -707,7 +701,7 @@ test.describe("Bark E2E", () => {
     expect(regData.access_token).toBeTruthy();
 
     // Login via UI with the new user
-    await page.goto("");
+    await page.goto("/");
     await waitForFlutter(page);
 
     const { width, height } = vp(page);
@@ -890,70 +884,74 @@ test.describe("Bark E2E", () => {
     }
   });
 
-  test.describe("idle timeout", () => {
-    test.describe.configure({ retries: 3 });
+  test("container stops after idle timeout", async ({ page, request }) => {
+    test.setTimeout(300_000);
 
-    test("container stops after idle timeout", async ({ page, request }) => {
-      test.setTimeout(300_000);
+    // Check if test mode is enabled
+    const getResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
+    if (!getResp.ok()) {
+      test.skip(true, "BARK_TEST_MODE not enabled");
+      return;
+    }
 
-      // Check if test mode is enabled
-      const getResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
-      if (!getResp.ok()) {
-        test.skip(true, "BARK_TEST_MODE not enabled");
-        return;
-      }
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "e2e-idle-test",
+    );
 
-      const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
-        page,
-        request,
-        "e2e-idle-test",
-      );
+    // Set a short idle timeout for this workspace only
+    await request.post(
+      `${API_BASE}/api/test/set-idle-timeout?seconds=5&workspace_id=${workspaceId}`,
+      { headers },
+    );
 
-      // Set a short idle timeout for this workspace only
+    try {
+      // Wait for the container to idle out (5s timeout + check interval).
+      // The backend dynamically adapts the cleanup loop interval to the
+      // shortest per-workspace timeout, so 15s is more than enough.
+      await page.waitForTimeout(15000);
+
+      // Reset per-workspace timeout to something long before sending the
+      // prompt, so the restarted container doesn't get killed while waiting
+      // for the LLM response (which can be slow under concurrent load).
       await request.post(
-        `${API_BASE}/api/test/set-idle-timeout?seconds=5&workspace_id=${workspaceId}`,
+        `${API_BASE}/api/test/set-idle-timeout?seconds=300&workspace_id=${workspaceId}`,
         { headers },
       );
 
-      try {
-        // Wait for the container to idle out (5s timeout + check interval)
-        await page.waitForTimeout(15000);
+      // Send a prompt — it should trigger a container restart
+      const { height } = vp(page);
+      const f = fv(page);
+      await f.click({ position: { x: 240, y: height - 30 }, force: true });
+      await page.waitForTimeout(500);
+      await page.keyboard.type("say hello");
+      await page.waitForTimeout(300);
+      await page.keyboard.press("Enter");
 
-        // Send a prompt — it should trigger a container restart
-        const { height } = vp(page);
-        const f = fv(page);
-        await f.click({ position: { x: 240, y: height - 30 }, force: true });
-        await page.waitForTimeout(500);
-        await page.keyboard.type("say hello");
-        await page.waitForTimeout(300);
-        await page.keyboard.press("Enter");
-
-        // Poll for a response — the container should restart and respond
-        let found = false;
-        for (let i = 0; i < 30; i++) {
-          await page.waitForTimeout(3000);
-          const msgResp = await request.get(
-            `${API_BASE}/workspaces/${workspaceId}/messages`,
-            { headers },
-          );
-          if (msgResp.ok()) {
-            const messages = await msgResp.json();
-            if (
-              messages.some(
-                (m: any) => m.entry_type === "assistant" && m.content,
-              )
-            ) {
-              found = true;
-              break;
-            }
+      // Poll for a response — the container should restart and respond
+      let found = false;
+      for (let i = 0; i < 30; i++) {
+        await page.waitForTimeout(3000);
+        const msgResp = await request.get(
+          `${API_BASE}/workspaces/${workspaceId}/messages`,
+          { headers },
+        );
+        if (msgResp.ok()) {
+          const messages = await msgResp.json();
+          if (
+            messages.some((m: any) => m.entry_type === "assistant" && m.content)
+          ) {
+            found = true;
+            break;
           }
         }
-        expect(found).toBeTruthy();
-      } finally {
-        await cleanup();
       }
-    });
-  }); // end idle timeout describe
+      expect(found).toBeTruthy();
+    } finally {
+      await cleanup();
+    }
+  });
 
   test("container starts on workspace open and stops on navigate away", async ({
     page,

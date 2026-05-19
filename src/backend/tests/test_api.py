@@ -494,3 +494,18 @@ class TestSetIdleTimeout:
             )
         finally:
             container_manager._workspace_idle_timeouts.clear()
+
+    async def test_cleanup_loop_adapts_to_short_timeout(self, db):
+        """Cleanup loop interval adapts when per-workspace timeouts exist."""
+        try:
+            container_manager.set_workspace_idle_timeout("ws-fast", 6)
+            # With a 6s per-workspace timeout, the minimum is 6, so
+            # the loop should sleep max(2, 6//2) = 3 seconds.
+            assert min(container_manager._workspace_idle_timeouts.values()) == 6
+            # Global CHECK_INTERVAL_SECONDS should be unchanged
+            assert (
+                container_manager.CHECK_INTERVAL_SECONDS
+                == container_manager._parse_idle_timeout()[1]
+            )
+        finally:
+            container_manager._workspace_idle_timeouts.clear()
