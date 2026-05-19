@@ -104,6 +104,52 @@ function vp(page: Page) {
   return page.viewportSize() || { width: 1280, height: 720 };
 }
 
+/** Type a prompt into the chat input and verify it was received by the backend.
+ *  On slower environments (CI, WebKit), the Flutter chat widget may not be
+ *  fully wired up when container_ready fires. This function retries once
+ *  if the user message doesn't appear in the backend within 10s. */
+async function sendPrompt(
+  page: Page,
+  request: APIRequestContext,
+  workspaceId: string,
+  headers: Record<string, string>,
+  text: string,
+) {
+  const { height } = vp(page);
+
+  const typeAndSend = async () => {
+    await flutterClick(page, 240, height - 30);
+    await page.waitForTimeout(500);
+    await page.keyboard.type(text);
+    await page.waitForTimeout(300);
+    await page.keyboard.press("Enter");
+  };
+
+  const checkReceived = async (): Promise<boolean> => {
+    for (let i = 0; i < 5; i++) {
+      await page.waitForTimeout(2000);
+      const msgResp = await request.get(
+        `${API_BASE}/workspaces/${workspaceId}/messages`,
+        { headers },
+      );
+      if (msgResp.ok()) {
+        const messages = await msgResp.json();
+        if (messages.some((m: any) => m.entry_type === "user")) return true;
+      }
+    }
+    return false;
+  };
+
+  await typeAndSend();
+  if (await checkReceived()) return;
+  // Retry once — the chat widget may not have been ready
+  await typeAndSend();
+  if (await checkReceived()) return;
+  throw new Error(
+    `Prompt "${text}" was not received by the backend after 2 attempts`,
+  );
+}
+
 /** Click the terminal area, wait for it to be interactive, then type a command and press Enter. */
 async function terminalType(
   page: Page,
@@ -614,18 +660,15 @@ test.describe("Bark E2E", () => {
     );
 
     try {
-      // Click chat input and type a simple prompt — the test exercises
-      // file creation + hosted URL generation, not LLM coding ability,
-      // so keep the prompt minimal to reduce LLM response time.
-      const { height } = vp(page);
-      const f = fv(page);
-      await f.click({ position: { x: 240, y: height - 30 }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type(
+      // Simple prompt — the test exercises file creation + hosted URL
+      // generation, not LLM coding ability.
+      await sendPrompt(
+        page,
+        request,
+        workspaceId,
+        headers,
         'create a node http server that responds with "hello world" and serve it',
       );
-      await page.waitForTimeout(300);
-      await page.keyboard.press("Enter");
 
       // Poll for files and a hosted URL in a single loop
       let hasFiles = false;
@@ -764,13 +807,13 @@ test.describe("Bark E2E", () => {
     );
 
     try {
-      const { height } = vp(page);
-      const f = fv(page);
-      await f.click({ position: { x: 240, y: height - 30 }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type("what is 2+2? reply with just the number");
-      await page.waitForTimeout(300);
-      await page.keyboard.press("Enter");
+      await sendPrompt(
+        page,
+        request,
+        workspaceId,
+        headers,
+        "what is 2+2? reply with just the number",
+      );
 
       let found = false;
       for (let i = 0; i < 30; i++) {
@@ -916,10 +959,16 @@ test.describe("Bark E2E", () => {
     );
 
     try {
-      // Wait for the container to idle out (5s timeout + check interval).
-      // The backend dynamically adapts the cleanup loop interval to the
-      // shortest per-workspace timeout, so 15s is more than enough.
-      await page.waitForTimeout(15000);
+      // Wait for the container to actually stop
+      let stopped = false;
+      for (let i = 0; i < 30; i++) {
+        if (dockerContainersForWorkspace(workspaceId).length === 0) {
+          stopped = true;
+          break;
+        }
+        await page.waitForTimeout(1000);
+      }
+      expect(stopped).toBeTruthy();
 
       // Reset per-workspace timeout to something long before sending the
       // prompt, so the restarted container doesn't get killed while waiting
@@ -929,14 +978,15 @@ test.describe("Bark E2E", () => {
         { headers },
       );
 
-      // Send a prompt — it should trigger a container restart
-      const { height } = vp(page);
-      const f = fv(page);
-      await f.click({ position: { x: 240, y: height - 30 }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type("say hello");
-      await page.waitForTimeout(300);
-      await page.keyboard.press("Enter");
+      // Reload the workspace page to get a fresh WebSocket connection —
+      // the old one died with the container.
+      await page.goto(`/#/workspace/${workspaceId}`);
+      await waitForFlutter(page);
+      await page.waitForTimeout(2000);
+
+      // Send a prompt — the backend will auto-restart the container
+      // when it receives a prompt on a dead Pi client.
+      await sendPrompt(page, request, workspaceId, headers, "say hello");
 
       // Poll for a response — the container should restart and respond
       let found = false;
@@ -1143,22 +1193,21 @@ test.describe("Bark E2E", () => {
     );
 
     try {
-      const { height } = vp(page);
-      const f = fv(page);
-      await f.click({ position: { x: 240, y: height - 30 }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type(
+      await sendPrompt(
+        page,
+        request,
+        workspaceId,
+        headers,
         "write a very detailed 2000 word essay about the history of computing",
       );
-      await page.waitForTimeout(300);
-      await page.keyboard.press("Enter");
 
       // Wait for the agent to start running
       await page.waitForTimeout(5000);
 
       // Click the abort button (red stop_circle icon, to the right of
       // the chat input). It's at the send button position.
-      await f.click({ position: { x: 460, y: height - 30 }, force: true });
+      const { height } = vp(page);
+      await flutterClick(page, 460, height - 30);
       await page.waitForTimeout(3000);
 
       // Verify the agent stopped — check that messages contain the user prompt
@@ -1193,19 +1242,18 @@ test.describe("Bark E2E", () => {
 
     try {
       const { height } = vp(page);
-      const f = fv(page);
-      const chatX = 240;
-      const chatY = height - 30;
 
-      // Send first prompt
-      await f.click({ position: { x: chatX, y: chatY }, force: true });
-      await page.waitForTimeout(500);
-      await page.keyboard.type("what is 10+10? reply with just the number");
-      await page.keyboard.press("Enter");
+      // Send first prompt (verified delivery)
+      await sendPrompt(
+        page,
+        request,
+        workspaceId,
+        headers,
+        "what is 10+10? reply with just the number",
+      );
 
-      // Immediately send second prompt (should be queued)
-      await page.waitForTimeout(1000);
-      await f.click({ position: { x: chatX, y: chatY }, force: true });
+      // Immediately send second prompt (should be queued while first runs)
+      await flutterClick(page, 240, height - 30);
       await page.waitForTimeout(300);
       await page.keyboard.type("what is 20+20? reply with just the number");
       await page.keyboard.press("Enter");

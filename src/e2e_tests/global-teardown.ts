@@ -50,7 +50,7 @@ async function globalTeardown() {
       .toString()
       .trim();
     if (ids) {
-      execSync(`docker rm -f ${ids}`);
+      execSync(`docker rm -f ${ids.split("\n").join(" ")}`);
       console.log("Removed leftover bark containers");
     }
   } catch {

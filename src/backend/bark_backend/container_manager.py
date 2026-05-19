@@ -56,6 +56,8 @@ _cleanup_task: asyncio.Task | None = None
 # its own BARK_DATA_DIR/bark.db. If multiple processes ever shared a DB,
 # this would need a database-level lock instead.
 _port_lock: asyncio.Lock = asyncio.Lock()
+# Signals the cleanup loop to wake up early when a short timeout is set
+_cleanup_wake: asyncio.Event = asyncio.Event()
 
 
 async def allocate_ports(workspace_id: str, count: int) -> list[int]:
@@ -249,6 +251,9 @@ def record_activity(container_id: str) -> None:
 def set_workspace_idle_timeout(workspace_id: str, seconds: int) -> None:
     """Set a per-workspace idle timeout override."""
     _workspace_idle_timeouts[workspace_id] = seconds
+    # Wake the cleanup loop so it picks up the new short timeout immediately
+    # instead of waiting for its current (potentially long) sleep to finish.
+    _cleanup_wake.set()
 
 
 def get_workspace_idle_timeout(workspace_id: str) -> int:
@@ -279,7 +284,12 @@ async def _cleanup_idle_containers() -> None:
             interval = max(2, min_timeout // 2)
         else:
             interval = CHECK_INTERVAL_SECONDS
-        await asyncio.sleep(interval)
+        # Wait for the interval OR until woken early by a new short timeout
+        _cleanup_wake.clear()
+        try:
+            await asyncio.wait_for(_cleanup_wake.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            pass
         now = time.time()
         to_stop = []
         for cid, info in list(_containers.items()):
