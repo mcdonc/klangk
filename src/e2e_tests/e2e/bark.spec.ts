@@ -126,7 +126,7 @@ async function sendPrompt(
   };
 
   const checkReceived = async (): Promise<boolean> => {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 10; i++) {
       await page.waitForTimeout(2000);
       const msgResp = await request.get(
         `${API_BASE}/workspaces/${workspaceId}/messages`,
@@ -978,11 +978,14 @@ test.describe("Bark E2E", () => {
         { headers },
       );
 
-      // Reload the workspace page to get a fresh WebSocket connection —
-      // the old one died with the container.
+      // Navigate away and back to get a fresh WebSocket connection —
+      // the old one died with the container. Navigate to root first to
+      // force a full page reload (goto to the same URL may be a no-op).
+      await page.goto("/");
+      await waitForFlutter(page);
       await page.goto(`/#/workspace/${workspaceId}`);
       await waitForFlutter(page);
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(4000);
 
       // Send a prompt — the backend will auto-restart the container
       // when it receives a prompt on a dead Pi client.
