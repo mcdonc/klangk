@@ -52,8 +52,6 @@ jobs:
 
       - uses: DeterminateSystems/determinate-nix-action@main
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-
       - name: Free disk space
         run: |
           set -x
