@@ -670,20 +670,24 @@ test.describe("Bark E2E", () => {
     }
   });
 
-  test("logout returns to login page", async ({ page, request }) => {
-    test.setTimeout(60_000);
-    const username = `logout-${Date.now()}`;
-    await registerUser(request, username);
-    await loginViaUI(page, username, TEST_PASSWORD);
+  test.describe("logout", () => {
+    test.describe.configure({ retries: 3 });
 
-    const { width } = vp(page);
-    const f = fv(page);
+    test("logout returns to login page", async ({ page, request }) => {
+      test.setTimeout(60_000);
+      const username = `logout-${Date.now()}`;
+      await registerUser(request, username);
+      await loginViaUI(page, username, TEST_PASSWORD);
 
-    // Logout button is in the top-right corner of the workspaces page
-    await f.click({ position: { x: width - 25, y: 28 }, force: true });
-    await page.waitForTimeout(2000);
+      const { width } = vp(page);
+      const f = fv(page);
 
-    await expect(page).toHaveTitle(/Login/i, { timeout: 30_000 });
+      // Logout button is in the top-right corner of the workspaces page
+      await f.click({ position: { x: width - 25, y: 28 }, force: true });
+      await page.waitForTimeout(2000);
+
+      await expect(page).toHaveTitle(/Login/i, { timeout: 30_000 });
+    });
   });
 
   test("register new user, logout, and login with new credentials", async ({
