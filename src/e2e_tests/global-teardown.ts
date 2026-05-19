@@ -63,14 +63,22 @@ async function globalTeardown() {
     console.log(`Backend log: ${logPath}`);
   }
 
-  // Clean up temp data directory
+  // Clean up temp data directory. On CI, Docker containers create root-owned
+  // files in bind-mounted workspace dirs, so rmSync fails with EACCES.
+  // Use a Docker container to remove them first.
   const dataDir = process.env.BARK_E2E_DATA_DIR;
   if (dataDir) {
     console.log(`Cleaning up ${dataDir}`);
     try {
+      if (process.env.CI) {
+        execSync(
+          `docker run --rm -v "${dataDir}:/cleanup" alpine rm -rf /cleanup/*`,
+          { stdio: "ignore", timeout: 10_000 },
+        );
+      }
       rmSync(dataDir, { recursive: true, force: true });
-    } catch (e) {
-      console.warn(`Failed to clean up ${dataDir}:`, e);
+    } catch {
+      // Best effort — CI will clean up the runner anyway
     }
   }
 
