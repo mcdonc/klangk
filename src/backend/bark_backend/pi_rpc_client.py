@@ -64,6 +64,26 @@ class PiRpcClient:
         except (OSError, ConnectionError, asyncio.IncompleteReadError) as e:
             logger.error("Pi RPC read error: %s", e)
         finally:
+            if self._proc:
+                rc = self._proc.returncode
+                logger.warning(
+                    "Pi read loop ended for container %s (exit code: %s)",
+                    self.container_id[:12],
+                    rc,
+                )
+                if self._proc.stderr:
+                    try:
+                        stderr = await asyncio.wait_for(
+                            self._proc.stderr.read(), timeout=2
+                        )
+                        if stderr:
+                            logger.warning(
+                                "Pi stderr for %s: %s",
+                                self.container_id[:12],
+                                stderr.decode("utf-8", errors="replace")[:500],
+                            )
+                    except (asyncio.TimeoutError, OSError):
+                        pass
             await self._event_queue.put(None)
 
     @property
