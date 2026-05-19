@@ -1038,6 +1038,7 @@ test.describe("Bark E2E", () => {
       // a new WebSocket — a hash-only change may not trigger reconnection.
       await loginViaUI(page, username, TEST_PASSWORD);
       await page.goto(`/#/workspace/${workspaceId}`);
+      await waitForFlutter(page);
 
       // Wait for container to start (poll up to 60s)
       let started = false;
