@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:flutter_highlight/themes/monokai-sublime.dart';
 import 'package:highlight/highlight.dart' show highlight, Node;
 import 'package:http/http.dart' as http;
@@ -469,12 +470,11 @@ class _ChatPanelState extends State<ChatPanel> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           MarkdownBody(
-            data: entry.content,
+            data: autoLinkUrls(entry.content),
             selectable: true,
+            builders: {'a': _LinkBuilder()},
             onTapLink: (text, href, title) {
-              if (href != null) {
-                openUrl(href);
-              }
+              if (href != null) openUrl(href);
             },
             syntaxHighlighter: _MonokaiSyntaxHighlighter(),
             styleSheet: MarkdownStyleSheet(
@@ -693,6 +693,84 @@ class _MonokaiSyntaxHighlighter extends SyntaxHighlighter {
       color: themeEntry.color,
       fontWeight: themeEntry.fontWeight,
       fontStyle: themeEntry.fontStyle,
+    );
+  }
+}
+
+/// Wrap bare URLs in markdown link syntax so MarkdownBody renders them
+/// as clickable links. Skips URLs already inside markdown links or
+/// inside code blocks/spans.
+final _bareUrlPattern = RegExp(r'(?<!\[.*?\]\()(?<![`(])https?://[^\s)\]>`]+');
+
+@visibleForTesting
+String autoLinkUrls(String text) {
+  return text.replaceAllMapped(_bareUrlPattern, (m) {
+    final url = m.group(0)!;
+    return '[$url]($url)';
+  });
+}
+
+/// Renders markdown links with a small copy button next to the link text.
+/// Left-click on the link text is handled by onTapLink (opens in new tab).
+class _LinkBuilder extends MarkdownElementBuilder {
+  String? _href;
+
+  @override
+  void visitElementBefore(md.Element element) {
+    _href = element.attributes['href'];
+  }
+
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final href = _href;
+    if (href == null) return null;
+
+    final text = element.textContent;
+    final style = preferredStyle ??
+        const TextStyle(
+          fontSize: 16,
+          color: Color(0xFF1565C0),
+          decoration: TextDecoration.underline,
+        );
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: GestureDetector(
+            onTap: () => openUrl(href),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Text(text, style: style),
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        SizedBox(
+          width: 20,
+          height: 20,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            iconSize: 14,
+            icon: const Icon(Icons.copy, color: Color(0xFF90A4AE)),
+            tooltip: 'Copy link',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: href));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Copied: $href'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

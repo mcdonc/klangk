@@ -89,6 +89,41 @@ void main() {
       client.close();
     });
 
+    testWidgets('shows copy button next to links in assistant message',
+        (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+
+      client.emit(AguiEvent(
+        type: AguiEventType.textMessageStart,
+        data: {'messageId': 'm1'},
+      ));
+      await tester.pump();
+
+      client.emit(AguiEvent(
+        type: AguiEventType.textMessageContent,
+        data: {
+          'messageId': 'm1',
+          'delta': 'Visit http://localhost:8995/hosted/abc/9000/ for the app'
+        },
+      ));
+      await tester.pump();
+
+      // The URL should be rendered as a link with a copy icon
+      expect(find.byIcon(Icons.copy), findsOneWidget);
+      client.close();
+    });
+
     testWidgets('shows run started indicator', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
