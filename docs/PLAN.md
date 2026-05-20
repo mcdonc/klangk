@@ -63,7 +63,7 @@ bark/
     stub_dart_plugins.sh       # Creates minimal bark_plugins stub for first-time checkout / CI
     flutterbuildweb.sh         # Flutter build: plugin auto-fetch, codegen, flutter build web
     dockerbuild.sh             # Docker build: plugin staging, container cleanup, workspace image build (named build contexts)
-    dockerbuild-base.sh        # Build and push base Docker image to GHCR
+    dockerbuild-base.sh        # Build base Docker image
     pull-base-image.sh         # Pull latest base image from GHCR (if changed)
     nginx.sh                   # nginx reverse proxy: config generation and exec
 

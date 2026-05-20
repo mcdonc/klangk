@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Build and push the base Docker image to GHCR.
+# Build base Docker image.
 # Run when Dockerfile.base, apt packages, or Pi agent version changes.
-# Requires: docker login ghcr.io
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
@@ -15,7 +14,8 @@ docker build --platform linux/amd64 \
   -f src/dockerimage/Dockerfile.base \
   -t "$IMAGE" "$@" src/dockerimage/
 
-echo "==> Pushing to GHCR"
-docker push "$IMAGE"
+# Requires: docker login ghcr.io
+#echo "==> Pushing to GHCR"
+#docker push "$IMAGE"
 
 echo "==> Done: $IMAGE"
