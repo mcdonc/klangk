@@ -837,28 +837,25 @@ test.describe("Bark E2E", () => {
     const { workspaceId } = await createWorkspace(request, headers, "deeplink");
 
     // Navigate directly to a workspace URL without being logged in.
-    // The router should redirect to /login with a redirect query param.
     await page.goto(`/#/workspace/${workspaceId}`);
     await waitForFlutter(page);
     await expect(page).toHaveTitle(/Login/i, { timeout: 10_000 });
 
-    // Should be on the login page
-    await expect(page).toHaveTitle(/Login/i, { timeout: 10_000 });
-
-    // Log in — should redirect to the workspace, not /workspaces
+    // Log in via the UI. The "Please log in to continue." message shifts
+    // the form down slightly, so use slightly lower Y coordinates.
     const { width, height } = vp(page);
     const cx = width / 2;
     const f = fv(page);
 
-    await f.click({ position: { x: cx, y: height * 0.47 }, force: true });
+    await f.click({ position: { x: cx, y: height * 0.5 }, force: true });
     await page.waitForTimeout(300);
     await page.keyboard.type(username);
 
-    await f.click({ position: { x: cx, y: height * 0.55 }, force: true });
+    await f.click({ position: { x: cx, y: height * 0.58 }, force: true });
     await page.waitForTimeout(300);
     await page.keyboard.type(TEST_PASSWORD);
 
-    await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
+    await f.click({ position: { x: cx, y: height * 0.69 }, force: true });
 
     // Should end up at the workspace, not the workspace list
     await page.waitForTimeout(5000);
