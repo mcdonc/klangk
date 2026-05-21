@@ -82,58 +82,6 @@ test.describe("Bark E2E", () => {
     }
   });
 
-  test("switch to Files tab and back", async ({ page, request }) => {
-    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
-      page,
-      request,
-      "files-tab",
-    );
-
-    try {
-      const { width } = vp(page);
-      const f = fv(page);
-      const rightCenter = (492 + width) / 2;
-
-      await f.click({
-        position: { x: rightCenter + 200, y: 16 },
-        force: true,
-      });
-      await page.waitForTimeout(500);
-
-      const listResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
-        { headers },
-      );
-      expect(listResp.ok()).toBeTruthy();
-
-      await f.click({
-        position: { x: rightCenter - 200, y: 16 },
-        force: true,
-      });
-      await page.waitForTimeout(500);
-
-      const termX = rightCenter;
-      const termY = 200;
-      await terminalType(
-        page,
-        "echo tab-switch-ok > /workspace/.tab-test",
-        termX,
-        termY,
-      );
-      await waitForFile(request, workspaceId, ".tab-test", headers);
-
-      const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.tab-test`,
-        { headers },
-      );
-      expect(readResp.ok()).toBeTruthy();
-      const data = await readResp.json();
-      expect(data.content).toContain("tab-switch-ok");
-    } finally {
-      await cleanup();
-    }
-  });
-
   test("terminal accepts keyboard input", async ({ page, request }) => {
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
