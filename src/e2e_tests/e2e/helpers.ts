@@ -173,7 +173,7 @@ export async function terminalType(
   const f = fv(page);
 
   await f.click({ position: { x, y }, force: true });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
 }

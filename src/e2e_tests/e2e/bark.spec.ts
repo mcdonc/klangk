@@ -31,7 +31,27 @@ test.describe("Bark E2E", () => {
   test("login with wrong password fails", async ({ page, request }) => {
     const username = `wrong-pw-${Date.now()}`;
     await registerUser(request, username);
-    await expect(loginViaUI(page, username, "wrongpassword")).rejects.toThrow();
+
+    // Type credentials manually instead of loginViaUI (which waits 15s
+    // for a Workspaces title that never comes on failed login).
+    await page.goto("/");
+    await waitForFlutter(page);
+    const { width, height } = vp(page);
+    const cx = width / 2;
+    const f = fv(page);
+
+    await f.click({ position: { x: cx, y: height * 0.47 }, force: true });
+    await page.waitForTimeout(300);
+    await page.keyboard.type(username);
+
+    await f.click({ position: { x: cx, y: height * 0.55 }, force: true });
+    await page.waitForTimeout(300);
+    await page.keyboard.type("wrongpassword");
+
+    await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
+    await page.waitForTimeout(2000);
+
+    // Should still be on login page
     await expect(page).toHaveTitle(/Login/i);
   });
 
@@ -77,7 +97,7 @@ test.describe("Bark E2E", () => {
         position: { x: rightCenter + 200, y: 16 },
         force: true,
       });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       const listResp = await request.get(
         `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
@@ -89,7 +109,7 @@ test.describe("Bark E2E", () => {
         position: { x: rightCenter - 200, y: 16 },
         force: true,
       });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       const termX = rightCenter;
       const termY = 200;
@@ -527,11 +547,11 @@ test.describe("Bark E2E", () => {
 
       // Switch to Files tab
       await f.click({ position: { x: rightCenter + 200, y: 16 }, force: true });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       // Switch back to Terminal tab
       await f.click({ position: { x: rightCenter - 200, y: 16 }, force: true });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       // Switch to Files again and back
       await f.click({ position: { x: rightCenter + 200, y: 16 }, force: true });
