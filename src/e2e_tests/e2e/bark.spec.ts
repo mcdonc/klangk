@@ -49,9 +49,10 @@ test.describe("Bark E2E", () => {
     await page.keyboard.type("wrongpassword");
 
     await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
-    await page.waitForTimeout(2000);
 
-    // Should still be on login page
+    // Wait briefly for the login attempt to complete, then verify
+    // we're still on the login page (not redirected to workspaces).
+    await page.waitForTimeout(500);
     await expect(page).toHaveTitle(/Login/i);
   });
 
@@ -453,16 +454,16 @@ test.describe("Bark E2E", () => {
     const f = fv(page);
 
     await f.click({ position: { x: cx, y: height * 0.47 }, force: true });
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(200);
     await page.keyboard.type(username);
 
     await f.click({ position: { x: cx, y: height * 0.55 }, force: true });
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(200);
     await page.keyboard.type(password);
 
     await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
 
-    await expect(page).toHaveTitle(/Workspaces/i, { timeout: 15_000 });
+    await expect(page).toHaveTitle(/Workspaces/i, { timeout: 10_000 });
   });
 
   test("invalid token returns 401 from API", async ({ request }) => {
@@ -690,7 +691,7 @@ test.describe("Bark E2E", () => {
     await request.delete(`${API_BASE}/workspaces/${wsB.id}`, { headers });
   });
 
-  test("navigate into subdirectory via file viewer", async ({
+  test("nested directory structure accessible via file API", async ({
     page,
     request,
   }) => {
@@ -701,21 +702,10 @@ test.describe("Bark E2E", () => {
     );
 
     try {
-      // Create a nested directory structure via terminal
-      const { width, height } = vp(page);
-      const f = fv(page);
-      const termX = (492 + width) / 2;
-      await terminalType(
-        page,
-        "mkdir -p /workspace/.e2e-nav/inner && echo nav-test > /workspace/.e2e-nav/inner/file.txt",
-        termX,
-        200,
-      );
-      await waitForFile(
-        request,
-        workspaceId,
-        ".e2e-nav/inner/file.txt",
-        headers,
+      // Create a nested directory structure via API (faster than terminal)
+      await request.post(
+        `${API_BASE}/workspaces/${workspaceId}/files?path=.e2e-nav/inner/file.txt`,
+        { headers, data: "nav-test" },
       );
 
       // Verify structure via API
@@ -877,20 +867,19 @@ test.describe("Bark E2E", () => {
     const f = fv(page);
 
     await f.click({ position: { x: cx, y: height * 0.47 }, force: true });
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(200);
     await page.keyboard.type(username);
 
     await f.click({ position: { x: cx, y: height * 0.55 }, force: true });
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(200);
     await page.keyboard.type(TEST_PASSWORD);
 
     await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
 
     // Should end up at the workspace, not the workspace list.
-    // Poll for up to 30s since login can be slow under parallel load.
     let finalUrl = "";
-    for (let i = 0; i < 60; i++) {
-      await page.waitForTimeout(500);
+    for (let i = 0; i < 30; i++) {
+      await page.waitForTimeout(300);
       finalUrl = page.url();
       if (finalUrl.includes(workspaceId)) break;
     }

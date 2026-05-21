@@ -41,15 +41,15 @@ export async function loginViaUI(
   const f = fv(page);
 
   await f.click({ position: { x: cx, y: height * 0.47 }, force: true });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(200);
   await page.keyboard.type(username);
 
   await f.click({ position: { x: cx, y: height * 0.55 }, force: true });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(200);
   await page.keyboard.type(password);
 
   await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
-  await expect(page).toHaveTitle(/Workspaces/i, { timeout: 15_000 });
+  await expect(page).toHaveTitle(/Workspaces/i, { timeout: 10_000 });
 }
 
 // Flutter Web renders to <canvas> inside <flutter-view>, so standard DOM
