@@ -81,8 +81,6 @@ class TestStart:
         mock_os["openpty"].assert_called_once()
         mock_os["set_winsize"].assert_called_once_with(master_fd, 40, 120)
         mock_os["fd_close"].assert_called_once_with(slave_fd)
-        mock_os["fd_write"].assert_called_once()
-
         exec_args = m_exec.call_args[0]
         assert exec_args[0] == "docker"
         assert exec_args[1] == "exec"

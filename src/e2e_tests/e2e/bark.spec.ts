@@ -97,7 +97,7 @@ test.describe("Bark E2E", () => {
 
       await terminalType(
         page,
-        "echo playwright-terminal-test > /workspace/.term-test",
+        "echo playwright-terminal-test > /work/.term-test",
         termX,
         termY,
       );
@@ -190,7 +190,7 @@ test.describe("Bark E2E", () => {
       const termX = (492 + width) / 2;
       const termY = height / 2;
 
-      await terminalType(page, 'echo "foo" > /workspace/foo.txt', termX, termY);
+      await terminalType(page, 'echo "foo" > /work/foo.txt', termX, termY);
       await waitForFile(request, workspaceId, "foo.txt", headers);
 
       const readResp = await request.get(
@@ -458,7 +458,7 @@ test.describe("Bark E2E", () => {
       // Run a multi-command sequence
       await terminalType(
         page,
-        "mkdir -p /workspace/.e2e-multitest/sub && echo done > /workspace/.e2e-multitest/sub/result.txt",
+        "mkdir -p /work/.e2e-multitest/sub && echo done > /work/.e2e-multitest/sub/result.txt",
         termX,
         termY,
       );
@@ -513,7 +513,7 @@ test.describe("Bark E2E", () => {
       const termY = 200;
       await terminalType(
         page,
-        "echo tab-survive-test > /workspace/.tab-survive",
+        "echo tab-survive-test > /work/.tab-survive",
         termX,
         termY,
       );
@@ -653,7 +653,7 @@ test.describe("Bark E2E", () => {
       // Create nested directory structure via terminal
       await terminalType(
         page,
-        "mkdir -p /workspace/.e2e-nav/inner && echo nav-test > /workspace/.e2e-nav/inner/file.txt",
+        "mkdir -p /work/.e2e-nav/inner && echo nav-test > /work/.e2e-nav/inner/file.txt",
       );
       await waitForFile(
         request,
@@ -678,6 +678,78 @@ test.describe("Bark E2E", () => {
       );
       expect(content.ok()).toBeTruthy();
       expect((await content.json()).content.trim()).toBe("nav-test");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("host files in home dir appear inside container", async ({
+    page,
+    request,
+  }) => {
+    const email = `host-home-${Date.now()}@test.example.com`;
+    const { token, headers } = await registerUser(request, email);
+    const { workspaceId, cleanup } = await createWorkspace(
+      request,
+      headers,
+      "host-home",
+    );
+
+    // Decode user ID from JWT
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1], "base64url").toString(),
+    );
+    const userId = payload.sub;
+
+    // Write a file to the host home directory before starting the container
+    const dataDir = process.env.BARK_E2E_DATA_DIR!;
+    const homePath = `${dataDir}/workspaces/${userId}/home/${workspaceId}`;
+    const { mkdirSync, writeFileSync } = await import("fs");
+    mkdirSync(homePath, { recursive: true });
+    writeFileSync(`${homePath}/.host-created-file`, "hello-from-host\n");
+
+    try {
+      await openWorkspace(page, email, workspaceId);
+
+      // Copy the file from ~ to /work so the file API can read it
+      await terminalType(page, "cp ~/.host-created-file /work/.host-check");
+      await waitForFile(request, workspaceId, ".host-check", headers);
+
+      const resp = await request.get(
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.host-check`,
+        { headers },
+      );
+      expect(resp.ok()).toBeTruthy();
+      expect((await resp.json()).content.trim()).toBe("hello-from-host");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("files created in container home persist on host", async ({
+    page,
+    request,
+  }) => {
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "home-persist",
+    );
+
+    try {
+      // Create a file in ~ and copy it to /work so the file API can read it
+      await terminalType(
+        page,
+        "echo home-test > ~/.home-persist-test && cp ~/.home-persist-test /work/.home-result",
+      );
+      await waitForFile(request, workspaceId, ".home-result", headers);
+
+      const resp = await request.get(
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.home-result`,
+        { headers },
+      );
+      expect(resp.ok()).toBeTruthy();
+      expect((await resp.json()).content.trim()).toBe("home-test");
     } finally {
       await cleanup();
     }

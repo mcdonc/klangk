@@ -53,11 +53,15 @@ async def archive_user_data(user_id: str, email: str) -> Path | None:
 
 
 def _workspace_path(user_id: str, workspace_id: str) -> Path:
-    return WORKSPACES_ROOT / user_id / "data" / workspace_id
+    return WORKSPACES_ROOT / user_id / "work" / workspace_id
 
 
 def _sessions_path(user_id: str, workspace_id: str) -> Path:
     return WORKSPACES_ROOT / user_id / "sessions" / workspace_id
+
+
+def _home_path(user_id: str, workspace_id: str) -> Path:
+    return WORKSPACES_ROOT / user_id / "home" / workspace_id
 
 
 async def create_workspace(user_id: str, name: str) -> dict:
@@ -66,6 +70,8 @@ async def create_workspace(user_id: str, name: str) -> dict:
     path.mkdir(parents=True, exist_ok=True)
     sessions = _sessions_path(user_id, workspace["id"])
     sessions.mkdir(parents=True, exist_ok=True)
+    home = _home_path(user_id, workspace["id"])
+    home.mkdir(parents=True, exist_ok=True)
     # Allocate ports at creation time so ranges are sequential
     await container_manager.allocate_ports(workspace["id"], workspace["num_ports"])
     return workspace
@@ -103,5 +109,11 @@ def get_workspace_host_path(user_id: str, workspace_id: str) -> Path:
 
 def get_sessions_host_path(user_id: str, workspace_id: str) -> Path:
     path = _sessions_path(user_id, workspace_id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_home_host_path(user_id: str, workspace_id: str) -> Path:
+    path = _home_path(user_id, workspace_id)
     path.mkdir(parents=True, exist_ok=True)
     return path

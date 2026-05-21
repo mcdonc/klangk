@@ -91,7 +91,7 @@ async def get_docker() -> aiodocker.Docker:  # pragma: no cover
 async def start_container(
     workspace_id: str,
     host_path: str,
-    sessions_path: str,
+    home_path: str,
     existing_container_id: str | None = None,
     resume_session: str | None = None,
     num_ports: int = DEFAULT_PORTS_PER_WORKSPACE,
@@ -185,12 +185,11 @@ async def start_container(
             "Init": True,
             "ReadonlyRootfs": True,
             "Binds": [
-                f"{host_path}:/workspace",
-                f"{sessions_path}:/home/bark/.pi/sessions",
+                f"{host_path}:/work",
+                f"{home_path}:/home/bark",
             ],
             "Tmpfs": {
                 "/tmp": "rw,noexec,nosuid,size=256m",
-                "/home/bark": "rw,nosuid,size=64m",
                 "/run": "rw,noexec,nosuid,size=16m",
                 "/var/log": "rw,noexec,nosuid,size=16m",
             },

@@ -24,7 +24,7 @@ Pi container per workspace (stdin/stdout JSON-RPC)
     ├── Server-side tools (from $BARK_PLUGINS_DIR/*/tools/)
     ├── AGENTS.md (dynamically generated on container start)
     ↕ bind mount
-$BARK_DATA_DIR/workspaces/<user-id>/data/<workspace-id>/
+$BARK_DATA_DIR/workspaces/<user-id>/work/<workspace-id>/
 ```
 
 ### Components
@@ -68,7 +68,7 @@ bark/
     nginx.sh                   # nginx reverse proxy: config generation and exec
 
   src/dockerimage/
-    Dockerfile                  # Workspace image: FROM bark-pi-base + plugin extensions + tools + entrypoint
+    Dockerfile                  # Workspace image: FROM bark-pi-base + plugin extensions + tools + entrypoint + /etc/bash.bashrc
     Dockerfile.base             # Base image: node:22-slim + Pi + Python3 + build-essential + SQLite + vim + emacs + net tools + /bin/sh→bash (pushed to GHCR)
     entrypoint.sh               # Sets up Pi config (FIFO for models.json, system prompt), starts Pi in RPC mode
     system-prompt.md            # Static system prompt for Pi (copied into image)
@@ -183,9 +183,8 @@ bark/
 - 30-minute idle timeout (configurable via `BARK_IDLE_TIMEOUT_SECONDS`) with automatic container stop, debug notification, and terminal overlay with restart button. Activity is recorded on user actions (prompt, steer, terminal input) and on every Pi event (tool calls, text streaming), so containers stay alive during long-running LLM requests as long as events are flowing. Stuck tool executions (e.g., foreground server) produce no events and will eventually time out.
 - All user containers stopped on logout and backend shutdown
 - Read-only root filesystem (`ReadonlyRootfs: True`) — the agent cannot modify system files or install packages outside the workspace. Writable paths:
-  - `/workspace` — bind mount to host (user files)
-  - `/home/bark/.pi/sessions` — bind mount to host (Pi session history)
-  - `/home/bark` — tmpfs (Pi agent config, regenerated each start)
+  - `/work` — bind mount to host (user files, `$BARK_DATA_DIR/workspaces/<user>/work/<workspace>/`)
+  - `/home/bark` — bind mount to host (persistent home, `$BARK_DATA_DIR/workspaces/<user>/home/<workspace>/`). Dotfiles (`.bashrc`, `.vimrc`, `.gitconfig`), bash history, and Pi sessions persist across container restarts. Pi agent config (`.pi/agent/`) is cleaned and regenerated each start.
   - `/tmp` — tmpfs (scratch space)
   - `/run`, `/var/log` — tmpfs (runtime)
 - `bark` user baked into the image at build time with the host UID/GID (passed as Docker build args)
@@ -198,7 +197,7 @@ bark/
 - Direct shell access to the workspace container via the Terminal tab in the right panel
 - Uses xterm.dart (pure Flutter terminal emulator) with a dark theme (Tomorrow Night palette)
 - Backend spawns `docker exec` subprocess with PTY (`os.openpty`) piped over the existing WebSocket
-- Runs as `bark` user in `/workspace` with bash, tab completion, readline, and colored prompt/ls
+- Runs as `bark` user in `/work` with bash, tab completion, readline, and colored prompt/ls (defaults from `/etc/bash.bashrc` in the image, overridable via `~/.bashrc` on the persistent home mount)
 - Terminal interaction bumps the container idle timeout via `record_activity()`
 - On-demand: subprocess starts when user clicks the Terminal tab
 - State preserved across tab switches (IndexedStack keeps all panels alive)
@@ -524,8 +523,8 @@ plugins:
 
 - All data stored in `$BARK_DATA_DIR` (defaults to `~/.bark/data`)
 - SQLite database: `bark.db` (users, workspaces, messages, token blocklist)
-- Workspace files: `workspaces/<user-id>/data/<workspace-id>/`
-- Pi sessions: `workspaces/<user-id>/sessions/<workspace-id>/`
+- Workspace files: `workspaces/<user-id>/work/<workspace-id>/` (mounted as `/work`)
+- Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/bark` — dotfiles, bash history, Pi sessions)
 - Database persists across restarts and rebuilds
 
 ## Client-Side Tool Delegation via Extension UI Sub-Protocol
@@ -590,6 +589,7 @@ arctor nginx (443)
 
 - **Plugin version numbers**: Plugins may want their own version numbers (in `plugin.yaml` or similar metadata) for compatibility checking, display in the UI, and meaningful pinning beyond git refs.
 - **Entrypoint nohup zombie**: The `nohup sh -c "cat ... > FIFO ..."` writer in `entrypoint.sh` (line 78) leaves one `[sh] <defunct>` zombie per container start. Its parent is the `su` process which doesn't call `wait()`. Harmless but cosmetic. Fix by restructuring the entrypoint so the writer finishes before the final `exec`, or by using a different mechanism to feed the FIFOs.
+- **Install gh, ssh and nano in container**: Add the GitHub CLI (`gh`) and SSH client to the Docker base image via `apt install` so users can interact with GitHub repos and remote servers from within their workspace and use the nano text editor.
 - **Container resource limits**: Add CPU/memory limits to containers to prevent runaway processes.
 - **Container network isolation**: Restrict container network access to prevent use as an attack platform. Use a custom Docker network with limited egress — allow only the Ollama API endpoint (cloud or self-hosted) and block all other outbound traffic. Consider using `--network=none` with a proxy sidecar for allowlisted domains only.
 - **Syntax highlighting language detection**: Improve code block language detection for unlabeled blocks.
@@ -598,8 +598,6 @@ arctor nginx (443)
 - **Audit container env vars**: Investigate whether `BARK_PORT_MAPPINGS`, `BARK_WORKSPACE_ID`, `BARK_HOSTING_PROTOCOL`, and `BARK_HOSTING_HOSTNAME` need to be in the container environment. If they're only used by the entrypoint or Pi extensions, they may be safe to strip from the terminal session via `env -u`. If they're not needed at all, stop passing them at container creation time.
 - **Same-workspace multi-window**: Opening the same workspace in two browser windows simultaneously has undefined behavior — both WebSocket connections share one Pi container/session, and prompts from either window could collide or interleave unpredictably. Consider either locking a workspace to one connection at a time, or multiplexing both windows onto the same event stream.
 - **Workspace disk quotas**: Limit how much disk space each workspace can consume. Options: use filesystem quotas (XFS/ext4 project quotas on the host), overlay2 with size limits, or a loopback-mounted filesystem per workspace with a fixed size. Should also surface current disk usage in the UI (file viewer header or workspace list) so users can see how much space they've used.
-- **Retain shell history across container restarts**: Bash history is lost when a container is stopped because `/home/bark` is a tmpfs. Bind-mount a per-workspace history file (e.g., `$BARK_DATA_DIR/workspaces/<user>/<ws>/.bash_history`) into the container so terminal history persists.
-- **User dotfile customization**: Allow users to customize their container shell environment (`.bashrc`, `.vimrc`, `.emacs`, `.gitconfig`, etc.). Options: bind-mount a per-user dotfiles directory from the host into `/home/bark`, or provide a UI for editing dotfiles that persist across container restarts. Currently `/home/bark` is a tmpfs regenerated each start, so any customization is lost.
 - **Process state checkpoint/restore across container restarts**: Research checkpointing running process state before container shutdown and restoring it on restart, so long-running servers, REPLs, and background tasks survive idle timeouts. Options: [CRIU](https://criu.org/) (Checkpoint/Restore In Userspace) can freeze and restore Linux processes including open files, sockets, and memory; Docker has experimental `docker checkpoint` support built on CRIU. Trade-offs: CRIU requires `CAP_SYS_ADMIN` or a privileged container, restored processes may fail if ports are remapped or network state changed, and checkpoint images can be large. Lighter alternatives: save enough state to re-run setup scripts on restart (virtualenvs, npm installs, server start commands).
 - **Investigate running Pi under bubblewrap**: Explore using [bubblewrap](https://github.com/containers/bubblewrap) (bwrap) as an alternative to Docker for sandboxing Pi. Bubblewrap is lighter-weight than Docker — no daemon, no image builds, no container overhead — and provides namespace-based isolation (mount, PID, network, user). This could significantly reduce startup time and resource usage. Trade-offs: no pre-built image caching, need to manage tool installations on the host, less isolation than full container. Could be offered as an alternative backend alongside Docker.
 - **Remove leading underscores from internal functions**: Functions like `_handle_prompt`, `_forward_events`, `_cleanup_connection`, `_derive_hosting_info`, etc. in `ws_handler.py` and helper functions in other modules use leading underscores to signal "module-private". Since these are now tested directly via imports, the underscores are unnecessary and make the test imports look odd. Rename to drop the underscores.
@@ -608,6 +606,7 @@ arctor nginx (443)
 - **Remove /auth/register endpoint**: With email verification, user creation in production goes through the admin endpoint (`/admin/users`). The `/auth/register` endpoint may no longer be needed — its only remaining use is the `BARK_TEST_MODE` bypass for E2E tests. Consider moving the test-mode registration to the admin endpoint or a dedicated test-only route.
 - **BARK_SMTP_PASSWORD_PATH**: Support `BARK_SMTP_PASSWORD_PATH` as an alternative to `BARK_SMTP_PASSWORD`, pointing to a file containing the SMTP password. This avoids storing secrets in `.env` and works with secret management tools like agenix/sops that write decrypted secrets to files at runtime.
 - **Test SMTP email delivery**: The email service has unit tests with mocked SMTP, but no integration test for real SMTP delivery. Add a manual test script or a health check endpoint that sends a test email via the configured SMTP/sendmail to verify the mail pipeline works end-to-end. Manually test SMTP mode on arctor by setting `BARK_SMTP_HOST=localhost` in `.env` (arctor's Postfix accepts `permit_mynetworks` without auth for localhost connections).
+- **Enforce 79-char line limit**: Configure formatters/linters for Dart, Python, and TypeScript to use a 79-character line limit. Update ruff, dart format, and prettier configs accordingly. This will require reformatting existing code.
 - **Login/register form UX**: The login and register modes are visually indistinguishable — both show an Email field, Password field, and a button. Add visual differentiation (e.g., a heading, different button colors, or a card title) so users can tell which mode they're in.
 - **Forgot password flow**: Add a "Forgot password?" link on the login page that sends a password reset email with a signed token link. The reset page lets the user set a new password. Similar to the verification flow — JWT-signed token, 72h expiry, auto-login after reset.
 - **Resend verification email**: If the verification email is lost in transit or expires, users need a way to request a new one. Add a "Resend verification email" link on the login page (shown when login fails with "not verified") and/or an admin action to resend. Consider rate-limiting to prevent abuse.

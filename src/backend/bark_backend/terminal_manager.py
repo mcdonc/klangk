@@ -69,7 +69,7 @@ class TerminalSession:
             "-u",
             "bark",
             "-w",
-            "/workspace",
+            "/work",
             "-e",
             "TERM=xterm-256color",
             self.container_id,
@@ -91,14 +91,7 @@ class TerminalSession:
         loop = asyncio.get_event_loop()
         loop.add_reader(master_fd, self._on_readable)
 
-        # Send init commands to set up prompt and aliases
-        init = (
-            r"PS1='\[\033[01;34m\]\w\[\033[00m\]\$ '"
-            "\nalias ls='ls --color=auto'"
-            "\nalias grep='grep --color=auto'"
-            "\nclear\n"
-        )
-        _fd_write(master_fd, init.encode())
+        # Prompt and aliases come from /etc/bash.bashrc in the container image
 
         logger.info("Terminal session started for container %s", self.container_id)
 

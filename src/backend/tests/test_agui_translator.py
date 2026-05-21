@@ -397,14 +397,13 @@ class TestExtractContentText:
 class TestExtractFilePath:
     def test_path_key(self):
         assert (
-            _extract_file_path({"args": {"path": "/workspace/foo.txt"}})
-            == "/workspace/foo.txt"
+            _extract_file_path({"args": {"path": "/work/foo.txt"}}) == "/work/foo.txt"
         )
 
     def test_file_path_key(self):
         assert (
-            _extract_file_path({"args": {"file_path": "/workspace/bar.py"}})
-            == "/workspace/bar.py"
+            _extract_file_path({"args": {"file_path": "/work/bar.py"}})
+            == "/work/bar.py"
         )
 
     def test_path_preferred_over_file_path(self):

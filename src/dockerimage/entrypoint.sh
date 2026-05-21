@@ -4,8 +4,11 @@
 
 # Don't hardcode any secrets here, its copied to the container fs.
 
-# Set up Pi agent config in bark's home (copied from build-time /opt/bark)
+# Set up Pi agent config in bark's home (copied from build-time /opt/bark).
+# /home/bark is a persistent bind mount, so clean the agent dir first to
+# avoid stale files from previous container starts.
 PI_AGENT_DIR="/home/bark/.pi/agent"
+rm -rf "$PI_AGENT_DIR"
 mkdir -p "$PI_AGENT_DIR/extensions"
 cp -r /opt/bark/pi-agent/extensions/* "$PI_AGENT_DIR/extensions/" 2>/dev/null
 
@@ -47,12 +50,12 @@ EOF
 )
 
 # Fix ownership: bark's home + workspace directory
-# /home/bark/.pi/sessions is bind-mounted from the host by container_manager
+# /home/bark/.pi/sessions persists on the host via the /home/bark bind mount
 chown -R bark:bark /home/bark
-chown bark:bark /workspace
+chown bark:bark /work
 
-# Allow bark to use git in /workspace
-su bark -c "git config --global --add safe.directory /workspace" 2>/dev/null
+# Allow bark to use git in /work
+su bark -c "git config --global --add safe.directory /work" 2>/dev/null
 
 # Build system prompt file from static template + registered extension tools
 SYSTEM_PROMPT_FILE="$PI_AGENT_DIR/system-prompt.md"
@@ -101,6 +104,8 @@ if [ -n "$BARK_RESUME_SESSION" ]; then
   PI_CMD="$PI_CMD --session $BARK_RESUME_SESSION"
 fi
 
-# Drop to bark user and run Pi (exec replaces this shell so Pi gets PID 1's stdio)
+# Drop to bark user and run Pi. Use -s /bin/sh to avoid sourcing .bashrc
+# (which is user-editable on the persistent home mount and could read FIFOs
+# before Pi does, leaking the API key).
 exec env $STRIP_VARS -u BARK_RESUME_SESSION -u TEMP_SETTINGS_CONTENT -u TEMP_MODELS_CONTENT \
-  su bark -c "PI_CODING_AGENT_DIR=$PI_AGENT_DIR $PI_CMD"
+  su -s /bin/sh bark -c "PI_CODING_AGENT_DIR=$PI_AGENT_DIR $PI_CMD"

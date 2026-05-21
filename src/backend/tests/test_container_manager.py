@@ -195,7 +195,7 @@ class TestStartContainer:
             cid, status = await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
             )
         assert cid == "new-cid"
         assert status == "created"
@@ -211,7 +211,7 @@ class TestStartContainer:
             cid, status = await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
                 existing_container_id="existing-cid",
             )
         assert cid == "existing-cid"
@@ -229,7 +229,7 @@ class TestStartContainer:
             cid, status = await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
                 existing_container_id="old-cid",
             )
         assert cid == "new-cid"
@@ -248,7 +248,7 @@ class TestStartContainer:
             cid, status = await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
                 existing_container_id="gone-cid",
             )
         assert cid == "new-cid"
@@ -263,7 +263,7 @@ class TestStartContainer:
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
                 resume_session="/path/to/session.jsonl",
             )
         call_kwargs = mock_docker.containers.create_or_replace.call_args
@@ -282,7 +282,7 @@ class TestStartContainer:
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
             )
         call_kwargs = mock_docker.containers.create_or_replace.call_args
         env = call_kwargs[1]["config"]["Env"]
@@ -298,7 +298,7 @@ class TestStartContainer:
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
                 hosting_hostname="example.com",
                 hosting_proto="https",
                 hosting_base_path="/bark",
@@ -318,7 +318,7 @@ class TestStartContainer:
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
                 num_ports=3,
             )
         # Ports should have been allocated
@@ -336,7 +336,7 @@ class TestStartContainer:
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
                 num_ports=2,
             )
         ports = await container_manager.get_workspace_ports(workspace["id"])
@@ -351,7 +351,7 @@ class TestStartContainer:
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
-                "/tmp/sessions",
+                "/tmp/home",
             )
         call_kwargs = mock_docker.containers.create_or_replace.call_args
         config = call_kwargs[1]["config"]

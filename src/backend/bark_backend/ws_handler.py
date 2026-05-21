@@ -145,24 +145,25 @@ async def _start_workspace_container(
     """Start/restart container, connect Pi RPC, start event forwarding, resume session."""
     user = state["user"]
     host_path = str(workspace_manager.get_workspace_host_path(user["id"], workspace_id))
-    sessions_path = str(
-        workspace_manager.get_sessions_host_path(user["id"], workspace_id)
-    )
+    home_path = str(workspace_manager.get_home_host_path(user["id"], workspace_id))
 
-    # Find the most recent session file to resume (if any)
+    # Find the most recent session file to resume (if any).
+    # Sessions live inside the persistent home mount at .pi/sessions/.
     import glob  # noqa: E402
 
-    session_files = sorted(glob.glob(f"{sessions_path}/**/*.jsonl", recursive=True))
+    session_files = sorted(
+        glob.glob(f"{home_path}/.pi/sessions/**/*.jsonl", recursive=True)
+    )
     resume_session = None
     if session_files:
         most_recent = session_files[-1]
-        resume_session = most_recent.replace(sessions_path, "/home/bark/.pi/sessions")
+        resume_session = most_recent.replace(home_path, "/home/bark")
 
     hosting_hostname, hosting_proto, hosting_base_path = _derive_hosting_info(ws)
     container_id, container_status = await container_manager.start_container(
         workspace_id,
         host_path,
-        sessions_path,
+        home_path,
         workspace.get("container_id"),
         resume_session=resume_session,
         num_ports=workspace.get(

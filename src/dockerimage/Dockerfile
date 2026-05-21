@@ -11,5 +11,6 @@ COPY builtin-extensions/ /opt/bark/pi-agent/extensions/
 COPY system-prompt.md /opt/bark/system-prompt.md
 COPY entrypoint.sh /opt/bark/entrypoint.sh
 RUN chmod +x /opt/bark/entrypoint.sh
+COPY bash.bashrc /etc/bash.bashrc
 
 ENTRYPOINT ["/opt/bark/entrypoint.sh"]

@@ -1128,8 +1128,8 @@ class TestStartWorkspaceContainer:
 
         pi.events = fake_events
 
-        sessions_path = str(
-            workspace_manager.get_sessions_host_path(user["id"], workspace["id"])
+        home_path = str(
+            workspace_manager.get_home_host_path(user["id"], workspace["id"])
         )
 
         with (
@@ -1140,7 +1140,9 @@ class TestStartWorkspaceContainer:
                 return_value=("cid-2", "connected"),
             ),
             patch.object(ws_handler, "PiRpcClient", return_value=pi),
-            patch("glob.glob", return_value=[f"{sessions_path}/session.jsonl"]),
+            patch(
+                "glob.glob", return_value=[f"{home_path}/.pi/sessions/session.jsonl"]
+            ),
         ):
             await _start_workspace_container(ws, state, workspace["id"], workspace)
 
