@@ -18,7 +18,8 @@ def _smtp_config() -> dict:
         "user": os.environ.get("BARK_SMTP_USER"),
         "password": os.environ.get("BARK_SMTP_PASSWORD"),
         "from_addr": os.environ.get("BARK_SMTP_FROM"),
-        "use_tls": os.environ.get("BARK_SMTP_USE_TLS", "true").lower() in ("true", "1"),
+        "use_tls": os.environ.get("BARK_SMTP_USE_TLS", "true").lower()
+        in ("true", "1"),
     }
 
 
@@ -84,20 +85,28 @@ async def _send_via_sendmail(msg: EmailMessage) -> None:
 async def send_email(to: str, subject: str, body: str) -> None:
     """Send an email via SMTP (if configured) or local sendmail."""
     msg = _build_message(to, subject, body)
-    logger.info("From: %s, To: %s, Subject: %s", msg["From"], to, msg["Subject"])
+    logger.info(
+        "From: %s, To: %s, Subject: %s", msg["From"], to, msg["Subject"]
+    )
     if _use_smtp():
         logger.info(
-            "Sending email to %s via SMTP (%s)", to, os.environ.get("BARK_SMTP_HOST")
+            "Sending email to %s via SMTP (%s)",
+            to,
+            os.environ.get("BARK_SMTP_HOST"),
         )
         await _send_via_smtp(msg)
     else:
-        logger.info("Sending email to %s via sendmail (no BARK_SMTP_HOST set)", to)
+        logger.info(
+            "Sending email to %s via sendmail (no BARK_SMTP_HOST set)", to
+        )
         await _send_via_sendmail(msg)
 
 
 async def send_verification_email(to: str, verification_url: str) -> None:
     """Send a verification email with the given callback URL."""
-    logger.info("Sending verification email to %s with URL: %s", to, verification_url)
+    logger.info(
+        "Sending verification email to %s with URL: %s", to, verification_url
+    )
     subject = "Verify your Bark account"
     body = (
         f"Click the link below to verify your email address and activate "

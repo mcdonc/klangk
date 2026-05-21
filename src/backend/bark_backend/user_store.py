@@ -5,7 +5,9 @@ import aiosqlite
 import uuid
 from pathlib import Path
 
-_data_dir = Path(os.environ.get("BARK_DATA_DIR", str(Path.home() / ".bark" / "data")))
+_data_dir = Path(
+    os.environ.get("BARK_DATA_DIR", str(Path.home() / ".bark" / "data"))
+)
 DB_PATH = _data_dir / "bark.db"
 
 
@@ -147,7 +149,9 @@ async def ensure_role(name: str) -> None:
     """Create a role if it doesn't exist."""
     db = await _get_db()
     try:
-        await db.execute("INSERT OR IGNORE INTO roles (name) VALUES (?)", (name,))
+        await db.execute(
+            "INSERT OR IGNORE INTO roles (name) VALUES (?)", (name,)
+        )
         await db.commit()
     finally:
         await db.close()
@@ -209,7 +213,8 @@ async def list_users() -> list[dict]:
         users = []
         for row in await cursor.fetchall():
             role_cursor = await db.execute(
-                "SELECT role_name FROM user_roles WHERE user_id = ?", (row["id"],)
+                "SELECT role_name FROM user_roles WHERE user_id = ?",
+                (row["id"],),
             )
             roles = [r["role_name"] for r in await role_cursor.fetchall()]
             users.append(
@@ -255,7 +260,9 @@ async def update_email(user_id: str, email: str) -> None:
     """Update a user's email."""
     db = await _get_db()
     try:
-        await db.execute("UPDATE users SET email = ? WHERE id = ?", (email, user_id))
+        await db.execute(
+            "UPDATE users SET email = ? WHERE id = ?", (email, user_id)
+        )
         await db.commit()
     finally:
         await db.close()
@@ -471,7 +478,10 @@ async def get_user_workspaces_with_containers(user_id: str) -> list[dict]:
             (user_id,),
         )
         rows = await cursor.fetchall()
-        return [{"id": row["id"], "container_id": row["container_id"]} for row in rows]
+        return [
+            {"id": row["id"], "container_id": row["container_id"]}
+            for row in rows
+        ]
     finally:
         await db.close()
 
@@ -566,7 +576,9 @@ async def get_messages(workspace_id: str) -> list[dict]:
 async def delete_workspace_messages(workspace_id: str) -> None:
     db = await _get_db()
     try:
-        await db.execute("DELETE FROM messages WHERE workspace_id = ?", (workspace_id,))
+        await db.execute(
+            "DELETE FROM messages WHERE workspace_id = ?", (workspace_id,)
+        )
         await db.commit()
     finally:
         await db.close()

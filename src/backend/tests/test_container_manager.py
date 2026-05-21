@@ -103,7 +103,9 @@ class TestIdleCallbacks:
 
     def test_remove_idle_callback_not_registered(self):
         container_manager.remove_idle_callback("ws-1", _noop_callback)
-        assert _noop_callback not in container_manager._idle_callbacks.get("ws-1", [])
+        assert _noop_callback not in container_manager._idle_callbacks.get(
+            "ws-1", []
+        )
 
     def test_remove_idle_callback_unknown_workspace(self):
         container_manager.remove_idle_callback("nonexistent", _noop_callback)
@@ -117,7 +119,9 @@ class TestIdleCallbacks:
         container_manager.on_idle_stop("ws-2", cb2)
         assert _noop_callback in container_manager._idle_callbacks["ws-1"]
         assert cb2 in container_manager._idle_callbacks["ws-2"]
-        assert _noop_callback not in container_manager._idle_callbacks.get("ws-2", [])
+        assert _noop_callback not in container_manager._idle_callbacks.get(
+            "ws-2", []
+        )
 
 
 class TestPortAllocation:
@@ -137,7 +141,9 @@ class TestPortAllocation:
 
     async def test_get_workspace_ports(self, workspace):
         allocated = await container_manager.allocate_ports(workspace["id"], 2)
-        retrieved = await container_manager.get_workspace_ports(workspace["id"])
+        retrieved = await container_manager.get_workspace_ports(
+            workspace["id"]
+        )
         assert retrieved == sorted(allocated)
 
     async def test_get_workspace_ports_empty(self, workspace):
@@ -189,9 +195,13 @@ class TestStartContainer:
     async def test_create_new_container(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=mock_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             cid, status = await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -207,7 +217,9 @@ class TestStartContainer:
         mock_c = _mock_container("existing-cid", running=True)
         mock_docker.containers.get = AsyncMock(return_value=mock_c)
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             cid, status = await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -223,9 +235,13 @@ class TestStartContainer:
         stopped_c = _mock_container("old-cid", running=False)
         mock_docker.containers.get = AsyncMock(return_value=stopped_c)
         new_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=new_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=new_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             cid, status = await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -242,9 +258,13 @@ class TestStartContainer:
             side_effect=aiodocker.exceptions.DockerError(404, "not found")
         )
         new_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=new_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=new_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             cid, status = await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -257,9 +277,13 @@ class TestStartContainer:
     async def test_resume_session_env_var(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=mock_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -268,7 +292,9 @@ class TestStartContainer:
             )
         call_kwargs = mock_docker.containers.create_or_replace.call_args
         env = call_kwargs[1]["config"]["Env"]
-        assert any("BARK_RESUME_SESSION=/path/to/session.jsonl" in e for e in env)
+        assert any(
+            "BARK_RESUME_SESSION=/path/to/session.jsonl" in e for e in env
+        )
 
     async def test_provider_env_vars_forwarded(self, workspace, monkeypatch):
         monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
@@ -276,9 +302,13 @@ class TestStartContainer:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-2")
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=mock_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -292,9 +322,13 @@ class TestStartContainer:
     async def test_hosting_env_vars(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=mock_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -312,9 +346,13 @@ class TestStartContainer:
     async def test_port_allocation_on_create(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=mock_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -330,9 +368,13 @@ class TestStartContainer:
         await container_manager.allocate_ports(workspace["id"], 5)
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=mock_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -345,9 +387,13 @@ class TestStartContainer:
     async def test_container_config_structure(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(return_value=mock_c)
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -369,7 +415,9 @@ class TestAttachContainer:
         mock_c = _mock_container("cid")
         mock_docker.containers.get = AsyncMock(return_value=mock_c)
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             stream = await container_manager.attach_container("cid")
         mock_c.attach.assert_called_once_with(
             stdin=True, stdout=True, stderr=True, stream=True
@@ -393,7 +441,9 @@ class TestStopContainer:
             "workspace_id": "ws",
         }
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.stop_and_remove_container("cid")
         mock_c.stop.assert_awaited_once()
         assert "cid" not in container_manager._containers
@@ -408,7 +458,9 @@ class TestStopContainer:
             "workspace_id": "ws",
         }
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.stop_and_remove_container("cid")
         # Should still remove from tracking
         assert "cid" not in container_manager._containers
@@ -430,7 +482,9 @@ class TestRemoveContainer:
             "workspace_id": "ws",
         }
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.stop_and_remove_container("cid")
         mock_c.stop.assert_awaited_once()
         mock_c.delete.assert_awaited_once_with(force=True)
@@ -446,7 +500,9 @@ class TestRemoveContainer:
             "workspace_id": "ws",
         }
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.stop_and_remove_container("cid")
         assert "cid" not in container_manager._containers
 
@@ -470,14 +526,18 @@ class TestStopUserContainers:
             "workspace_id": workspace["id"],
         }
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.stop_user_containers(user["id"])
         mock_c.stop.assert_awaited_once()
         assert "cid" not in container_manager._containers
 
     async def test_stop_user_no_containers(self, user):
         mock_docker = _mock_docker()
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.stop_user_containers(user["id"])
         mock_docker.containers.get.assert_not_awaited()
 
@@ -503,7 +563,9 @@ class TestShutdown:
             "workspace_id": "ws",
         }
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             container_manager._docker = mock_docker
             await container_manager.shutdown()
         mock_c.stop.assert_awaited()
@@ -514,9 +576,13 @@ class TestShutdown:
         mock_docker = _mock_docker()
         orphan = _mock_container("orphan-cid")
         mock_docker.containers.list = AsyncMock(return_value=[orphan])
-        mock_docker.containers.get = AsyncMock(return_value=_mock_container("x"))
+        mock_docker.containers.get = AsyncMock(
+            return_value=_mock_container("x")
+        )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             container_manager._docker = mock_docker
             await container_manager.shutdown()
         orphan.delete.assert_awaited_once()
@@ -527,7 +593,9 @@ class TestShutdown:
         mock_task = MagicMock()
         container_manager._cleanup_task = mock_task
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             container_manager._docker = mock_docker
             await container_manager.shutdown()
         mock_task.cancel.assert_called_once()
@@ -539,7 +607,9 @@ class TestShutdown:
             side_effect=OSError("Docker connection refused")
         )
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             container_manager._docker = mock_docker
             await container_manager.shutdown()
         # Should not raise
@@ -549,7 +619,9 @@ class TestShutdown:
         container_manager._docker = None
         mock_docker = _mock_docker()
         mock_docker.containers.list = AsyncMock(return_value=[])
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             await container_manager.shutdown()
         assert container_manager._cleanup_task is None
 
@@ -562,7 +634,9 @@ class TestShutdown:
         )
         mock_docker.containers.list = AsyncMock(return_value=[orphan])
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
             container_manager._docker = mock_docker
             await container_manager.shutdown()
         # Should have attempted to delete and not raised
@@ -588,12 +662,18 @@ class TestCleanupIdleContainers:
 
         # Set activity far in the past
         container_manager._containers["cid"] = {
-            "last_activity": time.time() - container_manager.IDLE_TIMEOUT_SECONDS - 100,
+            "last_activity": time.time()
+            - container_manager.IDLE_TIMEOUT_SECONDS
+            - 100,
             "workspace_id": "ws-1",
         }
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
-            task = asyncio.create_task(container_manager._cleanup_idle_containers())
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
+            task = asyncio.create_task(
+                container_manager._cleanup_idle_containers()
+            )
             # Let the task enter the Event wait, then wake it
             await asyncio.sleep(0.05)
             container_manager._get_cleanup_wake().set()
@@ -614,8 +694,12 @@ class TestCleanupIdleContainers:
             "workspace_id": "ws-1",
         }
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
-            task = asyncio.create_task(container_manager._cleanup_idle_containers())
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
+            task = asyncio.create_task(
+                container_manager._cleanup_idle_containers()
+            )
             await asyncio.sleep(0.05)
             container_manager._get_cleanup_wake().set()
             await asyncio.sleep(0.05)
@@ -633,7 +717,9 @@ class TestCleanupIdleContainers:
         mock_docker.containers.get = AsyncMock(return_value=mock_c)
 
         container_manager._containers["cid"] = {
-            "last_activity": time.time() - container_manager.IDLE_TIMEOUT_SECONDS - 100,
+            "last_activity": time.time()
+            - container_manager.IDLE_TIMEOUT_SECONDS
+            - 100,
             "workspace_id": "ws-1",
         }
 
@@ -644,8 +730,12 @@ class TestCleanupIdleContainers:
 
         container_manager.on_idle_stop("ws-1", on_idle)
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
-            task = asyncio.create_task(container_manager._cleanup_idle_containers())
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
+            task = asyncio.create_task(
+                container_manager._cleanup_idle_containers()
+            )
             await asyncio.sleep(0.05)
             container_manager._get_cleanup_wake().set()
             await asyncio.sleep(0.05)
@@ -662,7 +752,9 @@ class TestCleanupIdleContainers:
         mock_docker.containers.get = AsyncMock(return_value=mock_c)
 
         container_manager._containers["cid"] = {
-            "last_activity": time.time() - container_manager.IDLE_TIMEOUT_SECONDS - 100,
+            "last_activity": time.time()
+            - container_manager.IDLE_TIMEOUT_SECONDS
+            - 100,
             "workspace_id": "ws-1",
         }
 
@@ -671,8 +763,12 @@ class TestCleanupIdleContainers:
 
         container_manager.on_idle_stop("ws-1", bad_callback)
 
-        with patch.object(container_manager, "get_docker", return_value=mock_docker):
-            task = asyncio.create_task(container_manager._cleanup_idle_containers())
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
+            task = asyncio.create_task(
+                container_manager._cleanup_idle_containers()
+            )
             await asyncio.sleep(0.05)
             container_manager._get_cleanup_wake().set()
             await asyncio.sleep(0.05)
@@ -702,7 +798,9 @@ class TestCleanupIdleContainers:
             ):
                 # The Event-based wait will timeout after max(2, 5//2)=2s,
                 # then check containers. We cancel after one iteration.
-                task = asyncio.create_task(container_manager._cleanup_idle_containers())
+                task = asyncio.create_task(
+                    container_manager._cleanup_idle_containers()
+                )
                 await asyncio.sleep(0.1)  # Let it start
                 # Wake it immediately via the event
                 container_manager._get_cleanup_wake().set()

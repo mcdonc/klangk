@@ -15,7 +15,9 @@ def _fast_gensalt(rounds=4, prefix=b"2b"):
 bcrypt.gensalt = _fast_gensalt
 
 _TEST_PASSWORD = "testpass"
-_TEST_PASSWORD_HASH = bcrypt.hashpw(_TEST_PASSWORD.encode(), bcrypt.gensalt()).decode()
+_TEST_PASSWORD_HASH = bcrypt.hashpw(
+    _TEST_PASSWORD.encode(), bcrypt.gensalt()
+).decode()
 
 
 @pytest.fixture(autouse=True)

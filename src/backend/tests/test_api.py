@@ -9,7 +9,13 @@ from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI, HTTPException
 from httpx import AsyncClient, ASGITransport
 
-from bark_backend import api, auth, container_manager, user_store, workspace_manager
+from bark_backend import (
+    api,
+    auth,
+    container_manager,
+    user_store,
+    workspace_manager,
+)
 
 
 @pytest.fixture
@@ -29,7 +35,8 @@ async def client(app):
 
 async def _auth_headers(client):
     resp = await client.post(
-        "/auth/login", json={"email": "testuser@example.com", "password": "testpass"}
+        "/auth/login",
+        json={"email": "testuser@example.com", "password": "testpass"},
     )
     token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
@@ -66,7 +73,9 @@ class TestAuthRoutes:
         )
         token = login_resp.json()["access_token"]
         with patch.object(
-            api.email_service, "send_verification_email", new_callable=AsyncMock
+            api.email_service,
+            "send_verification_email",
+            new_callable=AsyncMock,
         ):
             resp = await client.post(
                 "/auth/register",
@@ -82,7 +91,8 @@ class TestAuthRoutes:
         """In test mode, unauthenticated registration is allowed and auto-verified."""
         monkeypatch.setenv("BARK_TEST_MODE", "1")
         resp = await client.post(
-            "/auth/register", json={"email": "new@example.com", "password": "newpass"}
+            "/auth/register",
+            json={"email": "new@example.com", "password": "newpass"},
         )
         assert resp.status_code == 200
         assert "access_token" in resp.json()
@@ -90,7 +100,9 @@ class TestAuthRoutes:
     async def test_register_unauthenticated(self, client, db):
         """Registration is open — no auth required (verification gates access)."""
         with patch.object(
-            api.email_service, "send_verification_email", new_callable=AsyncMock
+            api.email_service,
+            "send_verification_email",
+            new_callable=AsyncMock,
         ):
             resp = await client.post(
                 "/auth/register",
@@ -154,7 +166,8 @@ class TestAuthRoutes:
         assert resp.json()["status"] == "verified"
         # User can now log in
         login_resp = await client.post(
-            "/auth/login", json={"email": "unverified@example.com", "password": "pass"}
+            "/auth/login",
+            json={"email": "unverified@example.com", "password": "pass"},
         )
         assert login_resp.status_code == 200
 
@@ -179,14 +192,17 @@ class TestAuthRoutes:
 
     async def test_login_bad_password(self, client, user):
         resp = await client.post(
-            "/auth/login", json={"email": "testuser@example.com", "password": "wrong"}
+            "/auth/login",
+            json={"email": "testuser@example.com", "password": "wrong"},
         )
         assert resp.status_code == 401
 
     async def test_logout(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            api.container_manager, "stop_user_containers", new_callable=AsyncMock
+            api.container_manager,
+            "stop_user_containers",
+            new_callable=AsyncMock,
         ):
             resp = await client.post("/auth/logout", headers=headers)
         assert resp.status_code == 200
@@ -223,11 +239,15 @@ class TestWorkspaceRoutes:
 
     async def test_delete_workspace(self, client, user):
         headers = await _auth_headers(client)
-        create_resp = await client.post("/workspaces?name=doomed", headers=headers)
+        create_resp = await client.post(
+            "/workspaces?name=doomed", headers=headers
+        )
         ws_id = create_resp.json()["id"]
 
         with patch.object(
-            api.container_manager, "stop_and_remove_container", new_callable=AsyncMock
+            api.container_manager,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
         ):
             resp = await client.delete(f"/workspaces/{ws_id}", headers=headers)
         assert resp.status_code == 200
@@ -248,7 +268,9 @@ class TestWorkspaceRoutes:
         await user_store.update_workspace_container(ws_id, "fake-container-id")
 
         with patch.object(
-            api.container_manager, "stop_and_remove_container", new_callable=AsyncMock
+            api.container_manager,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
         ) as mock_rm:
             resp = await client.delete(f"/workspaces/{ws_id}", headers=headers)
         assert resp.status_code == 200
@@ -265,11 +287,15 @@ class TestWorkspaceRoutes:
 class TestMessageRoutes:
     async def test_get_messages(self, client, user):
         headers = await _auth_headers(client)
-        create_resp = await client.post("/workspaces?name=msg-ws", headers=headers)
+        create_resp = await client.post(
+            "/workspaces?name=msg-ws", headers=headers
+        )
         ws_id = create_resp.json()["id"]
 
         await user_store.save_message(ws_id, "user", "hello")
-        resp = await client.get(f"/workspaces/{ws_id}/messages", headers=headers)
+        resp = await client.get(
+            f"/workspaces/{ws_id}/messages", headers=headers
+        )
         assert resp.status_code == 200
         msgs = resp.json()
         assert len(msgs) == 1
@@ -277,7 +303,9 @@ class TestMessageRoutes:
 
     async def test_get_messages_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/workspaces/fake-id/messages", headers=headers)
+        resp = await client.get(
+            "/workspaces/fake-id/messages", headers=headers
+        )
         assert resp.status_code == 404
 
 
@@ -292,13 +320,17 @@ class TestFileRoutes:
     async def test_list_files(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.get(f"/workspaces/{ws_id}/files?path=.", headers=headers)
+        resp = await client.get(
+            f"/workspaces/{ws_id}/files?path=.", headers=headers
+        )
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
     async def test_list_files_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/workspaces/fake-id/files?path=.", headers=headers)
+        resp = await client.get(
+            "/workspaces/fake-id/files?path=.", headers=headers
+        )
         assert resp.status_code == 404
 
     async def test_upload_and_read(self, client, user):
@@ -314,7 +346,8 @@ class TestFileRoutes:
         assert resp.json()["status"] == "uploaded"
 
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/content?path=hello.txt", headers=headers
+            f"/workspaces/{ws_id}/files/content?path=hello.txt",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["content"] == "hello world"
@@ -450,7 +483,8 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/download?path=nope.txt", headers=headers
+            f"/workspaces/{ws_id}/files/download?path=nope.txt",
+            headers=headers,
         )
         assert resp.status_code == 404
 
@@ -591,7 +625,9 @@ class TestSetIdleTimeout:
             container_manager.set_workspace_idle_timeout("ws-fast", 6)
             # With a 6s per-workspace timeout, the minimum is 6, so
             # the loop should sleep max(2, 6//2) = 3 seconds.
-            assert min(container_manager._workspace_idle_timeouts.values()) == 6
+            assert (
+                min(container_manager._workspace_idle_timeouts.values()) == 6
+            )
             # Global CHECK_INTERVAL_SECONDS should be unchanged
             assert (
                 container_manager.CHECK_INTERVAL_SECONDS
@@ -619,7 +655,11 @@ class TestRoles:
     async def test_require_role_fails(self, user):
         """require_role dependency raises 403 when user lacks the role."""
         checker = auth.require_role("admin")
-        user_dict = {"id": user["id"], "email": "testuser@example.com", "roles": []}
+        user_dict = {
+            "id": user["id"],
+            "email": "testuser@example.com",
+            "roles": [],
+        }
         with pytest.raises(HTTPException) as exc_info:
             await checker(user_dict)
         assert exc_info.value.status_code == 403
@@ -651,7 +691,9 @@ class TestRoles:
     async def test_roles_in_jwt(self, user):
         await user_store.ensure_role("admin")
         await user_store.assign_role(user["id"], "admin")
-        token = auth._create_token(user["id"], "testuser@example.com", ["admin"])
+        token = auth._create_token(
+            user["id"], "testuser@example.com", ["admin"]
+        )
         payload = auth._decode_token(token)
         assert payload["roles"] == ["admin"]
 
@@ -683,7 +725,9 @@ class TestRoles:
         assert await user_store.get_user_roles(user["id"]) == ["admin"]
         db_conn = await user_store._get_db()
         try:
-            await db_conn.execute("DELETE FROM users WHERE id = ?", (user["id"],))
+            await db_conn.execute(
+                "DELETE FROM users WHERE id = ?", (user["id"],)
+            )
             await db_conn.commit()
         finally:
             await db_conn.close()
@@ -696,7 +740,9 @@ class TestRoles:
         assert "temp" in await user_store.get_user_roles(user["id"])
         db_conn = await user_store._get_db()
         try:
-            await db_conn.execute("DELETE FROM roles WHERE name = ?", ("temp",))
+            await db_conn.execute(
+                "DELETE FROM roles WHERE name = ?", ("temp",)
+            )
             await db_conn.commit()
         finally:
             await db_conn.close()
@@ -732,7 +778,9 @@ class TestAdminEndpoints:
             "/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
-        headers = {"Authorization": f"Bearer {login_resp.json()['access_token']}"}
+        headers = {
+            "Authorization": f"Bearer {login_resp.json()['access_token']}"
+        }
         resp = await client.get("/admin/users", headers=headers)
         assert resp.status_code == 403
 
@@ -740,13 +788,17 @@ class TestAdminEndpoints:
         headers = await self._admin_headers(client)
         with (
             patch.object(
-                container_manager, "stop_user_containers", new_callable=AsyncMock
+                container_manager,
+                "stop_user_containers",
+                new_callable=AsyncMock,
             ),
             patch.object(
                 workspace_manager, "archive_user_data", new_callable=AsyncMock
             ),
         ):
-            resp = await client.delete(f"/admin/users/{user['id']}", headers=headers)
+            resp = await client.delete(
+                f"/admin/users/{user['id']}", headers=headers
+            )
         assert resp.status_code == 200
         # Verify user is gone
         resp = await client.get("/admin/users", headers=headers)
@@ -755,15 +807,21 @@ class TestAdminEndpoints:
 
     async def test_delete_self_forbidden(self, client, admin_user):
         headers = await self._admin_headers(client)
-        resp = await client.delete(f"/admin/users/{admin_user['id']}", headers=headers)
+        resp = await client.delete(
+            f"/admin/users/{admin_user['id']}", headers=headers
+        )
         assert resp.status_code == 400
 
     async def test_delete_nonexistent_user(self, client, admin_user):
         headers = await self._admin_headers(client)
-        resp = await client.delete("/admin/users/nonexistent-id", headers=headers)
+        resp = await client.delete(
+            "/admin/users/nonexistent-id", headers=headers
+        )
         assert resp.status_code == 404
 
-    async def test_delete_user_cascades_workspaces(self, client, admin_user, user):
+    async def test_delete_user_cascades_workspaces(
+        self, client, admin_user, user
+    ):
         """Deleting a user cascades to their workspaces."""
         headers = await self._admin_headers(client)
         # Create a workspace for the user
@@ -771,17 +829,25 @@ class TestAdminEndpoints:
             "/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
-        user_headers = {"Authorization": f"Bearer {user_login.json()['access_token']}"}
-        ws_resp = await client.post("/workspaces?name=to-delete", headers=user_headers)
+        user_headers = {
+            "Authorization": f"Bearer {user_login.json()['access_token']}"
+        }
+        ws_resp = await client.post(
+            "/workspaces?name=to-delete", headers=user_headers
+        )
         assert ws_resp.status_code == 200
         # Delete the user
         with patch.object(
             container_manager, "stop_user_containers", new_callable=AsyncMock
         ):
-            resp = await client.delete(f"/admin/users/{user['id']}", headers=headers)
+            resp = await client.delete(
+                f"/admin/users/{user['id']}", headers=headers
+            )
         assert resp.status_code == 200
         # Workspace should be gone (CASCADE)
-        ws_list = await user_store.get_user_workspaces_with_containers(user["id"])
+        ws_list = await user_store.get_user_workspaces_with_containers(
+            user["id"]
+        )
         assert len(ws_list) == 0
 
     async def test_add_role(self, client, admin_user, user):
@@ -865,7 +931,9 @@ class TestArchiveUserData:
         data_dir.mkdir(parents=True)
         (data_dir / "hello.txt").write_text("test content")
 
-        result = await workspace_manager.archive_user_data(user["id"], user["email"])
+        result = await workspace_manager.archive_user_data(
+            user["id"], user["email"]
+        )
         assert result is not None
         assert result.exists()
         assert result.name == f"{user['id']}-{user['email']}.tar.xz"
@@ -874,7 +942,9 @@ class TestArchiveUserData:
 
     async def test_archive_no_data_dir(self, temp_data_dir, user):
         """Returns None if user has no data directory."""
-        result = await workspace_manager.archive_user_data(user["id"], user["email"])
+        result = await workspace_manager.archive_user_data(
+            user["id"], user["email"]
+        )
         assert result is None
 
     async def test_archive_tar_nonzero_exit(self, temp_data_dir, user):
@@ -897,7 +967,9 @@ class TestArchiveUserData:
         user_dir = workspace_manager.WORKSPACES_ROOT / user["id"]
         user_dir.mkdir(parents=True)
 
-        with patch("asyncio.create_subprocess_exec", side_effect=OSError("no tar")):
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=OSError("no tar")
+        ):
             result = await workspace_manager.archive_user_data(
                 user["id"], user["email"]
             )

@@ -57,7 +57,14 @@ class TerminalSession:
         env_unset = []
         for key in os.environ:
             if key.startswith(
-                ("OLLAMA_", "ANTHROPIC_", "OPENAI_", "GOOGLE_", "GROQ_", "MISTRAL_")
+                (
+                    "OLLAMA_",
+                    "ANTHROPIC_",
+                    "OPENAI_",
+                    "GOOGLE_",
+                    "GROQ_",
+                    "MISTRAL_",
+                )
             ):
                 env_unset.extend(["-u", key])
         # BARK_RESUME_SESSION is set on the container (not host), strip it too
@@ -93,7 +100,9 @@ class TerminalSession:
 
         # Prompt and aliases come from /etc/bash.bashrc in the container image
 
-        logger.info("Terminal session started for container %s", self.container_id)
+        logger.info(
+            "Terminal session started for container %s", self.container_id
+        )
 
     def _remove_reader(self) -> None:
         """Deregister the PTY master fd from the event loop."""
@@ -108,7 +117,9 @@ class TerminalSession:
         try:
             data = _fd_read(self._master_fd, 65536)
             if data:
-                self._output_queue.put_nowait(data.decode("utf-8", errors="replace"))
+                self._output_queue.put_nowait(
+                    data.decode("utf-8", errors="replace")
+                )
             else:
                 self._remove_reader()
                 self._output_queue.put_nowait(None)
@@ -169,4 +180,6 @@ class TerminalSession:
                 pass
             self._master_fd = None
 
-        logger.info("Terminal session stopped for container %s", self.container_id)
+        logger.info(
+            "Terminal session stopped for container %s", self.container_id
+        )

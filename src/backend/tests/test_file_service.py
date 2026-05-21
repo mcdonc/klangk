@@ -8,7 +8,9 @@ from bark_backend import file_service, workspace_manager
 @pytest.fixture
 async def workspace_dir(workspace, user, temp_data_dir):
     """Create the workspace directory on disk and return (user_id, workspace_id, path)."""
-    path = workspace_manager.get_workspace_host_path(user["id"], workspace["id"])
+    path = workspace_manager.get_workspace_host_path(
+        user["id"], workspace["id"]
+    )
     path.mkdir(parents=True, exist_ok=True)
     return user["id"], workspace["id"], path
 
@@ -210,7 +212,9 @@ class TestWriteFile:
         result = file_service.write_file(uid, wid, "out.txt", b"data")
         assert result == "out.txt"
 
-    async def test_write_nested_returns_full_relative_path(self, workspace_dir):
+    async def test_write_nested_returns_full_relative_path(
+        self, workspace_dir
+    ):
         uid, wid, _ = workspace_dir
         result = file_service.write_file(uid, wid, "a/b/c.txt", b"deep")
         assert result == "a/b/c.txt"

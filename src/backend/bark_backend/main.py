@@ -35,8 +35,12 @@ async def _seed_default_user() -> None:
         generated = password is None
         if generated:
             password = secrets.token_urlsafe(16)
-        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        user = await user_store.create_user(email, password_hash, verified=True)
+        password_hash = bcrypt.hashpw(
+            password.encode(), bcrypt.gensalt()
+        ).decode()
+        user = await user_store.create_user(
+            email, password_hash, verified=True
+        )
         await user_store.ensure_role("admin")
         await user_store.assign_role(user["id"], "admin")
         if generated:
@@ -96,8 +100,13 @@ def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
     @app.middleware("http")
     async def add_no_cache_headers(request, call_next):
         response = await call_next(request)
-        if request.url.path.endswith((".html", ".js")) or request.url.path == "/":
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        if (
+            request.url.path.endswith((".html", ".js"))
+            or request.url.path == "/"
+        ):
+            response.headers["Cache-Control"] = (
+                "no-cache, no-store, must-revalidate"
+            )
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
         return response
@@ -105,6 +114,8 @@ def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
     app.mount("/", static_app, name="frontend")
 
 
-_frontend_dir = Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
+_frontend_dir = (
+    Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
+)
 if _frontend_dir.exists():  # pragma: no cover
     setup_static_files(app, _frontend_dir)

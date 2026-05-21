@@ -7,7 +7,9 @@ from . import container_manager, user_store
 
 logger = logging.getLogger(__name__)
 
-_data_dir = Path(os.environ.get("BARK_DATA_DIR", str(Path.home() / ".bark" / "data")))
+_data_dir = Path(
+    os.environ.get("BARK_DATA_DIR", str(Path.home() / ".bark" / "data"))
+)
 WORKSPACES_ROOT = _data_dir / "workspaces"
 
 
@@ -73,7 +75,9 @@ async def create_workspace(user_id: str, name: str) -> dict:
     home = _home_path(user_id, workspace["id"])
     home.mkdir(parents=True, exist_ok=True)
     # Allocate ports at creation time so ranges are sequential
-    await container_manager.allocate_ports(workspace["id"], workspace["num_ports"])
+    await container_manager.allocate_ports(
+        workspace["id"], workspace["num_ports"]
+    )
     return workspace
 
 

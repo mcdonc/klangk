@@ -26,6 +26,9 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "--cov=bark_backend --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100"
 
+[tool.ruff]
+line-length = 79
+
 [tool.hatch.build.targets.wheel]
 packages = ["bark_backend"]
 

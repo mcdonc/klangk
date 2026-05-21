@@ -191,7 +191,9 @@ class TestReadLoop:
     async def test_reads_multiple_events(self):
         e1 = {"type": "agent_start"}
         e2 = {"type": "agent_end"}
-        data = json.dumps(e1).encode() + b"\n" + json.dumps(e2).encode() + b"\n"
+        data = (
+            json.dumps(e1).encode() + b"\n" + json.dumps(e2).encode() + b"\n"
+        )
 
         client = PiRpcClient("cid")
         client._proc = _mock_proc(stdout_data=data)
@@ -297,7 +299,9 @@ class TestReadLoop:
         client = PiRpcClient("cid")
         client._proc = _mock_proc()
         client._running = True
-        client._proc.stderr.read = MagicMock(side_effect=OSError("stderr broken"))
+        client._proc.stderr.read = MagicMock(
+            side_effect=OSError("stderr broken")
+        )
 
         await client._read_loop()
         assert await client._event_queue.get() is None

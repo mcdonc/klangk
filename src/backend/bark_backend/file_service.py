@@ -14,7 +14,9 @@ def resolve_path(user_id: str, workspace_id: str, relative_path: str) -> Path:
     return resolved
 
 
-def list_files(user_id: str, workspace_id: str, relative_path: str = ".") -> list[dict]:
+def list_files(
+    user_id: str, workspace_id: str, relative_path: str = "."
+) -> list[dict]:
     """List files and directories at the given path."""
     path = resolve_path(user_id, workspace_id, relative_path)
     if not path.exists() or not path.is_dir():
@@ -27,7 +29,9 @@ def list_files(user_id: str, workspace_id: str, relative_path: str = ".") -> lis
                 "name": entry.name,
                 "path": str(
                     entry.relative_to(
-                        workspace_manager.get_workspace_host_path(user_id, workspace_id)
+                        workspace_manager.get_workspace_host_path(
+                            user_id, workspace_id
+                        )
                     )
                 ),
                 "is_dir": entry.is_dir(),
@@ -37,7 +41,9 @@ def list_files(user_id: str, workspace_id: str, relative_path: str = ".") -> lis
     return entries
 
 
-def read_file(user_id: str, workspace_id: str, relative_path: str) -> str | None:
+def read_file(
+    user_id: str, workspace_id: str, relative_path: str
+) -> str | None:
     """Read file contents. Returns None if file doesn't exist or is too large."""
     path = resolve_path(user_id, workspace_id, relative_path)
     if not path.exists() or not path.is_file():
@@ -71,7 +77,9 @@ def delete_path(user_id: str, workspace_id: str, relative_path: str) -> str:
     )
 
 
-def rename_path(user_id: str, workspace_id: str, old_path: str, new_path: str) -> str:
+def rename_path(
+    user_id: str, workspace_id: str, old_path: str, new_path: str
+) -> str:
     """Rename/move a file or directory. Returns the new relative path."""
     src = resolve_path(user_id, workspace_id, old_path)
     dst = resolve_path(user_id, workspace_id, new_path)

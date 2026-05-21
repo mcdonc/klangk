@@ -11,7 +11,9 @@ from pydantic import BaseModel
 
 from . import user_store
 
-SECRET_KEY = os.environ.get("BARK_JWT_SECRET", "bark-dev-secret-change-in-production")
+SECRET_KEY = os.environ.get(
+    "BARK_JWT_SECRET", "bark-dev-secret-change-in-production"
+)
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
@@ -41,7 +43,9 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-def _create_token(user_id: str, email: str, roles: list[str] | None = None) -> str:
+def _create_token(
+    user_id: str, email: str, roles: list[str] | None = None
+) -> str:
     jti = str(uuid.uuid4())
     expire = datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRE_HOURS)
     payload = {
@@ -70,10 +74,14 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def validate_email(email: str) -> None:
     """Raise HTTPException if the email is not valid."""
     if not _EMAIL_RE.match(email):
-        raise HTTPException(status_code=400, detail="Must be a valid email address")
+        raise HTTPException(
+            status_code=400, detail="Must be a valid email address"
+        )
 
 
-async def register(req: RegisterRequest, verified: bool = False) -> RegisterResult:
+async def register(
+    req: RegisterRequest, verified: bool = False
+) -> RegisterResult:
     existing = await user_store.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
@@ -84,17 +92,23 @@ async def register(req: RegisterRequest, verified: bool = False) -> RegisterResu
         )
 
     password_hash = _hash_password(req.password)
-    user = await user_store.create_user(req.email, password_hash, verified=verified)
+    user = await user_store.create_user(
+        req.email, password_hash, verified=verified
+    )
     token = None
     if verified:
         roles = await user_store.get_user_roles(user["id"])
         token = _create_token(user["id"], user["email"], roles)
-    return RegisterResult(user_id=user["id"], email=user["email"], access_token=token)
+    return RegisterResult(
+        user_id=user["id"], email=user["email"], access_token=token
+    )
 
 
 async def login(req: LoginRequest) -> TokenResponse:
     user = await user_store.get_user_by_email(req.email)
-    if user is None or not _verify_password(req.password, user["password_hash"]):
+    if user is None or not _verify_password(
+        req.password, user["password_hash"]
+    ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.get("verified"):
         raise HTTPException(
@@ -111,7 +125,9 @@ VERIFY_TOKEN_EXPIRE_HOURS = 72
 
 def create_verification_token(user_id: str) -> str:
     """Create a JWT token for email verification."""
-    expire = datetime.now(timezone.utc) + timedelta(hours=VERIFY_TOKEN_EXPIRE_HOURS)
+    expire = datetime.now(timezone.utc) + timedelta(
+        hours=VERIFY_TOKEN_EXPIRE_HOURS
+    )
     payload = {"sub": user_id, "purpose": "verify", "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -141,7 +157,9 @@ async def get_current_user(
             raise HTTPException(status_code=401, detail="Invalid token")
 
         if await user_store.is_token_blocklisted(jti):
-            raise HTTPException(status_code=401, detail="Token has been revoked")
+            raise HTTPException(
+                status_code=401, detail="Token has been revoked"
+            )
 
         user = await user_store.get_user_by_id(user_id)
         if user is None:
@@ -157,7 +175,9 @@ def require_role(role: str):
 
     async def _check(user: dict = Depends(get_current_user)) -> dict:
         if role not in user.get("roles", []):
-            raise HTTPException(status_code=403, detail=f"Role '{role}' required")
+            raise HTTPException(
+                status_code=403, detail=f"Role '{role}' required"
+            )
         return user
 
     return _check
@@ -207,7 +227,9 @@ async def logout(token: str) -> None:
         jti = payload.get("jti")
         exp = payload.get("exp")
         if jti and exp:
-            expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+            expires_at = datetime.fromtimestamp(
+                exp, tz=timezone.utc
+            ).isoformat()
             await user_store.blocklist_token(jti, expires_at)
     except JWTError:
         pass

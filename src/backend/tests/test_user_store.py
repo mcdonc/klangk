@@ -51,11 +51,15 @@ class TestWorkspaces:
         assert found["name"] == "test-workspace"
 
     async def test_get_workspace_wrong_user(self, workspace):
-        found = await user_store.get_workspace(workspace["id"], "wrong-user-id")
+        found = await user_store.get_workspace(
+            workspace["id"], "wrong-user-id"
+        )
         assert found is None
 
     async def test_delete_workspace(self, workspace, user):
-        deleted = await user_store.delete_workspace(workspace["id"], user["id"])
+        deleted = await user_store.delete_workspace(
+            workspace["id"], user["id"]
+        )
         assert deleted is True
         found = await user_store.get_workspace(workspace["id"], user["id"])
         assert found is None
@@ -89,7 +93,9 @@ class TestMessages:
 
 class TestPortAllocations:
     async def test_add_and_get_ports(self, workspace):
-        await user_store.add_port_allocations(workspace["id"], [9000, 9001, 9002])
+        await user_store.add_port_allocations(
+            workspace["id"], [9000, 9001, 9002]
+        )
         ports = await user_store.get_workspace_ports(workspace["id"])
         assert ports == [9000, 9001, 9002]
 
@@ -100,7 +106,9 @@ class TestPortAllocations:
         assert 9001 in all_ports
 
     async def test_remove_ports(self, workspace):
-        await user_store.add_port_allocations(workspace["id"], [9000, 9001, 9002])
+        await user_store.add_port_allocations(
+            workspace["id"], [9000, 9001, 9002]
+        )
         await user_store.remove_port_allocations(workspace["id"], [9001])
         ports = await user_store.get_workspace_ports(workspace["id"])
         assert ports == [9000, 9002]
@@ -127,7 +135,9 @@ class TestPortAllocations:
         assert all_ports == set()
 
     async def test_find_and_allocate_ports(self, workspace):
-        ports = await user_store.find_and_allocate_ports(workspace["id"], 3, 9000)
+        ports = await user_store.find_and_allocate_ports(
+            workspace["id"], 3, 9000
+        )
         assert ports == [9000, 9001, 9002]
         stored = await user_store.get_workspace_ports(workspace["id"])
         assert stored == [9000, 9001, 9002]
@@ -141,12 +151,16 @@ class TestPortAllocations:
 
 class TestContainerTracking:
     async def test_update_workspace_container(self, workspace, user):
-        await user_store.update_workspace_container(workspace["id"], "container-123")
+        await user_store.update_workspace_container(
+            workspace["id"], "container-123"
+        )
         ws = await user_store.get_workspace(workspace["id"], user["id"])
         assert ws["container_id"] == "container-123"
 
     async def test_clear_workspace_container(self, workspace, user):
-        await user_store.update_workspace_container(workspace["id"], "container-123")
+        await user_store.update_workspace_container(
+            workspace["id"], "container-123"
+        )
         await user_store.update_workspace_container(workspace["id"], None)
         ws = await user_store.get_workspace(workspace["id"], user["id"])
         assert ws["container_id"] is None
@@ -157,7 +171,9 @@ class TestContainerTracking:
         await user_store.create_workspace(user["id"], "ws-c3")  # no container
         await user_store.update_workspace_container(ws1["id"], "cid-1")
         await user_store.update_workspace_container(ws2["id"], "cid-2")
-        result = await user_store.get_user_workspaces_with_containers(user["id"])
+        result = await user_store.get_user_workspaces_with_containers(
+            user["id"]
+        )
         ids = {r["id"] for r in result}
         assert ws1["id"] in ids
         assert ws2["id"] in ids
@@ -166,7 +182,9 @@ class TestContainerTracking:
             assert r["container_id"] is not None
 
     async def test_get_user_workspaces_with_containers_empty(self, user):
-        result = await user_store.get_user_workspaces_with_containers(user["id"])
+        result = await user_store.get_user_workspaces_with_containers(
+            user["id"]
+        )
         assert result == []
 
 

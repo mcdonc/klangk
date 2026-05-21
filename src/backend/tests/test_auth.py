@@ -50,7 +50,9 @@ class TestRegister:
 
     async def test_register_verified(self, db):
         result = await auth.register(
-            auth.RegisterRequest(email="verified@example.com", password="pass1234"),
+            auth.RegisterRequest(
+                email="verified@example.com", password="pass1234"
+            ),
             verified=True,
         )
         assert result.access_token
@@ -62,7 +64,9 @@ class TestRegister:
         )
         with pytest.raises(HTTPException) as exc_info:
             await auth.register(
-                auth.RegisterRequest(email="dup@example.com", password="pass5678")
+                auth.RegisterRequest(
+                    email="dup@example.com", password="pass5678"
+                )
             )
         assert exc_info.value.status_code == 400
 
@@ -84,7 +88,9 @@ class TestRegister:
 class TestLogin:
     async def test_login_success(self, user):
         result = await auth.login(
-            auth.LoginRequest(email="testuser@example.com", password="testpass")
+            auth.LoginRequest(
+                email="testuser@example.com", password="testpass"
+            )
         )
         assert result.access_token
         assert result.token_type == "bearer"
@@ -92,7 +98,9 @@ class TestLogin:
     async def test_login_wrong_password(self, user):
         with pytest.raises(HTTPException) as exc_info:
             await auth.login(
-                auth.LoginRequest(email="testuser@example.com", password="wrong")
+                auth.LoginRequest(
+                    email="testuser@example.com", password="wrong"
+                )
             )
         assert exc_info.value.status_code == 401
 
@@ -105,7 +113,9 @@ class TestLogin:
         )
         with pytest.raises(HTTPException) as exc_info:
             await auth.login(
-                auth.LoginRequest(email="unverified@example.com", password="testpass")
+                auth.LoginRequest(
+                    email="unverified@example.com", password="testpass"
+                )
             )
         assert exc_info.value.status_code == 403
         assert "not verified" in exc_info.value.detail
@@ -197,7 +207,9 @@ class TestTokenValidation:
 class TestGetCurrentUser:
     async def test_valid_credentials(self, user):
         token = auth._create_token(user["id"], user["email"])
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
         result = await auth.get_current_user(creds)
         assert result["id"] == user["id"]
 
@@ -220,7 +232,9 @@ class TestGetCurrentUser:
             auth.SECRET_KEY,
             algorithm=auth.ALGORITHM,
         )
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
         with pytest.raises(HTTPException) as exc_info:
             await auth.get_current_user(creds)
         assert exc_info.value.status_code == 401
@@ -228,14 +242,18 @@ class TestGetCurrentUser:
     async def test_blocklisted_token(self, user):
         token = auth._create_token(user["id"], user["email"])
         await auth.logout(token)
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
         with pytest.raises(HTTPException) as exc_info:
             await auth.get_current_user(creds)
         assert exc_info.value.status_code == 401
 
     async def test_deleted_user(self, user):
         token = auth._create_token("nonexistent-id", "ghost@example.com")
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
         with pytest.raises(HTTPException) as exc_info:
             await auth.get_current_user(creds)
         assert exc_info.value.status_code == 401
@@ -244,7 +262,9 @@ class TestGetCurrentUser:
 class TestGetCurrentUserOptional:
     async def test_valid_credentials(self, user):
         token = auth._create_token(user["id"], user["email"])
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
         result = await auth.get_current_user_optional(creds)
         assert result is not None
         assert result["id"] == user["id"]
@@ -254,7 +274,9 @@ class TestGetCurrentUserOptional:
         assert result is None
 
     async def test_invalid_token(self, db):
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="bad.token")
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials="bad.token"
+        )
         result = await auth.get_current_user_optional(creds)
         assert result is None
 
@@ -264,20 +286,26 @@ class TestGetCurrentUserOptional:
             auth.SECRET_KEY,
             algorithm=auth.ALGORITHM,
         )
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
         result = await auth.get_current_user_optional(creds)
         assert result is None
 
     async def test_blocklisted_token(self, user):
         token = auth._create_token(user["id"], user["email"])
         await auth.logout(token)
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
         result = await auth.get_current_user_optional(creds)
         assert result is None
 
     async def test_deleted_user(self, user):
         token = auth._create_token("nonexistent-id", "ghost@example.com")
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
         result = await auth.get_current_user_optional(creds)
         assert result is None
 

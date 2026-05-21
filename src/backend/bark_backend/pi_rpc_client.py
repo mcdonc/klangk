@@ -31,7 +31,9 @@ class PiRpcClient:
         )
         self._running = True
         self._read_task = asyncio.create_task(self._read_loop())
-        logger.info("Attached to container %s via docker attach", self.container_id)
+        logger.info(
+            "Attached to container %s via docker attach", self.container_id
+        )
 
     async def _read_loop(self) -> None:
         """Read newline-delimited JSON events from stdout.
@@ -74,15 +76,19 @@ class PiRpcClient:
                 if self._proc.stderr:
                     try:
                         stderr_data = self._proc.stderr.read()
-                        if asyncio.iscoroutine(stderr_data) or asyncio.isfuture(
+                        if asyncio.iscoroutine(
                             stderr_data
-                        ):
-                            stderr_data = await asyncio.wait_for(stderr_data, timeout=2)
+                        ) or asyncio.isfuture(stderr_data):
+                            stderr_data = await asyncio.wait_for(
+                                stderr_data, timeout=2
+                            )
                         if stderr_data:
-                            stderr_text = stderr_data.decode("utf-8", errors="replace")[
-                                :500
-                            ]
-                            if "settings.json" in stderr_text:  # pragma: no cover
+                            stderr_text = stderr_data.decode(
+                                "utf-8", errors="replace"
+                            )[:500]
+                            if (
+                                "settings.json" in stderr_text
+                            ):  # pragma: no cover
                                 logger.warning(
                                     "Pi stderr for %s (expected ENOENT for "
                                     "settings.json FIFO after startup read): %s",
@@ -112,7 +118,9 @@ class PiRpcClient:
         self._proc.stdin.write(line.encode("utf-8"))
         await self._proc.stdin.drain()
 
-    async def prompt(self, text: str, images: list[dict] | None = None) -> None:
+    async def prompt(
+        self, text: str, images: list[dict] | None = None
+    ) -> None:
         cmd = {"type": "prompt", "message": text}
         if images:
             cmd["images"] = images

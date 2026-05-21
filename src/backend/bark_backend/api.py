@@ -51,7 +51,9 @@ if os.environ.get("BARK_TEST_MODE"):  # pragma: no cover
             container_manager.set_workspace_idle_timeout(workspace_id, seconds)
         else:
             container_manager.IDLE_TIMEOUT_SECONDS = seconds
-            container_manager.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
+            container_manager.CHECK_INTERVAL_SECONDS = max(
+                10, min(60, seconds // 3)
+            )
         return {"idle_timeout_seconds": seconds}
 
 
@@ -92,9 +94,14 @@ async def register(
     password_hash = auth._hash_password(req.password)
     user_id = str(uuid.uuid4())
 
-    hostname, proto, base_path = ws_handler.derive_hosting_info(request.headers)
+    hostname, proto, base_path = ws_handler.derive_hosting_info(
+        request.headers
+    )
     logger.info(
-        "Hosting info: hostname=%s proto=%s base_path=%s", hostname, proto, base_path
+        "Hosting info: hostname=%s proto=%s base_path=%s",
+        hostname,
+        proto,
+        base_path,
     )
     verification_token = auth.create_verification_token(user_id)
     verification_url = (
@@ -110,7 +117,9 @@ async def register(
             (user_id, req.email, password_hash),
         )
         logger.info("User inserted (uncommitted): %s", req.email)
-        await email_service.send_verification_email(req.email, verification_url)
+        await email_service.send_verification_email(
+            req.email, verification_url
+        )
         logger.info("Verification email sent, committing user: %s", req.email)
 
     return {"status": "pending_verification", "email": req.email}
@@ -153,7 +162,9 @@ async def list_workspaces(user: dict = Depends(auth.get_current_user)):
 
 
 @router.post("/workspaces")
-async def create_workspace(name: str, user: dict = Depends(auth.get_current_user)):
+async def create_workspace(
+    name: str, user: dict = Depends(auth.get_current_user)
+):
     try:
         return await workspace_manager.create_workspace(user["id"], name)
     except (sqlite3.IntegrityError, OSError) as e:
@@ -169,9 +180,13 @@ async def delete_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     if workspace.get("container_id"):
-        await container_manager.stop_and_remove_container(workspace["container_id"])
+        await container_manager.stop_and_remove_container(
+            workspace["container_id"]
+        )
 
-    deleted = await workspace_manager.delete_workspace(workspace_id, user["id"])
+    deleted = await workspace_manager.delete_workspace(
+        workspace_id, user["id"]
+    )
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="Workspace not found")
     return {"status": "deleted"}
@@ -181,7 +196,9 @@ async def delete_workspace(
 
 
 @router.get("/workspaces/{workspace_id}/messages")
-async def get_messages(workspace_id: str, user: dict = Depends(auth.get_current_user)):
+async def get_messages(
+    workspace_id: str, user: dict = Depends(auth.get_current_user)
+):
     workspace = await workspace_manager.get_workspace(workspace_id, user["id"])
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
@@ -220,7 +237,9 @@ async def read_file(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if content is None:
-        raise HTTPException(status_code=404, detail="File not found or too large")
+        raise HTTPException(
+            status_code=404, detail="File not found or too large"
+        )
     return {"path": path, "content": content}
 
 
@@ -253,13 +272,17 @@ async def rename_file(
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
-        renamed = file_service.rename_path(user["id"], workspace_id, old_path, new_path)
+        renamed = file_service.rename_path(
+            user["id"], workspace_id, old_path, new_path
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Source not found")
     except FileExistsError:
-        raise HTTPException(status_code=409, detail="Destination already exists")
+        raise HTTPException(
+            status_code=409, detail="Destination already exists"
+        )
     return {"path": renamed, "status": "renamed"}
 
 
@@ -289,7 +312,9 @@ async def download_file(
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{resolved.name}.zip"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{resolved.name}.zip"'
+        },
     )
 
 
@@ -305,7 +330,9 @@ async def upload_file(
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     filename = path if path else file.filename
-    if not filename:  # pragma: no cover — FastAPI rejects empty filename at 422 first
+    if (
+        not filename
+    ):  # pragma: no cover — FastAPI rejects empty filename at 422 first
         raise HTTPException(status_code=400, detail="No filename provided")
 
     content = await file.read()
@@ -327,7 +354,9 @@ async def list_users(admin: dict = Depends(auth.require_role("admin"))):
 
 
 @router.delete("/admin/users/{user_id}")
-async def delete_user(user_id: str, admin: dict = Depends(auth.require_role("admin"))):
+async def delete_user(
+    user_id: str, admin: dict = Depends(auth.require_role("admin"))
+):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
     user = await user_store.get_user_by_id(user_id)
@@ -365,7 +394,9 @@ async def remove_user_role(
 ):
     removed = await user_store.remove_role(user_id, role_name)
     if not removed:
-        raise HTTPException(status_code=404, detail="Role assignment not found")
+        raise HTTPException(
+            status_code=404, detail="Role assignment not found"
+        )
     return {"status": "removed", "user_id": user_id, "role": role_name}
 
 

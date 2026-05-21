@@ -99,7 +99,9 @@ class TestSendViaSendmail:
         assert mock_exec.call_args[0][0] == "sendmail"
 
     async def test_custom_sendmail_path(self, monkeypatch):
-        monkeypatch.setenv("BARK_SENDMAIL_PATH", "/run/current-system/sw/bin/sendmail")
+        monkeypatch.setenv(
+            "BARK_SENDMAIL_PATH", "/run/current-system/sw/bin/sendmail"
+        )
         mock_proc = AsyncMock()
         mock_proc.communicate.return_value = (b"", b"")
         mock_proc.returncode = 0
@@ -110,7 +112,9 @@ class TestSendViaSendmail:
             msg = email_service._build_message("to@example.com", "Hi", "Body")
             await email_service._send_via_sendmail(msg)
 
-        assert mock_exec.call_args[0][0] == "/run/current-system/sw/bin/sendmail"
+        assert (
+            mock_exec.call_args[0][0] == "/run/current-system/sw/bin/sendmail"
+        )
 
     async def test_raises_on_sendmail_failure(self):
         mock_proc = AsyncMock()
@@ -145,7 +149,8 @@ class TestSendVerificationEmail:
         mock_sendmail = AsyncMock()
         with patch.object(email_service, "_send_via_sendmail", mock_sendmail):
             await email_service.send_verification_email(
-                "user@example.com", "https://bark.example.com/#/verify?token=abc123"
+                "user@example.com",
+                "https://bark.example.com/#/verify?token=abc123",
             )
         mock_sendmail.assert_awaited_once()
         msg = mock_sendmail.call_args[0][0]

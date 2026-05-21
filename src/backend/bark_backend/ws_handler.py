@@ -144,8 +144,12 @@ async def _start_workspace_container(
 ) -> None:
     """Start/restart container, connect Pi RPC, start event forwarding, resume session."""
     user = state["user"]
-    host_path = str(workspace_manager.get_workspace_host_path(user["id"], workspace_id))
-    home_path = str(workspace_manager.get_home_host_path(user["id"], workspace_id))
+    host_path = str(
+        workspace_manager.get_workspace_host_path(user["id"], workspace_id)
+    )
+    home_path = str(
+        workspace_manager.get_home_host_path(user["id"], workspace_id)
+    )
 
     # Find the most recent session file to resume (if any).
     # Sessions live inside the persistent home mount at .pi/sessions/.
@@ -159,7 +163,9 @@ async def _start_workspace_container(
         most_recent = session_files[-1]
         resume_session = most_recent.replace(home_path, "/home/bark")
 
-    hosting_hostname, hosting_proto, hosting_base_path = _derive_hosting_info(ws)
+    hosting_hostname, hosting_proto, hosting_base_path = _derive_hosting_info(
+        ws
+    )
     container_id, container_status = await container_manager.start_container(
         workspace_id,
         host_path,
@@ -216,10 +222,14 @@ async def _start_workspace_container(
             workspace_id,
         )
     else:
-        logger.info("Container ready (new session) for workspace %s", workspace_id)
+        logger.info(
+            "Container ready (new session) for workspace %s", workspace_id
+        )
 
 
-async def _handle_workspace_connect(ws: WebSocket, state: dict, msg: dict) -> None:
+async def _handle_workspace_connect(
+    ws: WebSocket, state: dict, msg: dict
+) -> None:
     workspace_id = msg.get("workspaceId")
     if not workspace_id:
         await _send_error(ws, "Missing workspaceId")
@@ -238,7 +248,9 @@ async def _handle_workspace_connect(ws: WebSocket, state: dict, msg: dict) -> No
 
     ports = await container_manager.get_workspace_ports(workspace_id)
     status = state.get("container_status", "created")
-    container_name = f"bark-{container_manager.INSTANCE_ID}-{workspace_id[:12]}"
+    container_name = (
+        f"bark-{container_manager.INSTANCE_ID}-{workspace_id[:12]}"
+    )
     ports_str = f" (ports {','.join(str(p) for p in ports)})" if ports else ""
     status_msg = {
         "connected": f"Connected to running container {container_name}{ports_str}",
@@ -292,7 +304,9 @@ async def _handle_prompt(ws: WebSocket, state: dict, msg: dict) -> None:
         await _send_error(ws, "Not connected to a workspace")
         return
 
-    logger.info("Prompt received for workspace %s: %s", workspace_id, text[:80])
+    logger.info(
+        "Prompt received for workspace %s: %s", workspace_id, text[:80]
+    )
     # Try to send prompt, auto-restart container if it's dead
     pi_client: PiRpcClient | None = state.get("pi_client")
     try:
@@ -474,7 +488,9 @@ async def _handle_restart_container(ws: WebSocket, state: dict) -> None:
 
     ports = await container_manager.get_workspace_ports(workspace_id)
     ports_str = f" (ports {','.join(str(p) for p in ports)})" if ports else ""
-    container_name = f"bark-{container_manager.INSTANCE_ID}-{workspace_id[:12]}"
+    container_name = (
+        f"bark-{container_manager.INSTANCE_ID}-{workspace_id[:12]}"
+    )
     status_msg = f"Container restarted {container_name}{ports_str}"
     if state.get("resume_session"):
         status_msg += " (session resumed)"
@@ -502,7 +518,9 @@ async def _handle_restart_container(ws: WebSocket, state: dict) -> None:
     )
 
 
-async def _handle_terminal_start(ws: WebSocket, state: dict, msg: dict) -> None:
+async def _handle_terminal_start(
+    ws: WebSocket, state: dict, msg: dict
+) -> None:
     container_id = state.get("container_id")
     if not container_id:
         return
@@ -658,7 +676,9 @@ async def _forward_events(
         logger.error("Event forwarding error for %s: %s", workspace_id, e)
     finally:
         logger.info(
-            "Event forwarding ended for %s after %d events", workspace_id, event_count
+            "Event forwarding ended for %s after %d events",
+            workspace_id,
+            event_count,
         )
 
 

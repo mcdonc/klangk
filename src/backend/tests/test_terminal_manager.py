@@ -36,7 +36,9 @@ def real_pipe():
 def mock_os(real_pipe):
     r, w = real_pipe
     with (
-        patch.object(terminal_manager, "_openpty", return_value=(r, w)) as m_openpty,
+        patch.object(
+            terminal_manager, "_openpty", return_value=(r, w)
+        ) as m_openpty,
         patch.object(terminal_manager, "_set_winsize") as m_winsize,
         patch.object(terminal_manager, "_fd_read", return_value=b"") as m_read,
         patch.object(terminal_manager, "_fd_write", return_value=0) as m_write,
@@ -70,7 +72,9 @@ class TestStart:
         slave_fd = mock_os["slave_fd"]
         loop = asyncio.get_event_loop()
 
-        with patch("asyncio.create_subprocess_exec", return_value=proc) as m_exec:
+        with patch(
+            "asyncio.create_subprocess_exec", return_value=proc
+        ) as m_exec:
             s = TerminalSession("cid")
             await s.start(cols=120, rows=40)
 
@@ -96,7 +100,9 @@ class TestStart:
         master_fd = mock_os["master_fd"]
         loop = asyncio.get_event_loop()
 
-        with patch("asyncio.create_subprocess_exec", return_value=proc) as m_exec:
+        with patch(
+            "asyncio.create_subprocess_exec", return_value=proc
+        ) as m_exec:
             s = TerminalSession("cid")
             await s.start()
 
@@ -106,7 +112,9 @@ class TestStart:
         env_idx = exec_args.index("env")
         env_args = exec_args[env_idx:]
         assert "-u" in env_args
-        unset_keys = [env_args[i + 1] for i, a in enumerate(env_args) if a == "-u"]
+        unset_keys = [
+            env_args[i + 1] for i, a in enumerate(env_args) if a == "-u"
+        ]
         assert "OLLAMA_API_KEY" in unset_keys
         assert "ANTHROPIC_API_KEY" in unset_keys
         assert "BARK_RESUME_SESSION" in unset_keys
@@ -159,14 +167,18 @@ class TestRemoveReader:
         s = TerminalSession("cid")
         s._master_fd = 99
         loop = asyncio.get_event_loop()
-        with patch.object(loop, "remove_reader", side_effect=ValueError("bad fd")):
+        with patch.object(
+            loop, "remove_reader", side_effect=ValueError("bad fd")
+        ):
             s._remove_reader()
 
     def test_oserror_suppressed(self):
         s = TerminalSession("cid")
         s._master_fd = 99
         loop = asyncio.get_event_loop()
-        with patch.object(loop, "remove_reader", side_effect=OSError("bad fd")):
+        with patch.object(
+            loop, "remove_reader", side_effect=OSError("bad fd")
+        ):
             s._remove_reader()
 
 
@@ -193,7 +205,9 @@ class TestWrite:
 
         await s.write("ls\n")
 
-        mock_os["fd_write"].assert_called_once_with(mock_os["master_fd"], b"ls\n")
+        mock_os["fd_write"].assert_called_once_with(
+            mock_os["master_fd"], b"ls\n"
+        )
 
     async def test_write_no_fd(self, mock_os):
         s = TerminalSession("cid")
@@ -208,7 +222,9 @@ class TestResize:
 
         await s.resize(cols=200, rows=50)
 
-        mock_os["set_winsize"].assert_called_once_with(mock_os["master_fd"], 50, 200)
+        mock_os["set_winsize"].assert_called_once_with(
+            mock_os["master_fd"], 50, 200
+        )
 
     async def test_resize_no_fd(self, mock_os):
         s = TerminalSession("cid")
@@ -338,7 +354,9 @@ class TestStop:
         s._running = True
 
         loop = asyncio.get_event_loop()
-        with patch.object(loop, "remove_reader", side_effect=ValueError("bad fd")):
+        with patch.object(
+            loop, "remove_reader", side_effect=ValueError("bad fd")
+        ):
             await s.stop()
 
         assert s._master_fd is None
@@ -351,7 +369,9 @@ class TestStop:
         s._running = True
 
         loop = asyncio.get_event_loop()
-        with patch.object(loop, "remove_reader", side_effect=OSError("bad fd")):
+        with patch.object(
+            loop, "remove_reader", side_effect=OSError("bad fd")
+        ):
             await s.stop()
 
         assert s._master_fd is None

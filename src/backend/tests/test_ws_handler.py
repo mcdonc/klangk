@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 from fastapi import WebSocketDisconnect
 
-from bark_backend import ws_handler, container_manager, user_store, workspace_manager
+from bark_backend import (
+    ws_handler,
+    container_manager,
+    user_store,
+    workspace_manager,
+)
 from bark_backend.ws_handler import (
     _derive_hosting_info,
     _start_workspace_container,
@@ -86,7 +91,9 @@ class TestSendError:
     async def test_sends_error_json(self):
         ws = _mock_ws()
         await _send_error(ws, "bad thing")
-        ws.send_json.assert_awaited_once_with({"type": "error", "message": "bad thing"})
+        ws.send_json.assert_awaited_once_with(
+            {"type": "error", "message": "bad thing"}
+        )
 
 
 # --- _derive_hosting_info ---
@@ -506,7 +513,10 @@ class TestForwardEvents:
             {
                 "type": "message_update",
                 "message": {"id": "m1"},
-                "assistantMessageEvent": {"type": "text_delta", "delta": "hello"},
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "hello",
+                },
             },
             {"type": "message_end", "message": {"id": "m1"}},
             {"type": "agent_end"},
@@ -535,7 +545,10 @@ class TestForwardEvents:
             {
                 "type": "message_update",
                 "message": {"id": "m1"},
-                "assistantMessageEvent": {"type": "text_delta", "delta": "hello world"},
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "hello world",
+                },
             },
             {"type": "message_end", "message": {"id": "m1"}},
         ]
@@ -777,7 +790,9 @@ class TestHandlePrompt:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
@@ -825,7 +840,9 @@ class TestHandlePrompt:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
@@ -857,7 +874,9 @@ class TestHandlePrompt:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
             patch.object(
                 ws_handler,
@@ -910,7 +929,9 @@ class TestHandlePrompt:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
@@ -942,7 +963,9 @@ class TestHandleWorkspaceConnect:
 
     async def test_connect_success(self, user):
         ws = _mock_ws()
-        workspace = await workspace_manager.create_workspace(user["id"], "test-ws")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "test-ws"
+        )
         state = _base_state(user=user)
 
         async def fake_start(ws, state, wid, workspace):
@@ -951,13 +974,19 @@ class TestHandleWorkspaceConnect:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
             patch.object(
-                container_manager, "get_workspace_ports", return_value=[9000, 9001]
+                container_manager,
+                "get_workspace_ports",
+                return_value=[9000, 9001],
             ),
         ):
-            await _handle_workspace_connect(ws, state, {"workspaceId": workspace["id"]})
+            await _handle_workspace_connect(
+                ws, state, {"workspaceId": workspace["id"]}
+            )
 
         calls = [c[0][0] for c in ws.send_json.call_args_list]
         ready = [c for c in calls if c.get("type") == "workspace_ready"]
@@ -968,7 +997,9 @@ class TestHandleWorkspaceConnect:
 
     async def test_connect_fractional_timeout(self, user):
         ws = _mock_ws()
-        workspace = await workspace_manager.create_workspace(user["id"], "frac-ws")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "frac-ws"
+        )
         state = _base_state(user=user)
 
         original_timeout = container_manager.IDLE_TIMEOUT_SECONDS
@@ -982,9 +1013,13 @@ class TestHandleWorkspaceConnect:
         try:
             with (
                 patch.object(
-                    ws_handler, "_start_workspace_container", side_effect=fake_start
+                    ws_handler,
+                    "_start_workspace_container",
+                    side_effect=fake_start,
                 ),
-                patch.object(container_manager, "get_workspace_ports", return_value=[]),
+                patch.object(
+                    container_manager, "get_workspace_ports", return_value=[]
+                ),
             ):
                 await _handle_workspace_connect(
                     ws, state, {"workspaceId": workspace["id"]}
@@ -1009,7 +1044,9 @@ class TestHandleWorkspaceDisconnect:
         state["workspace_id"] = "ws-1"
 
         with patch.object(
-            container_manager, "stop_and_remove_container", new_callable=AsyncMock
+            container_manager,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
         ):
             await _handle_workspace_disconnect(ws, state)
 
@@ -1041,7 +1078,9 @@ class TestHandleRestartContainer:
 
     async def test_restart_success(self, user):
         ws = _mock_ws()
-        workspace = await workspace_manager.create_workspace(user["id"], "restart-ws")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "restart-ws"
+        )
         state = _base_state(user=user)
         state["workspace_id"] = workspace["id"]
         state["workspace"] = workspace
@@ -1057,9 +1096,13 @@ class TestHandleRestartContainer:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
-            patch.object(container_manager, "get_workspace_ports", return_value=[9000]),
+            patch.object(
+                container_manager, "get_workspace_ports", return_value=[9000]
+            ),
         ):
             await _handle_restart_container(ws, state)
 
@@ -1081,7 +1124,9 @@ class TestStartWorkspaceContainer:
     async def test_new_session(self, user):
         ws = _mock_ws(headers={"host": "localhost:8997"})
         state = _base_state(user=user)
-        workspace = await workspace_manager.create_workspace(user["id"], "start-ws")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "start-ws"
+        )
         pi = _mock_pi_client()
 
         async def fake_events():
@@ -1100,7 +1145,9 @@ class TestStartWorkspaceContainer:
             patch.object(ws_handler, "PiRpcClient", return_value=pi),
             patch("glob.glob", return_value=[]),
         ):
-            await _start_workspace_container(ws, state, workspace["id"], workspace)
+            await _start_workspace_container(
+                ws, state, workspace["id"], workspace
+            )
 
         assert state["container_id"] == "cid-1"
         assert state["pi_client"] is pi
@@ -1119,7 +1166,9 @@ class TestStartWorkspaceContainer:
     async def test_resume_session(self, user):
         ws = _mock_ws(headers={"host": "localhost:8997"})
         state = _base_state(user=user)
-        workspace = await workspace_manager.create_workspace(user["id"], "resume-ws")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "resume-ws"
+        )
         pi = _mock_pi_client()
 
         async def fake_events():
@@ -1141,10 +1190,13 @@ class TestStartWorkspaceContainer:
             ),
             patch.object(ws_handler, "PiRpcClient", return_value=pi),
             patch(
-                "glob.glob", return_value=[f"{home_path}/.pi/sessions/session.jsonl"]
+                "glob.glob",
+                return_value=[f"{home_path}/.pi/sessions/session.jsonl"],
             ),
         ):
-            await _start_workspace_container(ws, state, workspace["id"], workspace)
+            await _start_workspace_container(
+                ws, state, workspace["id"], workspace
+            )
 
         assert state["resume_session"] is not None
         assert "/home/bark/.pi/sessions" in state["resume_session"]
@@ -1160,7 +1212,9 @@ class TestStartWorkspaceContainer:
     async def test_idle_callback_ws_error(self, user):
         ws = _mock_ws(headers={"host": "localhost:8997"})
         state = _base_state(user=user)
-        workspace = await workspace_manager.create_workspace(user["id"], "idle-ws")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "idle-ws"
+        )
         pi = _mock_pi_client()
 
         async def fake_events():
@@ -1179,7 +1233,9 @@ class TestStartWorkspaceContainer:
             patch.object(ws_handler, "PiRpcClient", return_value=pi),
             patch("glob.glob", return_value=[]),
         ):
-            await _start_workspace_container(ws, state, workspace["id"], workspace)
+            await _start_workspace_container(
+                ws, state, workspace["id"], workspace
+            )
 
         # Test idle callback when WS send fails
         ws.send_json = AsyncMock(side_effect=RuntimeError("ws closed"))
@@ -1216,7 +1272,9 @@ class TestHandleWebsocketDispatch:
         ws.accept.assert_awaited_once()
 
     async def test_dispatch_follow_up(self, user):
-        ws = await self._run_commands(user, [{"cmd": "follow_up", "text": "more"}])
+        ws = await self._run_commands(
+            user, [{"cmd": "follow_up", "text": "more"}]
+        )
         ws.accept.assert_awaited_once()
 
     async def test_dispatch_abort(self, user):
@@ -1234,7 +1292,9 @@ class TestHandleWebsocketDispatch:
         ws.accept.assert_awaited_once()
 
     async def test_dispatch_terminal_input(self, user):
-        ws = await self._run_commands(user, [{"cmd": "terminal_input", "data": "x"}])
+        ws = await self._run_commands(
+            user, [{"cmd": "terminal_input", "data": "x"}]
+        )
         ws.accept.assert_awaited_once()
 
     async def test_dispatch_terminal_resize(self, user):
@@ -1273,11 +1333,16 @@ class TestHandleWebsocketDispatch:
         token = auth_mod._create_token(user["id"], user["email"])
         ws = _mock_ws(query_params={"token": token})
 
-        workspace = await workspace_manager.create_workspace(user["id"], "stop-ws")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "stop-ws"
+        )
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps(
-                    {"cmd": "workspace_connect", "workspaceId": workspace["id"]}
+                    {
+                        "cmd": "workspace_connect",
+                        "workspaceId": workspace["id"],
+                    }
                 ),
                 WebSocketDisconnect(),
             ]
@@ -1289,11 +1354,17 @@ class TestHandleWebsocketDispatch:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
-            patch.object(container_manager, "get_workspace_ports", return_value=[]),
             patch.object(
-                container_manager, "stop_and_remove_container", new_callable=AsyncMock
+                container_manager, "get_workspace_ports", return_value=[]
+            ),
+            patch.object(
+                container_manager,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
             ) as mock_stop,
         ):
             await handle_websocket(ws)
@@ -1307,7 +1378,9 @@ class TestHandleWebsocketDispatch:
 class TestHandleRestartContainerExtra:
     async def test_restart_cleanup_error(self, user):
         ws = _mock_ws()
-        workspace = await workspace_manager.create_workspace(user["id"], "restart-err")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "restart-err"
+        )
         state = _base_state(user=user)
         state["workspace_id"] = workspace["id"]
         state["workspace"] = workspace
@@ -1323,14 +1396,18 @@ class TestHandleRestartContainerExtra:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
             patch.object(
                 ws_handler,
                 "_cleanup_connection",
                 side_effect=RuntimeError("cleanup boom"),
             ),
-            patch.object(container_manager, "get_workspace_ports", return_value=[9000]),
+            patch.object(
+                container_manager, "get_workspace_ports", return_value=[9000]
+            ),
         ):
             await _handle_restart_container(ws, state)
 
@@ -1344,9 +1421,13 @@ class TestHandleRestartContainerExtra:
         assert len(ready) == 1
         container_manager._containers.pop("new-cid", None)
 
-    async def test_restart_fractional_timeout_with_resume(self, user, monkeypatch):
+    async def test_restart_fractional_timeout_with_resume(
+        self, user, monkeypatch
+    ):
         ws = _mock_ws()
-        workspace = await workspace_manager.create_workspace(user["id"], "restart-frac")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "restart-frac"
+        )
         state = _base_state(user=user)
         state["workspace_id"] = workspace["id"]
         state["workspace"] = workspace
@@ -1368,9 +1449,13 @@ class TestHandleRestartContainerExtra:
         try:
             with (
                 patch.object(
-                    ws_handler, "_start_workspace_container", side_effect=fake_start
+                    ws_handler,
+                    "_start_workspace_container",
+                    side_effect=fake_start,
                 ),
-                patch.object(container_manager, "get_workspace_ports", return_value=[]),
+                patch.object(
+                    container_manager, "get_workspace_ports", return_value=[]
+                ),
             ):
                 await _handle_restart_container(ws, state)
 
@@ -1419,7 +1504,9 @@ class TestHandleWebsocket:
 
         token = auth_mod._create_token(user["id"], user["email"])
         ws = _mock_ws(query_params={"token": token})
-        ws.receive_text = AsyncMock(side_effect=["not json", WebSocketDisconnect()])
+        ws.receive_text = AsyncMock(
+            side_effect=["not json", WebSocketDisconnect()]
+        )
 
         await handle_websocket(ws)
 
@@ -1448,7 +1535,9 @@ class TestHandleWebsocket:
 
         token = auth_mod._create_token(user["id"], user["email"])
         ws = _mock_ws(query_params={"token": token})
-        workspace = await workspace_manager.create_workspace(user["id"], "ui-ready-ws")
+        workspace = await workspace_manager.create_workspace(
+            user["id"], "ui-ready-ws"
+        )
 
         async def fake_start(ws_arg, state, wid, ws_obj):
             state["container_id"] = "cid"
@@ -1457,7 +1546,10 @@ class TestHandleWebsocket:
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps(
-                    {"cmd": "workspace_connect", "workspaceId": workspace["id"]}
+                    {
+                        "cmd": "workspace_connect",
+                        "workspaceId": workspace["id"],
+                    }
                 ),
                 json.dumps({"cmd": "ui_ready"}),
                 WebSocketDisconnect(),
@@ -1466,11 +1558,17 @@ class TestHandleWebsocket:
 
         with (
             patch.object(
-                ws_handler, "_start_workspace_container", side_effect=fake_start
+                ws_handler,
+                "_start_workspace_container",
+                side_effect=fake_start,
             ),
-            patch.object(container_manager, "get_workspace_ports", return_value=[]),
             patch.object(
-                container_manager, "stop_and_remove_container", new_callable=AsyncMock
+                container_manager, "get_workspace_ports", return_value=[]
+            ),
+            patch.object(
+                container_manager,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
             ),
         ):
             await handle_websocket(ws)

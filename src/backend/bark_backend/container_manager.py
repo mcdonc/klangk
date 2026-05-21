@@ -124,13 +124,16 @@ async def start_container(
             )
         except aiodocker.exceptions.DockerError:
             logger.info(
-                "Could not find container %s, creating new one", existing_container_id
+                "Could not find container %s, creating new one",
+                existing_container_id,
             )
 
     # Ensure workspace has the right number of ports allocated
     host_ports = await get_workspace_ports(workspace_id)
     if len(host_ports) < num_ports:
-        new_ports = await allocate_ports(workspace_id, num_ports - len(host_ports))
+        new_ports = await allocate_ports(
+            workspace_id, num_ports - len(host_ports)
+        )
         host_ports.extend(new_ports)
     elif len(host_ports) > num_ports:
         excess = host_ports[num_ports:]
@@ -141,7 +144,14 @@ async def start_container(
     env_vars = []
     for key in os.environ:
         if key.startswith(
-            ("ANTHROPIC_", "OPENAI_", "GOOGLE_", "GROQ_", "MISTRAL_", "OLLAMA_")
+            (
+                "ANTHROPIC_",
+                "OPENAI_",
+                "GOOGLE_",
+                "GROQ_",
+                "MISTRAL_",
+                "OLLAMA_",
+            )
         ):
             env_vars.append(f"{key}={os.environ[key]}")
     # Log provider env vars for debugging
@@ -156,7 +166,9 @@ async def start_container(
         parsed = urlparse(ollama_url)
         logger.info("OLLAMA_BASE_URL host: %s", parsed.hostname)
     # Tell the container the port mappings (container_port:host_port pairs)
-    mappings = [f"{CONTAINER_PORT_START + i}:{hp}" for i, hp in enumerate(host_ports)]
+    mappings = [
+        f"{CONTAINER_PORT_START + i}:{hp}" for i, hp in enumerate(host_ports)
+    ]
     env_vars.append(f"BARK_PORT_MAPPINGS={','.join(mappings)}")
     env_vars.append(f"BARK_WORKSPACE_ID={workspace_id}")
     env_vars.append(f"BARK_HOSTING_HOSTNAME={hosting_hostname}")
@@ -227,7 +239,9 @@ async def attach_container(container_id: str) -> aiodocker.stream.Stream:
     """Attach to container stdin/stdout for Pi RPC communication."""
     docker = await get_docker()
     container = await docker.containers.get(container_id)
-    stream = container.attach(stdin=True, stdout=True, stderr=True, stream=True)
+    stream = container.attach(
+        stdin=True, stdout=True, stderr=True, stream=True
+    )
     return stream
 
 
@@ -237,7 +251,9 @@ async def stop_and_remove_container(container_id: str) -> None:
 
     caller = "".join(traceback.format_stack()[-3:-1])
     logger.info(
-        "stop_and_remove_container(%s) called from:\n%s", container_id[:12], caller
+        "stop_and_remove_container(%s) called from:\n%s",
+        container_id[:12],
+        caller,
     )
     docker = await get_docker()
     try:
@@ -354,7 +370,9 @@ async def shutdown() -> None:
         _cleanup_task.cancel()
         _cleanup_task = None
     # Stop all tracked containers in parallel
-    tasks = [stop_and_remove_container(cid) for cid in list(_containers.keys())]
+    tasks = [
+        stop_and_remove_container(cid) for cid in list(_containers.keys())
+    ]
     # Also stop any orphaned bark containers (not in _containers but have our label)
     try:
         docker = await get_docker()

@@ -57,7 +57,9 @@ class TestLifespan:
     async def test_lifespan_starts_and_stops(self, db):
         app = FastAPI()
         with (
-            patch.object(main.container_manager, "start_cleanup_loop") as mock_start,
+            patch.object(
+                main.container_manager, "start_cleanup_loop"
+            ) as mock_start,
             patch.object(
                 main.container_manager, "shutdown", new_callable=AsyncMock
             ) as mock_shutdown,
@@ -79,7 +81,9 @@ class TestSetupStaticFiles:
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             resp = await client.get("/index.html")
         assert resp.status_code == 200
         assert b"hello" in resp.content
@@ -91,9 +95,14 @@ class TestSetupStaticFiles:
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             resp = await client.get("/index.html")
-        assert resp.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+        assert (
+            resp.headers["Cache-Control"]
+            == "no-cache, no-store, must-revalidate"
+        )
         assert resp.headers["Pragma"] == "no-cache"
         assert resp.headers["Expires"] == "0"
 
@@ -104,9 +113,14 @@ class TestSetupStaticFiles:
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             resp = await client.get("/app.js")
-        assert resp.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+        assert (
+            resp.headers["Cache-Control"]
+            == "no-cache, no-store, must-revalidate"
+        )
 
     async def test_no_cache_headers_not_on_other_files(self, tmp_path):
         (tmp_path / "image.png").write_bytes(b"\x89PNG")
@@ -115,6 +129,8 @@ class TestSetupStaticFiles:
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             resp = await client.get("/image.png")
         assert "Cache-Control" not in resp.headers

@@ -43,7 +43,10 @@ class TestTranslateEvent:
             {
                 "type": "message_update",
                 "message": {"id": "msg-1"},
-                "assistantMessageEvent": {"type": "text_delta", "delta": "hello"},
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "hello",
+                },
             },
             "ws-1",
         )
@@ -55,7 +58,10 @@ class TestTranslateEvent:
             {
                 "type": "message_update",
                 "message": {"id": "msg-1"},
-                "assistantMessageEvent": {"type": "thinking_delta", "delta": "hmm"},
+                "assistantMessageEvent": {
+                    "type": "thinking_delta",
+                    "delta": "hmm",
+                },
             },
             "ws-1",
         )
@@ -154,7 +160,9 @@ class TestTranslateEvent:
         assert events[0]["stepName"] == "turn"
 
     def test_message_start_no_id(self):
-        events = translate_event({"type": "message_start", "message": {}}, "ws-1")
+        events = translate_event(
+            {"type": "message_start", "message": {}}, "ws-1"
+        )
         assert events[0]["type"] == "TEXT_MESSAGE_START"
         # Should generate a UUID when id is missing
         assert len(events[0]["messageId"]) > 0
@@ -292,10 +300,14 @@ class TestTranslateEvent:
 
 class TestBashLikelyCreatesFiles:
     def test_mkdir(self):
-        assert _bash_likely_creates_files({"args": {"command": "mkdir -p /tmp/foo"}})
+        assert _bash_likely_creates_files(
+            {"args": {"command": "mkdir -p /tmp/foo"}}
+        )
 
     def test_touch(self):
-        assert _bash_likely_creates_files({"args": {"command": "touch file.txt"}})
+        assert _bash_likely_creates_files(
+            {"args": {"command": "touch file.txt"}}
+        )
 
     def test_git_clone(self):
         assert _bash_likely_creates_files(
@@ -311,7 +323,9 @@ class TestBashLikelyCreatesFiles:
         assert not _bash_likely_creates_files({"args": {"command": "ls -la"}})
 
     def test_cat_does_not(self):
-        assert not _bash_likely_creates_files({"args": {"command": "cat file.txt"}})
+        assert not _bash_likely_creates_files(
+            {"args": {"command": "cat file.txt"}}
+        )
 
     def test_string_args(self):
         assert _bash_likely_creates_files({"args": "mkdir foo"})
@@ -329,7 +343,9 @@ class TestBashLikelyCreatesFiles:
         assert _bash_likely_creates_files({"args": {"command": "npm init -y"}})
 
     def test_pip_install(self):
-        assert _bash_likely_creates_files({"args": {"command": "pip install requests"}})
+        assert _bash_likely_creates_files(
+            {"args": {"command": "pip install requests"}}
+        )
 
     def test_curl_output(self):
         assert _bash_likely_creates_files(
@@ -360,7 +376,10 @@ class TestExtractContentText:
         )
 
     def test_string_content(self):
-        assert _extract_content_text({"content": "plain string"}) == "plain string"
+        assert (
+            _extract_content_text({"content": "plain string"})
+            == "plain string"
+        )
 
     def test_raw_string(self):
         assert _extract_content_text("just a string") == "just a string"
@@ -373,7 +392,9 @@ class TestExtractContentText:
 
     def test_mixed_content_list(self):
         assert (
-            _extract_content_text({"content": [{"type": "text", "text": "a"}, "b"]})
+            _extract_content_text(
+                {"content": [{"type": "text", "text": "a"}, "b"]}
+            )
             == "ab"
         )
 
@@ -397,7 +418,8 @@ class TestExtractContentText:
 class TestExtractFilePath:
     def test_path_key(self):
         assert (
-            _extract_file_path({"args": {"path": "/work/foo.txt"}}) == "/work/foo.txt"
+            _extract_file_path({"args": {"path": "/work/foo.txt"}})
+            == "/work/foo.txt"
         )
 
     def test_file_path_key(self):
@@ -408,7 +430,9 @@ class TestExtractFilePath:
 
     def test_path_preferred_over_file_path(self):
         assert (
-            _extract_file_path({"args": {"path": "a.txt", "file_path": "b.txt"}})
+            _extract_file_path(
+                {"args": {"path": "a.txt", "file_path": "b.txt"}}
+            )
             == "a.txt"
         )
 

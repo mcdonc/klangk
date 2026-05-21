@@ -71,14 +71,20 @@ class TestDeleteWorkspace:
         sessions_path = workspace_manager._sessions_path(user["id"], ws["id"])
         (data_path / "file.txt").write_text("hello")
 
-        deleted = await workspace_manager.delete_workspace(ws["id"], user["id"])
+        deleted = await workspace_manager.delete_workspace(
+            ws["id"], user["id"]
+        )
         assert deleted is True
-        assert await workspace_manager.get_workspace(ws["id"], user["id"]) is None
+        assert (
+            await workspace_manager.get_workspace(ws["id"], user["id"]) is None
+        )
         assert not data_path.exists()
         assert not sessions_path.exists()
 
     async def test_delete_nonexistent(self, user):
-        deleted = await workspace_manager.delete_workspace("fake-id", user["id"])
+        deleted = await workspace_manager.delete_workspace(
+            "fake-id", user["id"]
+        )
         assert deleted is False
 
     async def test_delete_cascades_ports(self, user):
@@ -97,7 +103,9 @@ class TestDeleteWorkspace:
         data_path.rmdir()
         sessions_path.rmdir()
 
-        deleted = await workspace_manager.delete_workspace(ws["id"], user["id"])
+        deleted = await workspace_manager.delete_workspace(
+            ws["id"], user["id"]
+        )
         assert deleted is True
 
 
