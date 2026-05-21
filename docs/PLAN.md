@@ -588,8 +588,6 @@ arctor nginx (443)
 
 - **Local files pane**: Add a browser-side file pane where users can upload files into an in-browser-memory filesystem (e.g., using the File System Access API or an in-memory store). These files would be accessible to client-side plugins and could be passed to the REPL as context without uploading to the server. Useful for working with sensitive files that shouldn't leave the browser, or for quick one-off analysis without persisting to the workspace.
 
-- **Don't remove containers on workspace navigation**: Currently navigating away from a workspace (back button, browser tab switch, `deactivate()` in `workspace_page.dart`) stops and removes the container. Containers should be left running and only cleaned up by idle timeout or explicit logout/delete. This would make returning to a workspace instant (no container restart), reduce Docker churn during normal use, and avoid removing containers that hosted apps or background processes depend on. The hosted app proxy could auto-start the container before proxying if it's not running.
-
 - **Plugin version numbers**: Plugins may want their own version numbers (in `plugin.yaml` or similar metadata) for compatibility checking, display in the UI, and meaningful pinning beyond git refs.
 - **Entrypoint nohup zombie**: The `nohup sh -c "cat ... > FIFO ..."` writer in `entrypoint.sh` (line 78) leaves one `[sh] <defunct>` zombie per container start. Its parent is the `su` process which doesn't call `wait()`. Harmless but cosmetic. Fix by restructuring the entrypoint so the writer finishes before the final `exec`, or by using a different mechanism to feed the FIFOs.
 - **Container resource limits**: Add CPU/memory limits to containers to prevent runaway processes.

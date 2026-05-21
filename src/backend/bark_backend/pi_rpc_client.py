@@ -83,7 +83,7 @@ class PiRpcClient:
                                 :500
                             ]
                             if "settings.json" in stderr_text:  # pragma: no cover
-                                logger.debug(
+                                logger.warning(
                                     "Pi stderr for %s (expected ENOENT for "
                                     "settings.json FIFO after startup read): %s",
                                     self.container_id[:12],

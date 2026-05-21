@@ -70,12 +70,24 @@ if [ -d "$PI_AGENT_DIR/extensions" ] && [ "$(ls "$PI_AGENT_DIR/extensions"/*.ts 
   done
 fi
 
-# Write config content to temp files, then use nohup to feed them to the FIFOs.
+# Feed content to the FIFOs via a background process.
 # Pi reads settings.json first (SettingsManager.create), then models.json (ModelRegistry.create).
+# After each FIFO is consumed, delete it so the secret content doesn't persist on disk.
+# Pi may emit an ENOENT warning on a second read of settings.json — this is expected.
 # nohup ensures the writer survives the exec below.
-echo "$SETTINGS_CONTENT" > /tmp/settings-content
-echo "$MODELS_CONTENT" > /tmp/models-content
-nohup sh -c "cat /tmp/settings-content > $SETTINGS_JSON && rm -f $SETTINGS_JSON /tmp/settings-content && cat /tmp/models-content > $MODELS_JSON && rm -f $MODELS_JSON /tmp/models-content" >/dev/null 2>&1 &
+export TEMP_SETTINGS_CONTENT="$SETTINGS_CONTENT"
+export TEMP_MODELS_CONTENT="$MODELS_CONTENT"
+nohup sh -c '
+  set -e
+  # Write settings to FIFO (blocks until Pi reads it)
+  echo "$TEMP_SETTINGS_CONTENT" > '"$SETTINGS_JSON"'
+  # Remove the FIFO now that Pi has consumed it
+  rm -f '"$SETTINGS_JSON"'
+  # Write models to FIFO (blocks until Pi reads it)
+  echo "$TEMP_MODELS_CONTENT" > '"$MODELS_JSON"'
+  # Remove the FIFO now that Pi has consumed it
+  rm -f '"$MODELS_JSON"'
+' >/dev/null 2>&1 &
 
 # Build a list of env vars to strip (all provider-related vars)
 STRIP_VARS=""
@@ -90,5 +102,5 @@ if [ -n "$BARK_RESUME_SESSION" ]; then
 fi
 
 # Drop to bark user and run Pi (exec replaces this shell so Pi gets PID 1's stdio)
-exec env $STRIP_VARS -u BARK_RESUME_SESSION \
+exec env $STRIP_VARS -u BARK_RESUME_SESSION -u TEMP_SETTINGS_CONTENT -u TEMP_MODELS_CONTENT \
   su bark -c "PI_CODING_AGENT_DIR=$PI_AGENT_DIR $PI_CMD"
