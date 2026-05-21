@@ -79,11 +79,22 @@ class PiRpcClient:
                         ):
                             stderr_data = await asyncio.wait_for(stderr_data, timeout=2)
                         if stderr_data:
-                            logger.warning(
-                                "Pi stderr for %s: %s",
-                                self.container_id[:12],
-                                stderr_data.decode("utf-8", errors="replace")[:500],
-                            )
+                            stderr_text = stderr_data.decode("utf-8", errors="replace")[
+                                :500
+                            ]
+                            if "settings.json" in stderr_text:  # pragma: no cover
+                                logger.debug(
+                                    "Pi stderr for %s (expected ENOENT for "
+                                    "settings.json FIFO after startup read): %s",
+                                    self.container_id[:12],
+                                    stderr_text,
+                                )
+                            else:
+                                logger.warning(
+                                    "Pi stderr for %s: %s",
+                                    self.container_id[:12],
+                                    stderr_text,
+                                )
                     except (asyncio.TimeoutError, OSError, TypeError):
                         pass
             await self._event_queue.put(None)
