@@ -55,11 +55,14 @@ class TestAuthRoutes:
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         token = login_resp.json()["access_token"]
-        resp = await client.post(
-            "/auth/register",
-            json={"email": "new@example.com", "password": "newpass"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch.object(
+            api.email_service, "send_verification_email", new_callable=AsyncMock
+        ):
+            resp = await client.post(
+                "/auth/register",
+                json={"email": "new@example.com", "password": "newpass"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "pending_verification"
@@ -76,9 +79,13 @@ class TestAuthRoutes:
 
     async def test_register_unauthenticated(self, client, db):
         """Registration is open — no auth required (verification gates access)."""
-        resp = await client.post(
-            "/auth/register", json={"email": "new@example.com", "password": "newpass"}
-        )
+        with patch.object(
+            api.email_service, "send_verification_email", new_callable=AsyncMock
+        ):
+            resp = await client.post(
+                "/auth/register",
+                json={"email": "new@example.com", "password": "newpass"},
+            )
         assert resp.status_code == 200
         assert resp.json()["status"] == "pending_verification"
 
