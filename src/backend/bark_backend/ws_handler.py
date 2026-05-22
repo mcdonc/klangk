@@ -523,6 +523,8 @@ async def handle_terminal_start(ws: WebSocket, state: dict, msg: dict) -> None:
     rows = msg.get("rows", 24)
     session = TerminalSession(container_id)
     await session.start(cols, rows)
+    # Clear the screen to hide the double-prompt on startup
+    await session.write("clear\n")
     state["terminal_session"] = session
     state["terminal_task"] = asyncio.create_task(
         forward_terminal_output(ws, session, state)
