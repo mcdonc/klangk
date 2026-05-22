@@ -8,6 +8,10 @@ COPY --from=plugin-tools / /opt/bark/plugin-tools/
 RUN mkdir -p /opt/bark/pi-agent/extensions
 COPY --from=plugin-extensions / /opt/bark/pi-agent/extensions/
 COPY builtin-extensions/ /opt/bark/pi-agent/extensions/
+# Install npm dependencies for builtin extensions that need them
+RUN for dir in /opt/bark/pi-agent/extensions/*/; do \
+      [ -f "$dir/package.json" ] && (cd "$dir" && npm ci --omit=dev) || true; \
+    done
 COPY system-prompt.md /opt/bark/system-prompt.md
 COPY entrypoint.sh /opt/bark/entrypoint.sh
 RUN chmod +x /opt/bark/entrypoint.sh

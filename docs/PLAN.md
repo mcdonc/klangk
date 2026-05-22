@@ -38,6 +38,7 @@ $BARK_DATA_DIR/workspaces/<user-id>/work/<workspace-id>/
 - **AG-UI Protocol**: Standardized agent-user interaction protocol for event streaming
 - **Pi Coding Agent**: Minimal terminal coding harness (pi.dev) running in RPC mode with native session persistence and extension tools
 - **Ollama**: LLM provider — supports both Ollama Cloud and self-hosted instances, configurable via env vars (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_API_KEY`)
+- **Pydantic Logfire**: AI observability — FastAPI auto-instrumentation via Logfire Python SDK (`LOGFIRE_TOKEN`), Pi agent tracing via [pi-otel-telemetry](https://github.com/mprokopov/pi-otel-telemetry) extension (OTLP export to Logfire). Both trace sources appear in the same Logfire project. Container OTEL env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`) are auto-constructed from `LOGFIRE_TOKEN`/`LOGFIRE_BASE_URL` when set.
 - **devenv**: Nix-based development environment with auto-setup, conditional build tasks (`execIfModified`), auto-reload disabled
 
 ## Project Structure
@@ -68,11 +69,11 @@ bark/
     nginx.sh                   # nginx reverse proxy: config generation and exec
 
   src/dockerimage/
-    Dockerfile                  # Workspace image: FROM bark-pi-base + plugin extensions + tools + entrypoint + /etc/bash.bashrc
+    Dockerfile                  # Workspace image: FROM bark-pi-base + plugin extensions + tools + npm deps for builtin extensions + entrypoint + /etc/bash.bashrc
     Dockerfile.base             # Base image: node:22-slim + Pi + Python3 + build-essential + SQLite + vim + emacs + net tools + /bin/sh→bash (pushed to GHCR)
     entrypoint.sh               # Sets up Pi config (FIFO for models.json, system prompt), starts Pi in RPC mode
     system-prompt.md            # Static system prompt for Pi (copied into image)
-    builtin-extensions/         # Built-in Pi extensions (port-map.ts, etc.) — not from plugins
+    builtin-extensions/         # Built-in Pi extensions (port-map.ts, otel-telemetry/) — not from plugins
     # Plugin extensions and tools are staged at $BARK_PLUGINS_DIR/.docker/ at build time via named Docker build contexts
 
   src/backend/
@@ -357,7 +358,8 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `BARK_SMTP_FROM`            |                                      | Email sender address (falls back to SMTP_USER, then noreply@localhost)                                                                                    |
 | `BARK_SMTP_USE_TLS`         | `true`                               | Use STARTTLS for SMTP                                                                                                                                     |
 | `BARK_SENDMAIL_PATH`        | `sendmail`                           | Path to sendmail binary (used when BARK_SMTP_HOST is not set)                                                                                             |
-| `LOGFIRE_TOKEN`             |                                      | Pydantic Logfire write token (opt-in; supports `file:` prefix)                                                                                            |
+| `LOGFIRE_TOKEN`             |                                      | Pydantic Logfire write token (opt-in)                                                                                                                     |
+| `LOGFIRE_BASE_URL`          | `https://logfire-api.pydantic.dev`   | Logfire API base URL (for self-hosted instances)                                                                                                          |
 
 ### Ports
 
@@ -618,7 +620,6 @@ arctor nginx (443)
 - **devenv MCP memory leak**: The `devenv mcp` process grows to ~18GB virtual memory over time. Investigate root cause — may be in devenv itself or in the MCP server implementation.
 - **Production Flutter asset serving**: Create a command/script that produces a directory of pre-built Flutter web assets ready to be served in production without running the build. The current `flutterbuildweb.sh` appends a content hash query string (`?v=<hash>`) to `flutter_bootstrap.js` in `index.html` for cache-busting, but this only works for the dev build. Production deployments (e.g., arctor) copy files rather than running the build, and need the same cache-busting applied.
 - **Add LOGFIRE_TOKEN to arctor secrets**: Add `LOGFIRE_TOKEN` to `/etc/nixos/secrets/secrets.nix` on arctor so the production deployment can use `LOGFIRE_TOKEN=file:/run/secrets/logfire_token` in `.env`. Currently the token is only in the dev `.env` file.
-- **Logfire for Pi inside containers**: Pass `LOGFIRE_TOKEN` into workspace containers and configure Pi to send traces to Logfire. This would give visibility into LLM interactions (prompts, tool calls, streaming events, latency) from inside the container, complementing the backend FastAPI instrumentation which only sees HTTP/WebSocket-level spans. Investigate whether Pi supports OpenTelemetry or Logfire natively, or if instrumentation would need to be added via a Pi extension.
 - **Containerize the backend**: Create a Docker image for the Bark backend (FastAPI + Flutter web assets + nginx) for production deployment. Currently the backend runs directly via devenv/uvicorn — a container image would simplify deployment, versioning, and scaling. The deployment platform must support Docker-in-Docker (or bind-mount the host Docker socket) since Bark spawns workspace containers via the Docker API.
 - **SQLite migration tooling**: Research SQLite migration tools (e.g., Alembic, yoyo-migrations) for when dropping and recreating the database is no longer feasible. Currently schema changes are handled by `CREATE TABLE IF NOT EXISTS` with manual `ALTER TABLE` fallbacks, which won't scale as the schema evolves.
 - **E2E: cache Docker image build in CI**: The Docker image is rebuilt from scratch on every CI run. Options: (A) Push to GHCR (`ghcr.io/<repo>/bark-pi:<hash>`) keyed on a hash of Dockerfile + entrypoint + system-prompt + builtin-extensions + plugins — pull if exists, build and push if not. Requires `packages: write` permission but handles large images well. (B) Use GitHub Actions cache with `docker save`/`docker load` — simpler, no registry auth, but the 10 GB total cache limit is tight for a ~2-3 GB compressed tar. (C) Modify `dockerbuild.sh` to check a registry when `BARK_DOCKER_REGISTRY` is set — works for CI and anyone with registry access but couples the build script to a registry. Cache key should hash: `src/dockerimage/Dockerfile`, `src/dockerimage/entrypoint.sh`, `src/dockerimage/*.md`, `src/dockerimage/builtin-extensions/*.ts`, and `plugins/` contents.

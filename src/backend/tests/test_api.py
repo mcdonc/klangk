@@ -298,7 +298,6 @@ class TestResendVerification:
                 },
             )
         assert resp2.status_code == 429
-        # Clean up rate limit state
         api._resend_timestamps.pop("unverified@example.com", None)
 
 

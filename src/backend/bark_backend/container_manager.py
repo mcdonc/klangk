@@ -140,7 +140,7 @@ async def start_container(
         await user_store.remove_port_allocations(workspace_id, excess)
         host_ports = host_ports[:num_ports]
 
-    # Collect API keys from environment to pass into the container
+    # Collect API keys from environment to pass to the container
     env_vars = []
     for key in os.environ:
         if key.startswith(
@@ -166,6 +166,19 @@ async def start_container(
 
         parsed = urlparse(ollama_url)
         logger.info("OLLAMA_BASE_URL host: %s", parsed.hostname)
+    # Pass Logfire/OTEL config so the Pi otel-telemetry extension can
+    # send traces to the same Logfire project as the backend.
+    logfire_token = env_util.resolve_env_secret("LOGFIRE_TOKEN")
+    if logfire_token:
+        logfire_base = env_util.resolve_env_secret(
+            "LOGFIRE_BASE_URL", "https://logfire-api.pydantic.dev"
+        )
+        env_vars.append(f"OTEL_EXPORTER_OTLP_ENDPOINT={logfire_base}")
+        env_vars.append(
+            f"OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {logfire_token}"
+        )
+        env_vars.append("OTEL_SERVICE_NAME=bark-pi-agent")
+
     # Tell the container the port mappings (container_port:host_port pairs)
     mappings = [
         f"{CONTAINER_PORT_START + i}:{hp}" for i, hp in enumerate(host_ports)
