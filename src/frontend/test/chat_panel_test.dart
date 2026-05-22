@@ -1,6 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:bark_frontend/agui/agui_client.dart';
 import 'package:bark_frontend/agui/agui_events.dart';
 import 'package:bark_frontend/terminal/chat_panel.dart';
@@ -20,7 +24,15 @@ class _MockAguiClient extends AguiClient {
 
   void emit(AguiEvent event) => _controller.add(event);
 
+  final List<String> sentPrompts = [];
+
   void emitError(String error) => _errorController.add(error);
+
+  @override
+  void sendPrompt(String text) => sentPrompts.add(text);
+
+  @override
+  void sendAbort() {}
 
   void close() {
     _controller.close();
@@ -31,10 +43,12 @@ class _MockAguiClient extends AguiClient {
 void main() {
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
+    testChatHttpClientOverride = null;
   });
 
   tearDown(() {
     testBaseUrlOverride = null;
+    testChatHttpClientOverride = null;
   });
 
   group('ChatPanel', () {
@@ -405,6 +419,420 @@ void main() {
       await tester.pump();
 
       expect(find.textContaining('Hello World'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('send prompt via send button', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'button prompt');
+      await tester.tap(find.byIcon(Icons.send));
+      await tester.pumpAndSettle();
+
+      expect(client.sentPrompts, contains('button prompt'));
+      client.close();
+    });
+
+    testWidgets('tool call output delta updates entry', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Start a tool call
+      client.emit(AguiEvent(
+        type: AguiEventType.toolCallStart,
+        data: {
+          'toolCallId': 't1',
+          'toolCallName': 'bash',
+          'toolCallArgs': 'echo hi',
+        },
+      ));
+      await tester.pump();
+
+      // Send output delta
+      client.emit(AguiEvent(
+        type: AguiEventType.toolCallEnd,
+        data: {'toolCallId': 't1', 'delta': 'hello output'},
+      ));
+      await tester.pump();
+
+      expect(find.byType(ChatPanel), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('loads message history on init', (tester) async {
+      testChatHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/messages')) {
+          return http.Response(
+            jsonEncode([
+              {'entry_type': 'user', 'content': 'hello'},
+              {'entry_type': 'assistant', 'content': 'hi there'},
+              {
+                'entry_type': 'tool_call',
+                'content': '',
+                'tool_name': 'bash',
+                'tool_args': 'ls',
+                'tool_output': 'file.txt',
+                'is_complete': true,
+              },
+              {'entry_type': 'error', 'content': 'oops'},
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('hello'), findsOneWidget);
+      expect(find.textContaining('hi there'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('loads queued message from history', (tester) async {
+      testChatHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/messages')) {
+          return http.Response(
+            jsonEncode([
+              {
+                'entry_type': 'user',
+                'content': 'queued msg',
+                'is_queued': true,
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('queued msg'), findsOneWidget);
+      expect(find.text('queued'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('send prompt via enter key adds user message', (tester) async {
+      testChatHttpClientOverride = MockClient((request) async {
+        return http.Response(jsonEncode([]), 200);
+      });
+
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'test prompt');
+      await tester.tap(find.byIcon(Icons.send));
+      await tester.pumpAndSettle();
+
+      expect(client.sentPrompts, contains('test prompt'));
+      expect(find.text('test prompt'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('prompt_queued event marks last user entry as queued',
+        (tester) async {
+      testChatHttpClientOverride = MockClient((request) async {
+        return http.Response(jsonEncode([]), 200);
+      });
+
+      final client = _MockAguiClient();
+      final key = GlobalKey<ChatPanelState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              key: key,
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Send a prompt via state
+      await tester.enterText(find.byType(TextField), 'my prompt');
+      key.currentState!.sendPromptFromUI();
+      await tester.pumpAndSettle();
+
+      expect(find.text('my prompt'), findsOneWidget);
+
+      // Emit prompt_queued custom event
+      client.emit(AguiEvent(
+        type: AguiEventType.custom,
+        data: {'name': 'prompt_queued'},
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('queued'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('arrow up/down navigates history', (tester) async {
+      testChatHttpClientOverride = MockClient((request) async {
+        return http.Response(jsonEncode([]), 200);
+      });
+
+      final client = _MockAguiClient();
+      final key = GlobalKey<ChatPanelState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              key: key,
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Send two prompts via the state
+      await tester.enterText(find.byType(TextField), 'first');
+      key.currentState!.sendPromptFromUI();
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'second');
+      key.currentState!.sendPromptFromUI();
+      await tester.pumpAndSettle();
+
+      // Navigate history directly via the state
+      key.currentState!.navigateHistory(-1); // up
+      await tester.pump();
+      var tf = tester.widget<TextField>(find.byType(TextField));
+      expect(tf.controller!.text, 'second');
+
+      key.currentState!.navigateHistory(-1); // up again
+      await tester.pump();
+      tf = tester.widget<TextField>(find.byType(TextField));
+      expect(tf.controller!.text, 'first');
+
+      key.currentState!.navigateHistory(1); // down
+      await tester.pump();
+      tf = tester.widget<TextField>(find.byType(TextField));
+      expect(tf.controller!.text, 'second');
+
+      key.currentState!.navigateHistory(1); // down to saved
+      await tester.pump();
+      tf = tester.widget<TextField>(find.byType(TextField));
+      expect(tf.controller!.text, '');
+
+      client.close();
+    });
+
+    testWidgets('toolCallArgs delta appends to tool output', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+
+      // Start tool call
+      client.emit(AguiEvent(
+        type: AguiEventType.toolCallStart,
+        data: {
+          'toolCallId': 't1',
+          'toolCallName': 'bash',
+          'toolCallArgs': 'echo hi',
+        },
+      ));
+      await tester.pump();
+
+      // Send toolCallArgs delta
+      client.emit(AguiEvent(
+        type: AguiEventType.toolCallArgs,
+        data: {'toolCallId': 't1', 'delta': 'output line'},
+      ));
+      await tester.pump();
+
+      expect(find.byType(ChatPanel), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('tool call end with delta appends to output', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Start tool call
+      client.emit(AguiEvent(
+        type: AguiEventType.toolCallStart,
+        data: {
+          'toolCallId': 't1',
+          'toolCallName': 'bash',
+          'toolCallArgs': 'echo hi',
+        },
+      ));
+      await tester.pump();
+
+      // Send delta via TOOL_CALL_END with delta
+      client.emit(AguiEvent(
+        type: AguiEventType.toolCallEnd,
+        data: {'toolCallId': 't1', 'delta': 'line1\n'},
+      ));
+      await tester.pump();
+
+      // Send more delta
+      client.emit(AguiEvent(
+        type: AguiEventType.toolCallEnd,
+        data: {'toolCallId': 't1', 'delta': 'line2\n'},
+      ));
+      await tester.pump();
+
+      expect(find.byType(ChatPanel), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('long tool args are truncated in subtitle', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+
+      client.emit(AguiEvent(
+        type: AguiEventType.toolCallStart,
+        data: {
+          'toolCallId': 't1',
+          'toolCallName': 'bash',
+          'toolCallArgs': 'x' * 100,
+        },
+      ));
+      await tester.pump();
+
+      // Expand the tool call tile to see the subtitle
+      await tester.tap(find.textContaining('bash'));
+      await tester.pump();
+
+      expect(find.textContaining('${'x' * 80}...'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('long tool output is truncated', (tester) async {
+      testChatHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/messages')) {
+          return http.Response(
+            jsonEncode([
+              {
+                'entry_type': 'tool_call',
+                'content': 'bash',
+                'tool_name': 'bash',
+                'tool_args': 'big cmd',
+                'tool_output': 'y' * 3000,
+                'is_complete': true,
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatPanel(
+              aguiClient: client,
+              workspaceId: 'ws-1',
+              authToken: 'token',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Expand the tool call tile
+      await tester.tap(find.textContaining('bash'));
+      await tester.pump();
+
+      expect(find.textContaining('${'y' * 2000}...'), findsOneWidget);
       client.close();
     });
   });

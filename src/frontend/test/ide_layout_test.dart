@@ -153,5 +153,39 @@ void main() {
       await tester.pumpWidget(buildLayout());
       expect(find.byType(LayoutBuilder), findsOneWidget);
     });
+
+    testWidgets('vertical divider can be dragged', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      await tester.pumpAndSettle();
+
+      // Find the horizontal divider (resizeRow cursor)
+      final resizeRow = find.byWidgetPredicate(
+        (w) => w is MouseRegion && w.cursor == SystemMouseCursors.resizeRow,
+      );
+      expect(resizeRow, findsOneWidget);
+
+      // Drag it down
+      await tester.drag(resizeRow, const Offset(0, 50));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(IdeLayout), findsOneWidget);
+    });
+
+    testWidgets('horizontal divider can be dragged', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      await tester.pumpAndSettle();
+
+      // Find the vertical divider (resizeColumn cursor)
+      final resizeCol = find.byWidgetPredicate(
+        (w) => w is MouseRegion && w.cursor == SystemMouseCursors.resizeColumn,
+      );
+      expect(resizeCol, findsOneWidget);
+
+      // Drag it right
+      await tester.drag(resizeCol, const Offset(100, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(IdeLayout), findsOneWidget);
+    });
   });
 }

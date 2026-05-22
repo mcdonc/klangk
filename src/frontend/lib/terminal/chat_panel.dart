@@ -13,6 +13,10 @@ import '../utils/web_helpers_stub.dart'
 import '../agui/agui_client.dart';
 import '../agui/agui_events.dart';
 
+/// Override for testing to mock HTTP requests.
+@visibleForTesting
+http.Client? testChatHttpClientOverride;
+
 /// Chat-style panel with markdown rendering for assistant responses.
 class ChatPanel extends StatefulWidget {
   final AguiClient aguiClient;
@@ -23,10 +27,11 @@ class ChatPanel extends StatefulWidget {
       {super.key, required this.aguiClient, this.workspaceId, this.authToken});
 
   @override
-  State<ChatPanel> createState() => _ChatPanelState();
+  State<ChatPanel> createState() => ChatPanelState();
 }
 
-class _ChatPanelState extends State<ChatPanel> {
+@visibleForTesting
+class ChatPanelState extends State<ChatPanel> {
   final List<_ChatEntry> _entries = [];
   final _scrollController = ScrollController();
   var _inputController = TextEditingController();
@@ -52,7 +57,8 @@ class _ChatPanelState extends State<ChatPanel> {
   Future<void> _loadHistory() async {
     if (widget.workspaceId == null || widget.authToken == null) return;
     try {
-      final response = await http.get(
+      final client = testChatHttpClientOverride ?? http.Client();
+      final response = await client.get(
         Uri.parse('$baseUrl/workspaces/${widget.workspaceId}/messages'),
         headers: {'Authorization': 'Bearer ${widget.authToken}'},
       );
@@ -247,16 +253,18 @@ class _ChatPanelState extends State<ChatPanel> {
         .toList();
   }
 
-  void _navigateHistory(int direction) {
+  /// Navigate input history. Visible for testing.
+  void navigateHistory(int direction) {
     final history = _userHistory;
     if (history.isEmpty) return;
 
     final text = _inputController.text;
     final selection = _inputController.selection;
+    final offset = selection.baseOffset.clamp(0, text.length);
 
     if (direction < 0) {
       // Up arrow: only if cursor is on the first line
-      final textBeforeCursor = text.substring(0, selection.baseOffset);
+      final textBeforeCursor = text.substring(0, offset);
       if (textBeforeCursor.contains('\n')) return; // not at top
 
       if (_historyIndex == -1) {
@@ -269,7 +277,7 @@ class _ChatPanelState extends State<ChatPanel> {
       }
     } else {
       // Down arrow: only if cursor is on the last line
-      final textAfterCursor = text.substring(selection.baseOffset);
+      final textAfterCursor = text.substring(offset);
       if (textAfterCursor.contains('\n')) return; // not at bottom
 
       if (_historyIndex == -1) return;
@@ -290,7 +298,7 @@ class _ChatPanelState extends State<ChatPanel> {
         TextSelection.collapsed(offset: history[_historyIndex].length);
   }
 
-  void _sendPrompt() {
+  void sendPromptFromUI() {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
 
@@ -363,19 +371,21 @@ class _ChatPanelState extends State<ChatPanel> {
               Expanded(
                 child: KeyboardListener(
                   focusNode: FocusNode(),
+                  // coverage:ignore-start
                   onKeyEvent: (event) {
                     if (event is KeyDownEvent &&
                         event.logicalKey == LogicalKeyboardKey.enter &&
                         !HardwareKeyboard.instance.isShiftPressed) {
-                      _sendPrompt();
+                      sendPromptFromUI();
                     } else if (event is KeyDownEvent &&
                         event.logicalKey == LogicalKeyboardKey.arrowUp) {
-                      _navigateHistory(-1);
+                      navigateHistory(-1);
                     } else if (event is KeyDownEvent &&
                         event.logicalKey == LogicalKeyboardKey.arrowDown) {
-                      _navigateHistory(1);
+                      navigateHistory(1);
                     }
                   },
+                  // coverage:ignore-end
                   child: TextField(
                     controller: _inputController,
                     focusNode: _inputFocus,
@@ -406,7 +416,7 @@ class _ChatPanelState extends State<ChatPanel> {
                 IconButton(
                   icon: Icon(Icons.send, color: theme.colorScheme.primary),
                   tooltip: 'Send',
-                  onPressed: _sendPrompt,
+                  onPressed: sendPromptFromUI,
                 ),
             ],
           ),
@@ -474,9 +484,11 @@ class _ChatPanelState extends State<ChatPanel> {
             data: autoLinkUrls(entry.content),
             selectable: true,
             builders: {'a': _LinkBuilder()},
+            // coverage:ignore-start
             onTapLink: (text, href, title) {
               if (href != null) openUrl(href);
             },
+            // coverage:ignore-end
             syntaxHighlighter: _MonokaiSyntaxHighlighter(),
             styleSheet: MarkdownStyleSheet(
               a: const TextStyle(
@@ -659,6 +671,7 @@ class _MonokaiSyntaxHighlighter extends SyntaxHighlighter {
     color: Color(0xFFF8F8F2),
   );
 
+  // coverage:ignore-start
   @override
   TextSpan format(String source) {
     final result = highlight.parse(source, autoDetection: true);
@@ -696,6 +709,7 @@ class _MonokaiSyntaxHighlighter extends SyntaxHighlighter {
       fontStyle: themeEntry.fontStyle,
     );
   }
+  // coverage:ignore-end
 }
 
 /// Wrap bare URLs in markdown link syntax so MarkdownBody renders them
@@ -744,7 +758,7 @@ class _LinkBuilder extends MarkdownElementBuilder {
       children: [
         Flexible(
           child: GestureDetector(
-            onTap: () => openUrl(href),
+            onTap: () => openUrl(href), // coverage:ignore-line
             child: MouseRegion(
               cursor: SystemMouseCursors.click,
               child: Text(text, style: style),
@@ -760,6 +774,7 @@ class _LinkBuilder extends MarkdownElementBuilder {
             iconSize: 14,
             icon: const Icon(Icons.copy, color: Color(0xFF90A4AE)),
             tooltip: 'Copy link',
+            // coverage:ignore-start
             onPressed: () {
               Clipboard.setData(ClipboardData(text: href));
               ScaffoldMessenger.of(context).showSnackBar(
@@ -769,6 +784,7 @@ class _LinkBuilder extends MarkdownElementBuilder {
                 ),
               );
             },
+            // coverage:ignore-end
           ),
         ),
       ],

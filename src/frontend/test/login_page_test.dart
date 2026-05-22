@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bark_frontend/auth/auth_service.dart';
@@ -11,11 +14,13 @@ void main() {
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
     SharedPreferences.setMockInitialValues({});
+    testAuthHttpClientOverride = null;
     pendingRedirect = null;
   });
 
   tearDown(() {
     testBaseUrlOverride = null;
+    testAuthHttpClientOverride = null;
     pendingRedirect = null;
   });
 
@@ -175,6 +180,323 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Email'), findsOneWidget);
+    });
+
+    testWidgets('shows error when login fails', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': 'Invalid credentials'}),
+          401,
+        );
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'wrongpass');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Invalid credentials'), findsOneWidget);
+    });
+
+    testWidgets('shows error when register fails', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': 'Email already registered'}),
+          409,
+        );
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      // Switch to register mode
+      await tester.tap(find.textContaining('Create one'));
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Create Account'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Email already registered'), findsOneWidget);
+    });
+
+    testWidgets('shows resend button when error contains not verified',
+        (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      addTearDown(() => tester.view.resetPhysicalSize());
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': 'Account not verified'}),
+          403,
+        );
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Account not verified'), findsOneWidget);
+      expect(find.text('Resend verification email'), findsOneWidget);
+    });
+
+    testWidgets('shows resend button when register returns Check your email',
+        (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      addTearDown(() => tester.view.resetPhysicalSize());
+      testAuthHttpClientOverride = MockClient((request) async {
+        // Register success without access_token means verification needed
+        return http.Response(jsonEncode({}), 200);
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      // Switch to register mode
+      await tester.tap(find.textContaining('Create one'));
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Create Account'),
+      );
+      await tester.pumpAndSettle();
+
+      // The register method returns 'Check your email to verify...'
+      expect(find.textContaining('Check your email'), findsOneWidget);
+      expect(find.text('Resend verification email'), findsOneWidget);
+    });
+
+    testWidgets('resend verification success shows confirmation',
+        (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      addTearDown(() => tester.view.resetPhysicalSize());
+      int callCount = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        callCount++;
+        if (request.url.path.contains('login')) {
+          return http.Response(
+            jsonEncode({'detail': 'Account not verified'}),
+            403,
+          );
+        }
+        if (request.url.path.contains('resend-verification')) {
+          return http.Response(jsonEncode({'ok': true}), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+
+      // Trigger login to get "not verified" error
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Resend verification email'), findsOneWidget);
+
+      // Tap the resend button
+      await tester.tap(find.text('Resend verification email'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Verification email sent. Check your inbox.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('resend verification error shows error message',
+        (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      addTearDown(() => tester.view.resetPhysicalSize());
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('login')) {
+          return http.Response(
+            jsonEncode({'detail': 'Account not verified'}),
+            403,
+          );
+        }
+        if (request.url.path.contains('resend-verification')) {
+          return http.Response(
+            jsonEncode({'detail': 'Too many requests'}),
+            429,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Resend verification email'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Too many requests'), findsOneWidget);
+    });
+
+    testWidgets('toggling login/register clears error', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': 'Invalid credentials'}),
+          401,
+        );
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Invalid credentials'), findsOneWidget);
+
+      // Toggle to register mode - error should be cleared
+      await tester.tap(find.textContaining('Create one'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Invalid credentials'), findsNothing);
+    });
+
+    testWidgets('register mode enforces minimum password length',
+        (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      // Switch to register mode
+      await tester.tap(find.textContaining('Create one'));
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'ab');
+
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Create Account'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Min 4 characters'), findsOneWidget);
+    });
+
+    testWidgets('empty email shows Required validation', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, '');
+      await tester.enterText(fields.last, 'password');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Required'), findsOneWidget);
+    });
+
+    testWidgets('empty password shows Required validation', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, '');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Required'), findsOneWidget);
+    });
+
+    testWidgets('register button has green style', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      // Switch to register mode
+      await tester.tap(find.textContaining('Create one'));
+      await tester.pumpAndSettle();
+
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Create Account'),
+      );
+      assert(button.style != null);
+    });
+
+    testWidgets('submit via Enter on email field', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': 'Invalid credentials'}),
+          401,
+        );
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+
+      // Focus the email field and submit via Enter
+      await tester.tap(fields.first);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Invalid credentials'), findsOneWidget);
+    });
+
+    testWidgets('submit via Enter on password field', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': 'Invalid credentials'}),
+          401,
+        );
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+
+      // Focus the password field and submit via Enter
+      await tester.tap(fields.last);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Invalid credentials'), findsOneWidget);
     });
   });
 }

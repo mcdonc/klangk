@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
@@ -351,6 +352,463 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('alice@example.com'), findsOneWidget);
+    });
+
+    testWidgets('create dialog submit adds workspace to list', (tester) async {
+      var postCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          if (postCalled) {
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 'ws-new',
+                  'name': 'New WS',
+                  'container_id': null,
+                  'created_at': '2026-05-21',
+                },
+              ]),
+              200,
+            );
+          }
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/workspaces' && request.method == 'POST') {
+          postCalled = true;
+          return http.Response(
+            jsonEncode({
+              'id': 'ws-new',
+              'name': 'New WS',
+              'container_id': null,
+              'created_at': '2026-05-21',
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      // Open dialog
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      // Type workspace name and tap Create
+      await tester.enterText(find.byType(TextField), 'New WS');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(postCalled, isTrue);
+      expect(find.text('New WS'), findsOneWidget);
+    });
+
+    testWidgets('create dialog shows error snackbar on failure',
+        (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/workspaces' && request.method == 'POST') {
+          return http.Response(
+            jsonEncode({'detail': 'Name already taken'}),
+            409,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Duplicate');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Name already taken'), findsOneWidget);
+    });
+
+    testWidgets('confirm delete removes workspace from list', (tester) async {
+      var deleteCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          if (deleteCalled) {
+            return http.Response(jsonEncode([]), 200);
+          }
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'Doomed',
+                'container_id': null,
+                'created_at': '2026-01-01',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1' &&
+            request.method == 'DELETE') {
+          deleteCalled = true;
+          return http.Response('', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Doomed'), findsOneWidget);
+
+      // Tap delete icon
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+
+      // Confirm deletion
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(deleteCalled, isTrue);
+      expect(find.text('Doomed'), findsNothing);
+      expect(find.textContaining('No workspaces'), findsOneWidget);
+    });
+
+    testWidgets('tapping workspace card navigates to workspace URL',
+        (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-42',
+                'name': 'Nav Test',
+                'container_id': null,
+                'created_at': '2026-01-01',
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      String? navigatedTo;
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) => const WorkspaceListPage(),
+          ),
+          GoRoute(
+            path: '/workspace/:id',
+            builder: (context, state) {
+              navigatedTo = state.uri.toString();
+              return const Scaffold(
+                body: Text('workspace detail'),
+              );
+            },
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider(
+          create: (_) => AuthService(),
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Nav Test'));
+      await tester.pumpAndSettle();
+
+      expect(navigatedTo, '/workspace/ws-42');
+    });
+
+    testWidgets('admin icon shown when JWT has admin role', (tester) async {
+      final token = makeJwt({
+        'sub': 'admin-1',
+        'email': 'admin@example.com',
+        'roles': ['admin'],
+      });
+      SharedPreferences.setMockInitialValues({'bark_jwt': token});
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.admin_panel_settings), findsOneWidget);
+      expect(find.byTooltip('User Management'), findsOneWidget);
+    });
+
+    testWidgets('admin icon not shown for non-admin user', (tester) async {
+      final token = makeJwt({
+        'sub': 'user-1',
+        'email': 'user@example.com',
+        'roles': ['user'],
+      });
+      SharedPreferences.setMockInitialValues({'bark_jwt': token});
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.admin_panel_settings), findsNothing);
+    });
+
+    testWidgets('create dialog submit via text field onSubmitted',
+        (tester) async {
+      var postCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          if (postCalled) {
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 'ws-sub',
+                  'name': 'Submitted',
+                  'container_id': null,
+                  'created_at': '2026-05-21',
+                },
+              ]),
+              200,
+            );
+          }
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/workspaces' && request.method == 'POST') {
+          postCalled = true;
+          return http.Response(
+            jsonEncode({
+              'id': 'ws-sub',
+              'name': 'Submitted',
+              'container_id': null,
+              'created_at': '2026-05-21',
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      // Type and submit via keyboard (onSubmitted)
+      await tester.enterText(find.byType(TextField), 'Submitted');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(postCalled, isTrue);
+      expect(find.text('Submitted'), findsOneWidget);
+    });
+
+    testWidgets('create workspace exception shows error snackbar',
+        (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/workspaces' && request.method == 'POST') {
+          throw Exception('Network error');
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Fail WS');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Error:'), findsOneWidget);
+    });
+
+    testWidgets('delete workspace exception shows error snackbar',
+        (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'Doomed',
+                'container_id': null,
+                'created_at': '2026-01-01',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1' &&
+            request.method == 'DELETE') {
+          throw Exception('Network error');
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Error:'), findsOneWidget);
+    });
+
+    testWidgets('logout button calls logout and navigates', (tester) async {
+      var logoutCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/auth/logout') {
+          logoutCalled = true;
+          return http.Response('', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => const WorkspaceListPage(),
+          ),
+          GoRoute(
+            path: '/login',
+            builder: (_, __) => const Scaffold(body: Text('Login')),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider(
+          create: (_) => AuthService(),
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.logout));
+      await tester.pumpAndSettle();
+
+      expect(logoutCalled, isTrue);
+    });
+
+    testWidgets('title tap navigates to home', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      String? navigatedTo;
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => const WorkspaceListPage(),
+          ),
+          GoRoute(
+            path: '/workspace/:id',
+            builder: (_, state) {
+              navigatedTo = state.uri.toString();
+              return const Scaffold();
+            },
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider(
+          create: (_) => AuthService(),
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Tap the "Workspaces" title text
+      await tester.tap(find.text('Workspaces'));
+      await tester.pumpAndSettle();
+
+      // Already on '/', so no navigation change — but the onTap fires
+      // Just verify it didn't crash
+      expect(find.text('Workspaces'), findsOneWidget);
+    });
+
+    testWidgets('admin button navigates to admin page', (tester) async {
+      final token = makeJwt({
+        'sub': 'user-1',
+        'email': 'admin@example.com',
+        'roles': ['admin'],
+      });
+      SharedPreferences.setMockInitialValues({'bark_jwt': token});
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      String? navigatedTo;
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => const WorkspaceListPage(),
+          ),
+          GoRoute(
+            path: '/admin/users',
+            builder: (_, __) {
+              navigatedTo = '/admin/users';
+              return const Scaffold(body: Text('Admin'));
+            },
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider(
+          create: (_) => AuthService(),
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.admin_panel_settings));
+      await tester.pumpAndSettle();
+
+      expect(navigatedTo, '/admin/users');
     });
   });
 }

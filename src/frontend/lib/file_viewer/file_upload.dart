@@ -101,12 +101,14 @@ class FileDropZoneState extends State<FileDropZone> {
           statusCode = await testUploadOverride!(
               url, headers, file.name ?? 'unnamed', bytes);
         } else {
+          // coverage:ignore-start
           final request = http.MultipartRequest('POST', Uri.parse(url));
           request.headers.addAll(headers);
           request.files.add(http.MultipartFile.fromBytes('file', bytes,
               filename: file.name ?? 'unnamed'));
           final response = await request.send();
           statusCode = response.statusCode;
+          // coverage:ignore-end
         }
         if (statusCode != 200) {
           debugPrint('Upload failed: $statusCode for $path');

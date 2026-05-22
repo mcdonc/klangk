@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+// coverage:ignore-file
 /// Stubs for browser-only operations — used in VM tests.
 
 void openUrl(String url) {}

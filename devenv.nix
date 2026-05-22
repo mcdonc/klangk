@@ -131,7 +131,16 @@
 
   scripts.test-frontend.exec = ''
     cd $DEVENV_ROOT/src/frontend
-    exec flutter test "$@"
+    flutter test "$@"
+    exit_code=$?
+    case "$*" in
+      *--coverage*)
+        if [ -f coverage/lcov.info ]; then
+          python3 $DEVENV_ROOT/scripts/lcov-report.py coverage/lcov.info
+        fi
+        ;;
+    esac
+    exit $exit_code
   '';
 
   # --- Pre-commit hooks ---

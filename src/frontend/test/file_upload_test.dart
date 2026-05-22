@@ -455,4 +455,54 @@ void main() {
       });
     });
   });
+
+  group('FileDropZone drag events', () {
+    testWidgets('drag enter shows overlay, drag exit hides it', (tester) async {
+      await tester.pumpWidget(buildDropZone());
+      await tester.pumpAndSettle();
+
+      // No overlay initially
+      expect(find.text('Drop files or folders to upload'), findsNothing);
+
+      // Simulate drag enter
+      final dropTarget = tester.widget<DropTarget>(find.byType(DropTarget));
+      dropTarget.onDragEntered!(DropEventDetails(
+        localPosition: Offset.zero,
+        globalPosition: Offset.zero,
+      ));
+      await tester.pump();
+
+      expect(find.text('Drop files or folders to upload'), findsOneWidget);
+
+      // Simulate drag exit
+      dropTarget.onDragExited!(DropEventDetails(
+        localPosition: Offset.zero,
+        globalPosition: Offset.zero,
+      ));
+      await tester.pump();
+
+      expect(find.text('Drop files or folders to upload'), findsNothing);
+    });
+
+    testWidgets('drag done triggers upload', (tester) async {
+      testUploadOverride = (url, headers, name, bytes) async => 200;
+      final key = GlobalKey<FileDropZoneState>();
+      var completed = false;
+
+      await tester.pumpWidget(buildDropZone(
+        key: key,
+        onUploadComplete: () => completed = true,
+      ));
+      await tester.pumpAndSettle();
+
+      final dropTarget = tester.widget<DropTarget>(find.byType(DropTarget));
+      dropTarget.onDragDone!(makeDropDetails([
+        makeFile('test.txt', [1, 2, 3]),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(completed, isTrue);
+    });
+  });
 }

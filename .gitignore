@@ -48,6 +48,7 @@ Thumbs.db
 # Claude
 .claude/
 .coverage
+src/frontend/coverage/
 
 # E2E test artifacts
 src/e2e_tests/logs/

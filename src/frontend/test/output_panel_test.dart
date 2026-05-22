@@ -301,5 +301,44 @@ void main() {
 
       expect(find.text('No output yet'), findsOneWidget);
     });
+
+    testWidgets('reasoning content appends to existing entry', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+      );
+
+      client.emit(AguiEvent(
+        type: AguiEventType.reasoningMessageContent,
+        data: {'delta': 'first'},
+      ));
+      await tester.pump();
+
+      client.emit(AguiEvent(
+        type: AguiEventType.reasoningMessageContent,
+        data: {'delta': ' second'},
+      ));
+      await tester.pump();
+
+      expect(find.textContaining('first second'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('long content is truncated to 500 chars', (tester) async {
+      final client = _MockAguiClient();
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+      );
+
+      final longContent = 'x' * 600;
+      client.emit(AguiEvent(
+        type: AguiEventType.runError,
+        data: {'message': longContent},
+      ));
+      await tester.pump();
+
+      expect(find.textContaining('${'x' * 500}...'), findsOneWidget);
+      client.close();
+    });
   });
 }

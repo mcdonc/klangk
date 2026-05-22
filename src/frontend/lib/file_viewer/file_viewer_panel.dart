@@ -171,7 +171,6 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         ],
       ),
     );
-    controller.dispose();
     if (newName == null || newName.isEmpty || newName == name) return;
 
     // Build new path: replace the last component
@@ -303,7 +302,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         children.add(WidgetSpan(
           alignment: PlaceholderAlignment.middle,
           child: InkWell(
-            onTap: () => _navigateTo(path),
+            onTap: () => _navigateTo(path), // coverage:ignore-line
             child: const Text('/'),
           ),
         ));

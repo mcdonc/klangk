@@ -34,6 +34,10 @@ jobs:
         working-directory: src/frontend
         run: flutter pub get
 
-      - name: Run tests
+      - name: Run tests with coverage
         working-directory: src/frontend
-        run: flutter test
+        run: flutter test --coverage
+
+      - name: Coverage report
+        working-directory: src/frontend
+        run: python3 ../../scripts/lcov-report.py coverage/lcov.info

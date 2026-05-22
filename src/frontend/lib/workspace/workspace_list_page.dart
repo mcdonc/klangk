@@ -16,7 +16,6 @@ class WorkspaceListPage extends StatefulWidget {
 }
 
 class _WorkspaceListPageState extends State<WorkspaceListPage> {
-  String get _baseUrl => baseUrl;
   List<Map<String, dynamic>> _workspaces = [];
   bool _loading = true;
 

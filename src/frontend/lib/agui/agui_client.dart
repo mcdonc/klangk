@@ -9,16 +9,31 @@ import 'package:bark_plugin_api/bark_plugin_api.dart';
 /// Manages WebSocket connection to the Bark backend, sending commands
 /// and streaming AG-UI events.
 class AguiClient extends ChangeNotifier {
+  // coverage:ignore-start
   static String get _wsBaseUrl {
     final loc = Uri.base;
     final wsScheme = loc.scheme == 'https' ? 'wss' : 'ws';
     return '$wsScheme://${loc.host}:${loc.port}$baseUrl/ws';
   }
+  // coverage:ignore-end
 
   WebSocketChannel? _channel;
   AuthService? _auth;
   String? _currentWorkspaceId;
   bool _connected = false;
+
+  /// Override for testing to inject a fake channel factory.
+  @visibleForTesting
+  static WebSocketChannel Function(Uri uri)? testChannelFactory;
+
+  /// Inject a pre-connected channel for testing.
+  @visibleForTesting
+  void connectForTest(WebSocketChannel channel) {
+    _channel = channel;
+    _connected = true;
+    notifyListeners();
+    _listenToChannel();
+  }
 
   final _eventController = StreamController<AguiEvent>.broadcast();
   final _errorController = StreamController<String>.broadcast();
@@ -40,8 +55,14 @@ class AguiClient extends ChangeNotifier {
   Future<void> connect() async {
     if (_connected || _auth?.token == null) return;
 
-    final uri = Uri.parse('$_wsBaseUrl?token=${_auth!.token}');
-    _channel = WebSocketChannel.connect(uri);
+    if (testChannelFactory != null) {
+      _channel = testChannelFactory!(Uri());
+    } else {
+      // coverage:ignore-start
+      final uri = Uri.parse('$_wsBaseUrl?token=${_auth!.token}');
+      _channel = WebSocketChannel.connect(uri);
+      // coverage:ignore-end
+    }
 
     try {
       await _channel!.ready;
@@ -52,7 +73,10 @@ class AguiClient extends ChangeNotifier {
 
     _connected = true;
     notifyListeners();
+    _listenToChannel();
+  }
 
+  void _listenToChannel() {
     _channel!.stream.listen(
       (data) {
         try {

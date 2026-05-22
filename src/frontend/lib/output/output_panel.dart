@@ -288,11 +288,11 @@ class _OutputEntry {
     required this.timestamp,
   });
 
-  _OutputEntry copyWith({String? content}) {
+  _OutputEntry copyWith({required String content}) {
     return _OutputEntry(
       type: type,
       title: title,
-      content: content ?? this.content,
+      content: content,
       timestamp: timestamp,
     );
   }

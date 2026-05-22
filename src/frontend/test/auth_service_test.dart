@@ -131,6 +131,23 @@ void main() {
       final error = await service.register('newuser', 'newpass');
       expect(error, isNull);
       expect(service.token, 'reg-token');
+      expect(service.isLoggedIn, isTrue);
+    });
+
+    test('pending verification returns message', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'status': 'pending'}),
+          200,
+        );
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error = await service.register('newuser', 'newpass');
+      expect(error, 'Check your email to verify your account.');
+      expect(service.isLoggedIn, isFalse);
     });
 
     test('duplicate email returns error', () async {
@@ -146,6 +163,20 @@ void main() {
 
       final error = await service.register('existing', 'pass');
       expect(error, 'Registration failed');
+    });
+
+    test('connection error returns error string', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        throw Exception('Network unreachable');
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error = await service.register('user', 'pass');
+      expect(error, contains('Connection error'));
+      expect(service.isLoggedIn, isFalse);
+      expect(service.loading, isFalse);
     });
   });
 
@@ -176,6 +207,79 @@ void main() {
 
       await service.logout();
       expect(service.isLoggedIn, isFalse);
+    });
+  });
+
+  group('AuthService.resendVerification', () {
+    test('successful resend returns null', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        expect(request.url.path, '/auth/resend-verification');
+        final body = jsonDecode(request.body);
+        expect(body['email'], 'user@example.com');
+        expect(body['password'], 'pass');
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error =
+          await service.resendVerification('user@example.com', 'pass');
+      expect(error, isNull);
+    });
+
+    test('failed resend returns error detail', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': 'User not found'}),
+          404,
+        );
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error =
+          await service.resendVerification('missing@example.com', 'pass');
+      expect(error, 'User not found');
+    });
+
+    test('failed resend without detail returns default message', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(jsonEncode({}), 400);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error =
+          await service.resendVerification('user@example.com', 'pass');
+      expect(error, 'Failed to resend');
+    });
+
+    test('connection error returns error string', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        throw Exception('Network unreachable');
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error =
+          await service.resendVerification('user@example.com', 'pass');
+      expect(error, contains('Connection error'));
+    });
+  });
+
+  group('AuthService.saveTokenFromVerification', () {
+    test('saves token and logs user in', () async {
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isLoggedIn, isFalse);
+
+      await service.saveTokenFromVerification('verify-token');
+      expect(service.isLoggedIn, isTrue);
+      expect(service.token, 'verify-token');
     });
   });
 
@@ -216,6 +320,59 @@ void main() {
     test('email returns null when not logged in', () {
       final service = AuthService();
       expect(service.email, isNull);
+    });
+
+    test('userId returns sub from JWT payload', () async {
+      final token = makeJwt({
+        'sub': 'user-42',
+        'email': 'alice@example.com',
+        'roles': ['user'],
+      });
+      SharedPreferences.setMockInitialValues({'bark_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.userId, 'user-42');
+    });
+
+    test('roles returns roles list from JWT payload', () async {
+      final token = makeJwt({
+        'sub': 'user-1',
+        'roles': ['user', 'admin'],
+      });
+      SharedPreferences.setMockInitialValues({'bark_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.roles, ['user', 'admin']);
+    });
+
+    test('roles returns empty list when no roles in payload', () async {
+      final token = makeJwt({'sub': 'user-1'});
+      SharedPreferences.setMockInitialValues({'bark_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.roles, isEmpty);
+    });
+
+    test('isAdmin returns true when admin role present', () async {
+      final token = makeJwt({
+        'sub': 'user-1',
+        'roles': ['admin'],
+      });
+      SharedPreferences.setMockInitialValues({'bark_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isAdmin, isTrue);
+    });
+
+    test('isAdmin returns false when no admin role', () async {
+      final token = makeJwt({
+        'sub': 'user-1',
+        'roles': ['user'],
+      });
+      SharedPreferences.setMockInitialValues({'bark_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isAdmin, isFalse);
     });
   });
 
@@ -258,6 +415,37 @@ void main() {
 
       await service.authPost('/workspaces?name=test');
       expect(service.isLoggedIn, isFalse);
+    });
+
+    test('authPatch clears token on 401', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response('Unauthorized', 401);
+      });
+
+      SharedPreferences.setMockInitialValues({'bark_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      await service.authPatch('/users/1', body: '{"name":"new"}');
+      expect(service.isLoggedIn, isFalse);
+    });
+
+    test('authPatch preserves token on 200', () async {
+      String? method;
+      testAuthHttpClientOverride = MockClient((request) async {
+        method = request.method;
+        return http.Response('{}', 200);
+      });
+
+      SharedPreferences.setMockInitialValues({'bark_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final response =
+          await service.authPatch('/users/1', body: '{"name":"new"}');
+      expect(service.isLoggedIn, isTrue);
+      expect(response.statusCode, 200);
+      expect(method, 'PATCH');
     });
 
     test('authDelete clears token on 401', () async {
