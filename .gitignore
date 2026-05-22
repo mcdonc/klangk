@@ -20,6 +20,7 @@ src/frontend/.flutter-plugins
 src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec.lock
 src/frontend/pubspec_overrides.yaml
+src/frontend/coverage/
 
 # SQLite
 *.db

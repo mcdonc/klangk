@@ -67,8 +67,15 @@ class TerminalSession:
                 )
             ):
                 env_unset.extend(["-u", key])
-        # BARK_RESUME_SESSION is set on the container (not host), strip it too
+        # Strip vars set on the container (not on the host, so not in
+        # os.environ — must be listed explicitly).
         env_unset.extend(["-u", "BARK_RESUME_SESSION"])
+        for key in (
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_HEADERS",
+            "OTEL_SERVICE_NAME",
+        ):
+            env_unset.extend(["-u", key])
         exec_cmd = [
             "docker",
             "exec",
