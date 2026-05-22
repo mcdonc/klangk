@@ -58,6 +58,7 @@ def _mock_pi_client(alive=True):
     pi.abort = AsyncMock()
     pi.send_command = AsyncMock()
     pi.disconnect = AsyncMock()
+    pi.detach = MagicMock()
     pi.events = MagicMock()
     return pi
 
@@ -685,7 +686,7 @@ class TestCleanupConnection:
 
         await cleanup_connection(ws, state)
 
-        pi.disconnect.assert_awaited_once()
+        pi.detach.assert_called_once()
         t.stop.assert_awaited_once()
         assert state["_idle_cb"] is None
         assert state["terminal_session"] is None
@@ -699,6 +700,19 @@ class TestCleanupConnection:
         await cleanup_connection(ws, state)
         assert state["pi_client"] is None
         assert state["terminal_session"] is None
+
+    async def test_cleanup_bumps_activity(self):
+        ws = _mock_ws()
+        state = _base_state()
+        state["container_id"] = "ctr-1"
+        container_manager.track_activity("ctr-1", "ws-1")
+        old_time = container_manager._containers["ctr-1"]["last_activity"]
+        # Small delay so time.time() advances
+        await asyncio.sleep(0.01)
+        await cleanup_connection(ws, state)
+        new_time = container_manager._containers["ctr-1"]["last_activity"]
+        assert new_time > old_time
+        container_manager._containers.pop("ctr-1", None)
 
 
 # --- handle_prompt ---

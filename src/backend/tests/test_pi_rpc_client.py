@@ -333,6 +333,30 @@ class TestEvents:
         assert results == []
 
 
+class TestDetach:
+    def test_detach_stops_reading_without_killing(self):
+        client = PiRpcClient("cid")
+        proc = _mock_proc(returncode=None)
+        client._proc = proc
+        client._running = True
+        task = asyncio.get_event_loop().create_future()
+        client._read_task = task
+
+        client.detach()
+
+        assert client._running is False
+        assert client._proc is None
+        assert client._read_task is None
+        proc.terminate.assert_not_called()
+
+    def test_detach_no_proc(self):
+        client = PiRpcClient("cid")
+        client._running = True
+        client.detach()
+        assert client._running is False
+        assert client._proc is None
+
+
 class TestDisconnect:
     async def test_disconnect_running_proc(self):
         client = PiRpcClient("cid")

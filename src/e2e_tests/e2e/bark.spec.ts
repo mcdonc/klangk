@@ -993,4 +993,50 @@ test.describe("Bark E2E", () => {
       ),
     ).toBeFalsy();
   });
+
+  test("container survives page refresh", async ({ page, request }) => {
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "e2e-refresh-test",
+    );
+
+    try {
+      // Verify container is running
+      const containers = dockerContainersForWorkspace(workspaceId);
+      expect(containers.length).toBe(1);
+
+      // Reload the page (simulates browser refresh)
+      // Listen for container_ready on the new WebSocket after reload
+      const readyPromise = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Container did not reconnect within 30s")),
+          30_000,
+        );
+        page.on("websocket", (ws) => {
+          ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+            if (frame.payload.toString().includes("container_ready")) {
+              clearTimeout(timeout);
+              resolve();
+            }
+          });
+        });
+      });
+
+      await page.reload();
+      await readyPromise;
+
+      // Container should still be running after refresh
+      const containersAfter = dockerContainersForWorkspace(workspaceId);
+      expect(containersAfter.length).toBe(1);
+      expect(containersAfter[0]).toBe(containers[0]);
+
+      // Wait and verify no "container stopped" overlay appears
+      await page.waitForTimeout(5000);
+      const containersStill = dockerContainersForWorkspace(workspaceId);
+      expect(containersStill.length).toBe(1);
+    } finally {
+      await cleanup();
+    }
+  });
 });

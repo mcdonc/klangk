@@ -143,7 +143,25 @@ class PiRpcClient:
                 break
             yield event
 
+    def detach(self) -> None:
+        """Stop reading events without killing the docker attach process.
+
+        The container and Pi stay alive so the user can reconnect
+        (e.g. on page refresh). The orphaned docker attach process
+        will be cleaned up when the container eventually stops.
+        """
+        self._running = False
+        if self._read_task:
+            self._read_task.cancel()
+            self._read_task = None
+        self._proc = None
+
     async def disconnect(self) -> None:
+        """Stop reading and terminate the docker attach process.
+
+        This kills Pi's stdin, causing Pi to exit and the container
+        to stop. Use detach() instead if the container should survive.
+        """
         self._running = False
         if self._read_task:
             self._read_task.cancel()

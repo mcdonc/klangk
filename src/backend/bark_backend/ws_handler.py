@@ -676,6 +676,12 @@ async def forward_events(
 
 
 async def cleanup_connection(ws: WebSocket, state: dict) -> None:
+    # Bump activity so the container survives long enough for a page
+    # refresh to reconnect (prevents idle timeout during the gap).
+    container_id = state.get("container_id")
+    if container_id:
+        container_manager.record_activity(container_id)
+
     # Remove idle callback
     workspace_id = state.get("workspace_id")
     idle_cb = state.get("_idle_cb")
@@ -692,7 +698,11 @@ async def cleanup_connection(ws: WebSocket, state: dict) -> None:
 
     pi_client: PiRpcClient | None = state.get("pi_client")
     if pi_client:
-        await pi_client.disconnect()
+        # Detach without killing — the container and Pi stay alive so the
+        # user can reconnect (e.g. page refresh). disconnect() would
+        # terminate docker attach, closing Pi's stdin and stopping the
+        # container.
+        pi_client.detach()
 
     await stop_terminal(state)
 
