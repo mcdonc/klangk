@@ -20,6 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     xz-utils \
     openssh-client \
+    fd-find \
+    ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI (not in default Debian repos)
@@ -29,6 +31,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
+
+# fd-find installs as fdfind on Debian — symlink to fd
+RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 
 # Node/npm already present from base image
 RUN npm install -g @mariozechner/pi-coding-agent
