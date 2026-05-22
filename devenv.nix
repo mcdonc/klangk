@@ -204,4 +204,6 @@
         max: 200
     YAMLLINT
   '';
+
+  claude.code.mcpServers = { };
 }
