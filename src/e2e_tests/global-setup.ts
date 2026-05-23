@@ -10,36 +10,36 @@ async function globalSetup() {
   const projectRoot = join(__dirname, "..", "..");
   const backendPort = process.env.BARK_E2E_PORT || "18997";
 
-  // Warm up Ollama before starting the server to force model loading.
+  // Warm up LLM before starting the server to force model loading.
   // Cold model loads on first request can take 30+ seconds.
-  const ollamaUrl = process.env.OLLAMA_BASE_URL;
-  const ollamaModel = process.env.OLLAMA_MODEL;
-  const ollamaKey = process.env.OLLAMA_API_KEY;
-  if (ollamaUrl && ollamaModel) {
-    console.log("Warming up Ollama...");
+  const llmUrl = process.env.LLM_BASE_URL;
+  const llmModel = process.env.LLM_MODEL;
+  const llmKey = process.env.LLM_API_KEY;
+  if (llmUrl && llmModel) {
+    console.log("Warming up LLM...");
     const warmupStart = Date.now();
     try {
-      const warmupResp = await fetch(`${ollamaUrl}/chat/completions`, {
+      const warmupResp = await fetch(`${llmUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(ollamaKey ? { Authorization: `Bearer ${ollamaKey}` } : {}),
+          ...(llmKey ? { Authorization: `Bearer ${llmKey}` } : {}),
         },
         body: JSON.stringify({
-          model: ollamaModel,
+          model: llmModel,
           messages: [{ role: "user", content: "hi" }],
           max_tokens: 1,
         }),
       });
       if (warmupResp.ok) {
         console.log(
-          `Ollama warm (${((Date.now() - warmupStart) / 1000).toFixed(1)}s)`,
+          `LLM warm (${((Date.now() - warmupStart) / 1000).toFixed(1)}s)`,
         );
       } else {
-        console.warn(`Ollama warmup failed: ${warmupResp.status}`);
+        console.warn(`LLM warmup failed: ${warmupResp.status}`);
       }
     } catch (e) {
-      console.warn(`Ollama warmup error: ${e}`);
+      console.warn(`LLM warmup error: ${e}`);
     }
   }
 

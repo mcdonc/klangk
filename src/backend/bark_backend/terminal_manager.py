@@ -58,7 +58,7 @@ class TerminalSession:
         for key in os.environ:
             if key.startswith(
                 (
-                    "OLLAMA_",
+                    "LLM_",
                     "ANTHROPIC_",
                     "OPENAI_",
                     "GOOGLE_",

@@ -28,7 +28,7 @@ const webkitUse = {
 
 // Browsers run sequentially (chromium → firefox → webkit) to avoid
 // overwhelming SQLite with concurrent writes from 60+ parallel tests.
-// Within each browser, LLM tests run first (while Ollama is warm from
+// Within each browser, LLM tests run first (while the LLM is warm from
 // global setup), then non-LLM tests run (parallel).
 
 export default defineConfig({
@@ -49,7 +49,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [
-    // Chromium: LLM first (Ollama warm from setup), then non-LLM
+    // Chromium: LLM first (LLM warm from setup), then non-LLM
     {
       name: "chromium-llm",
       testMatch: "bark-llm.spec.ts",

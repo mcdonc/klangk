@@ -94,7 +94,7 @@ class TestStart:
         loop.remove_reader(master_fd)
 
     async def test_start_unsets_sensitive_env_vars(self, mock_os, monkeypatch):
-        monkeypatch.setenv("OLLAMA_API_KEY", "secret")
+        monkeypatch.setenv("LLM_API_KEY", "secret")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "secret2")
         proc = _mock_proc()
         master_fd = mock_os["master_fd"]
@@ -115,7 +115,7 @@ class TestStart:
         unset_keys = [
             env_args[i + 1] for i, a in enumerate(env_args) if a == "-u"
         ]
-        assert "OLLAMA_API_KEY" in unset_keys
+        assert "LLM_API_KEY" in unset_keys
         assert "ANTHROPIC_API_KEY" in unset_keys
         assert "BARK_RESUME_SESSION" in unset_keys
 

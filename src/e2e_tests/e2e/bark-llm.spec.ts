@@ -7,7 +7,7 @@ import {
   createAndOpenWorkspace,
 } from "./helpers";
 
-// LLM-dependent tests: each test contacts Ollama and may be slow or flaky.
+// LLM-dependent tests: each test contacts the LLM provider and may be slow or flaky.
 // Retries up to 3 times to handle intermittent LLM response failures.
 
 test.describe("Bark LLM", () => {

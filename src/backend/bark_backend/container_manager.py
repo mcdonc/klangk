@@ -144,15 +144,15 @@ async def start_container(
     env_vars = []
     nginx_port = env_util.resolve_env_secret("BARK_NGINX_PORT", "8995")
     proxy_url = f"http://host.docker.internal:{nginx_port}/llm-proxy"
-    ollama_model = env_util.resolve_env_secret("OLLAMA_MODEL", "")
+    llm_model = env_util.resolve_env_secret("LLM_MODEL", "")
     env_vars.append(f"LLM_PROXY_URL={proxy_url}")
-    if ollama_model:
-        env_vars.append(f"LLM_MODEL={ollama_model}")
+    if llm_model:
+        env_vars.append(f"LLM_MODEL={llm_model}")
     env_vars.append("PI_SKIP_VERSION_CHECK=1")
     logger.info(
         "Container LLM proxy: %s (model: %s)",
         proxy_url,
-        ollama_model,
+        llm_model,
     )
     # Pass Logfire/OTEL config so the Pi otel-telemetry extension can
     # send traces to the same Logfire project as the backend.

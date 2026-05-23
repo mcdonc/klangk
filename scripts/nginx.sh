@@ -45,8 +45,8 @@ http {
       allow 192.168.0.0/16;
       allow 10.0.0.0/8;
       deny all;
-      proxy_pass ${OLLAMA_BASE_URL}/;
-      proxy_set_header Authorization "Bearer ${OLLAMA_API_KEY}";
+      proxy_pass ${LLM_BASE_URL}/;
+      proxy_set_header Authorization "Bearer ${LLM_API_KEY}";
       proxy_set_header Host \$proxy_host;
       proxy_http_version 1.1;
       proxy_set_header Connection "";

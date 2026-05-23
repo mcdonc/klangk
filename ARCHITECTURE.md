@@ -37,7 +37,7 @@ $BARK_DATA_DIR/workspaces/<user-id>/work/<workspace-id>/
 
 - **AG-UI Protocol**: Standardized agent-user interaction protocol for event streaming
 - **Pi Coding Agent**: Minimal terminal coding harness (pi.dev) running in RPC mode with native session persistence and extension tools
-- **Ollama**: LLM provider — supports both Ollama Cloud and self-hosted instances, configurable via env vars (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_API_KEY`)
+- **LLM Provider**: Any OpenAI-compatible LLM provider (Ollama Cloud, self-hosted Ollama, etc.), configurable via env vars (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`). The model must support tool/function calling — Pi uses tools (bash, edit, write, read) to interact with the workspace.
 - **Pydantic Logfire**: AI observability — FastAPI auto-instrumentation via Logfire Python SDK (`LOGFIRE_TOKEN`), Pi agent tracing via [pi-otel-telemetry](https://github.com/mprokopov/pi-otel-telemetry) extension (OTLP export to Logfire). Both trace sources appear in the same Logfire project. Container OTEL env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`) are auto-constructed from `LOGFIRE_TOKEN`/`LOGFIRE_BASE_URL` when set.
 - **devenv**: Nix-based development environment with auto-setup, conditional build tasks (`execIfModified`), auto-reload disabled
 
@@ -48,7 +48,7 @@ bark/
   devenv.nix                    # Dev environment: Python (uv), Flutter, Docker CLI, conditional build tasks
   devenv.yaml                   # devenv inputs, reload: false
   .envrc                        # direnv integration
-  .env                          # Secrets: OLLAMA_API_KEY, OLLAMA_BASE_URL, OLLAMA_MODEL, BARK_JWT_SECRET, etc.
+  .env                          # Secrets: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, BARK_JWT_SECRET, etc.
   .gitignore
   README.md
   bootstrap                     # Install Nix + devenv
@@ -178,7 +178,7 @@ bark/
 - LLM provider/model configured via `settings.json` FIFO (sets `defaultProvider` and `defaultModel`)
 - API key delivered via `models.json` FIFO (named pipe, written once at startup, deleted after Pi reads it — key never persists on disk)
 - Both config FIFOs written by a `nohup` background process that survives the `exec` to Pi — settings.json is written first (Pi's SettingsManager reads it), then models.json (Pi's ModelRegistry reads it)
-- All provider env vars (`OLLAMA_*`, `ANTHROPIC_*`, etc.) stripped from Pi's process environment before exec
+- All provider env vars (`LLM_*`, `ANTHROPIC_*`, etc.) stripped from Pi's process environment before exec
 - `/bin/sh` symlinked to `/bin/bash` in the base image so Pi's bash tool supports bashisms (`source`, etc.)
 - System prompt (`src/dockerimage/system-prompt.md`) copied into image at build time. Instructs the agent to: create virtualenvs for Python projects, run `npm init` for Node projects, background long-running servers, always use `get_hosted_url` for fresh URLs, show full URLs as link text, and warn users that container restarts kill running processes
 - 30-minute idle timeout (configurable via `BARK_IDLE_TIMEOUT_SECONDS`) with automatic container stop, debug notification, and terminal overlay with restart button. Activity is recorded on user actions (prompt, steer, terminal input) and on every Pi event (tool calls, text streaming), so containers stay alive during long-running LLM requests as long as events are flowing. Stuck tool executions (e.g., foreground server) produce no events and will eventually time out.
@@ -294,16 +294,16 @@ bark/
 
 - Nix with devenv installed (run `./bootstrap` to install both)
 - Docker daemon running
-- Ollama — either a Cloud account with API key, or a self-hosted instance
+- An OpenAI-compatible LLM provider (e.g., Ollama Cloud, self-hosted Ollama)
 
 ### Setup & Run
 
 ```bash
 # Create .env
 cat > .env << 'EOF'
-OLLAMA_API_KEY=your-api-key-here
-OLLAMA_BASE_URL=https://ollama.com/v1       # or http://localhost:11434/v1 for self-hosted
-OLLAMA_MODEL=gemma4:31b                     # any model available on your Ollama instance
+LLM_API_KEY=your-api-key-here
+LLM_BASE_URL=https://ollama.com/v1       # or http://localhost:11434/v1 for self-hosted
+LLM_MODEL=gemma4:31b                     # any model available on your provider
 BARK_JWT_SECRET=change-this-to-a-random-secret
 BARK_DEFAULT_USER=admin@example.com
 # BARK_DEFAULT_PASSWORD=admin  # omit to generate a random password on first run
@@ -345,9 +345,9 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `BARK_HOSTING_BASE_PATH`    | (from `X-Forwarded-Prefix` or empty) | Base path prefix for user-facing app URLs (e.g., `/bark`). Auto-derived from nginx `X-Forwarded-Prefix` header if not set                                 |
 | `BARK_IDLE_TIMEOUT_SECONDS` | `1800`                               | Container idle timeout in seconds (check interval auto-computed as timeout/3, clamped 10–60s)                                                             |
 | `SOLIPLEX_URL`              | (empty)                              | Soliplex base URL as seen by browser (empty = same origin)                                                                                                |
-| `OLLAMA_API_KEY`            |                                      | Ollama Cloud API key                                                                                                                                      |
-| `OLLAMA_BASE_URL`           |                                      | Ollama API URL (cloud or self-hosted)                                                                                                                     |
-| `OLLAMA_MODEL`              |                                      | LLM model name                                                                                                                                            |
+| `LLM_API_KEY`               |                                      | LLM provider API key                                                                                                                                      |
+| `LLM_BASE_URL`              |                                      | LLM API URL (any OpenAI-compatible provider)                                                                                                              |
+| `LLM_MODEL`                 |                                      | LLM model name                                                                                                                                            |
 | `BARK_JWT_SECRET`           |                                      | JWT signing secret                                                                                                                                        |
 | `BARK_DEFAULT_USER`         |                                      | Auto-seeded admin email on startup                                                                                                                        |
 | `BARK_DEFAULT_PASSWORD`     |                                      | Auto-seeded password on startup (omit to generate random; supports `file:` prefix)                                                                        |
@@ -420,7 +420,7 @@ devenv shell -- test-e2e --reporter=list
 
 E2E tests run against Chromium, Firefox, and WebKit using browsers from `pkgs.playwright-driver.browsers` (NixOS-patched, no manual browser install needed). The `@playwright/test` npm version must match `pkgs.playwright-driver.version` exactly (currently 1.59.1). Browsers run sequentially (one at a time) to avoid memory pressure from multiple browser engines — within each browser, tests run in parallel with one worker per CPU core (default `100%`; override with `BARK_E2E_WORKERS=N`). Global test timeout is 300s. Each test registers its own unique user and creates its own workspace, so tests are fully isolated.
 
-The test server spawns the bark server on a non-default port (18997) with a temp `BARK_DATA_DIR` so it doesn't conflict with a running dev server. Flutter Web renders to canvas, so UI interaction uses coordinate-based clicks on `<flutter-view>`. LLM-dependent tests require `OLLAMA_API_KEY`, `OLLAMA_BASE_URL`, and `OLLAMA_MODEL` in `.env` or the process environment.
+The test server spawns the bark server on a non-default port (18997) with a temp `BARK_DATA_DIR` so it doesn't conflict with a running dev server. Flutter Web renders to canvas, so UI interaction uses coordinate-based clicks on `<flutter-view>`. LLM-dependent tests require `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` in `.env` or the process environment.
 
 **Frontend unit tests** (Dart/Flutter, no browser required):
 
@@ -453,7 +453,7 @@ GitHub Actions run automatically on PRs and pushes to main (all also support `wo
 
 - **Backend tests** (`.github/workflows/backend-tests.yml`) — triggered by changes to `src/backend/` or `pytest.ini`
 - **Frontend tests** (`.github/workflows/frontend-tests.yml`) — triggered by changes to `src/frontend/lib/`, `src/frontend/test/`, or `src/frontend/pubspec.yaml`. Uses `stub_dart_plugins.sh` to create a minimal `bark_plugins` package so `flutter pub get` works without the full plugin codegen.
-- **E2E tests** (`.github/workflows/e2e-tests.yml`) — runs hourly via cron (skips if no commits in the last hour) and on manual `workflow_dispatch`. Requires `OLLAMA_API_KEY`, `OLLAMA_BASE_URL`, and `OLLAMA_MODEL` secrets. Runs Playwright against Chromium, Firefox, and WebKit sequentially (browsers from `playwright-driver.browsers` in nixpkgs, one worker per CPU core). Warms up Ollama before each browser run. Uploads test results and per-run backend logs as artifacts on failure.
+- **E2E tests** (`.github/workflows/e2e-tests.yml`) — runs hourly via cron (skips if no commits in the last hour) and on manual `workflow_dispatch`. Requires `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` secrets. Runs Playwright against Chromium, Firefox, and WebKit sequentially (browsers from `playwright-driver.browsers` in nixpkgs, one worker per CPU core). Warms up the LLM before each browser run. Uploads test results and per-run backend logs as artifacts on failure.
 
 ### Plugin System
 

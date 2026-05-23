@@ -2,7 +2,7 @@
 
 ![Bark Web Coding Agent](docs/screenshot.png)
 
-A multi-user web coding agent powered by [Pi](https://pi.dev) and [Ollama](https://ollama.com) (cloud or self-hosted).
+A multi-user web coding agent powered by [Pi](https://pi.dev) and any OpenAI-compatible LLM provider (e.g., [Ollama](https://ollama.com) cloud or self-hosted).
 
 Bark gives each user their own isolated coding environment with an AI agent that can write, run, and test code directly. Each workspace runs in a Docker container with Python, Node.js, and C/C++ available.
 
@@ -12,7 +12,7 @@ Bark gives each user their own isolated coding environment with an AI agent that
 
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (run `./bootstrap` to install both)
 - Docker daemon running
-- [Ollama](https://ollama.com) — either a Cloud account with API key, or a self-hosted instance
+- An OpenAI-compatible LLM provider (e.g., [Ollama](https://ollama.com) cloud or self-hosted)
 
 ### Setup
 
@@ -20,12 +20,12 @@ Bark gives each user their own isolated coding environment with an AI agent that
 git clone <repo-url> bark
 cd bark
 
-# Create .env with your Ollama API key
+# Create .env with your LLM provider credentials
 cat > .env << 'EOF'
-# Ollama configuration
-OLLAMA_API_KEY=your-api-key-here
-OLLAMA_BASE_URL=https://ollama.com/v1       # or http://localhost:11434/v1 for self-hosted
-OLLAMA_MODEL=gemma4:31b                     # any model available on your Ollama instance
+# LLM configuration (any OpenAI-compatible provider)
+LLM_API_KEY=your-api-key-here
+LLM_BASE_URL=https://ollama.com/v1          # or http://localhost:11434/v1 for self-hosted
+LLM_MODEL=gemma4:31b                        # any model available on your provider
 
 # Bark configuration
 BARK_JWT_SECRET=change-this-to-a-random-secret
@@ -66,9 +66,9 @@ All settings can be overridden in `.env`. Defaults are provided in `devenv.nix` 
 | `BARK_DATA_DIR`         | `~/.bark/data`    | Database, workspaces, Pi sessions                                  |
 | `BARK_PLUGINS_DIR`      | `~/.bark/plugins` | Fetched plugins (outside repo for `execIfModified`)                |
 | `SOLIPLEX_URL`          | (empty)           | Soliplex base URL as seen by browser (empty = same origin)         |
-| `OLLAMA_API_KEY`        |                   | Ollama Cloud API key                                               |
-| `OLLAMA_BASE_URL`       |                   | Ollama API URL (cloud or self-hosted)                              |
-| `OLLAMA_MODEL`          |                   | LLM model name                                                     |
+| `LLM_API_KEY`           |                   | LLM provider API key                                               |
+| `LLM_BASE_URL`          |                   | LLM API URL (any OpenAI-compatible provider)                       |
+| `LLM_MODEL`             |                   | LLM model name                                                     |
 | `BARK_JWT_SECRET`       |                   | JWT signing secret                                                 |
 | `BARK_DEFAULT_USER`     |                   | Auto-seeded admin email on startup                                 |
 | `BARK_DEFAULT_PASSWORD` |                   | Auto-seeded password on startup (omit to generate random)          |
@@ -107,7 +107,7 @@ nginx reverse proxy (port 8995)
 
 - **Frontend**: Flutter Web with markdown rendering, syntax-highlighted code blocks, file viewer, container terminal, debug panel, admin user management
 - **Backend**: nginx reverse proxy + FastAPI serving API, WebSocket, and frontend static files. Role-based access control with JWT roles claim
-- **Agent**: Pi coding agent in RPC mode with Ollama (cloud or self-hosted, configurable model)
+- **Agent**: Pi coding agent in RPC mode with any OpenAI-compatible LLM provider
 - **Protocol**: [AG-UI](https://docs.ag-ui.com/) for standardized agent-user communication
 
 Each workspace gets its own Docker container with a bind-mounted directory. Pi sessions persist across container restarts (resumed automatically via `--session` flag), and conversation history is stored in SQLite. API keys are delivered via FIFO (named pipe) so they never persist on disk inside the container.
