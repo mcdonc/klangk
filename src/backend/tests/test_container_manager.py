@@ -267,6 +267,34 @@ class TestStartContainer:
             "https://custom.logfire.dev"
         )
 
+    async def test_create_container_logfire_environment(
+        self, workspace, monkeypatch
+    ):
+        monkeypatch.setenv("LOGFIRE_TOKEN", "tok")
+        monkeypatch.setenv("LOGFIRE_ENVIRONMENT", "staging")
+        monkeypatch.delenv("LOGFIRE_BASE_URL", raising=False)
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
+            await container_manager.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        call_kwargs = mock_docker.containers.create_or_replace.call_args
+        env_list = call_kwargs[1]["config"]["Env"]
+        env_dict = dict(e.split("=", 1) for e in env_list)
+        assert (
+            env_dict["OTEL_RESOURCE_ATTRIBUTES"]
+            == "deployment.environment=staging"
+        )
+
     async def test_reuse_running_container(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("existing-cid", running=True)
