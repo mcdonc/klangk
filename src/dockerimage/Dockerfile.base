@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     fd-find \
     ripgrep \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI (not in default Debian repos)
@@ -36,7 +37,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 
 # Node/npm already present from base image
-RUN npm install -g @mariozechner/pi-coding-agent
+# Install both old and new Pi package names: pi-otel-telemetry still depends on
+# @mariozechner/*, while pi-subagents requires @earendil-works/*.
+# Install @earendil-works last so its `pi` binary wins.
+RUN npm install -g @mariozechner/pi-coding-agent @earendil-works/pi-coding-agent
 
 # Create bark user with host UID/GID (passed as build args)
 ARG BARK_UID=1000

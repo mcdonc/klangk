@@ -42,12 +42,9 @@ cat >"$PI_AGENT_DIR/models.json" <<EOF
 }
 EOF
 
-cat >"$PI_AGENT_DIR/settings.json" <<EOF
-{
-  "defaultProvider": "llm-proxy",
-  "defaultModel": "$LLM_MODEL"
-}
-EOF
+# Merge runtime LLM config into build-time settings (which has "packages" from pi install)
+jq --arg model "$LLM_MODEL" '. + {defaultProvider: "llm-proxy", defaultModel: $model}' \
+  /opt/bark/pi-agent/settings.json >"$PI_AGENT_DIR/settings.json"
 
 # Build system prompt file from static template + registered extension tools
 SYSTEM_PROMPT_FILE="$PI_AGENT_DIR/system-prompt.md"
