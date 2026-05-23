@@ -102,6 +102,10 @@
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
   scripts.dockerbuild-base.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-base.sh" "$@"'';
 
+  scripts.kill-containers.exec = ''
+    docker ps -a --filter "label=bark.instance=''${BARK_INSTANCE_ID}" -q | xargs -r docker rm -f
+  '';
+
   scripts.rebuild.exec = ''
     echo "Rebuilding Docker image..."
     dockerbuild
