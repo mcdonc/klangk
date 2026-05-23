@@ -23,7 +23,7 @@ class IdeLayout extends StatefulWidget {
   final Widget terminal;
   final GlobalKey<ContainerTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
-  final Widget output;
+  final Widget debug;
 
   const IdeLayout({
     super.key,
@@ -32,7 +32,7 @@ class IdeLayout extends StatefulWidget {
     required this.terminal,
     this.terminalKey,
     this.fileViewerKey,
-    required this.output,
+    required this.debug,
   });
 
   @override
@@ -177,7 +177,7 @@ class _IdeLayoutState extends State<IdeLayout>
               bottom: 0,
               child: Container(
                 color: const Color(0xFFF0EFE9),
-                child: widget.output,
+                child: widget.debug,
               ),
             ),
             // Center vertical divider (on top so shadow renders over both panels)

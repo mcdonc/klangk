@@ -7,7 +7,7 @@ void main() {
     Widget? chat,
     Widget? fileViewer,
     Widget? terminal,
-    Widget? output,
+    Widget? debug,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -18,7 +18,7 @@ void main() {
             chat: chat ?? const Text('Chat'),
             fileViewer: fileViewer ?? const Text('Files'),
             terminal: terminal ?? const Text('Terminal'),
-            output: output ?? const Text('Debug'),
+            debug: debug ?? const Text('Debug'),
           ),
         ),
       ),
@@ -107,14 +107,14 @@ void main() {
       expect(find.byType(IndexedStack), findsOneWidget);
     });
 
-    testWidgets('output widget is always visible', (tester) async {
+    testWidgets('debug widget is always visible', (tester) async {
       await tester.pumpWidget(buildLayout(
-        output: const Text('DEBUG_OUTPUT'),
+        debug: const Text('DEBUG_OUTPUT'),
       ));
 
       expect(find.text('DEBUG_OUTPUT'), findsOneWidget);
 
-      // Switch to Files tab — output should still be visible
+      // Switch to Files tab — debug should still be visible
       final filesTab = find.descendant(
         of: find.byType(TabBar),
         matching: find.text('Files'),

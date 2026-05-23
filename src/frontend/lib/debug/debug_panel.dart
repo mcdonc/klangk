@@ -3,18 +3,18 @@ import 'package:flutter/material.dart';
 import '../agui/agui_client.dart';
 import '../agui/agui_events.dart';
 
-/// Structured output panel showing tool calls, errors, and reasoning.
-class OutputPanel extends StatefulWidget {
+/// Structured debug panel showing tool calls, errors, and reasoning.
+class DebugPanel extends StatefulWidget {
   final AguiClient aguiClient;
 
-  const OutputPanel({super.key, required this.aguiClient});
+  const DebugPanel({super.key, required this.aguiClient});
 
   @override
-  State<OutputPanel> createState() => _OutputPanelState();
+  State<DebugPanel> createState() => _DebugPanelState();
 }
 
-class _OutputPanelState extends State<OutputPanel> {
-  final List<_OutputEntry> _entries = [];
+class _DebugPanelState extends State<DebugPanel> {
+  final List<_DebugEntry> _entries = [];
   final _scrollController = ScrollController();
   late final StreamSubscription<AguiEvent> _eventSub;
 
@@ -25,11 +25,11 @@ class _OutputPanelState extends State<OutputPanel> {
   }
 
   void _handleEvent(AguiEvent event) {
-    _OutputEntry? entry;
+    _DebugEntry? entry;
 
     switch (event.type) {
       case AguiEventType.toolCallStart:
-        entry = _OutputEntry(
+        entry = _DebugEntry(
           type: _EntryType.toolCall,
           title: event.toolCallName ?? 'tool',
           content: '',
@@ -37,7 +37,7 @@ class _OutputPanelState extends State<OutputPanel> {
         );
         break;
       case AguiEventType.toolCallResult:
-        entry = _OutputEntry(
+        entry = _DebugEntry(
           type: _EntryType.toolResult,
           title: 'Result',
           content: event.content?.toString() ?? '',
@@ -45,7 +45,7 @@ class _OutputPanelState extends State<OutputPanel> {
         );
         break;
       case AguiEventType.runError:
-        entry = _OutputEntry(
+        entry = _DebugEntry(
           type: _EntryType.error,
           title: 'Error',
           content: event.message ?? 'Unknown error',
@@ -66,7 +66,7 @@ class _OutputPanelState extends State<OutputPanel> {
             _scrollToBottom();
             return;
           }
-          entry = _OutputEntry(
+          entry = _DebugEntry(
             type: _EntryType.reasoning,
             title: 'Thinking',
             content: delta,
@@ -75,7 +75,7 @@ class _OutputPanelState extends State<OutputPanel> {
         }
         break;
       case AguiEventType.stepStarted:
-        entry = _OutputEntry(
+        entry = _DebugEntry(
           type: _EntryType.step,
           title: 'turn',
           content: 'Started',
@@ -86,7 +86,7 @@ class _OutputPanelState extends State<OutputPanel> {
         if (event.customName == 'query_prompt') {
           final value = event.customValue;
           final text = value is Map ? (value['text'] ?? '') : '';
-          entry = _OutputEntry(
+          entry = _DebugEntry(
             type: _EntryType.step,
             title: 'query',
             content: text.toString(),
@@ -95,7 +95,7 @@ class _OutputPanelState extends State<OutputPanel> {
         } else if (event.customName == 'container_restart') {
           final value = event.customValue;
           final reason = value is Map ? (value['reason'] ?? '') : '';
-          entry = _OutputEntry(
+          entry = _DebugEntry(
             type: _EntryType.step,
             title: 'Container Restart',
             content: reason.toString(),
@@ -104,7 +104,7 @@ class _OutputPanelState extends State<OutputPanel> {
         } else if (event.customName == 'container_starting') {
           final value = event.customValue;
           final reason = value is Map ? (value['reason'] ?? '') : '';
-          entry = _OutputEntry(
+          entry = _DebugEntry(
             type: _EntryType.step,
             title: 'Container Starting',
             content: reason.toString(),
@@ -113,7 +113,7 @@ class _OutputPanelState extends State<OutputPanel> {
         } else if (event.customName == 'container_ready') {
           final value = event.customValue;
           final reason = value is Map ? (value['reason'] ?? '') : '';
-          entry = _OutputEntry(
+          entry = _DebugEntry(
             type: _EntryType.step,
             title: 'Container Ready',
             content: reason.toString(),
@@ -122,7 +122,7 @@ class _OutputPanelState extends State<OutputPanel> {
         } else if (event.customName == 'session_resume') {
           final value = event.customValue;
           final reason = value is Map ? (value['reason'] ?? '') : '';
-          entry = _OutputEntry(
+          entry = _DebugEntry(
             type: _EntryType.step,
             title: 'Session Resume',
             content: reason.toString(),
@@ -132,7 +132,7 @@ class _OutputPanelState extends State<OutputPanel> {
           final value = event.customValue;
           final method = value is Map ? (value['method'] ?? '') : '';
           final title = value is Map ? (value['title'] ?? '') : '';
-          entry = _OutputEntry(
+          entry = _DebugEntry(
             type: _EntryType.toolCall,
             title: 'Extension UI: $method',
             content:
@@ -142,7 +142,7 @@ class _OutputPanelState extends State<OutputPanel> {
         } else if (event.customName == 'container_stopped') {
           final value = event.customValue;
           final reason = value is Map ? (value['reason'] ?? '') : '';
-          entry = _OutputEntry(
+          entry = _DebugEntry(
             type: _EntryType.error,
             title: 'Container Stopped',
             content: reason.toString(),
@@ -227,7 +227,7 @@ class _OutputPanelState extends State<OutputPanel> {
     );
   }
 
-  Widget _buildEntry(_OutputEntry entry) {
+  Widget _buildEntry(_DebugEntry entry) {
     final color = switch (entry.type) {
       _EntryType.toolCall => Colors.cyan,
       _EntryType.toolResult => Colors.green,
@@ -275,21 +275,21 @@ class _OutputPanelState extends State<OutputPanel> {
 
 enum _EntryType { toolCall, toolResult, error, reasoning, step }
 
-class _OutputEntry {
+class _DebugEntry {
   final _EntryType type;
   final String title;
   final String content;
   final DateTime timestamp;
 
-  _OutputEntry({
+  _DebugEntry({
     required this.type,
     required this.title,
     required this.content,
     required this.timestamp,
   });
 
-  _OutputEntry copyWith({required String content}) {
-    return _OutputEntry(
+  _DebugEntry copyWith({required String content}) {
+    return _DebugEntry(
       type: type,
       title: title,
       content: content,

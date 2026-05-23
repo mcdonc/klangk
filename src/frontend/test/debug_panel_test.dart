@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bark_frontend/agui/agui_client.dart';
 import 'package:bark_frontend/agui/agui_events.dart';
-import 'package:bark_frontend/output/output_panel.dart';
+import 'package:bark_frontend/debug/debug_panel.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 
 /// Minimal mock of AguiClient that just provides an event stream.
@@ -28,11 +28,11 @@ void main() {
     testBaseUrlOverride = null;
   });
 
-  group('OutputPanel', () {
+  group('DebugPanel', () {
     testWidgets('shows "No output yet" initially', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       expect(find.text('No output yet'), findsOneWidget);
@@ -43,7 +43,7 @@ void main() {
     testWidgets('shows tool call entry', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -58,7 +58,7 @@ void main() {
     testWidgets('shows tool result entry', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -74,7 +74,7 @@ void main() {
     testWidgets('shows error entry', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -90,7 +90,7 @@ void main() {
     testWidgets('shows reasoning entry', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -106,7 +106,7 @@ void main() {
     testWidgets('appends to existing reasoning entry', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -129,7 +129,7 @@ void main() {
     testWidgets('shows step entry', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -145,7 +145,7 @@ void main() {
     testWidgets('shows custom query_prompt event', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -164,7 +164,7 @@ void main() {
     testWidgets('shows container_ready event', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -182,7 +182,7 @@ void main() {
     testWidgets('shows container_stopped event', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -200,7 +200,7 @@ void main() {
     testWidgets('shows container_restart event', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -218,7 +218,7 @@ void main() {
     testWidgets('shows container_starting event', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -236,7 +236,7 @@ void main() {
     testWidgets('shows session_resume event', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -254,7 +254,7 @@ void main() {
     testWidgets('shows extension_ui_request event', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -272,7 +272,7 @@ void main() {
     testWidgets('clear button removes entries', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -290,7 +290,7 @@ void main() {
     testWidgets('ignores empty reasoning delta', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -305,7 +305,7 @@ void main() {
     testWidgets('reasoning content appends to existing entry', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       client.emit(AguiEvent(
@@ -327,7 +327,7 @@ void main() {
     testWidgets('long content is truncated to 500 chars', (tester) async {
       final client = _MockAguiClient();
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: OutputPanel(aguiClient: client))),
+        MaterialApp(home: Scaffold(body: DebugPanel(aguiClient: client))),
       );
 
       final longContent = 'x' * 600;

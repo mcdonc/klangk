@@ -12,7 +12,7 @@ import '../utils/page_title.dart';
 import '../widgets/bark_logo.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../layout/ide_layout.dart';
-import '../output/output_panel.dart';
+import '../debug/debug_panel.dart';
 import '../terminal/container_terminal.dart';
 import '../terminal/chat_panel.dart';
 import 'package:bark_plugins/bark_plugins.dart';
@@ -47,7 +47,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       _pluginRegistry.register(plugin);
     }
     _fetchWorkspaceName();
-    // Delay connect until after first frame so child widgets (OutputPanel etc.) are subscribed
+    // Delay connect until after first frame so child widgets (DebugPanel etc.) are subscribed
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
 
@@ -277,7 +277,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                 ContainerTerminal(key: _terminalKey, aguiClient: aguiClient),
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
-            output: OutputPanel(aguiClient: aguiClient),
+            debug: DebugPanel(aguiClient: aguiClient),
           ),
           for (final plugin in _plugins)
             if (plugin.buildOverlay(context) != null)
