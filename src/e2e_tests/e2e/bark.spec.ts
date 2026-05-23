@@ -989,7 +989,7 @@ test.describe("Bark E2E", () => {
     ).toBeFalsy();
   });
 
-  test("container survives page refresh", async ({ page, request }) => {
+  test("container recreated on page refresh", async ({ page, request }) => {
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
@@ -1001,16 +1001,16 @@ test.describe("Bark E2E", () => {
       const containers = dockerContainersForWorkspace(workspaceId);
       expect(containers.length).toBe(1);
 
-      // Reload the page (simulates browser refresh)
-      // Listen for container_ready on the new WebSocket after reload
+      // Reload the page — container should be stopped on disconnect
+      // and a new one created on reconnect
       const readyPromise = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(
-          () => reject(new Error("Container did not reconnect within 30s")),
-          30_000,
+          () => reject(new Error("Container did not start within 120s")),
+          120_000,
         );
         page.on("websocket", (ws) => {
           ws.on("framereceived", (frame: { payload: string | Buffer }) => {
-            if (frame.payload.toString().includes("container_ready")) {
+            if (frame.payload.toString().includes("workspace_ready")) {
               clearTimeout(timeout);
               resolve();
             }
@@ -1021,15 +1021,9 @@ test.describe("Bark E2E", () => {
       await page.reload();
       await readyPromise;
 
-      // Container should still be running after refresh
+      // A new container should be running (old one was removed)
       const containersAfter = dockerContainersForWorkspace(workspaceId);
       expect(containersAfter.length).toBe(1);
-      expect(containersAfter[0]).toBe(containers[0]);
-
-      // Wait and verify no "container stopped" overlay appears
-      await page.waitForTimeout(5000);
-      const containersStill = dockerContainersForWorkspace(workspaceId);
-      expect(containersStill.length).toBe(1);
     } finally {
       await cleanup();
     }

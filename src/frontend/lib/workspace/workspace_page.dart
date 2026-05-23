@@ -34,6 +34,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String? _error;
   String _workspaceName = '';
   bool _agentRunning = false;
+  bool _containerStopped = false;
+  bool _restarting = false;
+  String _stopReason = '';
   StreamSubscription? _eventSub;
   late final ToolPluginRegistry _pluginRegistry;
   late final List<ToolPlugin> _plugins;
@@ -101,6 +104,28 @@ class _WorkspacePageState extends State<WorkspacePage> {
       } else if (event.type == AguiEventType.custom &&
           event.customName == 'extension_ui_request') {
         _handleExtensionUiRequest(event);
+      } else if (event.type == AguiEventType.custom &&
+          event.customName == 'container_stopped' &&
+          !_containerStopped) {
+        final value = event.customValue;
+        final reason = value is Map ? (value['reason'] ?? '') : '';
+        if (mounted) {
+          setState(() {
+            _containerStopped = true;
+            _stopReason = reason.toString().isNotEmpty
+                ? 'Container stopped ($reason)'
+                : 'Container stopped';
+          });
+        }
+      } else if (event.type == AguiEventType.custom &&
+          event.customName == 'container_ready' &&
+          _restarting) {
+        if (mounted) {
+          setState(() {
+            _restarting = false;
+            _containerStopped = false;
+          });
+        }
       }
     });
 
@@ -121,6 +146,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
         aguiClient.sendUiReady();
       });
     }
+  }
+
+  void _restartContainer() {
+    setState(() => _restarting = true);
+    final aguiClient = context.read<AguiClient>();
+    aguiClient.sendRestartContainer();
   }
 
   Future<void> _handleExtensionUiRequest(AguiEvent event) async {
@@ -282,6 +313,40 @@ class _WorkspacePageState extends State<WorkspacePage> {
           for (final plugin in _plugins)
             if (plugin.buildOverlay(context) != null)
               plugin.buildOverlay(context)!,
+          if (_containerStopped)
+            Container(
+              color: Colors.black54,
+              child: Center(
+                child: _restarting
+                    ? const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(color: Colors.white),
+                          SizedBox(height: 12),
+                          Text('Restarting...',
+                              style: TextStyle(color: Colors.white)),
+                        ],
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(_stopReason,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 16)),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: _restartContainer,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Restart'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF5B8C5A),
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
         ],
       ),
     );

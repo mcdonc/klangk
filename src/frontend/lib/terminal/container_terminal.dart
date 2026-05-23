@@ -51,9 +51,6 @@ class ContainerTerminalState extends State<ContainerTerminal> {
   StreamSubscription<String>? _outputSub;
   StreamSubscription<AguiEvent>? _eventSub;
   bool _started = false;
-  bool _containerStopped = false;
-  bool _restarting = false;
-  String _stopReason = '';
 
   @override
   void initState() {
@@ -61,15 +58,11 @@ class ContainerTerminalState extends State<ContainerTerminal> {
     _terminal = Terminal(maxLines: 10000);
     // coverage:ignore-start
     _terminal.onOutput = (data) {
-      if (!_containerStopped && !_restarting) {
-        widget.aguiClient.sendTerminalInput(data);
-      }
+      widget.aguiClient.sendTerminalInput(data);
     };
     // coverage:ignore-end
     _terminal.onResize = (cols, rows, _, __) {
-      if (!_containerStopped) {
-        widget.aguiClient.sendTerminalResize(cols, rows);
-      }
+      widget.aguiClient.sendTerminalResize(cols, rows);
     };
     _outputSub = widget.aguiClient.terminalOutput.listen((data) {
       _terminal.write(data);
@@ -78,31 +71,12 @@ class ContainerTerminalState extends State<ContainerTerminal> {
   }
 
   void _handleEvent(AguiEvent event) {
-    if (event.type == AguiEventType.custom) {
-      if (event.customName == 'container_stopped' && !_containerStopped) {
-        final value = event.customValue;
-        final reason = value is Map ? (value['reason'] ?? '') : '';
-        setState(() {
-          _containerStopped = true;
-          _stopReason = reason.toString().isNotEmpty
-              ? 'Container stopped ($reason)'
-              : 'Container stopped';
-        });
-      } else if (event.customName == 'container_ready' && _restarting) {
-        setState(() {
-          _restarting = false;
-          _containerStopped = false;
-        });
-        // Reconnect terminal session
-        _started = false;
-        _startTerminal();
-      }
+    if (event.type == AguiEventType.custom &&
+        event.customName == 'container_ready') {
+      // Reconnect terminal session after container restart
+      _started = false;
+      _startTerminal();
     }
-  }
-
-  void _restartContainer() {
-    setState(() => _restarting = true);
-    widget.aguiClient.sendRestartContainer();
   }
 
   void _startTerminal() {
@@ -221,63 +195,6 @@ class ContainerTerminalState extends State<ContainerTerminal> {
       ),
     );
 
-    if (!_containerStopped && !_restarting) return terminalView;
-
-    return Stack(
-      children: [
-        terminalView,
-        Positioned.fill(
-          child: Container(
-            color: const Color(0xCC1D1F21),
-            child: Center(
-              child: _restarting
-                  ? const Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Color(0xFFB5BD68),
-                          ),
-                        ),
-                        SizedBox(height: 12),
-                        Text(
-                          'Restarting container...',
-                          style: TextStyle(
-                            color: Color(0xFFC5C8C6),
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    )
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _stopReason,
-                          style: TextStyle(
-                            color: Color(0xFFC5C8C6),
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        ElevatedButton.icon(
-                          onPressed: _restartContainer,
-                          icon: const Icon(Icons.refresh, size: 18),
-                          label: const Text('Restart Terminal'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF5B8C5A),
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-        ),
-      ],
-    );
+    return terminalView;
   }
 }
