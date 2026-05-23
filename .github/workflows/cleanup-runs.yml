@@ -19,3 +19,9 @@ jobs:
           retain_days: 0
           keep_minimum_runs: 0
           delete_run_by_conclusion_pattern: "skipped,cancelled"
+      - name: Cancel this workflow run
+        uses: potiuk/cancel-workflow-runs@v4_9
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ github.run_id }}
+          reason: "Cleanup completed"

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 import '../utils/page_title.dart';
+import '../widgets/app_bar_actions.dart';
 import '../widgets/bark_logo.dart';
 
 class WorkspaceListPage extends StatefulWidget {
@@ -178,26 +179,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                 ),
               ),
             ),
-          if (context.watch<AuthService>().isAdmin)
-            IconButton(
-              icon: const Icon(Icons.admin_panel_settings,
-                  color: Color(0xFF1A237E)),
-              tooltip: 'User Management',
-              onPressed: () => context.go('/admin/users'),
-            ),
-          IconButton(
-            icon: const Icon(Icons.settings, color: Color(0xFF1A237E)),
-            tooltip: 'Settings',
-            onPressed: () => context.go('/settings'), // coverage:ignore-line
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Color(0xFF1A237E)),
-            tooltip: 'Logout',
-            onPressed: () async {
-              await context.read<AuthService>().logout();
-              if (mounted) context.go('/login');
-            },
-          ),
+          const AppBarActions(),
         ],
       ),
       floatingActionButton: FloatingActionButton(

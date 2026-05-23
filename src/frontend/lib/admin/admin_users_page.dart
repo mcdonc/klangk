@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../widgets/bark_logo.dart';
+import '../widgets/app_bar_actions.dart';
 
 class AdminUsersPage extends StatefulWidget {
   const AdminUsersPage({super.key});
@@ -181,14 +182,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                 ),
               ),
             ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Color(0xFF1A237E)),
-            tooltip: 'Logout',
-            onPressed: () async {
-              await context.read<AuthService>().logout();
-              if (context.mounted) context.go('/login');
-            },
-          ),
+          const AppBarActions(),
         ],
       ),
       floatingActionButton: FloatingActionButton(

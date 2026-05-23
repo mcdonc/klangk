@@ -10,6 +10,7 @@ import '../auth/auth_service.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 import '../utils/page_title.dart';
 import '../widgets/bark_logo.dart';
+import '../widgets/app_bar_actions.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../layout/ide_layout.dart';
 import '../debug/debug_panel.dart';
@@ -280,19 +281,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                 ),
               ),
             ),
-          IconButton(
-            icon: const Icon(Icons.settings, color: Color(0xFF1A237E)),
-            tooltip: 'Settings',
-            onPressed: () => context.go('/settings'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Color(0xFF1A237E)),
-            tooltip: 'Logout',
-            onPressed: () async {
-              await context.read<AuthService>().logout();
-              if (mounted) context.go('/login');
-            },
-          ),
+          const AppBarActions(),
         ],
       ),
       body: Stack(

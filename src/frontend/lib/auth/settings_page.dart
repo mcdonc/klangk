@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'auth_service.dart';
 import '../utils/page_title.dart';
 import '../widgets/bark_logo.dart';
+import '../widgets/app_bar_actions.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -153,6 +154,9 @@ class _SettingsPageState extends State<SettingsPage> {
             const Text('Settings', style: TextStyle(fontSize: 16)),
           ],
         ),
+        actions: const [
+          AppBarActions(),
+        ],
       ),
       body: Center(
         child: SingleChildScrollView(
