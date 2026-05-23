@@ -84,6 +84,30 @@ class TestRegister:
             )
         assert exc_info.value.status_code == 400
 
+    async def test_register_password_length_configurable(
+        self, db, monkeypatch
+    ):
+        """MIN_PASSWORD_LENGTH can be overridden via env var."""
+        monkeypatch.setattr(auth, "MIN_PASSWORD_LENGTH", 8)
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.register(
+                auth.RegisterRequest(
+                    email="valid@example.com", password="1234567"
+                )
+            )
+        assert exc_info.value.status_code == 400
+        assert (
+            "8" in exc_info.value.detail
+        )  # error message includes the length
+
+        # 8 chars should succeed
+        result = await auth.register(
+            auth.RegisterRequest(
+                email="valid@example.com", password="12345678"
+            )
+        )
+        assert result.user_id
+
 
 class TestLogin:
     async def test_login_success(self, user):

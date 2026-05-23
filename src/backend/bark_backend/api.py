@@ -87,9 +87,10 @@ async def register(
     existing = await user_store.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
-    if len(req.password) < 4:
+    if len(req.password) < auth.MIN_PASSWORD_LENGTH:
         raise HTTPException(
-            status_code=400, detail="Password must be at least 4 characters"
+            status_code=400,
+            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
         )
 
     password_hash = auth.hash_password(req.password)
@@ -232,10 +233,10 @@ async def reset_password(req: ResetPasswordRequest):
         raise HTTPException(
             status_code=400, detail="Invalid or expired reset token"
         )
-    if len(req.password) < 4:
+    if len(req.password) < auth.MIN_PASSWORD_LENGTH:
         raise HTTPException(
             status_code=400,
-            detail="Password must be at least 4 characters",
+            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
         )
     password_hash = auth.hash_password(req.password)
     await user_store.update_password(user_id, password_hash)
@@ -271,10 +272,10 @@ async def change_password(
         raise HTTPException(
             status_code=401, detail="Current password is incorrect"
         )
-    if len(req.new_password) < 4:
+    if len(req.new_password) < auth.MIN_PASSWORD_LENGTH:
         raise HTTPException(
             status_code=400,
-            detail="Password must be at least 4 characters",
+            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
         )
     password_hash = auth.hash_password(req.new_password)
     await user_store.update_password(user["id"], password_hash)

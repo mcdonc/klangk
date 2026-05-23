@@ -59,19 +59,20 @@ Open [http://localhost:8995](http://localhost:8995) (nginx) and log in with `adm
 
 All settings can be overridden in `.env`. Defaults are provided in `devenv.nix` at low priority so `.env` values take precedence.
 
-| Variable                | Default           | Description                                                        |
-| ----------------------- | ----------------- | ------------------------------------------------------------------ |
-| `BARK_NGINX_PORT`       | `8995`            | **Primary access point** — nginx (UI, API, WebSocket, hosted apps) |
-| `BARK_PORT`             | `8997`            | Backend (FastAPI/uvicorn) — proxied through nginx                  |
-| `BARK_DATA_DIR`         | `~/.bark/data`    | Database, workspaces, Pi sessions                                  |
-| `BARK_PLUGINS_DIR`      | `~/.bark/plugins` | Fetched plugins (outside repo for `execIfModified`)                |
-| `SOLIPLEX_URL`          | (empty)           | Soliplex base URL as seen by browser (empty = same origin)         |
-| `LLM_API_KEY`           |                   | LLM provider API key                                               |
-| `LLM_BASE_URL`          |                   | LLM API URL (any OpenAI-compatible provider)                       |
-| `LLM_MODEL`             |                   | LLM model name                                                     |
-| `BARK_JWT_SECRET`       |                   | JWT signing secret                                                 |
-| `BARK_DEFAULT_USER`     |                   | Auto-seeded admin email on startup                                 |
-| `BARK_DEFAULT_PASSWORD` |                   | Auto-seeded password on startup (omit to generate random)          |
+| Variable                   | Default           | Description                                                        |
+| -------------------------- | ----------------- | ------------------------------------------------------------------ |
+| `BARK_NGINX_PORT`          | `8995`            | **Primary access point** — nginx (UI, API, WebSocket, hosted apps) |
+| `BARK_PORT`                | `8997`            | Backend (FastAPI/uvicorn) — proxied through nginx                  |
+| `BARK_DATA_DIR`            | `~/.bark/data`    | Database, workspaces, Pi sessions                                  |
+| `BARK_PLUGINS_DIR`         | `~/.bark/plugins` | Fetched plugins (outside repo for `execIfModified`)                |
+| `SOLIPLEX_URL`             | (empty)           | Soliplex base URL as seen by browser (empty = same origin)         |
+| `LLM_API_KEY`              |                   | LLM provider API key                                               |
+| `LLM_BASE_URL`             |                   | LLM API URL (any OpenAI-compatible provider)                       |
+| `LLM_MODEL`                |                   | LLM model name                                                     |
+| `BARK_JWT_SECRET`          |                   | JWT signing secret                                                 |
+| `BARK_DEFAULT_USER`        |                   | Auto-seeded admin email on startup                                 |
+| `BARK_DEFAULT_PASSWORD`    |                   | Auto-seeded password on startup (omit to generate random)          |
+| `BARK_MIN_PASSWORD_LENGTH` | `4`               | Minimum password length                                            |
 
 ### Ports
 

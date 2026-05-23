@@ -17,6 +17,8 @@ SECRET_KEY = resolve_env_secret(
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
+MIN_PASSWORD_LENGTH = int(resolve_env_secret("BARK_MIN_PASSWORD_LENGTH", "4"))
+
 security = HTTPBearer(auto_error=False)
 
 
@@ -86,9 +88,10 @@ async def register(
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
     validate_email(req.email)
-    if len(req.password) < 4:
+    if len(req.password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(
-            status_code=400, detail="Password must be at least 4 characters"
+            status_code=400,
+            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
         )
 
     password_hash = hash_password(req.password)
