@@ -281,6 +281,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
               ),
             ),
           IconButton(
+            icon: const Icon(Icons.settings, color: Color(0xFF1A237E)),
+            tooltip: 'Settings',
+            onPressed: () => context.go('/settings'),
+          ),
+          IconButton(
             icon: const Icon(Icons.logout, color: Color(0xFF1A237E)),
             tooltip: 'Logout',
             onPressed: () async {

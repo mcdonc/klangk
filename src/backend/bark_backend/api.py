@@ -253,6 +253,76 @@ async def login(req: auth.LoginRequest):
     return await auth.login(req)
 
 
+class ChangePasswordRequest(auth.BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/auth/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    user: dict = Depends(auth.get_current_user),
+):
+    """Change password. Requires current password."""
+    stored = await user_store.get_user_by_email(user["email"])
+    if stored is None or not auth.verify_password(
+        req.current_password, stored["password_hash"]
+    ):
+        raise HTTPException(
+            status_code=401, detail="Current password is incorrect"
+        )
+    if len(req.new_password) < 4:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 4 characters",
+        )
+    password_hash = auth.hash_password(req.new_password)
+    await user_store.update_password(user["id"], password_hash)
+    return {"status": "updated"}
+
+
+class ChangeEmailRequest(auth.BaseModel):
+    email: str
+    password: str
+
+
+@router.post("/auth/change-email")
+async def change_email(
+    req: ChangeEmailRequest,
+    request: Request,
+    user: dict = Depends(auth.get_current_user),
+):
+    """Change email. Requires password. Marks account as unverified."""
+    stored = await user_store.get_user_by_email(user["email"])
+    if stored is None or not auth.verify_password(
+        req.password, stored["password_hash"]
+    ):
+        raise HTTPException(status_code=401, detail="Password is incorrect")
+    auth.validate_email(req.email)
+    existing = await user_store.get_user_by_email(req.email)
+    if existing is not None and existing["id"] != user["id"]:
+        raise HTTPException(status_code=400, detail="Email already in use")
+    await user_store.update_email(user["id"], req.email)
+    # Mark as unverified and send verification email
+    db = await user_store.get_db()
+    try:
+        await db.execute(
+            "UPDATE users SET verified = 0 WHERE id = ?",
+            (user["id"],),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    hostname, proto, base_path = ws_handler.derive_hosting_info(
+        request.headers
+    )
+    token = auth.create_verification_token(user["id"])
+    url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
+    await email_service.send_verification_email(req.email, url)
+    return {"status": "updated", "needs_verification": True}
+
+
 @router.post("/auth/logout")
 async def logout(user: dict = Depends(auth.get_current_user)):
     await container_manager.stop_user_containers(user["id"])

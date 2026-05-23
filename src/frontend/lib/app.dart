@@ -8,6 +8,7 @@ import 'auth/login_page.dart';
 import 'auth/verify_page.dart';
 import 'auth/forgot_password_page.dart';
 import 'auth/reset_password_page.dart';
+import 'auth/settings_page.dart';
 import 'workspace/workspace_list_page.dart';
 import 'workspace/workspace_page.dart';
 
@@ -100,6 +101,10 @@ class _BarkAppState extends State<BarkApp> {
             final token = state.uri.queryParameters['token'] ?? '';
             return VerifyPage(token: token);
           },
+        ),
+        GoRoute(
+          path: '/settings',
+          builder: (context, state) => const SettingsPage(),
         ),
         GoRoute(
           path: '/forgot-password',

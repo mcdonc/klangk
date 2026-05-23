@@ -397,6 +397,142 @@ class TestResetPassword:
         assert "4 characters" in resp.json()["detail"]
 
 
+class TestChangePassword:
+    async def test_change_password_success(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "newpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
+        # Can login with new password
+        resp2 = await client.post(
+            "/auth/login",
+            json={
+                "email": "testuser@example.com",
+                "password": "newpass",
+            },
+        )
+        assert resp2.status_code == 200
+
+    async def test_change_password_wrong_current(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-password",
+            json={
+                "current_password": "wrongpass",
+                "new_password": "newpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 401
+
+    async def test_change_password_too_short(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "ab",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+
+    async def test_change_password_no_auth(self, client, db):
+        resp = await client.post(
+            "/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "newpass",
+            },
+        )
+        assert resp.status_code == 401
+
+
+class TestChangeEmail:
+    async def test_change_email_success(self, client, user):
+        headers = await _auth_headers(client)
+        with patch.object(
+            api.email_service,
+            "send_verification_email",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            resp = await client.post(
+                "/auth/change-email",
+                json={
+                    "email": "new@example.com",
+                    "password": "testpass",
+                },
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "updated"
+        assert data["needs_verification"] is True
+        mock_send.assert_awaited_once()
+        # User should be unverified
+        updated = await user_store.get_user_by_email("new@example.com")
+        assert updated is not None
+        assert not updated["verified"]
+
+    async def test_change_email_wrong_password(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-email",
+            json={
+                "email": "new@example.com",
+                "password": "wrongpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 401
+
+    async def test_change_email_already_taken(self, client, user, db):
+        # Create another user
+        password_hash = auth.hash_password("other")
+        await user_store.create_user(
+            "other@example.com", password_hash, verified=True
+        )
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-email",
+            json={
+                "email": "other@example.com",
+                "password": "testpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+
+    async def test_change_email_invalid_format(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-email",
+            json={
+                "email": "not-an-email",
+                "password": "testpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+
+    async def test_change_email_no_auth(self, client, db):
+        resp = await client.post(
+            "/auth/change-email",
+            json={
+                "email": "new@example.com",
+                "password": "testpass",
+            },
+        )
+        assert resp.status_code == 401
+
+
 # --- Workspace routes ---
 
 
