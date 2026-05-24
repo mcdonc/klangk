@@ -42,7 +42,7 @@ test.describe("Bark LLM", () => {
         );
         if (msgResp.ok()) {
           const messages = await msgResp.json();
-          const urlRegex = /https?:\/\/localhost:\d+\/(bark\/)?hosted\/[^\s)]+/;
+          const urlRegex = /https?:\/\/[^\/]+\/hosted\/[^\/]+\/\d+\//;
           for (const m of messages) {
             // Check assistant text and tool_call output for hosted URLs
             const text =
