@@ -36,11 +36,23 @@ async function globalSetup() {
           `LLM warm (${((Date.now() - warmupStart) / 1000).toFixed(1)}s)`,
         );
       } else {
-        console.warn(`LLM warmup failed: ${warmupResp.status}`);
+        throw new Error(
+          `LLM warmup failed: ${warmupResp.status} — check LLM_BASE_URL and LLM_MODEL are set correctly`,
+        );
       }
     } catch (e) {
-      console.warn(`LLM warmup error: ${e}`);
+      throw new Error(
+        `LLM warmup error: ${e} — check LLM_BASE_URL and LLM_MODEL are set correctly`,
+      );
     }
+  } else if (llmUrl) {
+    throw new Error(
+      "LLM_BASE_URL is set but LLM_MODEL is not — add LLM_MODEL to .env",
+    );
+  } else {
+    throw new Error(
+      "LLM_BASE_URL is not set — add LLM_BASE_URL and LLM_MODEL to .env to enable LLM tests",
+    );
   }
 
   console.log(
