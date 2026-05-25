@@ -360,6 +360,7 @@ async def delete_workspace(
         await container_manager.stop_and_remove_container(
             workspace["container_id"]
         )
+    await ws_handler.reset_workspace_state(workspace_id)
 
     deleted = await workspace_manager.delete_workspace(
         workspace_id, user["id"]

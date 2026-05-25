@@ -938,6 +938,10 @@ async def reset_workspace_state(workspace_id: str) -> None:
     # Reset refcount so next connect sees conn_num==1
     container_manager._workspace_connections.pop(workspace_id, None)
 
+    # Clean up per-workspace tracking that accumulates over time
+    container_manager._idle_callbacks.pop(workspace_id, None)
+    container_manager._workspace_idle_timeouts.pop(workspace_id, None)
+
     _workspace_locks.pop(workspace_id, None)
 
     logger.info("Reset workspace state for %s", workspace_id)
