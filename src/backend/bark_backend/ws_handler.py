@@ -339,16 +339,17 @@ async def handle_prompt(ws: WebSocket, state: dict, msg: dict) -> None:
     )
     # Try to send prompt, auto-restart container if it's dead
     pi_client: PiRpcClient | None = state.get("pi_client")
+    message_saved = False
     try:
         if pi_client is None or not pi_client.is_alive:
             raise RuntimeError("Pi client is dead or missing")
         container_manager.record_activity(state["container_id"])
         ws_state = _workspace_state.get(workspace_id, {})
         is_queued = ws_state.get("agent_running", False)
-        if workspace_id:
-            await user_store.save_message(
-                workspace_id, "user", text, is_queued=is_queued
-            )
+        await user_store.save_message(
+            workspace_id, "user", text, is_queued=is_queued
+        )
+        message_saved = True
         # Show prompt in debug pane
         preview = text[:80] + ("..." if len(text) > 80 else "")
         await ws.send_json(
@@ -433,7 +434,7 @@ async def handle_prompt(ws: WebSocket, state: dict, msg: dict) -> None:
         )
         if pi_client and pi_client.is_alive:
             container_manager.record_activity(state["container_id"])
-            if workspace_id:
+            if not message_saved:
                 await user_store.save_message(workspace_id, "user", text)
             logger.info("Sending prompt after restart: %s", text[:50])
             await pi_client.prompt(text)
