@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -130,8 +131,14 @@ def create(
 ) -> None:
     """Create a new workspace."""
     _require_auth()
-    ws = _client().create_workspace(name)
-    typer.echo(f"Created workspace {name} ({ws.id[:12]})")
+    try:
+        ws = _client().create_workspace(name)
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.json().get("detail", exc.response.text)
+        _err.print(f"[red]Failed to create workspace:[/red] {detail}")
+        raise typer.Exit(code=1) from None
+    _out = Console()
+    _out.print(f"Created workspace [bold]{name}[/bold] ({ws.id[:12]})")
 
 
 @ws_app.command()

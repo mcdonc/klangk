@@ -144,6 +144,10 @@ class TestMainCLI:
         assert "2025-01-01" in output
 
     def test_create_workspace(self, logged_in_cfg, monkeypatch):
+        from io import StringIO
+
+        from rich.console import Console
+
         from bark_backend.cli import main
 
         ws = Workspace(
@@ -153,9 +157,32 @@ class TestMainCLI:
         client.create_workspace.return_value = ws
         monkeypatch.setattr(main, "_client", lambda: client)
 
-        with patch("typer.echo") as mock_echo:
+        buf = StringIO()
+        with patch.object(
+            main,
+            "Console",
+            return_value=Console(file=buf, force_terminal=True),
+        ):
             main.create("new-ws")
-        assert any("new-ws" in str(c) for c in mock_echo.call_args_list)
+        assert "new-ws" in buf.getvalue()
+
+    def test_create_workspace_error(self, logged_in_cfg, monkeypatch):
+        import typer
+
+        from bark_backend.cli import main
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.json.return_value = {"detail": "duplicate name"}
+        mock_response.text = "duplicate name"
+        client = MagicMock()
+        client.create_workspace.side_effect = httpx.HTTPStatusError(
+            "bad", request=MagicMock(), response=mock_response
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.create("dup")
 
     def test_delete_workspace(self, logged_in_cfg, monkeypatch):
         from bark_backend.cli import main
