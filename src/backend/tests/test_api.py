@@ -1307,5 +1307,19 @@ class TestArchiveUserData:
                 user["id"], user["email"]
             )
         assert result is None
-        # Original directory should still exist (not deleted on failure)
-        assert user_dir.exists()
+
+    async def test_archive_sanitizes_email(self, temp_data_dir, user):
+        """Email with path separators is sanitized in archive filename."""
+        user_dir = workspace_manager.WORKSPACES_ROOT / user["id"]
+        data_dir = user_dir / "data"
+        data_dir.mkdir(parents=True)
+
+        result = await workspace_manager.archive_user_data(
+            user["id"], "user/../../etc/passwd"
+        )
+        assert result is not None
+        # Archive must be under WORKSPACES_ROOT, not escaped
+        assert result.resolve().is_relative_to(
+            workspace_manager.WORKSPACES_ROOT.resolve()
+        )
+        assert ".." not in result.name

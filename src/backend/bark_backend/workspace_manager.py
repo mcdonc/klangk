@@ -24,8 +24,17 @@ async def archive_user_data(user_id: str, email: str) -> Path | None:
     user_dir = WORKSPACES_ROOT / user_id
     if not user_dir.exists():
         return None
-    archive_name = f"{user_id}-{email}.tar.xz"
+    # Sanitize email for use in filename — replace path separators
+    # and other unsafe characters to prevent path traversal.
+    safe_email = email.replace("/", "_").replace("\\", "_").replace("..", "_")
+    archive_name = f"{user_id}-{safe_email}.tar.xz"
     archive_path = WORKSPACES_ROOT / archive_name
+    # Verify the resolved path is still under WORKSPACES_ROOT
+    if not archive_path.resolve().is_relative_to(  # pragma: no cover
+        WORKSPACES_ROOT.resolve()
+    ):
+        logger.error("Archive path traversal blocked for email %s", email)
+        return None
     try:
         proc = await asyncio.create_subprocess_exec(
             "tar",
