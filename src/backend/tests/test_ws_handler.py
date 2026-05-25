@@ -772,7 +772,7 @@ class TestCleanupConnection:
         ].idle_callbacks.append(state["_idle_cb"])
 
         with patch.object(
-            container_manager,
+            container_manager.registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ) as mock_stop:
@@ -813,7 +813,7 @@ class TestCleanupConnection:
         ].idle_callbacks.append(state["_idle_cb"])
 
         with patch.object(
-            container_manager,
+            container_manager.registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ) as mock_stop:
@@ -846,7 +846,7 @@ class TestCleanupConnection:
         state["workspace_id"] = "ws-cleanup-3"
         container_manager.add_connection("ws-cleanup-3")
         with patch.object(
-            container_manager,
+            container_manager.registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ) as mock_stop:
@@ -1131,7 +1131,7 @@ class TestHandleWorkspaceConnect:
                 side_effect=fake_start,
             ),
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "get_workspace_ports",
                 return_value=[9000, 9001],
             ),
@@ -1170,7 +1170,9 @@ class TestHandleWorkspaceConnect:
                     side_effect=fake_start,
                 ),
                 patch.object(
-                    container_manager, "get_workspace_ports", return_value=[]
+                    container_manager.registry,
+                    "get_workspace_ports",
+                    return_value=[],
                 ),
             ):
                 await handle_workspace_connect(
@@ -1196,7 +1198,7 @@ class TestHandleWorkspaceDisconnect:
         state["workspace_id"] = "ws-1"
 
         with patch.object(
-            container_manager,
+            container_manager.registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ):
@@ -1250,7 +1252,9 @@ class TestHandleRestartContainer:
                 side_effect=fake_start,
             ),
             patch.object(
-                container_manager, "get_workspace_ports", return_value=[9000]
+                container_manager.registry,
+                "get_workspace_ports",
+                return_value=[9000],
             ),
         ):
             await handle_restart_container(ws, state)
@@ -1290,7 +1294,7 @@ class TestStartWorkspaceContainer:
 
         with (
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "start_container",
                 side_effect=fake_start,
             ),
@@ -1347,7 +1351,7 @@ class TestStartWorkspaceContainer:
 
         with (
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "start_container",
                 side_effect=fake_start_created,
             ),
@@ -1364,7 +1368,7 @@ class TestStartWorkspaceContainer:
 
         with (
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "start_container",
                 side_effect=fake_start_connected,
             ),
@@ -1412,7 +1416,7 @@ class TestStartWorkspaceContainer:
 
         with (
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "start_container",
                 side_effect=fake_start,
             ),
@@ -1459,7 +1463,7 @@ class TestStartWorkspaceContainer:
 
         with (
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "start_container",
                 side_effect=fake_start,
             ),
@@ -1596,10 +1600,12 @@ class TestHandleWebsocketDispatch:
                 side_effect=fake_start,
             ),
             patch.object(
-                container_manager, "get_workspace_ports", return_value=[]
+                container_manager.registry,
+                "get_workspace_ports",
+                return_value=[],
             ),
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "stop_and_remove_container",
                 new_callable=AsyncMock,
             ) as mock_stop,
@@ -1640,7 +1646,9 @@ class TestHandleRestartContainerExtra:
                 side_effect=RuntimeError("cleanup boom"),
             ),
             patch.object(
-                container_manager, "get_workspace_ports", return_value=[9000]
+                container_manager.registry,
+                "get_workspace_ports",
+                return_value=[9000],
             ),
         ):
             await handle_restart_container(ws, state)
@@ -1685,7 +1693,9 @@ class TestHandleRestartContainerExtra:
                     side_effect=fake_start,
                 ),
                 patch.object(
-                    container_manager, "get_workspace_ports", return_value=[]
+                    container_manager.registry,
+                    "get_workspace_ports",
+                    return_value=[],
                 ),
             ):
                 await handle_restart_container(ws, state)
@@ -1794,10 +1804,12 @@ class TestHandleWebsocket:
                 side_effect=fake_start,
             ),
             patch.object(
-                container_manager, "get_workspace_ports", return_value=[]
+                container_manager.registry,
+                "get_workspace_ports",
+                return_value=[],
             ),
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "stop_and_remove_container",
                 new_callable=AsyncMock,
             ),
@@ -1889,7 +1901,7 @@ class TestExecHandlers:
             "bark_backend.ws_handler.ExecSession",
             return_value=mock_session,
         ):
-            with patch.object(container_manager, "record_activity"):
+            with patch.object(container_manager.registry, "record_activity"):
                 await handle_exec_start(ws, state, {"command": ["ls"]})
         assert state["exec_session"] is mock_session
         assert state["exec_task"] is not None
@@ -1909,7 +1921,7 @@ class TestExecHandlers:
             "exec_session": session,
         }
         data = base64.b64encode(b"hello").decode()
-        with patch.object(container_manager, "record_activity"):
+        with patch.object(container_manager.registry, "record_activity"):
             await handle_exec_input(state, {"data": data})
         session.write.assert_awaited_with(b"hello")
 
@@ -1952,7 +1964,7 @@ class TestExecHandlers:
 
         session.output = fake_output
         state = {"container_id": "cid"}
-        with patch.object(container_manager, "record_activity"):
+        with patch.object(container_manager.registry, "record_activity"):
             await forward_exec_output(ws, session, state)
         calls = ws.send_json.call_args_list
         output_calls = [
@@ -1974,7 +1986,7 @@ class TestExecHandlers:
         session.output = fake_output
         ws.send_json = AsyncMock(side_effect=RuntimeError("ws dead"))
         state = {"container_id": "cid"}
-        with patch.object(container_manager, "record_activity"):
+        with patch.object(container_manager.registry, "record_activity"):
             await forward_exec_output(ws, session, state)
         # Should not raise
 

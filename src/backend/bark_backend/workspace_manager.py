@@ -75,7 +75,7 @@ async def create_workspace(user_id: str, name: str) -> dict:
     home = home_path(user_id, workspace["id"])
     home.mkdir(parents=True, exist_ok=True)
     # Allocate ports at creation time so ranges are sequential
-    await container_manager.allocate_ports(
+    await container_manager.registry.allocate_ports(
         workspace["id"], workspace["num_ports"]
     )
     return workspace

@@ -200,7 +200,7 @@ class TestAuthRoutes:
     async def test_logout(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            api.container_manager,
+            api.container_manager.registry,
             "stop_user_containers",
             new_callable=AsyncMock,
         ):
@@ -565,7 +565,7 @@ class TestWorkspaceRoutes:
         ws_id = create_resp.json()["id"]
 
         with patch.object(
-            api.container_manager,
+            api.container_manager.registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ):
@@ -588,7 +588,7 @@ class TestWorkspaceRoutes:
         await user_store.update_workspace_container(ws_id, "fake-container-id")
 
         with patch.object(
-            api.container_manager,
+            api.container_manager.registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ) as mock_rm:
@@ -1109,7 +1109,7 @@ class TestAdminEndpoints:
         headers = await self._admin_headers(client)
         with (
             patch.object(
-                container_manager,
+                container_manager.registry,
                 "stop_user_containers",
                 new_callable=AsyncMock,
             ),
@@ -1159,7 +1159,9 @@ class TestAdminEndpoints:
         assert ws_resp.status_code == 200
         # Delete the user
         with patch.object(
-            container_manager, "stop_user_containers", new_callable=AsyncMock
+            container_manager.registry,
+            "stop_user_containers",
+            new_callable=AsyncMock,
         ):
             resp = await client.delete(
                 f"/admin/users/{user['id']}", headers=headers

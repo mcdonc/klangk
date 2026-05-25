@@ -39,7 +39,7 @@ if resolve_env_secret("BARK_TEST_MODE"):  # pragma: no cover
         """Get the idle timeout (per-workspace or global default)."""
         if workspace_id:
             return {
-                "idle_timeout_seconds": container_manager.get_workspace_idle_timeout(
+                "idle_timeout_seconds": container_manager.registry.get_workspace_idle_timeout(
                     workspace_id
                 )
             }
@@ -49,7 +49,9 @@ if resolve_env_secret("BARK_TEST_MODE"):  # pragma: no cover
     async def set_idle_timeout(seconds: int, workspace_id: str | None = None):
         """Set the idle timeout. Per-workspace if workspace_id given, else global."""
         if workspace_id:
-            container_manager.set_workspace_idle_timeout(workspace_id, seconds)
+            container_manager.registry.set_workspace_idle_timeout(
+                workspace_id, seconds
+            )
         else:
             container_manager.IDLE_TIMEOUT_SECONDS = seconds
             container_manager.CHECK_INTERVAL_SECONDS = max(
@@ -326,7 +328,7 @@ async def change_email(
 
 @router.post("/auth/logout")
 async def logout(user: dict = Depends(auth.get_current_user)):
-    await container_manager.stop_user_containers(user["id"])
+    await container_manager.registry.stop_user_containers(user["id"])
     return {"status": "ok"}
 
 
@@ -357,7 +359,7 @@ async def delete_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     if workspace.get("container_id"):
-        await container_manager.stop_and_remove_container(
+        await container_manager.registry.stop_and_remove_container(
             workspace["container_id"]
         )
     await ws_handler.reset_workspace_state(workspace_id)
@@ -541,7 +543,7 @@ async def delete_user(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     # Stop all containers for this user before deleting
-    await container_manager.stop_user_containers(user_id)
+    await container_manager.registry.stop_user_containers(user_id)
     # Archive workspace data before deletion
     await workspace_manager.archive_user_data(user_id, user["email"])
     deleted = await user_store.delete_user(user_id)

@@ -58,15 +58,17 @@ class TestLifespan:
         app = FastAPI()
         with (
             patch.object(
-                main.container_manager,
+                main.container_manager.registry,
                 "adopt_orphaned_containers",
                 new_callable=AsyncMock,
             ) as mock_adopt,
             patch.object(
-                main.container_manager, "start_cleanup_loop"
+                main.container_manager.registry, "start_cleanup_loop"
             ) as mock_start,
             patch.object(
-                main.container_manager, "shutdown", new_callable=AsyncMock
+                main.container_manager.registry,
+                "shutdown",
+                new_callable=AsyncMock,
             ) as mock_shutdown,
         ):
             async with main.lifespan(app):

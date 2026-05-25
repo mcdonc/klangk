@@ -177,7 +177,10 @@ async def start_workspace_container(
     hosting_hostname, hosting_proto, hosting_base_path = derive_hosting_info(
         ws.headers
     )
-    container_id, container_status = await container_manager.start_container(
+    (
+        container_id,
+        container_status,
+    ) = await container_manager.registry.start_container(
         workspace_id,
         host_path,
         home_path,
@@ -199,7 +202,7 @@ async def start_workspace_container(
     if workspace_id not in _workspace_locks:
         _workspace_locks[workspace_id] = asyncio.Lock()
     async with _workspace_locks[workspace_id]:
-        conn_num = container_manager.add_connection(workspace_id)
+        conn_num = container_manager.registry.add_connection(workspace_id)
 
         if conn_num == 1:
             pi_client = PiRpcClient(container_id)
@@ -241,7 +244,7 @@ async def start_workspace_container(
             pass
 
     state["_idle_cb"] = on_idle
-    container_manager.on_idle_stop(workspace_id, on_idle)
+    container_manager.registry.on_idle_stop(workspace_id, on_idle)
 
     # Cache workspace info for auto-restart
     state["workspace"] = workspace
@@ -278,7 +281,7 @@ async def handle_workspace_connect(
 
     await start_workspace_container(ws, state, workspace_id, workspace)
 
-    ports = await container_manager.get_workspace_ports(workspace_id)
+    ports = await container_manager.registry.get_workspace_ports(workspace_id)
     status = state.get("container_status", "created")
     container_name = (
         f"bark-{container_manager.INSTANCE_ID}-{workspace_id[:12]}"
@@ -343,7 +346,7 @@ async def handle_prompt(ws: WebSocket, state: dict, msg: dict) -> None:
     try:
         if pi_client is None or not pi_client.is_alive:
             raise PiDeadError("Pi client is dead or missing")
-        container_manager.record_activity(state["container_id"])
+        container_manager.registry.record_activity(state["container_id"])
         ws_state = _workspace_state.get(workspace_id, {})
         is_queued = ws_state.get("agent_running", False)
         await user_store.save_message(
@@ -416,7 +419,7 @@ async def handle_prompt(ws: WebSocket, state: dict, msg: dict) -> None:
             return
 
         await start_workspace_container(ws, state, workspace_id, workspace)
-        container_manager.record_activity(state["container_id"])
+        container_manager.registry.record_activity(state["container_id"])
 
         # Retry the prompt in the background so the WebSocket message
         # loop resumes immediately (terminal, abort, etc. keep working).
@@ -441,7 +444,7 @@ async def _retry_prompt_after_restart(
         await asyncio.sleep(0.5)
         pi_client = state.get("pi_client")
         if pi_client and pi_client.is_alive:
-            container_manager.record_activity(state["container_id"])
+            container_manager.registry.record_activity(state["container_id"])
             if not message_saved:
                 await user_store.save_message(workspace_id, "user", text)
             try:
@@ -473,7 +476,7 @@ async def handle_steer(state: dict, msg: dict) -> None:
     pi_client: PiRpcClient | None = state.get("pi_client")
     if pi_client is None:
         return
-    container_manager.record_activity(state["container_id"])
+    container_manager.registry.record_activity(state["container_id"])
     try:
         await pi_client.steer(msg.get("text", ""))
     except PiDeadError:
@@ -484,7 +487,7 @@ async def handle_follow_up(state: dict, msg: dict) -> None:
     pi_client: PiRpcClient | None = state.get("pi_client")
     if pi_client is None:
         return
-    container_manager.record_activity(state["container_id"])
+    container_manager.registry.record_activity(state["container_id"])
     try:
         await pi_client.follow_up(msg.get("text", ""))
     except PiDeadError:
@@ -553,9 +556,9 @@ async def handle_restart_container(ws: WebSocket, state: dict) -> None:
         return
 
     await start_workspace_container(ws, state, workspace_id, workspace)
-    container_manager.record_activity(state["container_id"])
+    container_manager.registry.record_activity(state["container_id"])
 
-    ports = await container_manager.get_workspace_ports(workspace_id)
+    ports = await container_manager.registry.get_workspace_ports(workspace_id)
     ports_str = f" (ports {','.join(str(p) for p in ports)})" if ports else ""
     container_name = (
         f"bark-{container_manager.INSTANCE_ID}-{workspace_id[:12]}"
@@ -605,14 +608,14 @@ async def handle_terminal_start(ws: WebSocket, state: dict, msg: dict) -> None:
     # Sent directly to the frontend (not stdin) so it works even while
     # bash.bashrc is waiting for the entrypoint to finish.
     await ws.send_json({"type": "terminal_output", "data": "\x1b[2J\x1b[H"})
-    container_manager.record_activity(container_id)
+    container_manager.registry.record_activity(container_id)
 
 
 async def handle_terminal_input(state: dict, msg: dict) -> None:
     session: TerminalSession | None = state.get("terminal_session")
     if session is None or not session.is_alive:
         return
-    container_manager.record_activity(state["container_id"])
+    container_manager.registry.record_activity(state["container_id"])
     await session.write(msg.get("data", ""))
 
 
@@ -642,14 +645,14 @@ async def handle_exec_start(ws: WebSocket, state: dict, msg: dict) -> None:
     state["exec_task"] = asyncio.create_task(
         forward_exec_output(ws, session, state)
     )
-    container_manager.record_activity(container_id)
+    container_manager.registry.record_activity(container_id)
 
 
 async def handle_exec_input(state: dict, msg: dict) -> None:
     session: ExecSession | None = state.get("exec_session")
     if session is None or not session.is_alive:
         return
-    container_manager.record_activity(state["container_id"])
+    container_manager.registry.record_activity(state["container_id"])
     import base64
 
     raw = base64.b64decode(msg.get("data", ""))
@@ -698,7 +701,7 @@ async def forward_exec_output(
             )
             container_id = state.get("container_id")
             if container_id:
-                container_manager.record_activity(container_id)
+                container_manager.registry.record_activity(container_id)
         # Process exited — send exit code
         await ws.send_json(
             {
@@ -738,7 +741,7 @@ async def forward_terminal_output(
             await ws.send_json({"type": "terminal_output", "data": data})
             container_id = state.get("container_id")
             if container_id:
-                container_manager.record_activity(container_id)
+                container_manager.registry.record_activity(container_id)
         # Stream ended without cancellation — container likely died
         await ws.send_json(
             {
@@ -825,7 +828,7 @@ async def forward_events(pi_client: PiRpcClient, workspace_id: str) -> None:
                         ws_state["agent_running"] = False
                     cid = ws_state.get("container_id")
                     if cid:
-                        container_manager.record_activity(cid)
+                        container_manager.registry.record_activity(cid)
 
                 # Accumulate and save to history
                 if etype == "TEXT_MESSAGE_CONTENT":
@@ -873,7 +876,7 @@ async def cleanup_connection(ws: WebSocket, state: dict) -> None:
     workspace_id = state.get("workspace_id")
     idle_cb = state.get("_idle_cb")
     if workspace_id and idle_cb:
-        container_manager.remove_idle_callback(workspace_id, idle_cb)
+        container_manager.registry.remove_idle_callback(workspace_id, idle_cb)
         state["_idle_cb"] = None
 
     await stop_terminal(state)
@@ -889,7 +892,7 @@ async def cleanup_connection(ws: WebSocket, state: dict) -> None:
     # kills Pi and (optionally) destroys the container.
     remaining = 0
     if workspace_id:
-        remaining = container_manager.remove_connection(workspace_id)
+        remaining = container_manager.registry.remove_connection(workspace_id)
 
     if remaining == 0 and workspace_id:
         # Last connection — clean up shared Pi state
@@ -909,7 +912,9 @@ async def cleanup_connection(ws: WebSocket, state: dict) -> None:
 
         container_id = state.get("container_id")
         if container_id:
-            await container_manager.stop_and_remove_container(container_id)
+            await container_manager.registry.stop_and_remove_container(
+                container_id
+            )
 
         _workspace_locks.pop(workspace_id, None)
 
@@ -936,7 +941,7 @@ async def reset_workspace_state(workspace_id: str) -> None:
         await pi_client.disconnect()
 
     # Remove all container-level state (refcount, idle callbacks, timeout)
-    container_manager.remove_state(workspace_id)
+    container_manager.registry.remove_state(workspace_id)
 
     _workspace_locks.pop(workspace_id, None)
 
