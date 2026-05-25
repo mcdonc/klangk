@@ -262,14 +262,6 @@ async def attach_container(container_id: str) -> aiodocker.stream.Stream:
 
 async def stop_and_remove_container(container_id: str) -> None:
     """Stop and remove a container. Ports are kept allocated for restart."""
-    import traceback
-
-    caller = "".join(traceback.format_stack()[-3:-1])
-    logger.info(
-        "stop_and_remove_container(%s) called from:\n%s",
-        container_id[:12],
-        caller,
-    )
     docker = await get_docker()
     try:
         container = await docker.containers.get(container_id)
