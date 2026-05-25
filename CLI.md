@@ -42,15 +42,15 @@ Add to `pyproject.toml`:
 
 ## Commands
 
-| Command                     | Description                                                                  |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| `bark login [--server URL]` | Prompt for email/password, store JWT in `~/.config/bark/cli.toml`            |
-| `bark logout`               | Clear stored token                                                           |
-| `bark status`               | Show connection info (server, user, login status)                            |
-| `bark ws list`              | List workspaces (GET /workspaces)                                            |
-| `bark ws create NAME`       | Create a workspace                                                           |
-| `bark ws delete NAME`       | Delete a workspace                                                           |
-| `bark ws shell [WORKSPACE]` | **Main command.** Connect to workspace, drop into bash inside the container. |
+| Command                                                    | Description                                                                      |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `bark login [EMAIL] [--server URL] [--password-file FILE]` | Authenticate. Reuses saved token if valid. `--password-file -` reads from stdin. |
+| `bark logout`                                              | Clear stored token                                                               |
+| `bark status [--plain]`                                    | Show connection info (server, user, login status)                                |
+| `bark ws list [--plain]`                                   | List workspaces                                                                  |
+| `bark ws create NAME`                                      | Create a workspace                                                               |
+| `bark ws delete NAME`                                      | Delete a workspace                                                               |
+| `bark ws shell [WORKSPACE]`                                | **Main command.** Connect to workspace, drop into bash inside the container.     |
 
 ## `bark ws shell` — The Core Flow
 
@@ -85,29 +85,31 @@ This reuses the existing `terminal_manager.py` backend code that the Flutter web
 
 ```toml
 [server]
-url = "http://localhost:8997"
+url = "http://localhost:8995"
 
 [auth]
 token = "eyJ..."
-email = "admin"
+email = "admin@example.com"
 ```
 
 ## Implementation Phases
 
-### Phase 1 (this work): CLI with shell access
+### Phase 1 (done): CLI with shell access
 
-- Create `cli/` package: `__init__.py`, `config.py`, `auth.py`, `client.py`, `main.py`
-- Add typer dependency + `[project.scripts]` entry to `pyproject.toml`
-- `bark login`, `bark logout`, `bark status`
-- `bark workspaces`, `bark create`, `bark delete` (HTTP client via httpx)
-- `bark shell` — WebSocket terminal with raw mode, stdin/stdout forwarding, SIGWINCH
-- Tests for all of the above
-- No backend changes needed
+- `cli/` package: `__init__.py`, `config.py`, `auth.py`, `client.py`, `main.py`
+- typer dependency + `[project.scripts]` entry in `pyproject.toml`
+- `bark login [EMAIL]`, `bark logout`, `bark status [--plain]`
+- `bark ws list [--plain]`, `bark ws create`, `bark ws delete` (HTTP client via httpx)
+- `bark ws shell` — WebSocket terminal with raw mode, stdin/stdout forwarding, select-based interruptible stdin, SIGWINCH via polling
+- `--password-file` for non-interactive login (scripting)
+- Token reuse: `bark login` verifies saved token before prompting
+- Rich output: styled tables, colored error messages
+- 100% test coverage, no global stdin/stdout mutation in tests
 
 ### Phase 2 (future): Host path mounting
 
 - Backend change: accept `hostPath` in `workspace_connect` (admin-only)
-- `--mount PATH` flag on `bark shell`
+- `--mount PATH` flag on `bark ws shell`
 - Local mount: path on same machine as Docker
 - Remote mount: path on server filesystem
 
@@ -124,7 +126,7 @@ email = "admin"
 - Currently hardcoded to `bark-pi` image via `IMAGE_NAME` in `container_manager.py`
 - Store image preference in workspace/user DB records
 - Enables different toolchains (e.g., Rust image, Go image, data science image)
-- CLI impact: add `--image` flag to `bark create`, no other commands change
+- CLI impact: add `--image` flag to `bark ws create`, no other commands change
 - Note: Phase 1 CLI commands are pure REST/WebSocket clients with no Docker or image references, so no refactoring needed
 
 ### Phase 5 (future): File copy command
@@ -139,25 +141,22 @@ email = "admin"
 - Use `docker exec` directly instead of WebSocket PTY for native performance
 - Fall back to WebSocket for remote
 
-## Key Files to Modify
+## Key Files
 
-| File                                  | Change                                   |
-| ------------------------------------- | ---------------------------------------- |
-| `src/backend/pyproject.toml`          | Add typer dep, `[project.scripts]` entry |
-| `src/backend/bark_backend/cli/` (new) | All CLI code                             |
-
-## Key Files to Reference
-
-- `src/backend/bark_backend/terminal_manager.py` — PTY session over `docker exec`, the backend half of what `bark ws shell` connects to
-- `src/backend/bark_backend/ws_handler.py` — WebSocket message handling, `terminal_start`/`terminal_input`/`terminal_output`/`terminal_resize`/`terminal_stop` protocol
-- `src/frontend/lib/agui/agui_client.dart` — WebSocket command shapes (reference for client.py)
-- `src/frontend/lib/terminal/container_terminal.dart` — Flutter terminal implementation (reference for how the web UI does it)
+| File                                           | Purpose                                        |
+| ---------------------------------------------- | ---------------------------------------------- |
+| `src/backend/bark_backend/cli/main.py`         | Typer app, top-level + `ws` subcommand group   |
+| `src/backend/bark_backend/cli/auth.py`         | Login/logout with token reuse and rich prompts |
+| `src/backend/bark_backend/cli/client.py`       | HTTP + WebSocket client, shell PTY forwarding  |
+| `src/backend/bark_backend/cli/config.py`       | Config storage (~/.config/bark/cli.toml)       |
+| `src/backend/bark_backend/terminal_manager.py` | Backend PTY session (docker exec)              |
+| `src/backend/bark_backend/ws_handler.py`       | WebSocket terminal protocol                    |
 
 ## Verification
 
-1. `devenv shell -- test-backend` — all existing + new tests pass
+1. `devenv shell -- test-backend` — all tests pass with 100% coverage
 2. Start Bark normally (`devenv up`), then in another terminal:
-   - `bark login --server http://localhost:8997` with admin/admin
+   - `bark login admin@example.com` — authenticate
    - `bark ws list` — lists workspaces
    - `bark ws create cli-test` — creates a workspace
    - `bark ws shell cli-test` — drops into bash inside container

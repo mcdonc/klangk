@@ -55,6 +55,20 @@ Open [http://localhost:8995](http://localhost:8995) (nginx) and log in with `adm
 7. **Monitor activity** in the debug panel
 8. **Manage users** (admin only) — add, edit, delete users and toggle admin roles
 
+### CLI Access
+
+Bark also provides a CLI for terminal-based access to the same containers:
+
+```bash
+bark login admin@example.com        # authenticate (prompts for password)
+bark ws list                         # list workspaces
+bark ws create my-project            # create a workspace
+bark ws shell my-project             # drop into bash inside the container
+bark ws delete my-project            # delete a workspace
+```
+
+The CLI connects to the running Bark backend over HTTP + WebSocket — it works locally and against remote servers. See [CLI.md](CLI.md) for the full CLI reference and roadmap.
+
 ### Environment Variables
 
 All settings can be overridden in `.env`. Defaults are provided in `devenv.nix` at low priority so `.env` values take precedence.

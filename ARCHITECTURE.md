@@ -31,6 +31,7 @@ $BARK_DATA_DIR/workspaces/<user-id>/work/<workspace-id>/
 ### Components
 
 - **Backend** (`src/backend/`): Python/FastAPI — single-port server for API, WebSocket, and frontend static files
+- **CLI** (`src/backend/bark_backend/cli/`): `bark` command — typer-based thin client that talks to the backend over HTTP + WebSocket for terminal access to containers. See [CLI.md](CLI.md).
 - **Frontend** (`src/frontend/`): Flutter Web — chat with markdown rendering, syntax-highlighted code blocks, file viewer, debug panel
 - **Docker** (`src/dockerimage/`): Custom Dockerfile for Pi agent containers with Python3, Node.js, build-essential, SQLite, vim, emacs, network tools, Pi extensions
 
@@ -100,6 +101,11 @@ bark/
   src/backend/
     pyproject.toml              # Python deps: fastapi, aiodocker, aiosqlite, bcrypt, python-jose
     bark_backend/
+      cli/                      # CLI tool (bark command) — typer app, thin HTTP+WebSocket client
+        main.py                 # Typer app: login, logout, status, ws {list,create,delete,shell}
+        auth.py                 # Login/logout with token reuse, rich prompts, --password-file
+        client.py               # BarkClient (HTTP), WebSocket shell session with PTY forwarding
+        config.py               # Config storage (~/.config/bark/cli.toml)
       main.py                   # FastAPI app, lifespan, default user seeding, static file serving
       api.py                    # API route handlers (health, auth, workspaces, files, messages, admin) via APIRouter
       auth.py                   # Register/login/logout, JWT with roles, bcrypt, require_role(), email validation, verification tokens
@@ -353,38 +359,38 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 
 **`file:` prefix:** Any env var can be prefixed with `file:` to read the value from a file at runtime (e.g. `BARK_JWT_SECRET=file:/run/secrets/jwt`). The file contents are stripped of leading/trailing whitespace. This works with secret management tools like agenix/sops that write decrypted secrets to files. If the file cannot be read, an error is logged and the value is treated as unset.
 
-| Variable                    | Default                              | Description                                                                                                                                               |
-| --------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BARK_NGINX_PORT`           | `8995`                               | **Primary access point** — nginx reverse proxy port (UI, API, WebSocket, hosted apps)                                                                     |
-| `BARK_PORT`                 | `8997`                               | Backend (FastAPI/uvicorn) port — proxied through nginx, not accessed directly                                                                             |
-| `BARK_SOLIPLEX_PORT`        | `8555`                               | Soliplex backend port (unused unless Soliplex integration is configured)                                                                                  |
-| `BARK_DATA_DIR`             | `~/.bark/data`                       | Database, workspaces, Pi sessions                                                                                                                         |
-| `BARK_PLUGINS_DIR`          | `~/.bark/plugins`                    | Fetched plugins (outside repo for `execIfModified`)                                                                                                       |
-| `BARK_IMAGE_NAME`           | `bark-pi`                            | Docker image name for workspace containers                                                                                                                |
-| `BARK_INSTANCE_ID`          | `default`                            | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup                                             |
-| `BARK_HOSTING_HOSTNAME`     | (auto-derived)                       | Hostname for hosted app URLs. Behind a reverse proxy: uses `X-Forwarded-Host` as-is. Direct access: uses `Host` header with `BARK_NGINX_PORT` substituted |
-| `BARK_HOSTING_PROTO`        | (from `X-Forwarded-Proto` or `http`) | Protocol for user-facing app URLs. Auto-derived from request headers if not set                                                                           |
-| `BARK_HOSTING_BASE_PATH`    | (from `X-Forwarded-Prefix` or empty) | Base path prefix for user-facing app URLs (e.g., `/bark`). Auto-derived from nginx `X-Forwarded-Prefix` header if not set                                 |
-| `BARK_IDLE_TIMEOUT_SECONDS` | `1800`                               | Container idle timeout in seconds (check interval auto-computed as timeout/3, clamped 10–60s)                                                             |
-|`BARK_LOGIN_LOCKOUT_WINDOW`  |                                 `300`|Time window in seconds for counting failed login attempts.                                                                                                 |
-|`BARK_LOGIN_LOCKOUT_FAILURES`|                                   `0`|Number of failed login attempts before a lockout. Default `0` (disabled).                                                                                  |
-|`BARK_LOGIN_LOCKOUT_DURATION`|                                 `900`|Duration of lockout in seconds (only relevant when `BARK_LOGIN_LOCKOUT_FAILURES` > 0).                                                                     |
-| `LLM_API_KEY`               |                                      | LLM provider API key                                                                                                                                      |
-| `LLM_BASE_URL`              |                                      | LLM API URL (any OpenAI-compatible provider)                                                                                                              |
-| `LLM_MODEL`                 |                                      | LLM model name                                                                                                                                            |
-| `BARK_JWT_SECRET`           |                                      | JWT signing secret                                                                                                                                        |
-| `BARK_DEFAULT_USER`         |                                      | Auto-seeded admin email on startup                                                                                                                        |
-| `BARK_DEFAULT_PASSWORD`     |                                      | Auto-seeded password on startup (omit to generate random; supports `file:` prefix)                                                                        |
-| `BARK_SMTP_HOST`            |                                      | SMTP server hostname (if set, uses SMTP; otherwise uses sendmail)                                                                                         |
-| `BARK_SMTP_PORT`            | `587`                                | SMTP server port                                                                                                                                          |
-| `BARK_SMTP_USER`            |                                      | SMTP auth username                                                                                                                                        |
-| `BARK_SMTP_PASSWORD`        |                                      | SMTP auth password                                                                                                                                        |
-| `BARK_SMTP_FROM`            |                                      | Email sender address (falls back to SMTP_USER, then noreply@localhost)                                                                                    |
-| `BARK_SMTP_USE_TLS`         | `true`                               | Use STARTTLS for SMTP                                                                                                                                     |
-| `BARK_SENDMAIL_PATH`        | `sendmail`                           | Path to sendmail binary (used when BARK_SMTP_HOST is not set)                                                                                             |
-| `LOGFIRE_TOKEN`             |                                      | Pydantic Logfire write token (opt-in)                                                                                                                     |
-| `LOGFIRE_BASE_URL`          | `https://logfire-api.pydantic.dev`   | Logfire API base URL (for self-hosted instances)                                                                                                          |
-| `LOGFIRE_ENVIRONMENT`       |                                      | Logfire environment tag (e.g., `production`, `staging`) — filters traces in the dashboard. Also passed to containers via `OTEL_RESOURCE_ATTRIBUTES`.      |
+| Variable                      | Default                              | Description                                                                                                                                               |
+| ----------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BARK_NGINX_PORT`             | `8995`                               | **Primary access point** — nginx reverse proxy port (UI, API, WebSocket, hosted apps)                                                                     |
+| `BARK_PORT`                   | `8997`                               | Backend (FastAPI/uvicorn) port — proxied through nginx, not accessed directly                                                                             |
+| `BARK_SOLIPLEX_PORT`          | `8555`                               | Soliplex backend port (unused unless Soliplex integration is configured)                                                                                  |
+| `BARK_DATA_DIR`               | `~/.bark/data`                       | Database, workspaces, Pi sessions                                                                                                                         |
+| `BARK_PLUGINS_DIR`            | `~/.bark/plugins`                    | Fetched plugins (outside repo for `execIfModified`)                                                                                                       |
+| `BARK_IMAGE_NAME`             | `bark-pi`                            | Docker image name for workspace containers                                                                                                                |
+| `BARK_INSTANCE_ID`            | `default`                            | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup                                             |
+| `BARK_HOSTING_HOSTNAME`       | (auto-derived)                       | Hostname for hosted app URLs. Behind a reverse proxy: uses `X-Forwarded-Host` as-is. Direct access: uses `Host` header with `BARK_NGINX_PORT` substituted |
+| `BARK_HOSTING_PROTO`          | (from `X-Forwarded-Proto` or `http`) | Protocol for user-facing app URLs. Auto-derived from request headers if not set                                                                           |
+| `BARK_HOSTING_BASE_PATH`      | (from `X-Forwarded-Prefix` or empty) | Base path prefix for user-facing app URLs (e.g., `/bark`). Auto-derived from nginx `X-Forwarded-Prefix` header if not set                                 |
+| `BARK_IDLE_TIMEOUT_SECONDS`   | `1800`                               | Container idle timeout in seconds (check interval auto-computed as timeout/3, clamped 10–60s)                                                             |
+| `BARK_LOGIN_LOCKOUT_WINDOW`   | `300`                                | Time window in seconds for counting failed login attempts.                                                                                                |
+| `BARK_LOGIN_LOCKOUT_FAILURES` | `0`                                  | Number of failed login attempts before a lockout. Default `0` (disabled).                                                                                 |
+| `BARK_LOGIN_LOCKOUT_DURATION` | `900`                                | Duration of lockout in seconds (only relevant when `BARK_LOGIN_LOCKOUT_FAILURES` > 0).                                                                    |
+| `LLM_API_KEY`                 |                                      | LLM provider API key                                                                                                                                      |
+| `LLM_BASE_URL`                |                                      | LLM API URL (any OpenAI-compatible provider)                                                                                                              |
+| `LLM_MODEL`                   |                                      | LLM model name                                                                                                                                            |
+| `BARK_JWT_SECRET`             |                                      | JWT signing secret                                                                                                                                        |
+| `BARK_DEFAULT_USER`           |                                      | Auto-seeded admin email on startup                                                                                                                        |
+| `BARK_DEFAULT_PASSWORD`       |                                      | Auto-seeded password on startup (omit to generate random; supports `file:` prefix)                                                                        |
+| `BARK_SMTP_HOST`              |                                      | SMTP server hostname (if set, uses SMTP; otherwise uses sendmail)                                                                                         |
+| `BARK_SMTP_PORT`              | `587`                                | SMTP server port                                                                                                                                          |
+| `BARK_SMTP_USER`              |                                      | SMTP auth username                                                                                                                                        |
+| `BARK_SMTP_PASSWORD`          |                                      | SMTP auth password                                                                                                                                        |
+| `BARK_SMTP_FROM`              |                                      | Email sender address (falls back to SMTP_USER, then noreply@localhost)                                                                                    |
+| `BARK_SMTP_USE_TLS`           | `true`                               | Use STARTTLS for SMTP                                                                                                                                     |
+| `BARK_SENDMAIL_PATH`          | `sendmail`                           | Path to sendmail binary (used when BARK_SMTP_HOST is not set)                                                                                             |
+| `LOGFIRE_TOKEN`               |                                      | Pydantic Logfire write token (opt-in)                                                                                                                     |
+| `LOGFIRE_BASE_URL`            | `https://logfire-api.pydantic.dev`   | Logfire API base URL (for self-hosted instances)                                                                                                          |
+| `LOGFIRE_ENVIRONMENT`         |                                      | Logfire environment tag (e.g., `production`, `staging`) — filters traces in the dashboard. Also passed to containers via `OTEL_RESOURCE_ATTRIBUTES`.      |
 
 ### Ports
 
