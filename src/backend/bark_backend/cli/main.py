@@ -62,9 +62,19 @@ def logout() -> None:
 
 
 @app.command()
-def status() -> None:
+def status(
+    plain: bool = typer.Option(False, "--plain", help="Plain text output"),
+) -> None:
     """Show connection info (server, user)."""
     cfg = _cfg()
+    if plain:
+        print(f"server={cfg.server.url}")
+        if cfg.auth.token:
+            print(f"user={cfg.auth.email or 'unknown'}")
+            print("status=logged_in")
+        else:
+            print("status=not_logged_in")
+        return
     console = Console()
     table = Table(show_header=False, box=None, pad_edge=False)
     table.add_column(style="bold")

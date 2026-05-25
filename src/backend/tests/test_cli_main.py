@@ -155,11 +155,7 @@ class TestMainCLI:
         with pytest.raises(typer.Exit):
             main.shell(None)
 
-    def test_status_not_logged_in(self, tmp_path, monkeypatch):
-        from io import StringIO
-
-        from rich.console import Console
-
+    def test_status_not_logged_in(self, tmp_path, monkeypatch, capsys):
         from bark_backend.cli import main
 
         config_path = tmp_path / "cli.toml"
@@ -171,17 +167,20 @@ class TestMainCLI:
         cfg.auth.token = None
         cfg.save()
 
-        buf = StringIO()
-        monkeypatch.setattr(
-            "bark_backend.cli.main.Console",
-            lambda: Console(file=buf, force_terminal=True),
-        )
-        main.status()
-        output = buf.getvalue()
+        main.status(plain=True)
+        output = capsys.readouterr().out
         assert "custom:1234" in output
-        assert "not logged in" in output
+        assert "not_logged_in" in output
 
-    def test_status_logged_in(self, logged_in_cfg, monkeypatch):
+    def test_status_logged_in(self, logged_in_cfg, capsys):
+        from bark_backend.cli import main
+
+        main.status(plain=True)
+        output = capsys.readouterr().out
+        assert "test@example.com" in output
+        assert "logged_in" in output
+
+    def test_status_rich_logged_in(self, logged_in_cfg):
         from io import StringIO
 
         from rich.console import Console
@@ -189,14 +188,67 @@ class TestMainCLI:
         from bark_backend.cli import main
 
         buf = StringIO()
-        monkeypatch.setattr(
-            "bark_backend.cli.main.Console",
-            lambda: Console(file=buf, force_terminal=True),
-        )
-        main.status()
+        with patch.object(
+            main,
+            "Console",
+            return_value=Console(file=buf, force_terminal=True),
+        ):
+            main.status(plain=False)
         output = buf.getvalue()
         assert "test@example.com" in output
         assert "logged in" in output
+
+    def test_status_rich_not_logged_in(self, tmp_path, monkeypatch):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from bark_backend.cli import main
+
+        config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr(
+            "bark_backend.cli.config._CONFIG_PATH", config_path
+        )
+        cfg = CLIConfig()
+        cfg.auth.token = None
+        cfg.save()
+
+        buf = StringIO()
+        with patch.object(
+            main,
+            "Console",
+            return_value=Console(file=buf, force_terminal=True),
+        ):
+            main.status(plain=False)
+        output = buf.getvalue()
+        assert "not logged in" in output
+
+    def test_status_plain_logged_in(self, logged_in_cfg, capsys):
+        from bark_backend.cli import main
+
+        main.status(plain=True)
+        output = capsys.readouterr().out
+        assert "server=http://localhost:8997" in output
+        assert "user=test@example.com" in output
+        assert "status=logged_in" in output
+
+    def test_status_plain_not_logged_in(self, tmp_path, monkeypatch, capsys):
+        from bark_backend.cli import main
+
+        config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr(
+            "bark_backend.cli.config._CONFIG_PATH", config_path
+        )
+        cfg = CLIConfig()
+        cfg.server.url = "http://custom:1234"
+        cfg.auth.token = None
+        cfg.save()
+
+        main.status(plain=True)
+        output = capsys.readouterr().out
+        assert "server=http://custom:1234" in output
+        assert "status=not_logged_in" in output
+        assert "user=" not in output
 
     def test_logout_command(self, logged_in_cfg):
         from bark_backend.cli import main
