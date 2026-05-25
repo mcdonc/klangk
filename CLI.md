@@ -127,7 +127,13 @@ email = "admin"
 - CLI impact: add `--image` flag to `bark create`, no other commands change
 - Note: Phase 1 CLI commands are pure REST/WebSocket clients with no Docker or image references, so no refactoring needed
 
-### Phase 5 (future): Local Docker exec optimization
+### Phase 5 (future): File copy command
+
+- `bark cp LOCAL WORKSPACE:PATH` and `bark cp WORKSPACE:PATH LOCAL` for copying files to/from containers
+- Upload uses the existing REST file upload API (`POST /workspaces/{id}/files/upload`)
+- Download uses the existing download API (`GET /workspaces/{id}/files/download`); for directories the backend returns a zip — the CLI automatically unzips it to the local destination
+
+### Phase 6 (future): Local Docker exec optimization
 
 - Detect when backend is local
 - Use `docker exec` directly instead of WebSocket PTY for native performance
