@@ -800,10 +800,11 @@ async def cleanup_connection(ws: WebSocket, state: dict) -> None:
     await stop_terminal(state)
     await stop_exec(state)
 
-    # Stop the container on disconnect. The container will be recreated
-    # on the next connection (page refresh, navigate back, etc.).
+    # Only stop the container if this connection created it.
+    # If we connected to an already-running container ("connected" status),
+    # leave it alive for other sessions and let the idle timeout handle it.
     container_id = state.get("container_id")
-    if container_id:
+    if container_id and state.get("container_status") != "connected":
         await container_manager.stop_and_remove_container(container_id)
 
 

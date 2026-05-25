@@ -318,10 +318,17 @@ async def _ws_exec(
         loop = asyncio.get_event_loop()
         exit_code = 1
 
+        stop = asyncio.Event()
+
         async def stdin_forward() -> None:
-            while True:
-                data = await loop.run_in_executor(None, os.read, 0, 65536)
-                if not data:  # pragma: no cover
+            while not stop.is_set():
+                ready = await loop.run_in_executor(
+                    None, lambda: select.select([0], [], [], 0.2)[0]
+                )
+                if not ready:  # pragma: no cover
+                    continue
+                data = os.read(0, 65536)
+                if not data:
                     await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
                     break
                 await ws.send(  # pragma: no cover
@@ -347,16 +354,14 @@ async def _ws_exec(
                     exit_code = data.get("code", 0)
                     break
 
-        # Run both, but stdout_forward drives the lifecycle —
-        # when it receives exec_exit, we're done.
+        # stdout_forward drives the lifecycle — when it receives
+        # exec_exit, it sets stop so stdin_forward exits promptly.
         stdout_task = asyncio.create_task(stdout_forward())
         stdin_task = asyncio.create_task(stdin_forward())
         await stdout_task
-        stdin_task.cancel()
-        try:
-            await stdin_task
-        except asyncio.CancelledError:  # pragma: no cover
-            pass
+        stop.set()
+        # stdin_forward exits within 0.2s thanks to select timeout
+        await asyncio.wait_for(stdin_task, timeout=2)
 
         await ws.send(json.dumps({"cmd": "exec_stop"}))
         return exit_code
