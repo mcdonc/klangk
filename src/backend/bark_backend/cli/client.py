@@ -290,7 +290,15 @@ async def _run_shell(
                 _current_rows[0] = new_rows
                 await _send_resize()
 
-    await asyncio.gather(stdin_loop(), stdout_loop(), resize_loop())
+    async def heartbeat_loop() -> None:  # pragma: no cover
+        while not stop_event.is_set():
+            await asyncio.sleep(60)
+            if not stop_event.is_set():
+                await ws.send(json.dumps({"cmd": "heartbeat"}))
+
+    await asyncio.gather(
+        stdin_loop(), stdout_loop(), resize_loop(), heartbeat_loop()
+    )
 
 
 async def _ws_exec(
@@ -370,10 +378,17 @@ async def _ws_exec(
                     exit_code = 1
                     break
 
+        async def heartbeat_loop() -> None:  # pragma: no cover
+            while not stop.is_set():
+                await asyncio.sleep(60)
+                if not stop.is_set():
+                    await ws.send(json.dumps({"cmd": "heartbeat"}))
+
         # stdout_forward drives the lifecycle — when it receives
         # exec_exit, it sets stop so stdin_forward exits promptly.
         stdout_task = asyncio.create_task(stdout_forward())
         stdin_task = asyncio.create_task(stdin_forward())
+        heartbeat_task = asyncio.create_task(heartbeat_loop())
         await stdout_task
         stop.set()
         # stdin_forward exits within 0.2s thanks to select timeout
@@ -385,6 +400,11 @@ async def _ws_exec(
                 await stdin_task
             except asyncio.CancelledError:
                 pass
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
 
         await ws.send(json.dumps({"cmd": "exec_stop"}))
         return exit_code

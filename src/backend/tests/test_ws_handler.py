@@ -2082,6 +2082,41 @@ class TestExecDispatch:
             await handle_websocket(ws)
         mock.assert_awaited_once()
 
+    async def test_dispatch_heartbeat(self, user):
+        from bark_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        ws = _mock_ws(query_params={"token": token})
+        ws.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "heartbeat"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            ws_handler, "handle_heartbeat", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(ws)
+        mock.assert_awaited_once()
+
+
+class TestHandleHeartbeat:
+    async def test_records_activity(self):
+        state = {"container_id": "cid-hb"}
+        container_manager.registry.track_activity("cid-hb", "ws-hb")
+        container_manager.registry.states["ws-hb"].last_activity = 0.0
+
+        await ws_handler.handle_heartbeat(state)
+
+        assert container_manager.registry.states["ws-hb"].last_activity > 0.0
+        container_manager.registry.states.pop("ws-hb", None)
+        container_manager.registry._cid_to_wsid.pop("cid-hb", None)
+
+    async def test_no_container_id(self):
+        state = {}
+        # Should not raise
+        await ws_handler.handle_heartbeat(state)
+
 
 class TestResetWorkspaceState:
     async def test_resets_pi_and_refcount(self):

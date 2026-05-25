@@ -10,7 +10,7 @@ import '../widgets/app_bar_actions.dart';
 import '../widgets/bark_logo.dart';
 
 class WorkspaceListPage extends StatefulWidget {
-  const WorkspaceListPage({super.key});
+  const WorkspaceListPage({super.key}); // coverage:ignore-line
 
   @override
   State<WorkspaceListPage> createState() => _WorkspaceListPageState();

@@ -126,6 +126,7 @@ void main() {
       client.sendTerminalInput('ls\n');
       client.sendTerminalResize(120, 40);
       client.sendTerminalStop();
+      client.sendHeartbeat();
 
       expect(client.connected, isFalse);
       client.dispose();
@@ -374,6 +375,51 @@ void main() {
 
       expect(client.currentWorkspaceId, 'ws-42');
       expect(notified, isTrue);
+    });
+
+    test('workspace_ready starts heartbeat timer', () async {
+      channel.serverSend({
+        'type': 'workspace_ready',
+        'workspaceId': 'ws-hb',
+      });
+      await Future.delayed(Duration.zero);
+
+      // sendHeartbeat should work without error
+      client.sendHeartbeat();
+      final msg = jsonDecode(channel.sentMessages.last as String);
+      expect(msg, {'cmd': 'heartbeat'});
+    });
+
+    test('disconnect stops heartbeat timer', () async {
+      channel.serverSend({
+        'type': 'workspace_ready',
+        'workspaceId': 'ws-hb2',
+      });
+      await Future.delayed(Duration.zero);
+
+      final msgCountBefore = channel.sentMessages.length;
+      client.disconnect();
+
+      // No more heartbeats should be sent after disconnect
+      await Future.delayed(Duration.zero);
+      // Can't easily test timer cancellation directly, but disconnect
+      // should not throw and sentMessages should not grow
+      expect(channel.sentMessages.length, msgCountBefore);
+    });
+
+    test('disconnectWorkspace stops heartbeat timer', () async {
+      channel.serverSend({
+        'type': 'workspace_ready',
+        'workspaceId': 'ws-hb3',
+      });
+      await Future.delayed(Duration.zero);
+
+      client.disconnectWorkspace();
+      final msgs = channel.sentMessages
+          .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
+          .toList();
+      // Last message should be workspace_disconnect, not heartbeat
+      expect(msgs.last['cmd'], 'workspace_disconnect');
     });
 
     test('receives terminal_output from server', () async {

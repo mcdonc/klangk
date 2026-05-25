@@ -672,6 +672,24 @@ class TestFileRoutes:
         assert resp.status_code == 200
         assert resp.json()["content"] == "hello world"
 
+    async def test_upload_records_activity(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        cid = "cid-upload-test"
+        await user_store.update_workspace_container(ws_id, cid)
+        container_manager.registry.track_activity(cid, ws_id)
+        container_manager.registry.states[ws_id].last_activity = 0.0
+
+        await client.post(
+            f"/workspaces/{ws_id}/files/upload?path=test.txt",
+            headers=headers,
+            files={"file": ("test.txt", b"data", "text/plain")},
+        )
+
+        assert container_manager.registry.states[ws_id].last_activity > 0.0
+        container_manager.registry.states.pop(ws_id, None)
+        container_manager.registry._cid_to_wsid.pop(cid, None)
+
     async def test_read_nonexistent(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)

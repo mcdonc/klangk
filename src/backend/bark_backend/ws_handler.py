@@ -152,6 +152,8 @@ async def handle_websocket(ws: WebSocket) -> None:
                 await handle_exec_close_stdin(conn_state)
             elif cmd == "exec_stop":
                 await handle_exec_stop(conn_state)
+            elif cmd == "heartbeat":
+                await handle_heartbeat(conn_state)
             else:
                 await send_error(ws, f"Unknown command: {cmd}")
 
@@ -704,6 +706,12 @@ async def handle_exec_close_stdin(state: dict) -> None:
 
 async def handle_exec_stop(state: dict) -> None:
     await stop_exec(state)
+
+
+async def handle_heartbeat(state: dict) -> None:
+    container_id = state.get("container_id")
+    if container_id is not None:
+        container_manager.registry.record_activity(container_id)
 
 
 async def stop_exec(state: dict) -> None:

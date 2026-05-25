@@ -515,6 +515,10 @@ async def upload_file(
     ):  # pragma: no cover — FastAPI rejects empty filename at 422 first
         raise HTTPException(status_code=400, detail="No filename provided")
 
+    container_id = workspace.get("container_id")
+    if container_id is not None:
+        container_manager.registry.record_activity(container_id)
+
     content = await file.read()
     try:
         saved_path = file_service.write_file(

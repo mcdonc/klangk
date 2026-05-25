@@ -21,6 +21,7 @@ class AguiClient extends ChangeNotifier {
   AuthService? _auth;
   String? _currentWorkspaceId;
   bool _connected = false;
+  Timer? _heartbeatTimer;
 
   /// Override for testing to inject a fake channel factory.
   @visibleForTesting
@@ -87,6 +88,7 @@ class AguiClient extends ChangeNotifier {
             _eventController.add(AguiEvent.fromJson(json));
           } else if (type == 'workspace_ready') {
             _currentWorkspaceId = json['workspaceId'] as String?;
+            _startHeartbeat();
             notifyListeners();
           } else if (type == 'terminal_output') {
             _terminalOutputController.add(json['data'] as String? ?? '');
@@ -111,6 +113,7 @@ class AguiClient extends ChangeNotifier {
   }
 
   void disconnect() {
+    _stopHeartbeat();
     _channel?.sink.close();
     _channel = null;
     _connected = false;
@@ -128,6 +131,7 @@ class AguiClient extends ChangeNotifier {
   }
 
   void disconnectWorkspace() {
+    _stopHeartbeat();
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
     notifyListeners();
@@ -180,6 +184,23 @@ class AguiClient extends ChangeNotifier {
 
   void sendTerminalStop() {
     _send({'cmd': 'terminal_stop'});
+  }
+
+  void sendHeartbeat() {
+    _send({'cmd': 'heartbeat'});
+  }
+
+  void _startHeartbeat() {
+    _stopHeartbeat();
+    _heartbeatTimer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => sendHeartbeat(),
+    );
+  }
+
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
   }
 
   @override
