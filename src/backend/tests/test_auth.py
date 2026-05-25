@@ -1,6 +1,8 @@
 """Tests for auth module: password hashing, JWT tokens, login/register."""
 
+import os
 import pytest
+from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
@@ -151,6 +153,179 @@ class TestLogin:
             )
         assert exc_info.value.status_code == 401
 
+
+class TestLoginRateLimit:
+    """"Tests for login brute-force protection.
+
+    These require BARK_LOGIN_LOCKOUT_FAILURES > 0 (default is 0 = disabled),
+    so the class setup/teardown temporarily sets it to 5 and reloads
+    the auth module.
+    """
+
+    def setup_method(self):
+        self._prev = os.environ.get("BARK_LOGIN_LOCKOUT_FAILURES")
+        os.environ["BARK_LOGIN_LOCKOUT_FAILURES"] = "5"
+        import importlib
+        import bark_backend.auth as a
+        importlib.reload(a)
+        globals()["auth"] = a
+        globals()["user_store"] = a.user_store
+
+    def teardown_method(self):
+        if self._prev is None:
+            os.environ.pop("BARK_LOGIN_LOCKOUT_FAILURES", None)
+        else:
+            os.environ["BARK_LOGIN_LOCKOUT_FAILURES"] = self._prev
+        import importlib
+        import bark_backend.auth as a
+        importlib.reload(a)
+        globals()["auth"] = a
+        globals()["user_store"] = a.user_store
+
+    async def test_login_wrong_password_records_attempt(self, user):
+        """Wrong password increments attempt count."""
+        for i in range(auth.LOGIN_LOCKOUT_FAILURES - 1):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth.login(
+                    auth.LoginRequest(
+                        email="testuser@example.com", password="wrong"
+                    )
+                )
+            assert exc_info.value.status_code == 401
+        info = await user_store.get_login_attempt_info("testuser@example.com")
+        assert info["attempt_count"] == auth.LOGIN_LOCKOUT_FAILURES - 1
+
+    async def test_login_lockout_after_max_attempts(self, user):
+        """Locked out after LOGIN_LOCKOUT_FAILURES failed attempts."""
+        for i in range(auth.LOGIN_LOCKOUT_FAILURES):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth.login(
+                    auth.LoginRequest(
+                        email="testuser@example.com", password="wrong"
+                    )
+                )
+            if i < auth.LOGIN_LOCKOUT_FAILURES - 1:
+                assert exc_info.value.status_code == 401
+            else:
+                assert exc_info.value.status_code == 429
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.login(
+                auth.LoginRequest(
+                    email="testuser@example.com", password="wrong"
+                )
+            )
+        assert exc_info.value.status_code == 429
+
+    async def test_login_lockout_message_shows_remaining_time(self, user):
+        """Lockout message includes remaining minutes."""
+        locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+        await user_store.record_failed_login("testuser@example.com")
+        await user_store.set_login_lockout(
+            "testuser@example.com", locked_until.isoformat()
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.login(
+                auth.LoginRequest(
+                    email="testuser@example.com", password="wrong"
+                )
+            )
+        assert exc_info.value.status_code == 429
+        assert "minutes" in exc_info.value.detail
+
+    async def test_expired_lockout_allows_login(self, user):
+        """An expired lockout doesn't block the user from logging in."""
+        expired_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+        await user_store.record_failed_login("testuser@example.com")
+        await user_store.set_login_lockout(
+            "testuser@example.com", expired_until.isoformat()
+        )
+        result = await auth.login(
+            auth.LoginRequest(
+                email="testuser@example.com", password="testpass"
+            )
+        )
+        assert result.access_token
+
+    async def test_login_blocked_while_lockout_active(self, user):
+        """Active lockout returns 429 with a countdown."""
+        locked_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+        await user_store.record_failed_login("testuser@example.com")
+        await user_store.set_login_lockout(
+            "testuser@example.com", locked_until.isoformat()
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.login(
+                auth.LoginRequest(
+                    email="testuser@example.com", password="testpass"
+                )
+            )
+        assert exc_info.value.status_code == 429
+
+    async def test_should_lockout_helper(self, db):
+        """_should_lockout returns True at threshold, False below/above."""
+        assert auth._should_lockout({"attempt_count": 4}) is False
+        assert auth._should_lockout({"attempt_count": 5}) is True
+        assert auth._should_lockout(None) is False
+
+    async def test_should_lockout_respects_configured_threshold(self, db):
+        """_should_lockout uses LOGIN_LOCKOUT_FAILURES as the threshold."""
+        assert auth._should_lockout({"attempt_count": 5}) is True
+        assert auth._should_lockout({"attempt_count": 4}) is False
+
+    async def test_is_locked_out_helper(self, db):
+        """_is_locked_out returns True/msg when locked_until is in the future."""
+        future = datetime.now(timezone.utc) + timedelta(minutes=10)
+        past = datetime.now(timezone.utc) - timedelta(minutes=1)
+        locked = {"attempt_count": 5, "locked_until": future.isoformat()}
+        is_locked, msg = auth._is_locked_out(locked)
+        assert is_locked is True
+        assert "minutes" in msg
+        expired = {"attempt_count": 5, "locked_until": past.isoformat()}
+        is_locked2, msg2 = auth._is_locked_out(expired)
+        assert is_locked2 is False
+        assert msg2 is None
+        no_lock = {"attempt_count": 1, "locked_until": None}
+        assert auth._is_locked_out(no_lock) == (False, None)
+        assert auth._is_locked_out(None) == (False, None)
+
+    async def test_login_lockout_disabled_when_zero(self, db, monkeypatch):
+        """With LOGIN_LOCKOUT_FAILURES=0, no rate limiting occurs."""
+        monkeypatch.setattr(auth, "LOGIN_LOCKOUT_FAILURES", 0)
+        for _ in range(20):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth.login(
+                    auth.LoginRequest(
+                        email="testuser@example.com", password="wrong"
+                    )
+                )
+            assert exc_info.value.status_code == 401
+
+    async def test_login_nonexistent_user_also_rate_limited(self, db):
+        """Nonexistent users are also rate-limited to prevent enumeration."""
+        for i in range(auth.LOGIN_LOCKOUT_FAILURES):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth.login(
+                    auth.LoginRequest(
+                        email="nobody@example.com", password="wrong"
+                    )
+                )
+            if i < auth.LOGIN_LOCKOUT_FAILURES - 1:
+                assert exc_info.value.status_code == 401
+            else:
+                assert exc_info.value.status_code == 429
+
+    async def test_login_clears_attempts(self, db, user):
+        """Successful login clears failed attempt counts."""
+        await user_store.record_failed_login("testuser@example.com")
+        await user_store.record_failed_login("testuser@example.com")
+        result = await auth.login(
+            auth.LoginRequest(
+                email="testuser@example.com", password="testpass"
+            )
+        )
+        assert result.access_token
+        info = await user_store.get_login_attempt_info("testuser@example.com")
+        assert info is None
 
 class TestVerification:
     def test_create_and_decode_verification_token(self):

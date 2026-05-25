@@ -27,7 +27,8 @@ export async function registerUser(
   return { token, headers: { Authorization: `Bearer ${token}` } };
 }
 
-/** Log in via the UI by typing credentials into the Flutter login form. */
+/** Type email + password into the Flutter login form and click Login.
+ *  Returns once the response is received (does not wait for Workspaces). */
 export async function loginViaUI(page: Page, email: string, password: string) {
   await page.goto("/");
   await waitForFlutter(page);
@@ -56,6 +57,36 @@ export async function loginViaUI(page: Page, email: string, password: string) {
 
   await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
   await expect(page).toHaveTitle(/Workspaces/i, { timeout: 10_000 });
+}
+
+/** Like loginViaUI but does not wait for Workspaces — use when
+ *  expecting login to fail. Returns the page title after the click. */
+export async function tryLogin(page: Page, email: string, password: string) {
+  await page.goto("/");
+  await waitForFlutter(page);
+
+  const { width, height } = vp(page);
+  const cx = width / 2;
+  const f = fv(page);
+
+  const accessibilityBtn = page.locator("button", {
+    hasText: "Enable accessibility",
+  });
+  if (await accessibilityBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await accessibilityBtn.click();
+    await page.waitForTimeout(300);
+  }
+
+  await f.click({ position: { x: cx, y: height * 0.52 }, force: true });
+  await page.waitForTimeout(200);
+  await page.keyboard.type(email);
+
+  await f.click({ position: { x: cx, y: height * 0.6 }, force: true });
+  await page.waitForTimeout(200);
+  await page.keyboard.type(password);
+
+  await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
+  await page.waitForTimeout(500);
 }
 
 // Flutter Web renders to <canvas> inside <flutter-view>, so standard DOM

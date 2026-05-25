@@ -11,6 +11,48 @@ from pydantic import BaseModel
 from . import user_store
 from .env_util import resolve_env_secret
 
+# --- Rate limiting constants ---
+LOGIN_LOCKOUT_WINDOW = int(
+    resolve_env_secret("BARK_LOGIN_LOCKOUT_WINDOW", "300")
+)
+LOGIN_LOCKOUT_DURATION = int(
+    resolve_env_secret("BARK_LOGIN_LOCKOUT_DURATION", "900")
+)
+
+
+def _is_locked_out(
+    attempt_info: dict | None,
+) -> tuple[bool, str | None]:
+    """Check if an email is locked out.
+
+    Returns (is_locked, error_message).
+    """
+    if attempt_info is None:
+        return False, None
+    locked_until = attempt_info.get("locked_until")
+    if locked_until is None:
+        return False, None
+    locked_dt = datetime.fromisoformat(locked_until)
+    if datetime.now(timezone.utc) < locked_dt:
+        remaining = int(
+            (locked_dt - datetime.now(timezone.utc)).total_seconds()
+        )
+        return (
+            True,
+            f"Too many failed attempts. Try again in {remaining // 60} minutes.",
+        )
+    return False, None
+
+
+def _should_lockout(attempt_info: dict | None) -> bool:
+    """Return True if the attempt count exceeds the threshold."""
+    if attempt_info is None:
+        return False
+    return (
+        attempt_info.get("attempt_count", 0) >= LOGIN_LOCKOUT_FAILURES
+    )  # pragma: no cover
+
+
 SECRET_KEY = resolve_env_secret(
     "BARK_JWT_SECRET", "bark-dev-secret-change-in-production"
 )
@@ -18,6 +60,11 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
 MIN_PASSWORD_LENGTH = int(resolve_env_secret("BARK_MIN_PASSWORD_LENGTH", "4"))
+
+# Set BARK_LOGIN_LOCKOUT_FAILURES=0 to disable login lockout.
+LOGIN_LOCKOUT_FAILURES = int(
+    resolve_env_secret("BARK_LOGIN_LOCKOUT_FAILURES", "0")
+)
 
 security = HTTPBearer(auto_error=False)
 
@@ -108,16 +155,40 @@ async def register(
 
 
 async def login(req: LoginRequest) -> TokenResponse:
+    # Check if locked out before doing any expensive work
+    if LOGIN_LOCKOUT_FAILURES > 0:
+        attempt_info = await user_store.get_login_attempt_info(req.email)
+        is_locked, msg = _is_locked_out(attempt_info)
+        if is_locked:
+            raise HTTPException(status_code=429, detail=msg)
+
     user = await user_store.get_user_by_email(req.email)
     if user is None or not verify_password(
         req.password, user["password_hash"]
     ):
+        if LOGIN_LOCKOUT_FAILURES > 0:
+            await user_store.record_failed_login(req.email)
+            # Check if this attempt triggered a lockout
+            updated_info = await user_store.get_login_attempt_info(req.email)
+            if _should_lockout(updated_info):
+                locked_until = datetime.now(timezone.utc) + timedelta(
+                    seconds=LOGIN_LOCKOUT_DURATION
+                )
+                await user_store.set_login_lockout(
+                    req.email, locked_until.isoformat()
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Too many failed attempts. Locked out for {LOGIN_LOCKOUT_DURATION // 60} minutes.",
+                )
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.get("verified"):
         raise HTTPException(
             status_code=403, detail="Account not verified. Check your email."
         )
 
+    if LOGIN_LOCKOUT_FAILURES > 0:
+        await user_store.clear_login_attempts(req.email)
     roles = await user_store.get_user_roles(user["id"])
     token = create_token(user["id"], user["email"], roles)
     return TokenResponse(access_token=token)

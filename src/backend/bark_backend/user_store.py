@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 import aiosqlite
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .env_util import resolve_env_secret
@@ -87,6 +88,14 @@ async def init_db() -> None:
                 is_complete INTEGER NOT NULL DEFAULT 0,
                 is_queued INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                email TEXT PRIMARY KEY,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                first_attempt_at TEXT NOT NULL,
+                locked_until TEXT
             )
         """)
         await db.execute("""
@@ -570,6 +579,74 @@ async def get_messages(workspace_id: str) -> list[dict]:
             }
             for row in rows
         ]
+    finally:
+        await db.close()
+
+
+# Login attempt tracking (brute-force protection)
+
+
+async def record_failed_login(email: str) -> None:
+    """Record a failed login attempt for an email. Resets after the window."""
+    db = await get_db()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        # Try to update existing row
+        await db.execute(
+            """INSERT INTO login_attempts (email, attempt_count, first_attempt_at)
+               VALUES (?, 1, ?) ON CONFLICT(email) DO UPDATE SET
+               attempt_count = attempt_count + 1""",
+            (email, now),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_login_attempt_info(
+    email: str,
+) -> dict[str, int | str | None] | None:
+    """Return login attempt info for an email, or None if no attempts tracked."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """SELECT attempt_count, first_attempt_at, locked_until
+               FROM login_attempts WHERE email = ?""",
+            (email,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "attempt_count": row["attempt_count"],
+            "first_attempt_at": row["first_attempt_at"],
+            "locked_until": row["locked_until"],
+        }
+    finally:
+        await db.close()
+
+
+async def set_login_lockout(email: str, locked_until: str) -> None:
+    """Set the lockout time for an email after too many failed attempts."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE login_attempts SET locked_until = ? WHERE email = ?",
+            (locked_until, email),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def clear_login_attempts(email: str) -> None:
+    """Clear all login attempts for an email (on successful login)."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "DELETE FROM login_attempts WHERE email = ?", (email,)
+        )
+        await db.commit()
     finally:
         await db.close()
 

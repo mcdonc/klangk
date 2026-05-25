@@ -255,3 +255,44 @@ class TestMessageDetails:
         await user_store.save_message(workspace["id"], "user", "hello")
         messages = await user_store.get_messages(workspace["id"])
         assert messages[0]["created_at"] is not None
+
+
+class TestLoginAttempts:
+    async def test_record_and_get_attempts(self, db):
+        await user_store.record_failed_login("alice@example.com")
+        info = await user_store.get_login_attempt_info("alice@example.com")
+        assert info is not None
+        assert info["attempt_count"] == 1
+        assert info["locked_until"] is None
+
+    async def test_record_multiple_attempts(self, db):
+        for _ in range(3):
+            await user_store.record_failed_login("alice@example.com")
+        info = await user_store.get_login_attempt_info("alice@example.com")
+        assert info["attempt_count"] == 3
+
+    async def test_get_attempt_info_nonexistent(self, db):
+        info = await user_store.get_login_attempt_info("nobody@example.com")
+        assert info is None
+
+    async def test_set_and_get_lockout(self, db):
+        from datetime import datetime, timedelta, timezone
+
+        await user_store.record_failed_login("alice@example.com")
+        locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+        await user_store.set_login_lockout(
+            "alice@example.com", locked_until.isoformat()
+        )
+        info = await user_store.get_login_attempt_info("alice@example.com")
+        assert info["locked_until"] is not None
+
+    async def test_clear_attempts(self, db):
+        await user_store.record_failed_login("alice@example.com")
+        await user_store.record_failed_login("alice@example.com")
+        await user_store.clear_login_attempts("alice@example.com")
+        info = await user_store.get_login_attempt_info("alice@example.com")
+        assert info is None  # row deleted
+
+    async def test_clear_attempts_nonexistent(self, db):
+        # Should not raise
+        await user_store.clear_login_attempts("nobody@example.com")

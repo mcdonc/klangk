@@ -50,9 +50,8 @@ async function globalSetup() {
       "LLM_BASE_URL is set but LLM_MODEL is not — add LLM_MODEL to .env",
     );
   } else {
-    throw new Error(
-      "LLM_BASE_URL is not set — add LLM_BASE_URL and LLM_MODEL to .env to enable LLM tests",
-    );
+    // No LLM configured — skip warmup.
+    console.log("LLM not configured — skipping warmup");
   }
 
   console.log(
@@ -73,6 +72,7 @@ async function globalSetup() {
         ...process.env,
         BARK_PORT: backendPort,
         BARK_DATA_DIR: dataDir,
+        BARK_LOGIN_LOCKOUT_FAILURES: "5",
         BARK_JWT_SECRET: "e2e-test-secret",
         BARK_DEFAULT_USER: "admin@example.com",
         BARK_DEFAULT_PASSWORD: "admin",

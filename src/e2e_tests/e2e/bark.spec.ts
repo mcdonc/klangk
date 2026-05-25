@@ -16,6 +16,7 @@ import {
   openWorkspace,
   createAndOpenWorkspace,
   dockerContainersForWorkspace,
+  tryLogin,
 } from "./helpers";
 
 test.describe("Bark E2E", () => {
@@ -32,28 +33,28 @@ test.describe("Bark E2E", () => {
     const email = `wrong-pw-${Date.now()}@test.example.com`;
     await registerUser(request, email);
 
-    // Type credentials manually instead of loginViaUI (which waits 15s
-    // for a Workspaces title that never comes on failed login).
-    await page.goto("/");
-    await waitForFlutter(page);
-    const { width, height } = vp(page);
-    const cx = width / 2;
-    const f = fv(page);
-
-    await f.click({ position: { x: cx, y: height * 0.52 }, force: true });
-    await page.waitForTimeout(300);
-    await page.keyboard.type(email);
-
-    await f.click({ position: { x: cx, y: height * 0.6 }, force: true });
-    await page.waitForTimeout(300);
-    await page.keyboard.type("wrongpassword");
-
-    await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
-
-    // Wait briefly for the login attempt to complete, then verify
-    // we're still on the login page (not redirected to workspaces).
+    await tryLogin(page, email, "wrongpassword");
     await page.waitForTimeout(500);
     await expect(page).toHaveTitle(/Login/i);
+  });
+
+  test("login gets locked out after too many wrong passwords", async ({
+    page,
+    request,
+  }) => {
+    const email = `lockout-${Date.now()}@test.example.com`;
+    await registerUser(request, email);
+
+    // Exhaust the 5-attempt limit with wrong passwords
+    for (let i = 0; i < 5; i++) {
+      await tryLogin(page, email, "wrongpassword");
+      await expect(page).toHaveTitle(/Login/i);
+    }
+
+    // Now the account is locked — even correct password returns 429
+    await tryLogin(page, email, TEST_PASSWORD);
+    await page.waitForTimeout(500);
+    await expect(page).toHaveTitle(/Login/i); // still on login page
   });
 
   test("navigate to workspace and see IDE layout", async ({

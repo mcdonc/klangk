@@ -104,7 +104,7 @@ bark/
       api.py                    # API route handlers (health, auth, workspaces, files, messages, admin) via APIRouter
       auth.py                   # Register/login/logout, JWT with roles, bcrypt, require_role(), email validation, verification tokens
       email_service.py          # Email sending via SMTP or sendmail (verification emails)
-      user_store.py             # SQLite: users (with verified flag), workspaces, roles, user_roles, token blocklist, message history
+      user_store.py             # SQLite: users (with verified flag), workspaces, roles, user_roles, token blocklist, login_attempts, message history
       workspace_manager.py      # Workspace CRUD + host directory management + user data archival
       container_manager.py      # Docker lifecycle, port allocation, idle timeout, session resume env, shutdown cleanup
       pi_rpc_client.py          # docker attach subprocess for Pi stdin/stdout JSON-RPC (chunked reads for large events)
@@ -172,6 +172,7 @@ bark/
 - Admin user management: list/add/edit/delete users, toggle roles, user data archived to tar.xz on deletion, self-deletion prevented
 - Open registration with email verification (test mode auto-verifies for E2E tests)
 - Login rejects unverified accounts
+- Login brute-force protection: failed attempts tracked per email in SQLite; `BARK_LOGIN_LOCKOUT_FAILURES=N` failures within `BARK_LOGIN_LOCKOUT_WINDOW=S` (default 300s) triggers a `BARK_LOGIN_LOCKOUT_DURATION=D` (default 900s) lockout (429 with remaining seconds). Disabled by default (N=0).
 - Session persists across page reloads (async token loading before routing)
 - Deep link preservation: unauthenticated visits to protected URLs redirect to login, then return to the original URL after successful login
 
@@ -365,7 +366,9 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `BARK_HOSTING_PROTO`        | (from `X-Forwarded-Proto` or `http`) | Protocol for user-facing app URLs. Auto-derived from request headers if not set                                                                           |
 | `BARK_HOSTING_BASE_PATH`    | (from `X-Forwarded-Prefix` or empty) | Base path prefix for user-facing app URLs (e.g., `/bark`). Auto-derived from nginx `X-Forwarded-Prefix` header if not set                                 |
 | `BARK_IDLE_TIMEOUT_SECONDS` | `1800`                               | Container idle timeout in seconds (check interval auto-computed as timeout/3, clamped 10–60s)                                                             |
-| `SOLIPLEX_URL`              | (empty)                              | Soliplex base URL as seen by browser (empty = same origin)                                                                                                |
+|`BARK_LOGIN_LOCKOUT_WINDOW`  |                                 `300`|Time window in seconds for counting failed login attempts.                                                                                                 |
+|`BARK_LOGIN_LOCKOUT_FAILURES`|                                   `0`|Number of failed login attempts before a lockout. Default `0` (disabled).                                                                                  |
+|`BARK_LOGIN_LOCKOUT_DURATION`|                                 `900`|Duration of lockout in seconds (only relevant when `BARK_LOGIN_LOCKOUT_FAILURES` > 0).                                                                     |
 | `LLM_API_KEY`               |                                      | LLM provider API key                                                                                                                                      |
 | `LLM_BASE_URL`              |                                      | LLM API URL (any OpenAI-compatible provider)                                                                                                              |
 | `LLM_MODEL`                 |                                      | LLM model name                                                                                                                                            |
@@ -549,7 +552,7 @@ plugins:
 ### Data
 
 - All data stored in `$BARK_DATA_DIR` (defaults to `~/.bark/data`)
-- SQLite database: `bark.db` (users, workspaces, messages, token blocklist)
+- SQLite database: `bark.db` (users, workspaces, messages, token blocklist, login attempts)
 - Workspace files: `workspaces/<user-id>/work/<workspace-id>/` (mounted as `/work`)
 - Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/bark` — dotfiles, bash history, Pi sessions)
 - Database persists across restarts and rebuilds
