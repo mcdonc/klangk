@@ -479,7 +479,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch.object(main, "_ws_exec", fake_exec):
                 with pytest.raises(typer.Exit) as exc_info:
-                    main.exec(ctx, workspace="my-ws")
+                    main.exec_cmd(ctx, workspace="my-ws")
                 assert exc_info.value.exit_code == 0
 
     def test_exec_no_command(self, logged_in_cfg):
@@ -488,7 +488,7 @@ class TestMainCLI:
         ctx = MagicMock()
         ctx.args = []
         with pytest.raises(typer.Exit) as exc_info:
-            main.exec(ctx, workspace="my-ws")
+            main.exec_cmd(ctx, workspace="my-ws")
         assert exc_info.value.exit_code == 1
 
     def test_exec_workspace_not_found(self, logged_in_cfg, monkeypatch):
@@ -502,5 +502,5 @@ class TestMainCLI:
         ctx = MagicMock()
         ctx.args = ["ls"]
         with pytest.raises(typer.Exit) as exc_info:
-            main.exec(ctx, workspace="nope")
+            main.exec_cmd(ctx, workspace="nope")
         assert exc_info.value.exit_code == 1

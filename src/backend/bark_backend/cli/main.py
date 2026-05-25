@@ -227,19 +227,20 @@ def shell(
     asyncio.run(_ws_shell(ws_url, token, ws.id))
 
 
-@app.command(
+@ws_app.command(
+    "exec",
     context_settings={
         "allow_extra_args": True,
         "allow_interspersed_args": False,
-    }
+    },
 )
-def exec(
+def exec_cmd(
     ctx: typer.Context,
     workspace: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
     """Run a command in a workspace container.
 
-    Also usable as an rsync transport: rsync -avz -e "bark exec" src/ ws:/dest/
+    Also usable as an rsync transport: rsync -avz -e "bark ws exec" src/ ws:/dest/
     """
     cfg = _cfg()
     _require_auth()
