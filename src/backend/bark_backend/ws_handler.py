@@ -416,32 +416,57 @@ async def handle_prompt(ws: WebSocket, state: dict, msg: dict) -> None:
             return
 
         await start_workspace_container(ws, state, workspace_id, workspace)
-
-        # Record activity immediately to prevent idle timeout from killing it again
         container_manager.record_activity(state["container_id"])
-        logger.info(
-            "Container restarted, container_id=%s, waiting for Pi...",
-            state["container_id"],
+
+        # Retry the prompt in the background so the WebSocket message
+        # loop resumes immediately (terminal, abort, etc. keep working).
+        state["_retry_task"] = asyncio.create_task(
+            _retry_prompt_after_restart(
+                ws, state, workspace_id, text, message_saved
+            )
         )
 
-        # Wait for Pi to be ready and session to resume, then retry the prompt
-        await asyncio.sleep(4)
+
+async def _retry_prompt_after_restart(
+    ws: WebSocket,
+    state: dict,
+    workspace_id: str,
+    text: str,
+    message_saved: bool,
+) -> None:
+    """Wait for Pi to be ready after restart, then resend the prompt."""
+    # Poll with short sleeps instead of a single long sleep so Pi
+    # is reached as soon as it's ready.
+    for _ in range(20):  # 20 × 0.5s = 10s max
+        await asyncio.sleep(0.5)
         pi_client = state.get("pi_client")
-        logger.info(
-            "After wait: pi_client=%s, is_alive=%s",
-            pi_client,
-            pi_client.is_alive if pi_client else None,
-        )
         if pi_client and pi_client.is_alive:
             container_manager.record_activity(state["container_id"])
             if not message_saved:
                 await user_store.save_message(workspace_id, "user", text)
-            logger.info("Sending prompt after restart: %s", text[:50])
-            await pi_client.prompt(text)
-            logger.info("Prompt sent successfully after restart")
-        else:
-            logger.error("Pi client not alive after restart")
-            await send_error(ws, "Failed to restart container")
+            try:
+                await pi_client.prompt(text)
+                logger.info(
+                    "Prompt sent after restart for workspace %s",
+                    workspace_id,
+                )
+            except (
+                PiDeadError,
+                OSError,
+                ConnectionError,
+            ) as e:  # pragma: no cover
+                logger.error("Prompt after restart failed: %s", e)
+                await send_error(ws, "Failed to send prompt after restart")
+            return
+    logger.error("Pi not alive after restart for workspace %s", workspace_id)
+    try:
+        await send_error(ws, "Failed to restart container")
+    except (
+        WebSocketDisconnect,
+        RuntimeError,
+        ConnectionError,
+    ):  # pragma: no cover
+        pass
 
 
 async def handle_steer(state: dict, msg: dict) -> None:

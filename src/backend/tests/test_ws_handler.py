@@ -976,6 +976,7 @@ class TestHandlePrompt:
                 "workspace_id": workspace["id"],
             }
             await handle_prompt(ws, state, {"text": "hello after restart"})
+            await state["_retry_task"]
 
         pi_new.prompt.assert_awaited_once_with("hello after restart")
         container_manager._containers.pop("new-cid", None)
@@ -1022,6 +1023,7 @@ class TestHandlePrompt:
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             await handle_prompt(ws, state, {"text": "hello"})
+            await state["_retry_task"]
 
         calls = [c[0][0] for c in ws.send_json.call_args_list]
         assert any("Failed to restart" in str(c) for c in calls)
@@ -1065,6 +1067,7 @@ class TestHandlePrompt:
                 "workspace_id": workspace["id"],
             }
             await handle_prompt(ws, state, {"text": "hello"})
+            await state["_retry_task"]
 
         pi_new.prompt.assert_awaited_once()
         container_manager._containers.pop("new-cid", None)
@@ -1115,6 +1118,7 @@ class TestHandlePrompt:
                 "workspace_id": workspace["id"],
             }
             await handle_prompt(ws, state, {"text": "hello"})
+            await state["_retry_task"]
 
         pi_new.prompt.assert_awaited_once()
         container_manager._containers.pop("new-cid", None)
