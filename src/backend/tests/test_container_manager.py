@@ -537,7 +537,7 @@ class TestStopContainer:
             container_manager, "get_docker", return_value=mock_docker
         ):
             await container_manager.stop_and_remove_container("cid")
-        mock_c.stop.assert_awaited_once()
+        mock_c.delete.assert_awaited()
         assert "cid" not in container_manager._containers
 
     async def test_stop_docker_error(self):
@@ -578,7 +578,7 @@ class TestRemoveContainer:
             container_manager, "get_docker", return_value=mock_docker
         ):
             await container_manager.stop_and_remove_container("cid")
-        mock_c.stop.assert_awaited_once()
+        mock_c.delete.assert_awaited()
         mock_c.delete.assert_awaited_once_with(force=True)
         assert "cid" not in container_manager._containers
 
@@ -622,7 +622,7 @@ class TestStopUserContainers:
             container_manager, "get_docker", return_value=mock_docker
         ):
             await container_manager.stop_user_containers(user["id"])
-        mock_c.stop.assert_awaited_once()
+        mock_c.delete.assert_awaited()
         assert "cid" not in container_manager._containers
 
     async def test_stop_user_no_containers(self, user):
@@ -660,7 +660,7 @@ class TestShutdown:
         ):
             container_manager._docker = mock_docker
             await container_manager.shutdown()
-        mock_c.stop.assert_awaited()
+        mock_c.delete.assert_awaited()
         assert "cid" not in container_manager._containers
         mock_docker.close.assert_awaited_once()
 
@@ -775,7 +775,7 @@ class TestCleanupIdleContainers:
                 await task
             except asyncio.CancelledError:
                 pass
-        mock_c.stop.assert_awaited()
+        mock_c.delete.assert_awaited()
         assert "cid" not in container_manager._containers
 
     async def test_idle_calls_workspace_killed_callback(self):
@@ -939,7 +939,7 @@ class TestCleanupIdleContainers:
             except asyncio.CancelledError:
                 pass
         # Container should still be stopped despite callback error
-        mock_c.stop.assert_awaited()
+        mock_c.delete.assert_awaited()
 
     async def test_per_workspace_timeout_uses_event_wait(self):
         """When per-workspace timeouts exist, cleanup uses Event-based wait."""
@@ -971,7 +971,7 @@ class TestCleanupIdleContainers:
                     await task
                 except asyncio.CancelledError:
                     pass
-            mock_c.stop.assert_awaited()
+            mock_c.delete.assert_awaited()
         finally:
             container_manager._workspace_idle_timeouts.clear()
             container_manager._containers.clear()
@@ -1017,7 +1017,7 @@ class TestCleanupIdleContainers:
                         await container_manager.cleanup_idle_containers()
                     except asyncio.CancelledError:
                         pass
-            mock_c.stop.assert_awaited()
+            mock_c.delete.assert_awaited()
         finally:
             container_manager._workspace_idle_timeouts.clear()
             container_manager._containers.clear()

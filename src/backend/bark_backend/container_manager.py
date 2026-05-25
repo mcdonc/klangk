@@ -273,7 +273,8 @@ async def stop_and_remove_container(container_id: str) -> None:
     docker = await get_docker()
     try:
         container = await docker.containers.get(container_id)
-        await container.stop()
+        # force=True sends SIGKILL immediately — no need for a
+        # separate stop() which would SIGTERM + wait up to 10s.
         await container.delete(force=True)
         logger.info("Stopped container %s", container_id)
     except aiodocker.exceptions.DockerError as e:
