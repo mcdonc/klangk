@@ -1,0 +1,46 @@
+name: CLI E2E Tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/backend/**"
+      - "src/cli-e2e/**"
+      - "src/dockerimage/**"
+      - ".github/workflows/cli-e2e-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - "src/cli-e2e/**"
+      - "src/dockerimage/**"
+      - ".github/workflows/cli-e2e-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e src/backend/
+
+      - name: Pull base image
+        run: docker pull ghcr.io/mcdonc/bark/bark-pi-base:latest
+
+      - name: Build workspace image
+        run: |
+          STAGING=$(mktemp -d)
+          mkdir -p "$STAGING/extensions" "$STAGING/tools"
+          docker build --platform linux/amd64 \
+            --build-context plugin-extensions="$STAGING/extensions" \
+            --build-context plugin-tools="$STAGING/tools" \
+            -t bark-pi src/dockerimage/
+
+      - name: Run CLI E2E tests
+        run: python -m pytest src/cli-e2e -v -p no:xdist --no-cov
