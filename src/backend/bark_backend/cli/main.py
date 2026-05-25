@@ -19,6 +19,13 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 
+ws_app = typer.Typer(
+    name="ws",
+    help="Manage workspaces.",
+    rich_markup_mode="rich",
+)
+app.add_typer(ws_app, name="ws")
+
 _cfg_cache: CLIConfig | None = None
 
 
@@ -92,7 +99,7 @@ def status(
     console.print(table)
 
 
-@app.command("workspaces")
+@ws_app.command("list")
 def list_workspaces(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
@@ -117,7 +124,7 @@ def list_workspaces(
     console.print(table)
 
 
-@app.command()
+@ws_app.command()
 def create(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
@@ -127,7 +134,7 @@ def create(
     typer.echo(f"Created workspace {name} ({ws.id[:12]})")
 
 
-@app.command()
+@ws_app.command()
 def delete(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
@@ -141,7 +148,7 @@ def delete(
     typer.echo(f"Deleted workspace {name}")
 
 
-@app.command()
+@ws_app.command()
 def shell(
     workspace: str | None = typer.Argument(
         None, help="Workspace name (or select interactively)"
@@ -167,7 +174,7 @@ def shell(
     else:
         workspaces = client.list_workspaces()
         if not workspaces:
-            typer.echo("No workspaces found — create one with bark create.")
+            typer.echo("No workspaces found — create one with bark ws create.")
             raise typer.Exit(code=1)
         if len(workspaces) == 1:
             ws = workspaces[0]
