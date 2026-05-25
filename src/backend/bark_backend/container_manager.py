@@ -58,6 +58,9 @@ _port_lock: asyncio.Lock = asyncio.Lock()
 # Connection refcount per workspace: workspace_id -> count
 # Tracks how many WebSocket connections are using each workspace's container.
 _workspace_connections: dict[str, int] = {}
+# Called when a workspace's container is killed by idle timeout.
+# Set by ws_handler to clean up Pi state. Signature: async (workspace_id) -> None
+_on_workspace_killed: object = None
 # Signals the cleanup loop to wake up early when a short timeout is set.
 # Created lazily to avoid binding to the wrong event loop at import time.
 _cleanup_wake: asyncio.Event | None = None
@@ -336,6 +339,12 @@ def get_workspace_idle_timeout(workspace_id: str) -> int:
     return _workspace_idle_timeouts.get(workspace_id, IDLE_TIMEOUT_SECONDS)
 
 
+def set_on_workspace_killed(callback) -> None:
+    """Register a callback for when a container is killed by idle timeout."""
+    global _on_workspace_killed
+    _on_workspace_killed = callback
+
+
 def on_idle_stop(workspace_id: str, callback) -> None:
     """Register a callback to be called when a workspace container is stopped due to idle timeout."""
     _idle_callbacks.setdefault(workspace_id, []).append(callback)
@@ -390,6 +399,14 @@ async def cleanup_idle_containers() -> None:
                 except Exception as e:
                     logger.error("Idle callback error: %s", e)
             await stop_and_remove_container(cid)
+            # Clean up shared workspace state (Pi client, refcount, etc.)
+            if _on_workspace_killed:
+                try:
+                    await _on_workspace_killed(wid)
+                except Exception as e:
+                    logger.error(
+                        "Workspace killed callback error for %s: %s", wid, e
+                    )
 
 
 async def adopt_orphaned_containers() -> None:

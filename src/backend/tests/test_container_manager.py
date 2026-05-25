@@ -778,6 +778,75 @@ class TestCleanupIdleContainers:
         mock_c.stop.assert_awaited()
         assert "cid" not in container_manager._containers
 
+    async def test_idle_calls_workspace_killed_callback(self):
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("cid")
+        mock_docker.containers.get = AsyncMock(return_value=mock_c)
+
+        container_manager._containers["cid"] = {
+            "last_activity": time.time()
+            - container_manager.IDLE_TIMEOUT_SECONDS
+            - 100,
+            "workspace_id": "ws-killed",
+        }
+
+        killed_cb = AsyncMock()
+        old_cb = container_manager._on_workspace_killed
+        container_manager._on_workspace_killed = killed_cb
+
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
+            task = asyncio.create_task(
+                container_manager.cleanup_idle_containers()
+            )
+            await asyncio.sleep(0.05)
+            container_manager.get_cleanup_wake().set()
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        killed_cb.assert_awaited_once_with("ws-killed")
+        container_manager._on_workspace_killed = old_cb
+
+    async def test_idle_workspace_killed_callback_error(self):
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("cid")
+        mock_docker.containers.get = AsyncMock(return_value=mock_c)
+
+        container_manager._containers["cid"] = {
+            "last_activity": time.time()
+            - container_manager.IDLE_TIMEOUT_SECONDS
+            - 100,
+            "workspace_id": "ws-err",
+        }
+
+        killed_cb = AsyncMock(side_effect=RuntimeError("boom"))
+        old_cb = container_manager._on_workspace_killed
+        container_manager._on_workspace_killed = killed_cb
+
+        with patch.object(
+            container_manager, "get_docker", return_value=mock_docker
+        ):
+            task = asyncio.create_task(
+                container_manager.cleanup_idle_containers()
+            )
+            await asyncio.sleep(0.05)
+            container_manager.get_cleanup_wake().set()
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # Should not raise — error is logged
+        killed_cb.assert_awaited_once()
+        container_manager._on_workspace_killed = old_cb
+
     async def test_active_container_not_stopped(self):
         mock_docker = _mock_docker()
 

@@ -914,5 +914,34 @@ async def cleanup_connection(ws: WebSocket, state: dict) -> None:
         _workspace_locks.pop(workspace_id, None)
 
 
+async def reset_workspace_state(workspace_id: str) -> None:
+    """Clean up shared Pi state for a workspace.
+
+    Called when a container is killed externally (idle timeout,
+    manual stop) so the next workspace_connect starts Pi fresh
+    instead of reusing a dead client.
+    """
+    ws_state = _workspace_state.pop(workspace_id, {})
+
+    event_task = ws_state.get("event_task")
+    if event_task:
+        event_task.cancel()
+        try:
+            await event_task
+        except asyncio.CancelledError:
+            pass
+
+    pi_client: PiRpcClient | None = ws_state.get("pi_client")
+    if pi_client:
+        await pi_client.disconnect()
+
+    # Reset refcount so next connect sees conn_num==1
+    container_manager._workspace_connections.pop(workspace_id, None)
+
+    _workspace_locks.pop(workspace_id, None)
+
+    logger.info("Reset workspace state for %s", workspace_id)
+
+
 async def send_error(ws: WebSocket, message: str) -> None:
     await ws.send_json({"type": "error", "message": message})

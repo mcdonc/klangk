@@ -41,6 +41,7 @@ from bark_backend.ws_handler import (
     handle_exec_stop,
     forward_exec_output,
     stop_exec,
+    reset_workspace_state,
 )
 
 
@@ -2088,3 +2089,34 @@ class TestExecDispatch:
         ) as mock:
             await handle_websocket(ws)
         mock.assert_awaited_once()
+
+
+class TestResetWorkspaceState:
+    async def test_resets_pi_and_refcount(self):
+        pi = _mock_pi_client()
+        ws_handler._workspace_state["ws-reset"] = {
+            "pi_client": pi,
+            "event_task": asyncio.create_task(asyncio.sleep(10)),
+            "subscribers": set(),
+        }
+        container_manager._workspace_connections["ws-reset"] = 2
+        ws_handler._workspace_locks["ws-reset"] = asyncio.Lock()
+
+        await reset_workspace_state("ws-reset")
+
+        assert "ws-reset" not in ws_handler._workspace_state
+        assert "ws-reset" not in container_manager._workspace_connections
+        assert "ws-reset" not in ws_handler._workspace_locks
+        pi.disconnect.assert_awaited_once()
+
+    async def test_noop_for_unknown_workspace(self):
+        await reset_workspace_state("ws-unknown")  # should not raise
+
+    async def test_no_event_task(self):
+        pi = _mock_pi_client()
+        ws_handler._workspace_state["ws-no-task"] = {
+            "pi_client": pi,
+            "subscribers": set(),
+        }
+        await reset_workspace_state("ws-no-task")
+        pi.disconnect.assert_awaited_once()
