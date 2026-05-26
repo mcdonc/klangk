@@ -47,6 +47,7 @@
 
 ## CI
 
+- **Consolidate E2E workflows into a single e2e.yml**: `frontend-e2e-tests.yml` and `cli-e2e-tests.yml` share the same devenv setup and Docker build. Merge them into a single `e2e.yml` with jobs for frontend and CLI E2E tests that share a common setup. Include rate-limiting (e.g., the "skip if no commits in the last hour" check) so neither suite runs too frequently on scheduled triggers. Alternatively, factor the "check" logic into a shared composite action and use it from both workflows.
 - **E2E: cache Docker image build in CI**: The Docker image is rebuilt from scratch on every CI run. Options: (A) Push to GHCR (`ghcr.io/<repo>/bark-pi:<hash>`) keyed on a hash of Dockerfile + entrypoint + system-prompt + builtin-extensions + plugins — pull if exists, build and push if not. Requires `packages: write` permission but handles large images well. (B) Use GitHub Actions cache with `docker save`/`docker load` — simpler, no registry auth, but the 10 GB total cache limit is tight for a ~2-3 GB compressed tar. (C) Modify `dockerbuild.sh` to check a registry when `BARK_DOCKER_REGISTRY` is set — works for CI and anyone with registry access but couples the build script to a registry. Cache key should hash: `src/docker/Dockerfile`, `src/docker/entrypoint.sh`, `src/docker/*.md`, `src/docker/builtin-extensions/*.ts`, and `plugins/` contents.
 
 ## Monitoring

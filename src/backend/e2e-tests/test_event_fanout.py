@@ -52,11 +52,15 @@ def server():
             stdout=log_fd,
             stderr=log_fd,
         )
-        # Wait for nginx to start listening
+        # Wait for nginx LLM proxy to be reachable
         for _ in range(10):
             try:
-                httpx.get(f"http://localhost:{nginx_port}/", timeout=1)
-                break
+                resp = httpx.get(
+                    f"http://localhost:{nginx_port}/llm-proxy/models",
+                    timeout=2,
+                )
+                if resp.status_code == 200:
+                    break
             except Exception:
                 time.sleep(0.5)
         else:
@@ -65,7 +69,7 @@ def server():
                 open(nginx_log).read() if os.path.exists(nginx_log) else ""
             )
             raise RuntimeError(
-                f"Nginx failed to start on port {nginx_port}:\n{log_content}"
+                f"Nginx LLM proxy not reachable on port {nginx_port}:\n{log_content}"
             )
 
     env = {
