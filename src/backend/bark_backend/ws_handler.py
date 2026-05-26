@@ -31,10 +31,12 @@ class WorkspaceSession:
         self.workspace_id = workspace_id
         self.container_id: str | None = None
         self.subscribers: set[WebSocket] = set()
+        self.browser_subscribers: set[WebSocket] = set()
         self.lock = asyncio.Lock()
 
     async def reset(self) -> None:
         self.subscribers.clear()
+        self.browser_subscribers.clear()
 
 
 # Active sessions keyed by workspace_id.
