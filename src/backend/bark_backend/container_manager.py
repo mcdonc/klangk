@@ -358,6 +358,13 @@ class ContainerRegistry:
 
     async def stop_and_remove_container(self, container_id: str) -> None:
         """Stop and remove a container."""
+        import traceback
+
+        logger.info(
+            "stop_and_remove_container called for %s from:\n%s",
+            container_id[:12],
+            "".join(traceback.format_stack()),
+        )
         docker = await self.get_docker()
         try:
             container = await docker.containers.get(container_id)
