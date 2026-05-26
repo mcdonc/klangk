@@ -34,6 +34,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String _stopReason = '';
   BrowserDelegate? _browserDelegate;
   StreamSubscription<Map<String, dynamic>>? _customEventSub;
+  StreamSubscription<String>? _errorSub;
 
   @override
   void initState() {
@@ -109,7 +110,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     });
 
     // Listen for errors
-    wsClient.errors.listen((error) {
+    _errorSub = wsClient.errors.listen((error) {
       if (mounted) {
         setState(() => _error = error);
       }
@@ -136,6 +137,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
   void deactivate() {
     _customEventSub?.cancel();
     _customEventSub = null;
+    _errorSub?.cancel();
+    _errorSub = null;
     final wsClient = context.read<WsClient>();
     wsClient.removeListener(_onClientUpdate);
     wsClient.disconnectWorkspace();

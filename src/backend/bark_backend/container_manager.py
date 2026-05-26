@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+import uuid
 
 import aiodocker
 
@@ -119,8 +120,6 @@ class ContainerRegistry:
 
         Revokes any existing tokens for this workspace first.
         """
-        import uuid
-
         self.revoke_bridge_token(workspace_id)
         token = str(uuid.uuid4())
         self._bridge_tokens[token] = workspace_id

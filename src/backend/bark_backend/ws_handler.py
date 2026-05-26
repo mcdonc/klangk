@@ -4,6 +4,7 @@ import asyncio
 import glob
 import json
 import logging
+import uuid
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -481,8 +482,6 @@ async def dispatch_browser_request(
     Called by the /api/browser-delegate HTTP endpoint. Holds the connection
     open until a browser_response arrives or the timeout expires.
     """
-    import uuid
-
     request_id = str(uuid.uuid4())
     loop = asyncio.get_running_loop()
     future: asyncio.Future = loop.create_future()
