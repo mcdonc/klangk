@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import '../terminal/container_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
 
-/// IDE layout: skeuomorphic tabs (Terminal + Files) taking the full width.
+/// IDE layout: skeuomorphic tabs (Terminal + Files) with optional
+/// debug pane at the bottom separated by a draggable divider.
 class IdeLayout extends StatefulWidget {
   final Widget fileViewer;
   final Widget terminal;
+  final Widget? debug;
   final GlobalKey<ContainerTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
 
@@ -13,6 +15,7 @@ class IdeLayout extends StatefulWidget {
     super.key,
     required this.fileViewer,
     required this.terminal,
+    this.debug,
     this.terminalKey,
     this.fileViewerKey,
   });
@@ -23,6 +26,11 @@ class IdeLayout extends StatefulWidget {
 
 class _IdeLayoutState extends State<IdeLayout> {
   int _selectedIndex = 0;
+  double _debugHeight = 0; // collapsed by default
+
+  static const _dividerHeight = 6.0;
+  static const _minDebugHeight = 0.0;
+  static const _maxDebugHeight = 500.0;
 
   void _selectTab(int index) {
     if (index == _selectedIndex) return;
@@ -36,6 +44,8 @@ class _IdeLayoutState extends State<IdeLayout> {
 
   @override
   Widget build(BuildContext context) {
+    final hasDebug = widget.debug != null;
+
     return Column(
       children: [
         // Tab bar
@@ -64,7 +74,7 @@ class _IdeLayoutState extends State<IdeLayout> {
             ],
           ),
         ),
-        // Content
+        // Content area
         Expanded(
           child: IndexedStack(
             index: _selectedIndex,
@@ -81,6 +91,43 @@ class _IdeLayoutState extends State<IdeLayout> {
             ],
           ),
         ),
+        // Debug divider + pane
+        if (hasDebug) ...[
+          GestureDetector(
+            onVerticalDragUpdate: (details) {
+              setState(() {
+                _debugHeight = (_debugHeight - details.delta.dy)
+                    .clamp(_minDebugHeight, _maxDebugHeight);
+              });
+            },
+            onDoubleTap: () {
+              setState(() {
+                _debugHeight = _debugHeight > 0 ? 0 : 200;
+              });
+            },
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeRow,
+              child: Container(
+                height: _dividerHeight,
+                color: const Color(0xFF2D2D2D),
+                child: Center(
+                  child: Container(
+                    width: 40,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF666666),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            height: _debugHeight,
+            child: widget.debug!,
+          ),
+        ],
       ],
     );
   }

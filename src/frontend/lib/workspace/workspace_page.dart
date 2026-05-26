@@ -251,12 +251,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
             terminal: ContainerTerminal(key: _terminalKey, wsClient: wsClient),
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: DebugPanel(wsClient: wsClient),
+            debug: DebugPanel(wsClient: wsClient),
           ),
           for (final plugin in _plugins)
             if (plugin.buildOverlay(context) != null)
