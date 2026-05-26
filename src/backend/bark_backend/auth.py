@@ -8,7 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
-from . import user_store
+from . import model
 from .util import resolve_env_secret
 
 # --- Rate limiting constants ---
@@ -131,7 +131,7 @@ def validate_email(email: str) -> None:
 async def register(
     req: RegisterRequest, verified: bool = False
 ) -> RegisterResult:
-    existing = await user_store.get_user_by_email(req.email)
+    existing = await model.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
     validate_email(req.email)
@@ -142,12 +142,10 @@ async def register(
         )
 
     password_hash = hash_password(req.password)
-    user = await user_store.create_user(
-        req.email, password_hash, verified=verified
-    )
+    user = await model.create_user(req.email, password_hash, verified=verified)
     token = None
     if verified:
-        roles = await user_store.get_user_roles(user["id"])
+        roles = await model.get_user_roles(user["id"])
         token = create_token(user["id"], user["email"], roles)
     return RegisterResult(
         user_id=user["id"], email=user["email"], access_token=token
@@ -157,24 +155,24 @@ async def register(
 async def login(req: LoginRequest) -> TokenResponse:
     # Check if locked out before doing any expensive work
     if LOGIN_LOCKOUT_FAILURES > 0:
-        attempt_info = await user_store.get_login_attempt_info(req.email)
+        attempt_info = await model.get_login_attempt_info(req.email)
         is_locked, msg = _is_locked_out(attempt_info)
         if is_locked:
             raise HTTPException(status_code=429, detail=msg)
 
-    user = await user_store.get_user_by_email(req.email)
+    user = await model.get_user_by_email(req.email)
     if user is None or not verify_password(
         req.password, user["password_hash"]
     ):
         if LOGIN_LOCKOUT_FAILURES > 0:
-            await user_store.record_failed_login(req.email)
+            await model.record_failed_login(req.email)
             # Check if this attempt triggered a lockout
-            updated_info = await user_store.get_login_attempt_info(req.email)
+            updated_info = await model.get_login_attempt_info(req.email)
             if _should_lockout(updated_info):
                 locked_until = datetime.now(timezone.utc) + timedelta(
                     seconds=LOGIN_LOCKOUT_DURATION
                 )
-                await user_store.set_login_lockout(
+                await model.set_login_lockout(
                     req.email, locked_until.isoformat()
                 )
                 raise HTTPException(
@@ -188,8 +186,8 @@ async def login(req: LoginRequest) -> TokenResponse:
         )
 
     if LOGIN_LOCKOUT_FAILURES > 0:
-        await user_store.clear_login_attempts(req.email)
-    roles = await user_store.get_user_roles(user["id"])
+        await model.clear_login_attempts(req.email)
+    roles = await model.get_user_roles(user["id"])
     token = create_token(user["id"], user["email"], roles)
     return TokenResponse(access_token=token)
 
@@ -251,12 +249,12 @@ async def get_current_user(
         if user_id is None or jti is None:
             raise HTTPException(status_code=401, detail="Invalid token")
 
-        if await user_store.is_token_blocklisted(jti):
+        if await model.is_token_blocklisted(jti):
             raise HTTPException(
                 status_code=401, detail="Token has been revoked"
             )
 
-        user = await user_store.get_user_by_id(user_id)
+        user = await model.get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=401, detail="User not found")
         user["roles"] = payload.get("roles", [])
@@ -290,9 +288,9 @@ async def get_current_user_optional(
         jti = payload.get("jti")
         if user_id is None or jti is None:
             return None
-        if await user_store.is_token_blocklisted(jti):
+        if await model.is_token_blocklisted(jti):
             return None
-        user = await user_store.get_user_by_id(user_id)
+        user = await model.get_user_by_id(user_id)
         if user is not None:
             user["roles"] = payload.get("roles", [])
         return user
@@ -308,9 +306,9 @@ async def get_user_from_token(token: str) -> dict | None:
         jti = payload.get("jti")
         if user_id is None or jti is None:
             return None
-        if await user_store.is_token_blocklisted(jti):
+        if await model.is_token_blocklisted(jti):
             return None
-        return await user_store.get_user_by_id(user_id)
+        return await model.get_user_by_id(user_id)
     except JWTError:
         return None
 
@@ -325,6 +323,6 @@ async def logout(token: str) -> None:
             expires_at = datetime.fromtimestamp(
                 exp, tz=timezone.utc
             ).isoformat()
-            await user_store.blocklist_token(jti, expires_at)
+            await model.blocklist_token(jti, expires_at)
     except JWTError:
         pass

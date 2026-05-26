@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import container_manager, user_store
+from . import container_manager, model
 from .api import router
 from .util import resolve_env_secret
 from .ws_handler import handle_websocket
@@ -30,7 +30,7 @@ async def seed_default_user() -> None:
 
     email = resolve_env_secret("BARK_DEFAULT_USER", "admin")
     password = resolve_env_secret("BARK_DEFAULT_PASSWORD")
-    existing = await user_store.get_user_by_email(email)
+    existing = await model.get_user_by_email(email)
     if existing is None:
         generated = password is None
         if generated:
@@ -38,11 +38,9 @@ async def seed_default_user() -> None:
         password_hash = bcrypt.hashpw(
             password.encode(), bcrypt.gensalt()
         ).decode()
-        user = await user_store.create_user(
-            email, password_hash, verified=True
-        )
-        await user_store.ensure_role("admin")
-        await user_store.assign_role(user["id"], "admin")
+        user = await model.create_user(email, password_hash, verified=True)
+        await model.ensure_role("admin")
+        await model.assign_role(user["id"], "admin")
         if generated:
             logger.info(
                 "Created default admin user '%s' with generated password: %s",
@@ -53,13 +51,13 @@ async def seed_default_user() -> None:
             logger.info("Created default user '%s' with admin role", email)
     else:
         # Ensure existing default user has admin role
-        await user_store.ensure_role("admin")
-        await user_store.assign_role(existing["id"], "admin")
+        await model.ensure_role("admin")
+        await model.assign_role(existing["id"], "admin")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await user_store.init_db()
+    await model.init_db()
     await seed_default_user()
     from . import ws_handler
 

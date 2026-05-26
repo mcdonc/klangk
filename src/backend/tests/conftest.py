@@ -25,7 +25,7 @@ def temp_data_dir(tmp_path, monkeypatch):
     """Point BARK_DATA_DIR to a temp directory for each test."""
     monkeypatch.setenv("BARK_DATA_DIR", str(tmp_path))
     # Re-import to pick up the new env var
-    import bark_backend.user_store as us
+    import bark_backend.model as us
     import bark_backend.workspace_manager as wm
 
     us._data_dir = tmp_path
@@ -38,7 +38,7 @@ def temp_data_dir(tmp_path, monkeypatch):
 @pytest.fixture
 async def db(temp_data_dir):
     """Initialize a fresh database."""
-    import bark_backend.user_store as us
+    import bark_backend.model as us
 
     await us.init_db()
     return temp_data_dir
@@ -47,7 +47,7 @@ async def db(temp_data_dir):
 @pytest.fixture
 async def user(db):
     """Create a test user and return it."""
-    import bark_backend.user_store as us
+    import bark_backend.model as us
 
     user = await us.create_user(
         "testuser@example.com", _TEST_PASSWORD_HASH, verified=True
@@ -58,7 +58,7 @@ async def user(db):
 @pytest.fixture
 async def admin_user(db):
     """Create a test user with admin role and return it."""
-    import bark_backend.user_store as us
+    import bark_backend.model as us
 
     user = await us.create_user(
         "testadmin@example.com", _TEST_PASSWORD_HASH, verified=True
@@ -71,7 +71,7 @@ async def admin_user(db):
 @pytest.fixture
 async def workspace(user):
     """Create a test workspace (without port allocation)."""
-    import bark_backend.user_store as us
+    import bark_backend.model as us
 
     workspace = await us.create_workspace(user["id"], "test-workspace")
     return workspace

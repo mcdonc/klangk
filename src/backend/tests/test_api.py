@@ -13,7 +13,7 @@ from bark_backend import (
     api,
     auth,
     container_manager,
-    user_store,
+    model,
     workspace_manager,
     ws_handler,
 )
@@ -128,7 +128,7 @@ class TestAuthRoutes:
                 json={"email": "fail@example.com", "password": "newpass"},
             )
         # User should not exist — transaction was rolled back
-        user = await user_store.get_user_by_email("fail@example.com")
+        user = await model.get_user_by_email("fail@example.com")
         assert user is None
 
     async def test_register_short_password(self, client, db):
@@ -158,7 +158,7 @@ class TestAuthRoutes:
         import bcrypt
 
         password_hash = bcrypt.hashpw(b"pass", bcrypt.gensalt()).decode()
-        user = await user_store.create_user(
+        user = await model.create_user(
             "unverified@example.com", password_hash, verified=False
         )
         token = auth_mod.create_verification_token(user["id"])
@@ -220,7 +220,7 @@ class TestAuthRoutes:
 class TestResendVerification:
     async def _create_unverified_user(self):
         password_hash = auth.hash_password("testpass")
-        await user_store.create_user(
+        await model.create_user(
             "unverified@example.com", password_hash, verified=False
         )
 
@@ -305,7 +305,7 @@ class TestResendVerification:
 class TestForgotPassword:
     async def _create_user(self):
         password_hash = auth.hash_password("oldpass")
-        return await user_store.create_user(
+        return await model.create_user(
             "forgot@example.com", password_hash, verified=True
         )
 
@@ -355,7 +355,7 @@ class TestForgotPassword:
 class TestResetPassword:
     async def _create_user(self):
         password_hash = auth.hash_password("oldpass")
-        return await user_store.create_user(
+        return await model.create_user(
             "reset@example.com", password_hash, verified=True
         )
 
@@ -478,7 +478,7 @@ class TestChangeEmail:
         assert data["needs_verification"] is True
         mock_send.assert_awaited_once()
         # User should be unverified
-        updated = await user_store.get_user_by_email("new@example.com")
+        updated = await model.get_user_by_email("new@example.com")
         assert updated is not None
         assert not updated["verified"]
 
@@ -497,7 +497,7 @@ class TestChangeEmail:
     async def test_change_email_already_taken(self, client, user, db):
         # Create another user
         password_hash = auth.hash_password("other")
-        await user_store.create_user(
+        await model.create_user(
             "other@example.com", password_hash, verified=True
         )
         headers = await _auth_headers(client)
@@ -610,7 +610,7 @@ class TestWorkspaceRoutes:
         )
         ws_id = create_resp.json()["id"]
         # Simulate a running container
-        await user_store.update_workspace_container(ws_id, "fake-container-id")
+        await model.update_workspace_container(ws_id, "fake-container-id")
 
         with patch.object(
             api.container_manager.registry,
@@ -722,7 +722,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         cid = "cid-upload-test"
-        await user_store.update_workspace_container(ws_id, cid)
+        await model.update_workspace_container(ws_id, cid)
         container_manager.registry.track_activity(cid, ws_id)
         container_manager.registry.states[ws_id].last_activity = 0.0
 
@@ -1067,32 +1067,32 @@ class TestRoles:
         assert exc_info.value.status_code == 403
 
     async def test_ensure_role(self, db):
-        await user_store.ensure_role("editor")
+        await model.ensure_role("editor")
         # Idempotent
-        await user_store.ensure_role("editor")
+        await model.ensure_role("editor")
 
     async def test_assign_and_get_roles(self, user):
-        await user_store.ensure_role("admin")
-        await user_store.ensure_role("editor")
-        await user_store.assign_role(user["id"], "admin")
-        await user_store.assign_role(user["id"], "editor")
-        roles = await user_store.get_user_roles(user["id"])
+        await model.ensure_role("admin")
+        await model.ensure_role("editor")
+        await model.assign_role(user["id"], "admin")
+        await model.assign_role(user["id"], "editor")
+        roles = await model.get_user_roles(user["id"])
         assert set(roles) == {"admin", "editor"}
 
     async def test_assign_role_idempotent(self, user):
-        await user_store.ensure_role("admin")
-        await user_store.assign_role(user["id"], "admin")
-        await user_store.assign_role(user["id"], "admin")
-        roles = await user_store.get_user_roles(user["id"])
+        await model.ensure_role("admin")
+        await model.assign_role(user["id"], "admin")
+        await model.assign_role(user["id"], "admin")
+        roles = await model.get_user_roles(user["id"])
         assert roles == ["admin"]
 
     async def test_get_roles_empty(self, user):
-        roles = await user_store.get_user_roles(user["id"])
+        roles = await model.get_user_roles(user["id"])
         assert roles == []
 
     async def test_roles_in_jwt(self, user):
-        await user_store.ensure_role("admin")
-        await user_store.assign_role(user["id"], "admin")
+        await model.ensure_role("admin")
+        await model.assign_role(user["id"], "admin")
         token = auth.create_token(
             user["id"], "testuser@example.com", ["admin"]
         )
@@ -1121,11 +1121,11 @@ class TestRoles:
 
     async def test_cascade_delete_user(self, db):
         """Deleting a user cascades to user_roles."""
-        user = await user_store.create_user("delme", "hash")
-        await user_store.ensure_role("admin")
-        await user_store.assign_role(user["id"], "admin")
-        assert await user_store.get_user_roles(user["id"]) == ["admin"]
-        db_conn = await user_store.get_db()
+        user = await model.create_user("delme", "hash")
+        await model.ensure_role("admin")
+        await model.assign_role(user["id"], "admin")
+        assert await model.get_user_roles(user["id"]) == ["admin"]
+        db_conn = await model.get_db()
         try:
             await db_conn.execute(
                 "DELETE FROM users WHERE id = ?", (user["id"],)
@@ -1133,14 +1133,14 @@ class TestRoles:
             await db_conn.commit()
         finally:
             await db_conn.close()
-        assert await user_store.get_user_roles(user["id"]) == []
+        assert await model.get_user_roles(user["id"]) == []
 
     async def test_cascade_delete_role(self, user):
         """Deleting a role cascades to user_roles."""
-        await user_store.ensure_role("temp")
-        await user_store.assign_role(user["id"], "temp")
-        assert "temp" in await user_store.get_user_roles(user["id"])
-        db_conn = await user_store.get_db()
+        await model.ensure_role("temp")
+        await model.assign_role(user["id"], "temp")
+        assert "temp" in await model.get_user_roles(user["id"])
+        db_conn = await model.get_db()
         try:
             await db_conn.execute(
                 "DELETE FROM roles WHERE name = ?", ("temp",)
@@ -1148,7 +1148,7 @@ class TestRoles:
             await db_conn.commit()
         finally:
             await db_conn.close()
-        assert "temp" not in await user_store.get_user_roles(user["id"])
+        assert "temp" not in await model.get_user_roles(user["id"])
 
 
 # --- Admin API endpoints ---
@@ -1249,9 +1249,7 @@ class TestAdminEndpoints:
             )
         assert resp.status_code == 200
         # Workspace should be gone (CASCADE)
-        ws_list = await user_store.get_user_workspaces_with_containers(
-            user["id"]
-        )
+        ws_list = await model.get_user_workspaces_with_containers(user["id"])
         assert len(ws_list) == 0
 
     async def test_add_role(self, client, admin_user, user):
@@ -1260,7 +1258,7 @@ class TestAdminEndpoints:
             f"/admin/users/{user['id']}/roles/editor", headers=headers
         )
         assert resp.status_code == 200
-        roles = await user_store.get_user_roles(user["id"])
+        roles = await model.get_user_roles(user["id"])
         assert "editor" in roles
 
     async def test_add_role_nonexistent_user(self, client, admin_user):
@@ -1273,14 +1271,14 @@ class TestAdminEndpoints:
     async def test_remove_role(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         # First assign a role
-        await user_store.ensure_role("editor")
-        await user_store.assign_role(user["id"], "editor")
+        await model.ensure_role("editor")
+        await model.assign_role(user["id"], "editor")
         # Then remove it
         resp = await client.delete(
             f"/admin/users/{user['id']}/roles/editor", headers=headers
         )
         assert resp.status_code == 200
-        roles = await user_store.get_user_roles(user["id"])
+        roles = await model.get_user_roles(user["id"])
         assert "editor" not in roles
 
     async def test_update_email(self, client, admin_user, user):
@@ -1291,7 +1289,7 @@ class TestAdminEndpoints:
             headers=headers,
         )
         assert resp.status_code == 200
-        updated = await user_store.get_user_by_id(user["id"])
+        updated = await model.get_user_by_id(user["id"])
         assert updated["email"] == "renamed"
 
     async def test_update_password(self, client, admin_user, user):

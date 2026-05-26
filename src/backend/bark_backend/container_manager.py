@@ -7,7 +7,7 @@ import uuid
 
 import aiodocker
 
-from . import util, user_store
+from . import util, model
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ class ContainerRegistry:
 
     async def allocate_ports(self, workspace_id: str, count: int) -> list[int]:
         async with self.port_lock:
-            return await user_store.find_and_allocate_ports(
+            return await model.find_and_allocate_ports(
                 workspace_id, count, PORT_RANGE_START
             )
 
@@ -201,7 +201,7 @@ class ContainerRegistry:
         return IDLE_TIMEOUT_SECONDS
 
     async def get_workspace_ports(self, workspace_id: str) -> list[int]:
-        return await user_store.get_workspace_ports(workspace_id)
+        return await model.get_workspace_ports(workspace_id)
 
     # --- Container lifecycle ---
 
@@ -255,9 +255,9 @@ class ContainerRegistry:
         # Lock the entire read+allocate sequence to prevent
         # concurrent start_container calls from double-allocating.
         async with self.port_lock:
-            host_ports = await user_store.get_workspace_ports(workspace_id)
+            host_ports = await model.get_workspace_ports(workspace_id)
             if len(host_ports) < num_ports:
-                new_ports = await user_store.find_and_allocate_ports(
+                new_ports = await model.find_and_allocate_ports(
                     workspace_id,
                     num_ports - len(host_ports),
                     PORT_RANGE_START,
@@ -265,7 +265,7 @@ class ContainerRegistry:
                 host_ports.extend(new_ports)
             elif len(host_ports) > num_ports:
                 excess = host_ports[num_ports:]
-                await user_store.remove_port_allocations(workspace_id, excess)
+                await model.remove_port_allocations(workspace_id, excess)
                 host_ports = host_ports[:num_ports]
 
         env_vars = []
@@ -364,7 +364,7 @@ class ContainerRegistry:
         await container.start()
         container_id = container.id
 
-        await user_store.update_workspace_container(workspace_id, container_id)
+        await model.update_workspace_container(workspace_id, container_id)
         self.track_activity(container_id, workspace_id)
 
         logger.info(
@@ -406,9 +406,7 @@ class ContainerRegistry:
 
     async def stop_user_containers(self, user_id: str) -> None:
         """Stop all containers for a user (called on logout)."""
-        workspaces = await user_store.get_user_workspaces_with_containers(
-            user_id
-        )
+        workspaces = await model.get_user_workspaces_with_containers(user_id)
         for ws in workspaces:
             if ws["container_id"]:
                 await self.stop_and_remove_container(ws["container_id"])

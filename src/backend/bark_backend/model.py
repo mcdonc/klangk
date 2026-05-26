@@ -585,5 +585,3 @@ async def clear_login_attempts(email: str) -> None:
         await db.commit()
     finally:
         await db.close()
-
-

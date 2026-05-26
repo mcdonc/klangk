@@ -16,7 +16,7 @@ from . import (
     email_service,
     file_service,
     ws_handler,
-    user_store,
+    model,
     workspace_manager,
 )
 from .util import resolve_env_secret
@@ -93,7 +93,7 @@ async def register(
 
     logger.info("Registering user: %s", req.email)
     auth.validate_email(req.email)
-    existing = await user_store.get_user_by_email(req.email)
+    existing = await model.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
     if len(req.password) < auth.MIN_PASSWORD_LENGTH:
@@ -122,7 +122,7 @@ async def register(
 
     # Insert user and send email in a transaction — if the email fails,
     # the user insert is rolled back so they can try again.
-    async with user_store.transaction() as db:
+    async with model.transaction() as db:
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified) VALUES (?, ?, ?, 0)",
             (user_id, req.email, password_hash),
@@ -144,11 +144,11 @@ async def verify_email(token: str):
         raise HTTPException(
             status_code=400, detail="Invalid or expired verification token"
         )
-    updated = await user_store.verify_user(user_id)
+    updated = await model.verify_user(user_id)
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
-    user = await user_store.get_user_by_id(user_id)
-    roles = await user_store.get_user_roles(user_id)
+    user = await model.get_user_by_id(user_id)
+    roles = await model.get_user_roles(user_id)
     token = auth.create_token(user_id, user["email"], roles)
     return {"status": "verified", "access_token": token}
 
@@ -163,7 +163,7 @@ async def resend_verification(
     request: Request,
 ):
     """Resend verification email. Requires email+password to prevent abuse."""
-    user = await user_store.get_user_by_email(req.email)
+    user = await model.get_user_by_email(req.email)
     if user is None or not auth.verify_password(
         req.password, user["password_hash"]
     ):
@@ -203,7 +203,7 @@ RESET_COOLDOWN_SECONDS = 60
 @router.post("/auth/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest, request: Request):
     """Send a password reset email if the account exists."""
-    user = await user_store.get_user_by_email(req.email)
+    user = await model.get_user_by_email(req.email)
     if user is None:
         # Don't reveal whether the email exists
         return {"status": "sent"}
@@ -248,12 +248,12 @@ async def reset_password(req: ResetPasswordRequest):
             detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
         )
     password_hash = auth.hash_password(req.password)
-    await user_store.update_password(user_id, password_hash)
+    await model.update_password(user_id, password_hash)
     # Auto-login after reset
-    user = await user_store.get_user_by_id(user_id)
+    user = await model.get_user_by_id(user_id)
     if user is None:  # pragma: no cover
         raise HTTPException(status_code=404, detail="User not found")
-    roles = await user_store.get_user_roles(user_id)
+    roles = await model.get_user_roles(user_id)
     token = auth.create_token(user_id, user["email"], roles)
     return {"status": "reset", "access_token": token}
 
@@ -274,7 +274,7 @@ async def change_password(
     user: dict = Depends(auth.get_current_user),
 ):
     """Change password. Requires current password."""
-    stored = await user_store.get_user_by_email(user["email"])
+    stored = await model.get_user_by_email(user["email"])
     if stored is None or not auth.verify_password(
         req.current_password, stored["password_hash"]
     ):
@@ -287,7 +287,7 @@ async def change_password(
             detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
         )
     password_hash = auth.hash_password(req.new_password)
-    await user_store.update_password(user["id"], password_hash)
+    await model.update_password(user["id"], password_hash)
     return {"status": "updated"}
 
 
@@ -303,18 +303,18 @@ async def change_email(
     user: dict = Depends(auth.get_current_user),
 ):
     """Change email. Requires password. Marks account as unverified."""
-    stored = await user_store.get_user_by_email(user["email"])
+    stored = await model.get_user_by_email(user["email"])
     if stored is None or not auth.verify_password(
         req.password, stored["password_hash"]
     ):
         raise HTTPException(status_code=401, detail="Password is incorrect")
     auth.validate_email(req.email)
-    existing = await user_store.get_user_by_email(req.email)
+    existing = await model.get_user_by_email(req.email)
     if existing is not None and existing["id"] != user["id"]:
         raise HTTPException(status_code=400, detail="Email already in use")
-    await user_store.update_email(user["id"], req.email)
+    await model.update_email(user["id"], req.email)
     # Mark as unverified and send verification email
-    db = await user_store.get_db()
+    db = await model.get_db()
     try:
         await db.execute(
             "UPDATE users SET verified = 0 WHERE id = ?",
@@ -588,7 +588,7 @@ async def browser_delegate(body: BrowserDelegateRequest):
 
 @router.get("/admin/users")
 async def list_users(admin: dict = Depends(auth.require_role("admin"))):
-    return await user_store.list_users()
+    return await model.list_users()
 
 
 @router.delete("/admin/users/{user_id}")
@@ -597,14 +597,14 @@ async def delete_user(
 ):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
-    user = await user_store.get_user_by_id(user_id)
+    user = await model.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     # Stop all containers for this user before deleting
     await container_manager.registry.stop_user_containers(user_id)
     # Archive workspace data before deletion
     await workspace_manager.archive_user_data(user_id, user["email"])
-    deleted = await user_store.delete_user(user_id)
+    deleted = await model.delete_user(user_id)
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="User not found")
     return {"status": "deleted"}
@@ -616,11 +616,11 @@ async def add_user_role(
     role_name: str,
     admin: dict = Depends(auth.require_role("admin")),
 ):
-    user = await user_store.get_user_by_id(user_id)
+    user = await model.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    await user_store.ensure_role(role_name)
-    await user_store.assign_role(user_id, role_name)
+    await model.ensure_role(role_name)
+    await model.assign_role(user_id, role_name)
     return {"status": "assigned", "user_id": user_id, "role": role_name}
 
 
@@ -630,7 +630,7 @@ async def remove_user_role(
     role_name: str,
     admin: dict = Depends(auth.require_role("admin")),
 ):
-    removed = await user_store.remove_role(user_id, role_name)
+    removed = await model.remove_role(user_id, role_name)
     if not removed:
         raise HTTPException(
             status_code=404, detail="Role assignment not found"
@@ -649,12 +649,12 @@ async def update_user(
     req: UpdateUserRequest,
     admin: dict = Depends(auth.require_role("admin")),
 ):
-    user = await user_store.get_user_by_id(user_id)
+    user = await model.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if req.email is not None:
-        await user_store.update_email(user_id, req.email)
+        await model.update_email(user_id, req.email)
     if req.password is not None:
         password_hash = auth.hash_password(req.password)
-        await user_store.update_password(user_id, password_hash)
+        await model.update_password(user_id, password_hash)
     return {"status": "updated"}

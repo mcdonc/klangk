@@ -4,14 +4,13 @@ import asyncio
 import json
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, patch, PropertyMock
 
 from fastapi import WebSocketDisconnect
 
 from bark_backend import (
     ws_handler,
     container_manager,
-    user_store,
     workspace_manager,
 )
 from bark_backend.ws_handler import (
@@ -20,7 +19,6 @@ from bark_backend.ws_handler import (
     start_workspace_container,
     handle_workspace_connect,
     handle_workspace_disconnect,
-    handle_restart_container,
     handle_terminal_start,
     handle_terminal_input,
     handle_terminal_resize,
@@ -50,7 +48,6 @@ def _mock_ws(headers=None, query_params=None):
     return ws
 
 
-
 def _mock_terminal(alive=True):
     t = AsyncMock()
     type(t).is_alive = PropertyMock(return_value=alive)
@@ -66,7 +63,7 @@ def _base_state(user=None):
         "user": user or {"id": "uid", "email": "testuser@example.com"},
         "workspace_id": None,
         "container_id": None,
-                        "terminal_session": None,
+        "terminal_session": None,
         "terminal_task": None,
     }
 
@@ -162,10 +159,6 @@ class TestDeriveHostingInfo:
 
 
 # --- handle_steer ---
-
-
-
-
 
 
 class TestHandleTerminalInput:
@@ -378,7 +371,6 @@ def _teardown_workspace_state(workspace_id):
     container_manager.registry.states.pop(workspace_id, None)
 
 
-
 class TestCleanupConnection:
     async def test_cleanup_full_last_connection(self):
         ws = _mock_ws()
@@ -478,7 +470,6 @@ class TestCleanupConnection:
 # --- handle_prompt ---
 
 
-
 class TestHandleWorkspaceConnect:
     async def test_missing_workspace_id(self):
         ws = _mock_ws()
@@ -547,7 +538,6 @@ class TestHandleWorkspaceDisconnect:
 # --- handle_restart_container ---
 
 
-
 class TestStartWorkspaceContainer:
     async def test_new_session(self, user):
         ws = _mock_ws(headers={"host": "localhost:8997"})
@@ -555,7 +545,6 @@ class TestStartWorkspaceContainer:
         workspace = await workspace_manager.create_workspace(
             user["id"], "start-ws"
         )
-
 
         async def fake_start(*a, **kw):
             container_manager.registry.track_activity("cid-1", workspace["id"])
@@ -581,15 +570,12 @@ class TestStartWorkspaceContainer:
         ws_handler._sessions.pop(workspace["id"], None)
         container_manager.registry.states.pop(workspace["id"], None)
 
-
-
     async def test_idle_callback_ws_error(self, user):
         ws = _mock_ws(headers={"host": "localhost:8997"})
         state = _base_state(user=user)
         workspace = await workspace_manager.create_workspace(
             user["id"], "idle-ws"
         )
-
 
         async def fake_start(*a, **kw):
             container_manager.registry.track_activity("cid-3", workspace["id"])
@@ -633,10 +619,6 @@ class TestHandleWebsocketDispatch:
         await handle_websocket(ws)
         return ws
 
-
-
-
-
     async def test_dispatch_terminal_start(self, user):
         ws = await self._run_commands(user, [{"cmd": "terminal_start"}])
         ws.accept.assert_awaited_once()
@@ -670,7 +652,6 @@ class TestHandleWebsocketDispatch:
     async def test_dispatch_workspace_disconnect(self, user):
         ws = await self._run_commands(user, [{"cmd": "workspace_disconnect"}])
         ws.accept.assert_awaited_once()
-
 
     async def test_container_stopped_on_disconnect(self, user):
         """Container should be stopped and removed on disconnect."""
@@ -722,7 +703,6 @@ class TestHandleWebsocketDispatch:
 
 
 # --- handle_restart_container additional coverage ---
-
 
 
 class TestHandleWebsocket:
@@ -1003,7 +983,7 @@ class TestExecHandlers:
             "user": {"email": "test"},
             "workspace_id": None,
             "container_id": None,
-                            "terminal_session": None,
+            "terminal_session": None,
             "terminal_task": None,
             "exec_session": session,
             "exec_task": task,
@@ -1227,7 +1207,5 @@ class TestBrowserBridge:
 
 
 class TestResetWorkspaceState:
-
     async def test_noop_for_unknown_workspace(self):
         await reset_workspace_state("ws-unknown")  # should not raise
-

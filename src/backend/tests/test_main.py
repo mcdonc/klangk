@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from bark_backend import main, user_store
+from bark_backend import main, model
 
 
 # --- Seed default user ---
@@ -16,7 +16,7 @@ class TestSeedDefaultUser:
         monkeypatch.setenv("BARK_DEFAULT_USER", "seed-test")
         monkeypatch.setenv("BARK_DEFAULT_PASSWORD", "seed-pass")
         await main.seed_default_user()
-        user = await user_store.get_user_by_email("seed-test")
+        user = await model.get_user_by_email("seed-test")
         assert user is not None
 
     async def test_skips_existing_user(self, db, monkeypatch):
@@ -25,18 +25,18 @@ class TestSeedDefaultUser:
         await main.seed_default_user()
         # Call again — should not raise
         await main.seed_default_user()
-        user = await user_store.get_user_by_email("seed-test")
+        user = await model.get_user_by_email("seed-test")
         assert user is not None
 
     async def test_generates_password_when_not_set(self, db, monkeypatch):
         monkeypatch.setenv("BARK_DEFAULT_USER", "gen-test")
         monkeypatch.delenv("BARK_DEFAULT_PASSWORD", raising=False)
         await main.seed_default_user()
-        user = await user_store.get_user_by_email("gen-test")
+        user = await model.get_user_by_email("gen-test")
         assert user is not None
         # Password was generated, so we can't know it, but user exists
         # and has admin role
-        roles = await user_store.get_user_roles(user["id"])
+        roles = await model.get_user_roles(user["id"])
         assert "admin" in roles
 
     async def test_generated_password_is_logged(self, db, monkeypatch, caplog):

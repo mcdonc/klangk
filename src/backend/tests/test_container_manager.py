@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiodocker.exceptions
 import pytest
 
-from bark_backend import container_manager, user_store
+from bark_backend import container_manager, model
 
 
 class TestParseIdleTimeout:
@@ -159,7 +159,7 @@ class TestIdleCallbacks:
 
 class TestPortAllocation:
     async def test_allocate_ports(self, workspace):
-        ports = await user_store.find_and_allocate_ports(
+        ports = await model.find_and_allocate_ports(
             workspace["id"], 3, container_manager.PORT_RANGE_START
         )
         assert len(ports) == 3
@@ -167,19 +167,19 @@ class TestPortAllocation:
 
     async def test_allocate_ports_avoids_used(self, workspace, user):
         # Allocate some ports for workspace 1
-        ports1 = await user_store.find_and_allocate_ports(
+        ports1 = await model.find_and_allocate_ports(
             workspace["id"], 3, container_manager.PORT_RANGE_START
         )
         # Create second workspace and allocate
-        ws2 = await user_store.create_workspace(user["id"], "ws2")
-        ports2 = await user_store.find_and_allocate_ports(
+        ws2 = await model.create_workspace(user["id"], "ws2")
+        ports2 = await model.find_and_allocate_ports(
             ws2["id"], 3, container_manager.PORT_RANGE_START
         )
         # No overlap
         assert set(ports1).isdisjoint(set(ports2))
 
     async def test_get_workspace_ports(self, workspace):
-        allocated = await user_store.find_and_allocate_ports(
+        allocated = await model.find_and_allocate_ports(
             workspace["id"], 2, container_manager.PORT_RANGE_START
         )
         retrieved = await container_manager.registry.get_workspace_ports(
@@ -508,7 +508,7 @@ class TestStartContainer:
 
     async def test_excess_ports_trimmed(self, workspace):
         # Pre-allocate more ports than needed
-        await user_store.find_and_allocate_ports(
+        await model.find_and_allocate_ports(
             workspace["id"], 5, container_manager.PORT_RANGE_START
         )
         mock_docker = _mock_docker()
@@ -655,7 +655,7 @@ class TestStopUserContainers:
         mock_docker.containers.get = AsyncMock(return_value=mock_c)
 
         # Set container_id on the workspace
-        await user_store.update_workspace_container(workspace["id"], "cid")
+        await model.update_workspace_container(workspace["id"], "cid")
         container_manager.registry.track_activity("cid", workspace["id"])
 
         with patch.object(
@@ -670,7 +670,7 @@ class TestStopUserContainers:
         mock_c = _mock_container("cid")
         mock_docker.containers.get = AsyncMock(return_value=mock_c)
 
-        await user_store.update_workspace_container(workspace["id"], "cid")
+        await model.update_workspace_container(workspace["id"], "cid")
         container_manager.registry.track_activity("cid", workspace["id"])
 
         killed_cb = AsyncMock()

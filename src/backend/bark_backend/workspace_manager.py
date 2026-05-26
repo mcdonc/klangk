@@ -3,7 +3,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from . import container_manager, user_store
+from . import container_manager, model
 from .util import resolve_env_secret
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ def home_path(user_id: str, workspace_id: str) -> Path:
 async def create_workspace(
     user_id: str, name: str, image: str | None = None
 ) -> dict:
-    workspace = await user_store.create_workspace(user_id, name, image=image)
+    workspace = await model.create_workspace(user_id, name, image=image)
     path = workspace_path(user_id, workspace["id"])
     path.mkdir(parents=True, exist_ok=True)
     home = home_path(user_id, workspace["id"])
@@ -85,7 +85,7 @@ async def create_workspace(
         )
     except Exception:
         # Clean up the DB record and directories on port allocation failure
-        await user_store.delete_workspace(workspace["id"], user_id)
+        await model.delete_workspace(workspace["id"], user_id)
         await asyncio.to_thread(shutil.rmtree, path, True)
         await asyncio.to_thread(shutil.rmtree, home, True)
         raise
@@ -93,19 +93,19 @@ async def create_workspace(
 
 
 async def list_workspaces(user_id: str) -> list[dict]:
-    return await user_store.list_workspaces(user_id)
+    return await model.list_workspaces(user_id)
 
 
 async def get_workspace(workspace_id: str, user_id: str) -> dict | None:
-    return await user_store.get_workspace(workspace_id, user_id)
+    return await model.get_workspace(workspace_id, user_id)
 
 
 async def delete_workspace(workspace_id: str, user_id: str) -> bool:
-    workspace = await user_store.get_workspace(workspace_id, user_id)
+    workspace = await model.get_workspace(workspace_id, user_id)
     if workspace is None:
         return False
 
-    deleted = await user_store.delete_workspace(workspace_id, user_id)
+    deleted = await model.delete_workspace(workspace_id, user_id)
     if deleted:
         for dir_fn in (workspace_path, home_path):
             p = dir_fn(user_id, workspace_id)

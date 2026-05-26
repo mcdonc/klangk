@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
 
-from bark_backend import auth, user_store
+from bark_backend import auth, model
 
 
 class TestPasswordHashing:
@@ -134,7 +134,7 @@ class TestLogin:
         import bcrypt
 
         password_hash = bcrypt.hashpw(b"testpass", bcrypt.gensalt()).decode()
-        await user_store.create_user(
+        await model.create_user(
             "unverified@example.com", password_hash, verified=False
         )
         with pytest.raises(HTTPException) as exc_info:
@@ -155,7 +155,7 @@ class TestLogin:
 
 
 class TestLoginRateLimit:
-    """"Tests for login brute-force protection.
+    """ "Tests for login brute-force protection.
 
     These require BARK_LOGIN_LOCKOUT_FAILURES > 0 (default is 0 = disabled),
     so the class setup/teardown temporarily sets it to 5 and reloads
@@ -167,9 +167,10 @@ class TestLoginRateLimit:
         os.environ["BARK_LOGIN_LOCKOUT_FAILURES"] = "5"
         import importlib
         import bark_backend.auth as a
+
         importlib.reload(a)
         globals()["auth"] = a
-        globals()["user_store"] = a.user_store
+        globals()["model"] = a.model
 
     def teardown_method(self):
         if self._prev is None:
@@ -178,9 +179,10 @@ class TestLoginRateLimit:
             os.environ["BARK_LOGIN_LOCKOUT_FAILURES"] = self._prev
         import importlib
         import bark_backend.auth as a
+
         importlib.reload(a)
         globals()["auth"] = a
-        globals()["user_store"] = a.user_store
+        globals()["model"] = a.model
 
     async def test_login_wrong_password_records_attempt(self, user):
         """Wrong password increments attempt count."""
@@ -192,7 +194,7 @@ class TestLoginRateLimit:
                     )
                 )
             assert exc_info.value.status_code == 401
-        info = await user_store.get_login_attempt_info("testuser@example.com")
+        info = await model.get_login_attempt_info("testuser@example.com")
         assert info["attempt_count"] == auth.LOGIN_LOCKOUT_FAILURES - 1
 
     async def test_login_lockout_after_max_attempts(self, user):
@@ -219,8 +221,8 @@ class TestLoginRateLimit:
     async def test_login_lockout_message_shows_remaining_time(self, user):
         """Lockout message includes remaining minutes."""
         locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
-        await user_store.record_failed_login("testuser@example.com")
-        await user_store.set_login_lockout(
+        await model.record_failed_login("testuser@example.com")
+        await model.set_login_lockout(
             "testuser@example.com", locked_until.isoformat()
         )
         with pytest.raises(HTTPException) as exc_info:
@@ -235,8 +237,8 @@ class TestLoginRateLimit:
     async def test_expired_lockout_allows_login(self, user):
         """An expired lockout doesn't block the user from logging in."""
         expired_until = datetime.now(timezone.utc) - timedelta(minutes=1)
-        await user_store.record_failed_login("testuser@example.com")
-        await user_store.set_login_lockout(
+        await model.record_failed_login("testuser@example.com")
+        await model.set_login_lockout(
             "testuser@example.com", expired_until.isoformat()
         )
         result = await auth.login(
@@ -249,8 +251,8 @@ class TestLoginRateLimit:
     async def test_login_blocked_while_lockout_active(self, user):
         """Active lockout returns 429 with a countdown."""
         locked_until = datetime.now(timezone.utc) + timedelta(minutes=10)
-        await user_store.record_failed_login("testuser@example.com")
-        await user_store.set_login_lockout(
+        await model.record_failed_login("testuser@example.com")
+        await model.set_login_lockout(
             "testuser@example.com", locked_until.isoformat()
         )
         with pytest.raises(HTTPException) as exc_info:
@@ -316,16 +318,17 @@ class TestLoginRateLimit:
 
     async def test_login_clears_attempts(self, db, user):
         """Successful login clears failed attempt counts."""
-        await user_store.record_failed_login("testuser@example.com")
-        await user_store.record_failed_login("testuser@example.com")
+        await model.record_failed_login("testuser@example.com")
+        await model.record_failed_login("testuser@example.com")
         result = await auth.login(
             auth.LoginRequest(
                 email="testuser@example.com", password="testpass"
             )
         )
         assert result.access_token
-        info = await user_store.get_login_attempt_info("testuser@example.com")
+        info = await model.get_login_attempt_info("testuser@example.com")
         assert info is None
+
 
 class TestVerification:
     def test_create_and_decode_verification_token(self):
@@ -345,17 +348,17 @@ class TestVerification:
         import bcrypt
 
         password_hash = bcrypt.hashpw(b"pass", bcrypt.gensalt()).decode()
-        user = await user_store.create_user(
+        user = await model.create_user(
             "toverify@example.com", password_hash, verified=False
         )
         assert not user["verified"]
-        result = await user_store.verify_user(user["id"])
+        result = await model.verify_user(user["id"])
         assert result is True
-        updated = await user_store.get_user_by_email("toverify@example.com")
+        updated = await model.get_user_by_email("toverify@example.com")
         assert updated["verified"] is True
 
     async def test_verify_nonexistent_user(self, db):
-        result = await user_store.verify_user("nonexistent-id")
+        result = await model.verify_user("nonexistent-id")
         assert result is False
 
 
