@@ -3,11 +3,10 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../auth/auth_service.dart';
-import 'agui_events.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 
 /// Manages WebSocket connection to the Bark backend, sending commands
-/// and streaming AG-UI events.
+/// and streaming terminal output and browser bridge requests.
 class AguiClient extends ChangeNotifier {
   // coverage:ignore-start
   static String get _wsBaseUrl {
@@ -36,13 +35,11 @@ class AguiClient extends ChangeNotifier {
     _listenToChannel();
   }
 
-  final _eventController = StreamController<AguiEvent>.broadcast();
   final _errorController = StreamController<String>.broadcast();
   final _terminalOutputController = StreamController<String>.broadcast();
   final _browserRequestController =
       StreamController<Map<String, dynamic>>.broadcast();
 
-  Stream<AguiEvent> get events => _eventController.stream;
   Stream<String> get errors => _errorController.stream;
   Stream<String> get terminalOutput => _terminalOutputController.stream;
   Stream<Map<String, dynamic>> get browserRequests =>
@@ -88,9 +85,7 @@ class AguiClient extends ChangeNotifier {
           final json = jsonDecode(data as String) as Map<String, dynamic>;
           final type = json['type'] as String?;
 
-          if (type == 'event') {
-            _eventController.add(AguiEvent.fromJson(json));
-          } else if (type == 'workspace_ready') {
+          if (type == 'workspace_ready') {
             _currentWorkspaceId = json['workspaceId'] as String?;
             _startHeartbeat();
             notifyListeners();
@@ -147,31 +142,6 @@ class AguiClient extends ChangeNotifier {
     _send({'cmd': 'ui_ready'});
   }
 
-  void sendExtensionUiResponse(String id,
-      {String? value, bool? cancelled, bool? confirmed}) {
-    final msg = <String, dynamic>{'cmd': 'extension_ui_response', 'id': id};
-    if (value != null) msg['value'] = value;
-    if (cancelled == true) msg['cancelled'] = true;
-    if (confirmed != null) msg['confirmed'] = confirmed;
-    _send(msg);
-  }
-
-  void sendPrompt(String text) {
-    _send({'cmd': 'prompt', 'text': text});
-  }
-
-  void sendSteer(String text) {
-    _send({'cmd': 'steer', 'text': text});
-  }
-
-  void sendFollowUp(String text) {
-    _send({'cmd': 'follow_up', 'text': text});
-  }
-
-  void sendAbort() {
-    _send({'cmd': 'abort'});
-  }
-
   void sendRestartContainer() {
     _send({'cmd': 'restart_container'});
   }
@@ -216,7 +186,6 @@ class AguiClient extends ChangeNotifier {
   @override
   void dispose() {
     disconnect();
-    _eventController.close();
     _errorController.close();
     _terminalOutputController.close();
     _browserRequestController.close();
