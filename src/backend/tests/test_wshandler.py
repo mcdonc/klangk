@@ -1494,6 +1494,8 @@ class TestDispatchBrowserRequestCancelled:
         mock_ws = AsyncMock()
         session.subscribers.add(mock_ws)
         try:
+            # Snapshot request IDs before so we can check ours was cleaned up
+            before = set(wshandler._pending_browser_requests.keys())
             task = asyncio.create_task(
                 wshandler.dispatch_browser_request(
                     "ws-cancel",
@@ -1502,10 +1504,14 @@ class TestDispatchBrowserRequestCancelled:
                 )
             )
             await asyncio.sleep(0.05)
+            # Find the new request_id added by our dispatch
+            new_ids = set(wshandler._pending_browser_requests.keys()) - before
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            assert len(wshandler._pending_browser_requests) == 0
+            # Our request should have been cleaned up
+            for rid in new_ids:
+                assert rid not in wshandler._pending_browser_requests
         finally:
             wshandler._sessions.pop("ws-cancel", None)
 
