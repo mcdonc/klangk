@@ -104,7 +104,13 @@ def server():
         stdout = proc.stdout.read().decode() if proc.stdout else ""
         raise RuntimeError(f"Server failed to start:\n{stdout}")
 
-    yield {"url": base_url, "port": port, "data_dir": data_dir, "proc": proc}
+    yield {
+        "url": base_url,
+        "port": port,
+        "nginx_port": nginx_port,
+        "data_dir": data_dir,
+        "proc": proc,
+    }
 
     proc.send_signal(signal.SIGTERM)
     try:
@@ -327,6 +333,17 @@ class TestEventFanout:
         await asyncio.sleep(1)
 
         try:
+            # Verify LLM proxy is reachable before sending prompt
+            if os.environ.get("LLM_BASE_URL"):
+                proxy_resp = httpx.get(
+                    f"http://localhost:{server['nginx_port']}/llm-proxy/models",
+                    timeout=5,
+                )
+                assert proxy_resp.status_code == 200, (
+                    f"LLM proxy not reachable: {proxy_resp.status_code} "
+                    f"{proxy_resp.text[:200]}"
+                )
+
             # ws1 sends a prompt
             await ws1.send(json.dumps({"cmd": "prompt", "text": "say hello"}))
 
