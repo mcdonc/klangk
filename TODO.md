@@ -17,8 +17,9 @@
 
 ## Backend
 
-- **Sessions singleton class in wshandler.py**: Extract `_sessions`, `_pending_browser_requests`, `get_session`, `get_or_create_session`, `remove_session` into a `Sessions` singleton class for better encapsulation and testability.
-- **Clean up global mutable state in wshandler.py**: `_connections` is still a module-level dict. Consider consolidating remaining global state into the Sessions class or a handler instance.
+- **WorkspaceSessions singleton class in wshandler.py**: Extract `_sessions`, `_pending_browser_requests`, `get_session`, `get_or_create_session`, `remove_session` into a `Sessions` class for better encapsulation and testability. Create a singleton of it to replace `_sessions` global.
+- **BrowserBridge singleton class in wshandler.py**: Create a `BrowserBridge` class with `handle_browser_response` and `dispatch_browser_request` methods that owns the `_pending_browser_requests` dict. Instantiate as a module-level singleton. Eliminates the global and makes the bridge logic testable as an instance.
+- **Connections singleton class in wshandler.py**: Create a `Connections` class with a `handle_websocket` method that owns the `_connections` dict. Instantiate as a module-level singleton. Eliminates the `_connections` global and makes the WebSocket handler testable as an instance rather than module-level functions.
 - **Increase default terminal font size**: The terminal text is too small at the default 14px. Consider 16px or make it configurable.
 - **Mount S3 bucket as filesystem**: Allow workspaces to mount an S3 bucket (via s3fs-fuse or goofys) for persistent shared storage across containers and restarts.
 - **Update plugin docs to reflect new architecture**: "Bark plugins" are now just normal Pi extensions (npm packages with `pi.registerTool()`) that optionally include a `bark/` subdirectory with Dart code for browser-side actions. Update ARCHITECTURE.md plugin section, remove references to AG-UI `HOST_TOOL_REQUEST` delegation, and document the browser bridge flow (`@bark/bridge` → backend → WebSocket → Flutter plugin registry).
