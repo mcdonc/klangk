@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bark_frontend/agui/agui_client.dart';
-import 'package:bark_frontend/agui/agui_events.dart';
 import 'package:bark_frontend/auth/auth_service.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -117,10 +116,6 @@ void main() {
       client.connectWorkspace('ws-1');
       client.disconnectWorkspace();
       client.sendUiReady();
-      client.sendPrompt('hello');
-      client.sendSteer('left');
-      client.sendFollowUp('more');
-      client.sendAbort();
       client.sendRestartContainer();
       client.sendTerminalStart();
       client.sendTerminalInput('ls\n');
@@ -142,30 +137,6 @@ void main() {
 
       expect(client.currentWorkspaceId, isNull);
       expect(notified, isTrue);
-      client.dispose();
-    });
-  });
-
-  group('AguiClient.sendExtensionUiResponse', () {
-    test('with value', () {
-      final client = AguiClient();
-      // No channel, so this is a no-op — just verify it doesn't throw
-      client.sendExtensionUiResponse('ext-1', value: 'result');
-      expect(client.connected, isFalse);
-      client.dispose();
-    });
-
-    test('with cancelled', () {
-      final client = AguiClient();
-      client.sendExtensionUiResponse('ext-1', cancelled: true);
-      expect(client.connected, isFalse);
-      client.dispose();
-    });
-
-    test('with confirmed', () {
-      final client = AguiClient();
-      client.sendExtensionUiResponse('ext-1', confirmed: true);
-      expect(client.connected, isFalse);
       client.dispose();
     });
   });
@@ -251,17 +222,6 @@ void main() {
   });
 
   group('AguiClient streams', () {
-    test('events stream is broadcast', () {
-      final client = AguiClient();
-      // Should allow multiple listeners
-      final sub1 = client.events.listen((_) {});
-      final sub2 = client.events.listen((_) {});
-      sub1.cancel();
-      sub2.cancel();
-      expect(client.events.isBroadcast, isTrue);
-      client.dispose();
-    });
-
     test('errors stream is broadcast', () {
       final client = AguiClient();
       expect(client.errors.isBroadcast, isTrue);
@@ -303,10 +263,6 @@ void main() {
     });
 
     test('send methods produce correct JSON', () {
-      client.sendPrompt('hello');
-      client.sendSteer('left');
-      client.sendFollowUp('more');
-      client.sendAbort();
       client.sendRestartContainer();
       client.sendTerminalStart(cols: 100, rows: 30);
       client.sendTerminalInput('ls\n');
@@ -319,18 +275,14 @@ void main() {
       final msgs = channel.sentMessages
           .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
           .toList();
-      expect(msgs[0], {'cmd': 'prompt', 'text': 'hello'});
-      expect(msgs[1], {'cmd': 'steer', 'text': 'left'});
-      expect(msgs[2], {'cmd': 'follow_up', 'text': 'more'});
-      expect(msgs[3], {'cmd': 'abort'});
-      expect(msgs[4], {'cmd': 'restart_container'});
-      expect(msgs[5], {'cmd': 'terminal_start', 'cols': 100, 'rows': 30});
-      expect(msgs[6], {'cmd': 'terminal_input', 'data': 'ls\n'});
-      expect(msgs[7], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
-      expect(msgs[8], {'cmd': 'terminal_stop'});
-      expect(msgs[9], {'cmd': 'ui_ready'});
-      expect(msgs[10], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
-      expect(msgs[11], {'cmd': 'workspace_disconnect'});
+      expect(msgs[0], {'cmd': 'restart_container'});
+      expect(msgs[1], {'cmd': 'terminal_start', 'cols': 100, 'rows': 30});
+      expect(msgs[2], {'cmd': 'terminal_input', 'data': 'ls\n'});
+      expect(msgs[3], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
+      expect(msgs[4], {'cmd': 'terminal_stop'});
+      expect(msgs[5], {'cmd': 'ui_ready'});
+      expect(msgs[6], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
+      expect(msgs[7], {'cmd': 'workspace_disconnect'});
     });
 
     test('sendTerminalStart uses default cols/rows', () {
@@ -338,36 +290,6 @@ void main() {
       final msg = jsonDecode(channel.sentMessages.last as String);
       expect(msg['cols'], 80);
       expect(msg['rows'], 24);
-    });
-
-    test('sendExtensionUiResponse with all options', () {
-      client.sendExtensionUiResponse('id-1',
-          value: 'val', cancelled: true, confirmed: false);
-      final msg = jsonDecode(channel.sentMessages.last as String);
-      expect(msg['cmd'], 'extension_ui_response');
-      expect(msg['id'], 'id-1');
-      expect(msg['value'], 'val');
-      expect(msg['cancelled'], true);
-      expect(msg['confirmed'], false);
-    });
-
-    test('receives event from server', () async {
-      final events = <AguiEvent>[];
-      client.events.listen(events.add);
-
-      channel.serverSend({
-        'type': 'event',
-        'event': {
-          'type': 'TEXT_MESSAGE_CONTENT',
-          'messageId': 'm1',
-          'delta': 'hello',
-        },
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(events.length, 1);
-      expect(events[0].type, AguiEventType.textMessageContent);
-      expect(events[0].delta, 'hello');
     });
 
     test('receives workspace_ready from server', () async {
