@@ -559,7 +559,8 @@ class TestWorkspaceRoutes:
         resp = await client.post(
             "/workspaces", headers=headers, json={"name": "dup"}
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 409
+        assert "already exists" in resp.json()["detail"]
 
     async def test_create_with_disallowed_image(self, client, user):
         headers = await _auth_headers(client)

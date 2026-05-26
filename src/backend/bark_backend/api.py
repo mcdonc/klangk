@@ -374,7 +374,12 @@ async def create_workspace(
         return await workspace_manager.create_workspace(
             user["id"], body.name, image=body.image
         )
-    except (sqlite3.IntegrityError, OSError) as e:
+    except sqlite3.IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A workspace named {body.name!r} already exists",
+        )
+    except OSError as e:  # pragma: no cover
         raise HTTPException(status_code=400, detail=str(e))
 
 
