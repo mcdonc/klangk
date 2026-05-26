@@ -54,6 +54,11 @@ jobs:
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           devenv tasks run bark:docker-build
 
+      - name: Start services
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv processes up -d
+
       - name: Run CLI E2E tests
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
