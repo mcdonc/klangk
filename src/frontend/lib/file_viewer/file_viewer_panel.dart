@@ -1,12 +1,10 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import '../agui/agui_client.dart';
+import '../ws/ws_client.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.html) '../utils/web_helpers_web.dart';
-import '../agui/agui_events.dart';
 import 'file_upload.dart';
 import '../utils/suppress_browser_menu.dart';
 
@@ -14,13 +12,13 @@ import '../utils/suppress_browser_menu.dart';
 http.Client? testHttpClientOverride;
 
 class FileViewerPanel extends StatefulWidget {
-  final AguiClient aguiClient;
+  final WsClient wsClient;
   final String workspaceId;
   final String? authToken;
 
   const FileViewerPanel({
     super.key,
-    required this.aguiClient,
+    required this.wsClient,
     required this.workspaceId,
     this.authToken,
   });
@@ -37,7 +35,6 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   String? _selectedFile;
   String? _fileContent;
   bool _loading = false;
-  late final StreamSubscription<AguiEvent> _eventSub;
 
   /// Refresh the file list for the current directory.
   void refresh() => _loadFiles();
@@ -46,11 +43,6 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   void initState() {
     super.initState();
     _loadFiles();
-    _eventSub = widget.aguiClient.events.listen((event) {
-      if (event.isFileChanged) {
-        _loadFiles();
-      }
-    });
   }
 
   Map<String, String> get _headers => {
@@ -268,7 +260,6 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   @override
   void dispose() {
-    _eventSub.cancel();
     super.dispose();
   }
 

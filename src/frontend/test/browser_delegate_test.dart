@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:bark_frontend/agui/agui_client.dart';
+import 'package:bark_frontend/ws/ws_client.dart';
 import 'package:bark_frontend/browser/browser_delegate.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -57,13 +57,13 @@ void main() {
   });
 
   group('BrowserDelegate', () {
-    late AguiClient client;
+    late WsClient client;
     late _FakeWebSocketChannel channel;
     late BrowserDelegate delegate;
     late MockClient mockHttp;
 
     setUp(() {
-      client = AguiClient();
+      client = WsClient();
       channel = _FakeWebSocketChannel();
       client.connectForTest(channel);
       mockHttp = MockClient((request) async {
@@ -267,9 +267,9 @@ void main() {
     });
   });
 
-  group('AguiClient browser_request stream', () {
+  group('WsClient browser_request stream', () {
     test('browser_request emitted on stream', () async {
-      final client = AguiClient();
+      final client = WsClient();
       final channel = _FakeWebSocketChannel();
       client.connectForTest(channel);
 
@@ -292,7 +292,7 @@ void main() {
     });
 
     test('sendBrowserResponse sends correct JSON', () {
-      final client = AguiClient();
+      final client = WsClient();
       final channel = _FakeWebSocketChannel();
       client.connectForTest(channel);
 
@@ -304,6 +304,31 @@ void main() {
       expect(msg['id'], 'req-1');
       expect(msg['status'], 200);
       expect(msg['body'], 'hello');
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('custom events emitted on stream', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+
+      final events = <Map<String, dynamic>>[];
+      client.customEvents.listen(events.add);
+
+      channel.serverSend({
+        'type': 'event',
+        'event': {
+          'type': 'CUSTOM',
+          'name': 'container_stopped',
+          'value': {},
+        },
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(events.length, 1);
+      expect(events[0]['event']['name'], 'container_stopped');
 
       client.disconnect();
       client.dispose();

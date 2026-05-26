@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:bark_frontend/agui/agui_client.dart';
+import 'package:bark_frontend/ws/ws_client.dart';
 import 'package:bark_frontend/auth/auth_service.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -54,18 +54,18 @@ void main() {
     testBaseUrlOverride = null;
   });
 
-  group('AguiClient initial state', () {
+  group('WsClient initial state', () {
     test('not connected initially', () {
-      final client = AguiClient();
+      final client = WsClient();
       expect(client.connected, isFalse);
       expect(client.currentWorkspaceId, isNull);
       client.dispose();
     });
   });
 
-  group('AguiClient.updateAuth', () {
+  group('WsClient.updateAuth', () {
     test('no-op when not connected', () {
-      final client = AguiClient();
+      final client = WsClient();
       final auth = AuthService();
 
       client.updateAuth(auth);
@@ -74,7 +74,7 @@ void main() {
     });
 
     test('disconnects when connected and auth not logged in', () {
-      final client = AguiClient();
+      final client = WsClient();
       final channel = _FakeWebSocketChannel();
       client.connectForTest(channel);
       expect(client.connected, isTrue);
@@ -87,9 +87,9 @@ void main() {
     });
   });
 
-  group('AguiClient.disconnect', () {
+  group('WsClient.disconnect', () {
     test('disconnect resets state', () {
-      final client = AguiClient();
+      final client = WsClient();
       client.disconnect();
       expect(client.connected, isFalse);
       expect(client.currentWorkspaceId, isNull);
@@ -97,7 +97,7 @@ void main() {
     });
 
     test('disconnect notifies listeners', () {
-      final client = AguiClient();
+      final client = WsClient();
       bool notified = false;
       client.addListener(() => notified = true);
 
@@ -108,9 +108,9 @@ void main() {
     });
   });
 
-  group('AguiClient send methods (no channel)', () {
+  group('WsClient send methods (no channel)', () {
     test('send methods do not throw without connection', () {
-      final client = AguiClient();
+      final client = WsClient();
 
       // All send methods should silently no-op without a channel
       client.connectWorkspace('ws-1');
@@ -129,7 +129,7 @@ void main() {
     });
 
     test('disconnectWorkspace clears workspace id', () {
-      final client = AguiClient();
+      final client = WsClient();
       bool notified = false;
       client.addListener(() => notified = true);
 
@@ -141,24 +141,24 @@ void main() {
     });
   });
 
-  group('AguiClient.connect', () {
+  group('WsClient.connect', () {
     setUp(() {
-      AguiClient.testChannelFactory = null;
+      WsClient.testChannelFactory = null;
     });
 
     tearDown(() {
-      AguiClient.testChannelFactory = null;
+      WsClient.testChannelFactory = null;
     });
 
     test('connect without auth returns early', () async {
-      final client = AguiClient();
+      final client = WsClient();
       await client.connect();
       expect(client.connected, isFalse);
       client.dispose();
     });
 
     test('connect when already connected returns early', () async {
-      final client = AguiClient();
+      final client = WsClient();
       final channel = _FakeWebSocketChannel();
       client.connectForTest(channel);
       expect(client.connected, isTrue);
@@ -173,13 +173,13 @@ void main() {
     test('connect success via testChannelFactory', () async {
       SharedPreferences.setMockInitialValues({'bark_jwt': 'test-token'});
       final channel = _FakeWebSocketChannel();
-      AguiClient.testChannelFactory = (_) => channel;
+      WsClient.testChannelFactory = (_) => channel;
 
       final auth = AuthService();
       await Future.delayed(Duration.zero);
       expect(auth.isLoggedIn, isTrue);
 
-      final client = AguiClient();
+      final client = WsClient();
       client.updateAuth(auth);
 
       await client.connect();
@@ -192,12 +192,12 @@ void main() {
       SharedPreferences.setMockInitialValues({'bark_jwt': 'test-token'});
       final failChannel = _FakeWebSocketChannel();
       failChannel.failReady = true;
-      AguiClient.testChannelFactory = (_) => failChannel;
+      WsClient.testChannelFactory = (_) => failChannel;
 
       final auth = AuthService();
       await Future.delayed(Duration.zero);
 
-      final client = AguiClient();
+      final client = WsClient();
       client.updateAuth(auth);
 
       final errors = <String>[];
@@ -212,41 +212,47 @@ void main() {
     });
   });
 
-  group('AguiClient.dispose', () {
+  group('WsClient.dispose', () {
     test('dispose cleans up streams', () {
-      final client = AguiClient();
+      final client = WsClient();
       client.dispose();
       // After dispose, adding listeners should fail or streams should be closed
       expect(client.connected, isFalse);
     });
   });
 
-  group('AguiClient streams', () {
+  group('WsClient streams', () {
     test('errors stream is broadcast', () {
-      final client = AguiClient();
+      final client = WsClient();
       expect(client.errors.isBroadcast, isTrue);
       client.dispose();
     });
 
     test('terminalOutput stream is broadcast', () {
-      final client = AguiClient();
+      final client = WsClient();
       expect(client.terminalOutput.isBroadcast, isTrue);
       client.dispose();
     });
 
     test('browserRequests stream is broadcast', () {
-      final client = AguiClient();
+      final client = WsClient();
       expect(client.browserRequests.isBroadcast, isTrue);
+      client.dispose();
+    });
+
+    test('customEvents stream is broadcast', () {
+      final client = WsClient();
+      expect(client.customEvents.isBroadcast, isTrue);
       client.dispose();
     });
   });
 
-  group('AguiClient with fake channel', () {
-    late AguiClient client;
+  group('WsClient with fake channel', () {
+    late WsClient client;
     late _FakeWebSocketChannel channel;
 
     setUp(() {
-      client = AguiClient();
+      client = WsClient();
       channel = _FakeWebSocketChannel();
       client.connectForTest(channel);
     });

@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:xterm/xterm.dart';
-import '../agui/agui_client.dart';
-import '../agui/agui_events.dart';
+import '../ws/ws_client.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.html) '../utils/web_helpers_web.dart';
 
@@ -35,9 +34,9 @@ const _theme = TerminalTheme(
 );
 
 class ContainerTerminal extends StatefulWidget {
-  final AguiClient aguiClient;
+  final WsClient wsClient;
 
-  const ContainerTerminal({super.key, required this.aguiClient});
+  const ContainerTerminal({super.key, required this.wsClient});
 
   @override
   State<ContainerTerminal> createState() => ContainerTerminalState();
@@ -49,7 +48,7 @@ class ContainerTerminalState extends State<ContainerTerminal> {
   final _focusNode = FocusNode();
   final _scrollController = ScrollController();
   StreamSubscription<String>? _outputSub;
-  StreamSubscription<AguiEvent>? _eventSub;
+  StreamSubscription<Map<String, dynamic>>? _eventSub;
   bool _started = false;
 
   @override
@@ -58,22 +57,22 @@ class ContainerTerminalState extends State<ContainerTerminal> {
     _terminal = Terminal(maxLines: 10000);
     // coverage:ignore-start
     _terminal.onOutput = (data) {
-      widget.aguiClient.sendTerminalInput(data);
+      widget.wsClient.sendTerminalInput(data);
     };
     // coverage:ignore-end
     _terminal.onResize = (cols, rows, _, __) {
-      widget.aguiClient.sendTerminalResize(cols, rows);
+      widget.wsClient.sendTerminalResize(cols, rows);
     };
-    _outputSub = widget.aguiClient.terminalOutput.listen((data) {
+    _outputSub = widget.wsClient.terminalOutput.listen((data) {
       _terminal.write(data);
     });
-    _eventSub = widget.aguiClient.events.listen(_handleEvent);
+    _eventSub = widget.wsClient.customEvents.listen(_handleEvent);
   }
 
-  void _handleEvent(AguiEvent event) {
-    if (event.type == AguiEventType.custom &&
-        event.customName == 'container_ready') {
-      // Reconnect terminal session after container restart
+  void _handleEvent(Map<String, dynamic> msg) {
+    final event = msg['event'] as Map<String, dynamic>?;
+    if (event == null) return;
+    if (event['type'] == 'CUSTOM' && event['name'] == 'container_ready') {
       _started = false;
       _startTerminal();
     }
@@ -82,7 +81,7 @@ class ContainerTerminalState extends State<ContainerTerminal> {
   void _startTerminal() {
     if (_started) return;
     _started = true;
-    widget.aguiClient.sendTerminalStart(
+    widget.wsClient.sendTerminalStart(
       cols: _terminal.viewWidth,
       rows: _terminal.viewHeight,
     );
@@ -100,7 +99,7 @@ class ContainerTerminalState extends State<ContainerTerminal> {
     _outputSub?.cancel();
     _eventSub?.cancel();
     if (_started) {
-      widget.aguiClient.sendTerminalStop();
+      widget.wsClient.sendTerminalStop();
     }
     super.dispose();
   }
@@ -128,7 +127,7 @@ class ContainerTerminalState extends State<ContainerTerminal> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.aguiClient.currentWorkspaceId == null) {
+    if (widget.wsClient.currentWorkspaceId == null) {
       return const Center(
         child: Text('Connect to a workspace to use the terminal',
             style: TextStyle(fontSize: 12)),

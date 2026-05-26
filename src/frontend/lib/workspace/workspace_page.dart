@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../agui/agui_client.dart';
+import '../ws/ws_client.dart';
 import '../auth/auth_service.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 import '../utils/page_title.dart';
@@ -59,13 +59,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   Future<void> _connectToWorkspace() async {
-    final aguiClient = context.read<AguiClient>();
+    final wsClient = context.read<WsClient>();
 
-    if (!aguiClient.connected) {
-      await aguiClient.connect();
+    if (!wsClient.connected) {
+      await wsClient.connect();
     }
 
-    if (!aguiClient.connected) {
+    if (!wsClient.connected) {
       setState(() {
         _connecting = false;
         _error = 'Failed to connect to server';
@@ -73,15 +73,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
       return;
     }
 
-    aguiClient.connectWorkspace(widget.workspaceId);
-    aguiClient.addListener(_onClientUpdate);
+    wsClient.connectWorkspace(widget.workspaceId);
+    wsClient.addListener(_onClientUpdate);
 
     // Start browser delegate for bridge requests
-    _browserDelegate = BrowserDelegate(aguiClient);
+    _browserDelegate = BrowserDelegate(wsClient);
     _browserDelegate!.start();
 
     // Listen for errors
-    aguiClient.errors.listen((error) {
+    wsClient.errors.listen((error) {
       if (mounted) {
         setState(() => _error = error);
       }
@@ -89,26 +89,26 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   void _onClientUpdate() {
-    final aguiClient = context.read<AguiClient>();
-    if (aguiClient.currentWorkspaceId == widget.workspaceId) {
+    final wsClient = context.read<WsClient>();
+    if (wsClient.currentWorkspaceId == widget.workspaceId) {
       setState(() => _connecting = false);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        aguiClient.sendUiReady();
+        wsClient.sendUiReady();
       });
     }
   }
 
   void _restartContainer() {
     setState(() => _restarting = true);
-    final aguiClient = context.read<AguiClient>();
-    aguiClient.sendRestartContainer();
+    final wsClient = context.read<WsClient>();
+    wsClient.sendRestartContainer();
   }
 
   @override
   void deactivate() {
-    final aguiClient = context.read<AguiClient>();
-    aguiClient.removeListener(_onClientUpdate);
-    aguiClient.disconnectWorkspace();
+    final wsClient = context.read<WsClient>();
+    wsClient.removeListener(_onClientUpdate);
+    wsClient.disconnectWorkspace();
     super.deactivate();
   }
 
@@ -155,7 +155,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       );
     }
 
-    final aguiClient = context.read<AguiClient>();
+    final wsClient = context.read<WsClient>();
     final authToken = context.read<AuthService>().token;
 
     return Scaffold(
@@ -199,12 +199,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
           IdeLayout(
             fileViewer: FileViewerPanel(
               key: _fileViewerKey,
-              aguiClient: aguiClient,
+              wsClient: wsClient,
               workspaceId: widget.workspaceId,
               authToken: authToken,
             ),
-            terminal:
-                ContainerTerminal(key: _terminalKey, aguiClient: aguiClient),
+            terminal: ContainerTerminal(key: _terminalKey, wsClient: wsClient),
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
           ),

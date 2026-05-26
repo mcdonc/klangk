@@ -2,23 +2,22 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:bark_frontend/agui/agui_client.dart';
-import 'package:bark_frontend/agui/agui_events.dart';
+import 'package:bark_frontend/ws/ws_client.dart';
 import 'package:bark_frontend/terminal/container_terminal.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 
-class _MockAguiClient extends AguiClient {
-  final StreamController<AguiEvent> _controller =
-      StreamController<AguiEvent>.broadcast();
+class _MockWsClient extends WsClient {
+  final StreamController<Map<String, dynamic>> _controller =
+      StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _terminalController =
       StreamController<String>.broadcast();
   final List<String> sentCommands = [];
   final bool hasWorkspace;
 
-  _MockAguiClient({this.hasWorkspace = true});
+  _MockWsClient({this.hasWorkspace = true});
 
   @override
-  Stream<AguiEvent> get events => _controller.stream;
+  Stream<Map<String, dynamic>> get customEvents => _controller.stream;
 
   @override
   Stream<String> get terminalOutput => _terminalController.stream;
@@ -26,7 +25,7 @@ class _MockAguiClient extends AguiClient {
   @override
   String? get currentWorkspaceId => hasWorkspace ? 'ws-1' : null;
 
-  void emit(AguiEvent event) => _controller.add(event);
+  void emit(Map<String, dynamic> event) => _controller.add(event);
   void emitTerminal(String data) => _terminalController.add(data);
 
   @override
@@ -53,11 +52,11 @@ class _MockAguiClient extends AguiClient {
   }
 }
 
-Widget _buildTerminal(_MockAguiClient client,
+Widget _buildTerminal(_MockWsClient client,
     {GlobalKey<ContainerTerminalState>? key}) {
   return MaterialApp(
     home: Scaffold(
-      body: ContainerTerminal(key: key, aguiClient: client),
+      body: ContainerTerminal(key: key, wsClient: client),
     ),
   );
 }
@@ -68,21 +67,21 @@ void main() {
 
   group('ContainerTerminal', () {
     testWidgets('renders when workspace connected', (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       expect(find.byType(ContainerTerminal), findsOneWidget);
       client.close();
     });
 
     testWidgets('shows connect message when no workspace', (tester) async {
-      final client = _MockAguiClient(hasWorkspace: false);
+      final client = _MockWsClient(hasWorkspace: false);
       await tester.pumpWidget(_buildTerminal(client));
       expect(find.textContaining('Connect to a workspace'), findsOneWidget);
       client.close();
     });
 
     testWidgets('sends terminal_start on first build', (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
       expect(client.sentCommands, contains('terminal_start'));
@@ -90,7 +89,7 @@ void main() {
     });
 
     testWidgets('only sends terminal_start once', (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
       final count =
@@ -100,7 +99,7 @@ void main() {
     });
 
     testWidgets('sends terminal_stop on dispose', (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
       client.sentCommands.clear();
@@ -112,7 +111,7 @@ void main() {
     });
 
     testWidgets('requestFocus via GlobalKey', (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       final key = GlobalKey<ContainerTerminalState>();
       await tester.pumpWidget(_buildTerminal(client, key: key));
       key.currentState!.requestFocus();
@@ -122,16 +121,16 @@ void main() {
     });
 
     testWidgets('container_ready reconnects terminal', (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
       final startCount =
           client.sentCommands.where((c) => c == 'terminal_start').length;
 
-      client.emit(AguiEvent(
-        type: AguiEventType.custom,
-        data: {'name': 'container_ready', 'value': {}},
-      ));
+      client.emit({
+        'type': 'event',
+        'event': {'type': 'CUSTOM', 'name': 'container_ready', 'value': {}},
+      });
       await tester.pump();
 
       // Should send terminal_start again to reconnect
@@ -143,7 +142,7 @@ void main() {
     });
 
     testWidgets('terminal output stream writes to terminal', (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
 
@@ -159,7 +158,7 @@ void main() {
 
     testWidgets('terminal onOutput sends input when not stopped',
         (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       final key = GlobalKey<ContainerTerminalState>();
       await tester.pumpWidget(_buildTerminal(client, key: key));
       await tester.pumpAndSettle();
@@ -174,7 +173,7 @@ void main() {
 
     testWidgets('right-click shows context menu and paste works',
         (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
 
@@ -195,7 +194,7 @@ void main() {
     });
 
     testWidgets('right-click with selection shows copy option', (tester) async {
-      final client = _MockAguiClient();
+      final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
 

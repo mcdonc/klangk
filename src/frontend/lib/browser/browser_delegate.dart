@@ -1,14 +1,14 @@
 import 'dart:async';
 import 'package:http/http.dart' as http;
-import '../agui/agui_client.dart';
+import '../ws/ws_client.dart';
 
 /// Handles browser_request messages from the backend bridge.
 ///
-/// Listens to [AguiClient.browserRequests] and dispatches actions.
+/// Listens to [WsClient.browserRequests] and dispatches actions.
 /// Currently handles built-in actions (fetch, celebrate, beep).
 /// Plugin-based dispatch will be added in a later phase.
 class BrowserDelegate {
-  final AguiClient _client;
+  final WsClient _client;
   final http.Client _httpClient;
   StreamSubscription<Map<String, dynamic>>? _subscription;
 

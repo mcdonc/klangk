@@ -7,7 +7,7 @@ import 'package:bark_plugin_api/bark_plugin_api.dart';
 
 /// Manages WebSocket connection to the Bark backend, sending commands
 /// and streaming terminal output and browser bridge requests.
-class AguiClient extends ChangeNotifier {
+class WsClient extends ChangeNotifier {
   // coverage:ignore-start
   static String get _wsBaseUrl {
     final loc = Uri.base;
@@ -39,11 +39,17 @@ class AguiClient extends ChangeNotifier {
   final _terminalOutputController = StreamController<String>.broadcast();
   final _browserRequestController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _customEventController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<String> get errors => _errorController.stream;
   Stream<String> get terminalOutput => _terminalOutputController.stream;
   Stream<Map<String, dynamic>> get browserRequests =>
       _browserRequestController.stream;
+
+  /// Custom events from the backend (container_ready, container_stopped, etc.)
+  Stream<Map<String, dynamic>> get customEvents =>
+      _customEventController.stream;
   bool get connected => _connected;
   String? get currentWorkspaceId => _currentWorkspaceId;
 
@@ -95,6 +101,8 @@ class AguiClient extends ChangeNotifier {
             _errorController.add(json['message'] as String? ?? 'Unknown error');
           } else if (type == 'browser_request') {
             _browserRequestController.add(json);
+          } else if (type == 'event') {
+            _customEventController.add(json);
           }
         } catch (e) {
           _errorController.add('Parse error: $e');
@@ -189,6 +197,7 @@ class AguiClient extends ChangeNotifier {
     _errorController.close();
     _terminalOutputController.close();
     _browserRequestController.close();
+    _customEventController.close();
     super.dispose();
   }
 }
