@@ -39,6 +39,34 @@ class _FakeSink extends Fake implements WebSocketSink {
   Future close([int? closeCode, String? closeReason]) async {}
 }
 
+class _TestPlugin extends ToolPlugin {
+  int callCount = 0;
+  String lastAction = '';
+
+  @override
+  Map<String, ToolHandler> get handlers => {
+        'celebrate': (request) async {
+          callCount++;
+          lastAction = 'celebrate';
+          return 'celebrated!';
+        },
+        'beep': (request) async {
+          callCount++;
+          lastAction = 'beep';
+          return 'beeped!';
+        },
+      };
+}
+
+class _ThrowingPlugin extends ToolPlugin {
+  @override
+  Map<String, ToolHandler> get handlers => {
+        'throw_action': (request) async {
+          throw Exception('plugin boom');
+        },
+      };
+}
+
 List<Map<String, dynamic>> _browserResponses(_FakeWebSocketChannel channel) {
   return channel.sentMessages
       .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
@@ -61,6 +89,8 @@ void main() {
     late _FakeWebSocketChannel channel;
     late BrowserDelegate delegate;
     late MockClient mockHttp;
+    late ToolPluginRegistry registry;
+    late _TestPlugin testPlugin;
 
     setUp(() {
       client = WsClient();
@@ -69,7 +99,11 @@ void main() {
       mockHttp = MockClient((request) async {
         return http.Response('mock-body', 200);
       });
-      delegate = BrowserDelegate(client, httpClient: mockHttp);
+      registry = ToolPluginRegistry();
+      testPlugin = _TestPlugin();
+      registry.register(testPlugin);
+      delegate = BrowserDelegate(client,
+          httpClient: mockHttp, registry: registry);
       delegate.start();
     });
 
@@ -79,10 +113,7 @@ void main() {
       client.dispose();
     });
 
-    test('responds to celebrate action', () async {
-      bool celebrated = false;
-      delegate.onCelebrate = () => celebrated = true;
-
+    test('dispatches celebrate to plugin', () async {
       channel.serverSend({
         'type': 'browser_request',
         'id': 'req-1',
@@ -90,17 +121,16 @@ void main() {
       });
       await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(celebrated, isTrue);
+      expect(testPlugin.callCount, 1);
+      expect(testPlugin.lastAction, 'celebrate');
       final responses = _browserResponses(channel);
       expect(responses.length, 1);
       expect(responses[0]['id'], 'req-1');
       expect(responses[0]['status'], 'ok');
+      expect(responses[0]['result'], 'celebrated!');
     });
 
-    test('responds to beep action', () async {
-      bool beeped = false;
-      delegate.onBeep = () => beeped = true;
-
+    test('dispatches beep to plugin', () async {
       channel.serverSend({
         'type': 'browser_request',
         'id': 'req-2',
@@ -108,11 +138,11 @@ void main() {
       });
       await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(beeped, isTrue);
+      expect(testPlugin.callCount, 1);
       final responses = _browserResponses(channel);
       expect(responses.length, 1);
-      expect(responses[0]['id'], 'req-2');
       expect(responses[0]['status'], 'ok');
+      expect(responses[0]['result'], 'beeped!');
     });
 
     test('returns error for unknown action', () async {
@@ -126,7 +156,19 @@ void main() {
       final responses = _browserResponses(channel);
       expect(responses.length, 1);
       expect(responses[0]['id'], 'req-3');
-      expect(responses[0]['error'], contains('unknown action'));
+      expect(responses[0]['error'], contains('Unknown action'));
+    });
+
+    test('returns error for missing action', () async {
+      channel.serverSend({
+        'type': 'browser_request',
+        'id': 'req-null',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final responses = _browserResponses(channel);
+      expect(responses.length, 1);
+      expect(responses[0]['error'], contains('missing action'));
     });
 
     test('ignores request without id', () async {
@@ -139,26 +181,18 @@ void main() {
       expect(_browserResponses(channel), isEmpty);
     });
 
-    test('celebrate works without callback set', () async {
-      channel.serverSend({
-        'type': 'browser_request',
-        'id': 'req-4',
-        'action': 'celebrate',
-      });
-      await Future.delayed(const Duration(milliseconds: 50));
-
-      final responses = _browserResponses(channel);
-      expect(responses.length, 1);
-      expect(responses[0]['status'], 'ok');
-    });
-
-    test('action callback exception returns error', () async {
-      delegate.onCelebrate = () => throw Exception('boom');
+    test('plugin exception returns error', () async {
+      final throwRegistry = ToolPluginRegistry();
+      throwRegistry.register(_ThrowingPlugin());
+      delegate.stop();
+      delegate = BrowserDelegate(client,
+          httpClient: mockHttp, registry: throwRegistry);
+      delegate.start();
 
       channel.serverSend({
         'type': 'browser_request',
         'id': 'req-boom',
-        'action': 'celebrate',
+        'action': 'throw_action',
       });
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -203,7 +237,8 @@ void main() {
         return http.Response('post-result', 201);
       });
       delegate.stop();
-      delegate = BrowserDelegate(client, httpClient: postClient);
+      delegate = BrowserDelegate(client,
+          httpClient: postClient, registry: registry);
       delegate.start();
 
       channel.serverSend({
@@ -231,7 +266,8 @@ void main() {
         requests.add(request);
         return http.Response('ok', 200);
       });
-      delegate = BrowserDelegate(client, httpClient: headerClient);
+      delegate = BrowserDelegate(client,
+          httpClient: headerClient, registry: registry);
       delegate.start();
 
       channel.serverSend({
@@ -279,7 +315,8 @@ void main() {
       final errorClient = MockClient((request) async {
         throw Exception('network error');
       });
-      delegate = BrowserDelegate(client, httpClient: errorClient);
+      delegate = BrowserDelegate(client,
+          httpClient: errorClient, registry: registry);
       delegate.start();
 
       channel.serverSend({
@@ -296,7 +333,7 @@ void main() {
     });
   });
 
-  group('WsClient browser_request stream', () {
+  group('WsClient browser streams', () {
     test('browser_request emitted on stream', () async {
       final client = WsClient();
       final channel = _FakeWebSocketChannel();

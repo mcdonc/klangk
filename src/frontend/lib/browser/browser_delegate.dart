@@ -1,19 +1,25 @@
 import 'dart:async';
 import 'package:http/http.dart' as http;
+import 'package:bark_plugin_api/bark_plugin_api.dart';
 import '../ws/ws_client.dart';
 
 /// Handles browser_request messages from the backend bridge.
 ///
-/// Listens to [WsClient.browserRequests] and dispatches actions.
-/// Currently handles built-in actions (fetch, celebrate, beep).
-/// Plugin-based dispatch will be added in a later phase.
+/// Built-in actions (fetch) are handled directly. All other actions
+/// are dispatched to the [ToolPluginRegistry] which holds handlers
+/// registered by Bark plugins.
 class BrowserDelegate {
   final WsClient _client;
   final http.Client _httpClient;
+  final ToolPluginRegistry _registry;
   StreamSubscription<Map<String, dynamic>>? _subscription;
 
-  BrowserDelegate(this._client, {http.Client? httpClient})
-      : _httpClient = httpClient ?? http.Client(); // coverage:ignore-line
+  BrowserDelegate(
+    this._client, {
+    http.Client? httpClient,
+    ToolPluginRegistry? registry,
+  })  : _httpClient = httpClient ?? http.Client(), // coverage:ignore-line
+        _registry = registry ?? ToolPluginRegistry(); // coverage:ignore-line
 
   void start() {
     _subscription = _client.browserRequests.listen(_handleRequest);
@@ -32,17 +38,17 @@ class BrowserDelegate {
     Map<String, dynamic> result;
 
     try {
-      switch (action) {
-        case 'fetch':
-          result = await _handleFetch(request);
-        case 'celebrate':
-          result = {'status': 'ok'};
-          onCelebrate?.call();
-        case 'beep':
-          result = {'status': 'ok'};
-          onBeep?.call();
-        default:
-          result = {'error': 'unknown action: $action'};
+      if (action == 'fetch') {
+        result = await _handleFetch(request);
+      } else if (action != null) {
+        final response = await _registry.dispatch(action, request);
+        if (response.startsWith('Unknown action:')) {
+          result = {'error': response};
+        } else {
+          result = {'status': 'ok', 'result': response};
+        }
+      } else {
+        result = {'error': 'missing action'};
       }
     } catch (e) {
       result = {'error': 'action failed: $e'};
@@ -94,10 +100,4 @@ class BrowserDelegate {
       return {'error': 'fetch failed: $e'};
     }
   }
-
-  /// Callback for celebrate action. Set by the widget tree.
-  void Function()? onCelebrate;
-
-  /// Callback for beep action. Set by the widget tree.
-  void Function()? onBeep;
 }

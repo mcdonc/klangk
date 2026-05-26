@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../ws/ws_client.dart';
 import '../auth/auth_service.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
+import 'package:bark_plugins/bark_plugins.dart';
 import '../utils/page_title.dart';
 import '../widgets/bark_logo.dart';
 import '../widgets/app_bar_actions.dart';
@@ -35,10 +36,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
   BrowserDelegate? _browserDelegate;
   StreamSubscription<Map<String, dynamic>>? _customEventSub;
   StreamSubscription<String>? _errorSub;
+  late final ToolPluginRegistry _pluginRegistry;
+  late final List<ToolPlugin> _plugins;
 
   @override
   void initState() {
     super.initState();
+    _pluginRegistry = ToolPluginRegistry();
+    _plugins = createAllPlugins();
+    for (final plugin in _plugins) {
+      _pluginRegistry.register(plugin);
+    }
     _fetchWorkspaceName();
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
@@ -80,7 +88,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     wsClient.addListener(_onClientUpdate);
 
     // Start browser delegate for bridge requests
-    _browserDelegate = BrowserDelegate(wsClient);
+    _browserDelegate = BrowserDelegate(wsClient, registry: _pluginRegistry);
     _browserDelegate!.start();
 
     // Listen for container lifecycle events
@@ -148,6 +156,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
   @override
   void dispose() {
     _browserDelegate?.stop();
+    for (final plugin in _plugins) {
+      plugin.dispose();
+    }
     super.dispose();
   }
 
@@ -240,6 +251,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
           ),
+          for (final plugin in _plugins)
+            if (plugin.buildOverlay(context) != null)
+              plugin.buildOverlay(context)!,
           if (_containerStopped)
             Container(
               color: Colors.black54,
