@@ -320,6 +320,10 @@ async def handle_restart_container(ws: WebSocket, state: dict) -> None:
         await send_error(ws, "Not connected to a workspace")
         return
 
+    # Save before cleanup — cleanup_connection clears state fields.
+    user = state["user"]
+    workspace = state.get("workspace")
+
     await ws.send_json(
         {
             "type": "event",
@@ -336,10 +340,9 @@ async def handle_restart_container(ws: WebSocket, state: dict) -> None:
     except (RuntimeError, OSError, ConnectionError) as e:
         logger.warning("Cleanup error during restart: %s", e)
 
-    workspace = state.get("workspace")
     if workspace is None:
         workspace = await workspace_manager.get_workspace(
-            workspace_id, state["user"]["id"]
+            workspace_id, user["id"]
         )
     if workspace is None:
         await send_error(ws, "Workspace not found")
