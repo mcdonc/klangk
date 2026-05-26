@@ -578,7 +578,7 @@ async def browser_delegate(body: BrowserDelegateRequest):
         workspace_id,
         body.model_dump(exclude={"token"}),
     )
-    if "error" in result:
+    if result.get("error"):
         raise HTTPException(status_code=502, detail=result["error"])
     return result
 

@@ -1,6 +1,7 @@
 """WebSocket handler: auth, workspace routing, terminal/exec/bridge."""
 
 import asyncio
+import glob
 import json
 import logging
 
@@ -186,8 +187,6 @@ async def start_workspace_container(
     )
 
     # Find the most recent Pi session file to resume (if any).
-    import glob
-
     session_files = sorted(
         glob.glob(f"{home_path}/.pi/sessions/**/*.jsonl", recursive=True)
     )
@@ -495,9 +494,9 @@ async def dispatch_browser_request(
         return {"error": "No browser client connected to this workspace"}
 
     message = {
+        **request,
         "type": "browser_request",
         "id": request_id,
-        **request,
     }
     await _broadcast(workspace_id, message)
 

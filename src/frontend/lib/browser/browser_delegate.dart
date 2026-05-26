@@ -80,10 +80,10 @@ class BrowserDelegate {
       httpRequest.headers.addAll(headers);
       if (body != null) httpRequest.body = body;
 
-      final streamed = await _httpClient.send(httpRequest).timeout(
-            const Duration(seconds: 30),
-          );
-      final response = await http.Response.fromStream(streamed);
+      final response = await _httpClient
+          .send(httpRequest)
+          .then(http.Response.fromStream)
+          .timeout(const Duration(seconds: 30));
 
       return {
         'status': response.statusCode,

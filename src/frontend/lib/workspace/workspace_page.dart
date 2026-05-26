@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -32,6 +33,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   bool _restarting = false;
   String _stopReason = '';
   BrowserDelegate? _browserDelegate;
+  StreamSubscription<Map<String, dynamic>>? _customEventSub;
 
   @override
   void initState() {
@@ -81,7 +83,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     _browserDelegate!.start();
 
     // Listen for container lifecycle events
-    wsClient.customEvents.listen((msg) {
+    _customEventSub = wsClient.customEvents.listen((msg) {
       final event = msg['event'] as Map<String, dynamic>?;
       if (event == null) return;
       final name = event['name'] as String?;
@@ -132,6 +134,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   void deactivate() {
+    _customEventSub?.cancel();
+    _customEventSub = null;
     final wsClient = context.read<WsClient>();
     wsClient.removeListener(_onClientUpdate);
     wsClient.disconnectWorkspace();
