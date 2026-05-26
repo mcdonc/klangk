@@ -44,21 +44,21 @@ class _IdeLayoutState extends State<IdeLayout> {
           color: const Color(0xFFD0CFC8),
           child: Row(
             children: [
-              _SkeuoTab(
-                label: 'Terminal',
-                icon: Icons.terminal,
-                isSelected: _selectedIndex == 0,
-                onTap: () => _selectTab(0),
+              Expanded(
+                child: _SkeuoTab(
+                  label: 'Terminal',
+                  icon: Icons.terminal,
+                  isSelected: _selectedIndex == 0,
+                  onTap: () => _selectTab(0),
+                ),
               ),
-              _SkeuoTab(
-                label: 'Files',
-                icon: Icons.folder_outlined,
-                isSelected: _selectedIndex == 1,
-                onTap: () => _selectTab(1),
-              ),
-              // Fill remaining space with the bar background
-              const Expanded(
-                child: SizedBox.shrink(),
+              Expanded(
+                child: _SkeuoTab(
+                  label: 'Files',
+                  icon: Icons.folder_outlined,
+                  isSelected: _selectedIndex == 1,
+                  onTap: () => _selectTab(1),
+                ),
               ),
             ],
           ),
@@ -142,7 +142,6 @@ class _SkeuoTab extends StatelessWidget {
               : null,
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               icon,
