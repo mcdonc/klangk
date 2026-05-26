@@ -5,6 +5,20 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../auth/auth_service.dart';
 import 'package:bark_plugin_api/bark_plugin_api.dart';
 
+/// A single WebSocket debug log entry.
+class WsDebugEntry {
+  final DateTime timestamp;
+  final String direction; // 'SEND' or 'RECV'
+  final String summary;
+  final Map<String, dynamic>? data;
+
+  WsDebugEntry({
+    required this.direction,
+    required this.summary,
+    this.data,
+  }) : timestamp = DateTime.now();
+}
+
 /// Manages WebSocket connection to the Bark backend, sending commands
 /// and streaming terminal output and browser bridge requests.
 class WsClient extends ChangeNotifier {
@@ -41,6 +55,7 @@ class WsClient extends ChangeNotifier {
       StreamController<Map<String, dynamic>>.broadcast();
   final _customEventController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _debugLogController = StreamController<WsDebugEntry>.broadcast();
 
   Stream<String> get errors => _errorController.stream;
   Stream<String> get terminalOutput => _terminalOutputController.stream;
@@ -50,6 +65,9 @@ class WsClient extends ChangeNotifier {
   /// Custom events from the backend (container_ready, container_stopped, etc.)
   Stream<Map<String, dynamic>> get customEvents =>
       _customEventController.stream;
+
+  /// Debug log of all WebSocket messages (sent and received).
+  Stream<WsDebugEntry> get debugLog => _debugLogController.stream;
   bool get connected => _connected;
   String? get currentWorkspaceId => _currentWorkspaceId;
 
@@ -90,6 +108,18 @@ class WsClient extends ChangeNotifier {
         try {
           final json = jsonDecode(data as String) as Map<String, dynamic>;
           final type = json['type'] as String?;
+
+          // Skip noisy terminal_output from debug log
+          if (type != 'terminal_output') {
+            final summary = type == 'event'
+                ? 'event:${(json['event'] as Map?)?['name'] ?? '?'}'
+                : type ?? '?';
+            _debugLogController.add(WsDebugEntry(
+              direction: 'RECV',
+              summary: summary,
+              data: json,
+            ));
+          }
 
           if (type == 'workspace_ready') {
             _currentWorkspaceId = json['workspaceId'] as String?;
@@ -132,6 +162,15 @@ class WsClient extends ChangeNotifier {
 
   void _send(Map<String, dynamic> msg) {
     if (_channel == null) return;
+    final cmd = msg['cmd'] as String? ?? '?';
+    // Skip noisy terminal_input from debug log
+    if (cmd != 'terminal_input') {
+      _debugLogController.add(WsDebugEntry(
+        direction: 'SEND',
+        summary: cmd,
+        data: msg,
+      ));
+    }
     _channel!.sink.add(jsonEncode(msg));
   }
 
@@ -198,6 +237,7 @@ class WsClient extends ChangeNotifier {
     _terminalOutputController.close();
     _browserRequestController.close();
     _customEventController.close();
+    _debugLogController.close();
     super.dispose();
   }
 }

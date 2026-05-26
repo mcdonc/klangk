@@ -240,6 +240,12 @@ void main() {
       client.dispose();
     });
 
+    test('debugLog stream is broadcast', () {
+      final client = WsClient();
+      expect(client.debugLog.isBroadcast, isTrue);
+      client.dispose();
+    });
+
     test('customEvents stream is broadcast', () {
       final client = WsClient();
       expect(client.customEvents.isBroadcast, isTrue);

@@ -14,6 +14,7 @@ import '../file_viewer/file_viewer_panel.dart';
 import '../layout/ide_layout.dart';
 import '../terminal/container_terminal.dart';
 import '../browser/browser_delegate.dart';
+import '../debug/debug_panel.dart';
 
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
@@ -250,6 +251,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
             terminal: ContainerTerminal(key: _terminalKey, wsClient: wsClient),
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: DebugPanel(wsClient: wsClient),
           ),
           for (final plugin in _plugins)
             if (plugin.buildOverlay(context) != null)
