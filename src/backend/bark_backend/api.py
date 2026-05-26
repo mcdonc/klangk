@@ -2,8 +2,10 @@
 
 import io
 import logging
+import posixpath
 import sqlite3
 import time
+import uuid
 import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
@@ -61,9 +63,7 @@ if resolve_env_secret("BARK_TEST_MODE"):  # pragma: no cover
             )
         else:
             container.IDLE_TIMEOUT_SECONDS = seconds
-            container.CHECK_INTERVAL_SECONDS = max(
-                10, min(60, seconds // 3)
-            )
+            container.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
         return {"idle_timeout_seconds": seconds}
 
 
@@ -89,7 +89,6 @@ async def register(
         # Test mode: auto-verify so E2E tests get immediate access
         result = await auth.register(req, verified=True)
         return result
-    import uuid
 
     logger.info("Registering user: %s", req.email)
     auth.validate_email(req.email)
@@ -105,9 +104,7 @@ async def register(
     password_hash = auth.hash_password(req.password)
     user_id = str(uuid.uuid4())
 
-    hostname, proto, base_path = wshandler.derive_hosting_info(
-        request.headers
-    )
+    hostname, proto, base_path = wshandler.derive_hosting_info(request.headers)
     logger.info(
         "Hosting info: hostname=%s proto=%s base_path=%s",
         hostname,
@@ -128,9 +125,7 @@ async def register(
             (user_id, req.email, password_hash),
         )
         logger.info("User inserted (uncommitted): %s", req.email)
-        await emailsvc.send_verification_email(
-            req.email, verification_url
-        )
+        await emailsvc.send_verification_email(req.email, verification_url)
         logger.info("Verification email sent, committing user: %s", req.email)
 
     return {"status": "pending_verification", "email": req.email}
@@ -149,8 +144,8 @@ async def verify_email(token: str):
         raise HTTPException(status_code=404, detail="User not found")
     user = await model.get_user_by_id(user_id)
     roles = await model.get_user_roles(user_id)
-    token = auth.create_token(user_id, user["email"], roles)
-    return {"status": "verified", "access_token": token}
+    access_token = auth.create_token(user_id, user["email"], roles)
+    return {"status": "verified", "access_token": access_token}
 
 
 _resend_timestamps: dict[str, float] = {}
@@ -181,9 +176,7 @@ async def resend_verification(
         )
     _resend_timestamps[req.email] = now
 
-    hostname, proto, base_path = wshandler.derive_hosting_info(
-        request.headers
-    )
+    hostname, proto, base_path = wshandler.derive_hosting_info(request.headers)
     verification_token = auth.create_verification_token(user["id"])
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
@@ -218,9 +211,7 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
         )
     _reset_timestamps[req.email] = now
 
-    hostname, proto, base_path = wshandler.derive_hosting_info(
-        request.headers
-    )
+    hostname, proto, base_path = wshandler.derive_hosting_info(request.headers)
     reset_token = auth.create_password_reset_token(user["id"])
     reset_url = (
         f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
@@ -314,19 +305,13 @@ async def change_email(
         raise HTTPException(status_code=400, detail="Email already in use")
     await model.update_email(user["id"], req.email)
     # Mark as unverified and send verification email
-    db = await model.get_db()
-    try:
+    async with model.transaction() as db:
         await db.execute(
             "UPDATE users SET verified = 0 WHERE id = ?",
             (user["id"],),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
-    hostname, proto, base_path = wshandler.derive_hosting_info(
-        request.headers
-    )
+    hostname, proto, base_path = wshandler.derive_hosting_info(request.headers)
     token = auth.create_verification_token(user["id"])
     url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
     await emailsvc.send_verification_email(req.email, url)
@@ -334,8 +319,15 @@ async def change_email(
 
 
 @router.post("/auth/logout")
-async def logout(user: dict = Depends(auth.get_current_user)):
+async def logout(
+    request: Request,
+    user: dict = Depends(auth.get_current_user),
+):
     await container.registry.stop_user_containers(user["id"])
+    # Blocklist the token so it can't be reused after logout
+    authorization = request.headers.get("authorization", "")
+    if authorization.startswith("Bearer "):
+        await auth.logout(authorization[7:])
     return {"status": "ok"}
 
 
@@ -391,15 +383,20 @@ async def delete_workspace(
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    if workspace.get("container_id"):
-        await container.registry.stop_and_remove_container(
-            workspace["container_id"]
-        )
+    # Prefer the live container_id from the registry (tracks the currently
+    # running container) over the DB value (may be stale if the container
+    # was already stopped by idle timeout).
+    live_state = container.registry.get_state(workspace_id)
+    cid = (
+        live_state.container_id
+        if live_state
+        else workspace.get("container_id")
+    )
+    if cid:
+        await container.registry.stop_and_remove_container(cid)
     await wshandler.reset_workspace_state(workspace_id)
 
-    deleted = await workspaces.delete_workspace(
-        workspace_id, user["id"]
-    )
+    deleted = await workspaces.delete_workspace(workspace_id, user["id"])
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="Workspace not found")
     return {"status": "deleted"}
@@ -533,10 +530,8 @@ async def upload_file(
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    filename = path if path else file.filename
-    if (
-        not filename
-    ):  # pragma: no cover — FastAPI rejects empty filename at 422 first
+    filename = path if path else posixpath.basename(file.filename or "")
+    if not filename:  # pragma: no cover
         raise HTTPException(status_code=400, detail="No filename provided")
 
     container_id = workspace.get("container_id")
