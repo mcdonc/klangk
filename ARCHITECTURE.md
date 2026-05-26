@@ -243,29 +243,13 @@ bark/
 
 - Extensions are TypeScript files collected from `$BARK_PLUGINS_DIR/*/extension.ts` and staged at `$BARK_PLUGINS_DIR/.docker/extensions/` at build time (injected via named Docker build contexts)
 - The LLM sees them in its tool list alongside built-in tools (read, write, edit, bash)
-- Extensions can be server-side (run code inside the container) or client-side (delegate to the browser via the Extension UI Sub-Protocol)
+- Extensions can be server-side (run code inside the container) or client-side (delegate to the browser via the browser bridge)
 - AGENTS.md is generated dynamically on each container start, listing all registered extension tools
 - Sample plugins exist in `plugins/`:
   - `word_count` — fast file stats (lines, words, characters, size) via Python script (server-side)
   - `pig_latin` — text to Pig Latin converter, pure TypeScript (server-side)
-  - `celebrate` — triggers confetti animation in the browser (client-side, via Extension UI Sub-Protocol)
-  - `beep` — plays an audible beep tone via Web Audio API (client-side, via Extension UI Sub-Protocol)
-
-### Chat Interface
-
-- Markdown rendering for assistant responses (flutter_markdown_plus)
-- Syntax-highlighted code blocks (Monokai Sublime theme, highlight.dart, JetBrains Mono)
-- Collapsible tool call cards showing arguments and results
-- Streaming indicator while agent is thinking
-- Enter to send, Shift+Enter for newline
-- Abort button (red when agent running)
-- Conversation history persisted to SQLite and restored on workspace reload
-- Input history navigation (up/down arrow keys cycle through previous prompts)
-- Queued messages shown dimmed with "queued" label, persisted in SQLite
-- Persistent error snackbars with close button
-- Text is selectable and copyable via native right-click
-- Clickable URLs open in a new browser tab, with a copy button next to each link
-- Bare URLs in assistant messages are auto-linked (converted to clickable markdown links)
+  - `celebrate` — triggers confetti animation in the browser (client-side, via browser bridge)
+  - `beep` — plays an audible beep tone via Web Audio API (client-side, via browser bridge)
 
 ### File Viewer
 
@@ -555,33 +539,35 @@ plugins:
 ### Data
 
 - All data stored in `$BARK_DATA_DIR` (defaults to `~/.bark/data`)
-- SQLite database: `bark.db` (users, workspaces, messages, token blocklist, login attempts)
+- SQLite database: `bark.db` (users, workspaces, port allocations, token blocklist, login attempts)
 - Workspace files: `workspaces/<user-id>/work/<workspace-id>/` (mounted as `/work`)
 - Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/bark` — dotfiles, bash history, Pi sessions)
 - Database persists across restarts and rebuilds
 
-## Client-Side Tool Delegation via Extension UI Sub-Protocol
+## Client-Side Tool Delegation via Browser Bridge
 
-We use Pi's **Extension UI Sub-Protocol** to delegate tool execution to the browser.
+Pi extensions inside the container can delegate actions to the browser via the backend bridge endpoint.
 
 ### How it works
 
-Pi extensions can call `ctx.ui.input(title, placeholder)` from within a tool's `execute` method. In RPC mode, this emits an `extension_ui_request` event on stdout and blocks until an `extension_ui_response` comes back on stdin. We use this as a general-purpose request/response channel between the container and the browser.
-
-**Convention**: Extensions use `ctx.ui.input("HOST_TOOL_REQUEST", jsonPayload)` where the payload encodes the action to perform. The frontend parses the JSON, executes the action, and sends the result back.
+Extensions POST to `http://host.docker.internal:<nginx_port>/api/browser-delegate` with a bridge token (set as `BARK_BRIDGE_TOKEN` in the container env). The backend resolves the token to a workspace, relays the request to the Flutter client over the existing WebSocket, and returns the browser's response as the HTTP response.
 
 ### Flow
 
 ```text
 LLM calls tool → Pi extension execute()
-  → ctx.ui.input("HOST_TOOL_REQUEST", '{"action":"...", ...}')
-  → Pi emits: {"type":"extension_ui_request","id":"...","method":"input","title":"HOST_TOOL_REQUEST","placeholder":"..."}
-  → Backend forwards to frontend via WebSocket
-  → Frontend executes action (browser-side, with auth cookies)
-  → Frontend sends: {"cmd":"extension_ui_response","id":"...","value":"result"}
-  → Backend forwards to Pi stdin
-  → Extension receives result, returns to LLM
+  → HTTP POST to /api/browser-delegate {action, token, ...}
+  → Backend resolves token → workspace_id
+  → WebSocket message: {"type":"browser_request","id":"...","action":"..."}
+  → Flutter BrowserDelegate handles action (fetch, celebrate, etc.)
+  → WebSocket message: {"cmd":"browser_response","id":"...","data":"..."}
+  → Backend returns HTTP response to extension
+  → Extension returns result to LLM
 ```
+
+Built-in actions: `fetch` (HTTP request with browser cookies). All other actions are dispatched to the `ToolPluginRegistry` which routes to Dart plugin handlers registered by `bark/` subdirectories.
+
+Bridge tokens are per-workspace UUIDs, created on container start, revoked on stop. The `@bark/bridge` npm package provides `browserFetch()`, `browserAction()`, and `isBridgeAvailable()` helpers for extension authors.
 
 ### Current client-side tools
 
