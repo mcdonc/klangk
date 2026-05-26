@@ -545,7 +545,9 @@ class TestWorkspaceRoutes:
 
     async def test_create_workspace(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.post("/workspaces?name=test-ws", headers=headers)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "test-ws"}
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "test-ws"
@@ -553,14 +555,35 @@ class TestWorkspaceRoutes:
 
     async def test_create_duplicate(self, client, user):
         headers = await _auth_headers(client)
-        await client.post("/workspaces?name=dup", headers=headers)
-        resp = await client.post("/workspaces?name=dup", headers=headers)
+        await client.post("/workspaces", headers=headers, json={"name": "dup"})
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "dup"}
+        )
         assert resp.status_code == 400
+
+    async def test_create_with_disallowed_image(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces",
+            headers=headers,
+            json={"name": "bad-img", "image": "evil:latest"},
+        )
+        assert resp.status_code == 400
+        assert "not allowed" in resp.json()["detail"]
+
+    async def test_list_images(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/images", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "default" in data
+        assert "allowed" in data
+        assert data["default"] in data["allowed"]
 
     async def test_delete_workspace(self, client, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
-            "/workspaces?name=doomed", headers=headers
+            "/workspaces", headers=headers, json={"name": "doomed"}
         )
         ws_id = create_resp.json()["id"]
 
@@ -581,7 +604,7 @@ class TestWorkspaceRoutes:
     async def test_delete_workspace_with_container(self, client, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
-            "/workspaces?name=has-container", headers=headers
+            "/workspaces", headers=headers, json={"name": "has-container"}
         )
         ws_id = create_resp.json()["id"]
         # Simulate a running container
@@ -608,7 +631,7 @@ class TestMessageRoutes:
     async def test_get_messages(self, client, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
-            "/workspaces?name=msg-ws", headers=headers
+            "/workspaces", headers=headers, json={"name": "msg-ws"}
         )
         ws_id = create_resp.json()["id"]
 
@@ -634,7 +657,9 @@ class TestMessageRoutes:
 
 class TestFileRoutes:
     async def _create_workspace(self, client, headers):
-        resp = await client.post("/workspaces?name=file-ws", headers=headers)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "file-ws"}
+        )
         return resp.json()["id"]
 
     async def test_list_files(self, client, user):
@@ -1182,7 +1207,7 @@ class TestAdminEndpoints:
             "Authorization": f"Bearer {user_login.json()['access_token']}"
         }
         ws_resp = await client.post(
-            "/workspaces?name=to-delete", headers=user_headers
+            "/workspaces", headers=user_headers, json={"name": "to-delete"}
         )
         assert ws_resp.status_code == 200
         # Delete the user

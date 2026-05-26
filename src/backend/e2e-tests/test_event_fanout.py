@@ -134,7 +134,10 @@ def auth(server):
     headers = {"Authorization": f"Bearer {token}"}
 
     resp = httpx.post(
-        f"{url}/workspaces?name=fanout-test", headers=headers, timeout=10
+        f"{url}/workspaces",
+        headers=headers,
+        json={"name": "fanout-test"},
+        timeout=10,
     )
     assert resp.status_code == 200
     workspace_id = resp.json()["id"]

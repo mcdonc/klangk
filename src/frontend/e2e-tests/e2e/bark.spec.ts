@@ -147,10 +147,10 @@ test.describe("Bark E2E", () => {
     }
 
     // Create workspace via API
-    const createResp = await request.post(
-      `${API_BASE}/workspaces?name=${encodeURIComponent(wsName)}`,
-      { headers },
-    );
+    const createResp = await request.post(`${API_BASE}/workspaces`, {
+      headers,
+      data: { name: wsName },
+    });
     expect(createResp.ok()).toBeTruthy();
     const created = await createResp.json();
     expect(created.id).toBeTruthy();
@@ -211,10 +211,10 @@ test.describe("Bark E2E", () => {
       request,
       `file-ops-${Date.now()}@test.example.com`,
     );
-    const wsResp = await request.post(
-      `${API_BASE}/workspaces?name=e2e-file-ops-${Date.now()}`,
-      { headers },
-    );
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers,
+      data: { name: `e2e-file-ops-${Date.now()}` },
+    });
     const workspaceId = (await wsResp.json()).id;
     const fileName = "playwright-test.txt";
     const renamedName = "playwright-renamed.txt";
@@ -294,10 +294,10 @@ test.describe("Bark E2E", () => {
       request,
       `folder-${Date.now()}@test.example.com`,
     );
-    const wsResp = await request.post(
-      `${API_BASE}/workspaces?name=e2e-folder-${Date.now()}`,
-      { headers },
-    );
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers,
+      data: { name: `e2e-folder-${Date.now()}` },
+    });
     const workspaceId = (await wsResp.json()).id;
     const folder = "test-folder";
 
@@ -586,14 +586,16 @@ test.describe("Bark E2E", () => {
     }
 
     // Create two workspaces
-    const respA = await request.post(`${API_BASE}/workspaces?name=e2e-ws-a`, {
+    const respA = await request.post(`${API_BASE}/workspaces`, {
       headers,
+      data: { name: "e2e-ws-a" },
     });
     expect(respA.ok()).toBeTruthy();
     const wsA = await respA.json();
 
-    const respB = await request.post(`${API_BASE}/workspaces?name=e2e-ws-b`, {
+    const respB = await request.post(`${API_BASE}/workspaces`, {
       headers,
+      data: { name: "e2e-ws-b" },
     });
     expect(respB.ok()).toBeTruthy();
     const wsB = await respB.json();

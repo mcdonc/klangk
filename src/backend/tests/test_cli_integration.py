@@ -316,6 +316,30 @@ class TestClientLines:
                     client.delete_workspace("ws1")
 
 
+class TestImagesCommand:
+    def test_images_lists_allowed(self, monkeypatch):
+        from bark_backend.cli import main as cli_main
+
+        mock_client = MagicMock()
+        mock_client.list_images.return_value = {
+            "default": "bark-pi",
+            "allowed": ["bark-pi", "bark-rust"],
+        }
+        monkeypatch.setattr(cli_main, "_client", lambda: mock_client)
+        monkeypatch.setattr(cli_main, "_cfg", lambda: CLIConfig())
+        cfg = CLIConfig()
+        cfg.auth.token = "tok"
+        monkeypatch.setattr(cli_main, "_cfg", lambda: cfg)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(cli_main.app, ["images"])
+        assert result.exit_code == 0
+        assert "bark-pi" in result.output
+        assert "bark-rust" in result.output
+
+
 class TestWsExec:
     @pytest.mark.asyncio
     async def test_ws_exec_success(self):

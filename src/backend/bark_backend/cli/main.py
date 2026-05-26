@@ -143,11 +143,14 @@ def list_workspaces(
 @ws_app.command()
 def create(
     name: str = typer.Argument(..., help="Workspace name"),
+    image: str | None = typer.Option(
+        None, "--image", help="Docker image to use (see `bark images`)"
+    ),
 ) -> None:
     """Create a new workspace."""
     _require_auth()
     try:
-        ws = _client().create_workspace(name)
+        ws = _client().create_workspace(name, image=image)
     except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)
         _err.print(f"[red]Failed to create workspace:[/red] {detail}")
@@ -322,6 +325,22 @@ def sync(
     _err.print(f"[dim]{' '.join(cmd)}[/dim]")
     result = subprocess.run(cmd)
     raise typer.Exit(code=result.returncode)
+
+
+@app.command()
+def images() -> None:
+    """List available Docker images for workspaces."""
+    _require_auth()
+    try:
+        data = _client().list_images()
+    except httpx.HTTPStatusError as exc:  # pragma: no cover
+        detail = exc.response.json().get("detail", exc.response.text)
+        _err.print(f"[red]Failed to list images:[/red] {detail}")
+        raise typer.Exit(code=1) from None
+    console = Console()
+    for img in data["allowed"]:
+        prefix = "*" if img == data["default"] else " "
+        console.print(f"  {prefix} {img}")
 
 
 if __name__ == "__main__":  # pragma: no cover

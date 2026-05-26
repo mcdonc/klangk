@@ -86,7 +86,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     if (name == null || name.isEmpty) return;
 
     try {
-      final response = await _auth.authPost('/workspaces?name=$name');
+      final response = await _auth.authPost(
+        '/workspaces',
+        body: jsonEncode({'name': name}),
+      );
       if (response.statusCode == 200) {
         await _loadWorkspaces();
       } else {

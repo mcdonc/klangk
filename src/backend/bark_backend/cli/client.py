@@ -85,8 +85,13 @@ class BarkClient:
             for w in raw
         ]
 
-    def create_workspace(self, name: str) -> Workspace:  # pragma: no cover
-        resp = self.post("/workspaces", params={"name": name})
+    def create_workspace(  # pragma: no cover
+        self, name: str, image: str | None = None
+    ) -> Workspace:
+        body: dict = {"name": name}
+        if image:
+            body["image"] = image
+        resp = self.post("/workspaces", json=body)
         if resp.status_code == 401:
             raise AuthError("Not logged in — run `bark login`")
         resp.raise_for_status()
@@ -94,6 +99,13 @@ class BarkClient:
         return Workspace(
             id=w["id"], name=w["name"], created_at=w["created_at"]
         )
+
+    def list_images(self) -> dict:  # pragma: no cover
+        resp = self.get("/images")
+        if resp.status_code == 401:
+            raise AuthError("Not logged in — run `bark login`")
+        resp.raise_for_status()
+        return resp.json()
 
     def resolve_workspace(self, name: str) -> Workspace:
         """Find a workspace by name. Raises WorkspaceNotFoundError if not found."""

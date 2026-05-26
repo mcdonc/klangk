@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 IMAGE_NAME = env_util.resolve_env_secret("BARK_IMAGE_NAME", "bark-pi")
 INSTANCE_ID = env_util.resolve_env_secret("BARK_INSTANCE_ID", "default")
 
+_allowed_images_env = env_util.resolve_env_secret("BARK_ALLOWED_IMAGES", "")
+ALLOWED_IMAGES: set[str] = {
+    img.strip() for img in _allowed_images_env.split(",") if img.strip()
+}
+ALLOWED_IMAGES.add(IMAGE_NAME)  # default image is always allowed
+
 
 def parse_idle_timeout() -> tuple[int, int]:
     default = 30 * 60
@@ -185,12 +191,20 @@ class ContainerRegistry:
         hosting_hostname: str = "localhost",
         hosting_proto: str = "http",
         hosting_base_path: str = "",
+        image: str | None = None,
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
         Returns (container_id, status) where status is one of:
         'connected' (already running), 'restarted', or 'created'.
         """
+        resolved_image = image or IMAGE_NAME
+        if resolved_image not in ALLOWED_IMAGES:
+            raise ValueError(
+                f"Image {resolved_image!r} is not in the allowed list: "
+                f"{sorted(ALLOWED_IMAGES)}"
+            )
+
         docker = await self.get_docker()
 
         if existing_container_id:
@@ -283,7 +297,7 @@ class ContainerRegistry:
             port_bindings[port_key] = [{"HostPort": str(host_port)}]
 
         config = {
-            "Image": IMAGE_NAME,
+            "Image": resolved_image,
             "Labels": {
                 "bark.managed": "true",
                 "bark.instance": INSTANCE_ID,

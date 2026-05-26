@@ -5,6 +5,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiodocker.exceptions
+import pytest
 
 from bark_backend import container_manager, user_store
 
@@ -420,6 +421,12 @@ class TestStartContainer:
         assert any(
             "BARK_RESUME_SESSION=/path/to/session.jsonl" in e for e in env
         )
+
+    async def test_disallowed_image_raises(self, workspace):
+        with pytest.raises(ValueError, match="not in the allowed list"):
+            await container_manager.registry.start_container(
+                workspace["id"], "/work", "/home", image="evil:latest"
+            )
 
     async def test_llm_proxy_env_vars(self, workspace, monkeypatch):
         """Container gets proxy URL, not real API keys."""

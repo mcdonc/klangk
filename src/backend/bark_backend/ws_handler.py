@@ -240,6 +240,7 @@ async def start_workspace_container(
         hosting_hostname=hosting_hostname,
         hosting_proto=hosting_proto,
         hosting_base_path=hosting_base_path,
+        image=workspace.get("image"),
     )
     state["container_status"] = container_status
     state["workspace_id"] = workspace_id

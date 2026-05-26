@@ -70,8 +70,10 @@ def home_path(user_id: str, workspace_id: str) -> Path:
     return WORKSPACES_ROOT / user_id / "home" / workspace_id
 
 
-async def create_workspace(user_id: str, name: str) -> dict:
-    workspace = await user_store.create_workspace(user_id, name)
+async def create_workspace(
+    user_id: str, name: str, image: str | None = None
+) -> dict:
+    workspace = await user_store.create_workspace(user_id, name, image=image)
     path = workspace_path(user_id, workspace["id"])
     path.mkdir(parents=True, exist_ok=True)
     home = home_path(user_id, workspace["id"])

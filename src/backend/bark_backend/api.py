@@ -8,6 +8,7 @@ import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
 from . import (
     auth,
@@ -340,12 +341,33 @@ async def list_workspaces(user: dict = Depends(auth.get_current_user)):
     return await workspace_manager.list_workspaces(user["id"])
 
 
+class CreateWorkspaceRequest(BaseModel):
+    name: str
+    image: str | None = None
+
+
+@router.get("/images")
+async def list_images(_user: dict = Depends(auth.get_current_user)):
+    return {
+        "default": container_manager.IMAGE_NAME,
+        "allowed": sorted(container_manager.ALLOWED_IMAGES),
+    }
+
+
 @router.post("/workspaces")
 async def create_workspace(
-    name: str, user: dict = Depends(auth.get_current_user)
+    body: CreateWorkspaceRequest, user: dict = Depends(auth.get_current_user)
 ):
+    if body.image and body.image not in container_manager.ALLOWED_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Image {body.image!r} is not allowed. "
+            f"Allowed: {sorted(container_manager.ALLOWED_IMAGES)}",
+        )
     try:
-        return await workspace_manager.create_workspace(user["id"], name)
+        return await workspace_manager.create_workspace(
+            user["id"], body.name, image=body.image
+        )
     except (sqlite3.IntegrityError, OSError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 

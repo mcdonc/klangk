@@ -256,10 +256,10 @@ export async function createWorkspace(
   cleanup: () => Promise<void>;
 }> {
   const name = `${namePrefix}-${Date.now()}@test.example.com`;
-  const createResp = await request.post(
-    `${API_BASE}/workspaces?name=${encodeURIComponent(name)}`,
-    { headers },
-  );
+  const createResp = await request.post(`${API_BASE}/workspaces`, {
+    headers,
+    data: { name },
+  });
   if (!createResp.ok()) {
     const body = await createResp.text();
     throw new Error(
