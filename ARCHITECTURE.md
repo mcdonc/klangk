@@ -344,8 +344,8 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `BARK_NGINX_PORT`             | `8995`                               | **Primary access point** — nginx reverse proxy port (UI, API, WebSocket, hosted apps)                                                                     |
 | `BARK_PORT`                   | `8997`                               | Backend (FastAPI/uvicorn) port — proxied through nginx, not accessed directly                                                                             |
 | `BARK_SOLIPLEX_PORT`          | `8555`                               | Soliplex backend port (unused unless Soliplex integration is configured)                                                                                  |
-| `BARK_DATA_DIR`               | `~/.bark/data`                       | Database, workspaces, Pi sessions                                                                                                                         |
-| `BARK_PLUGINS_DIR`            | `~/.bark/plugins`                    | Fetched plugins (outside repo for `execIfModified`)                                                                                                       |
+| `BARK_DATA_DIR`               | `$DEVENV_STATE/bark/data`            | Database, workspaces, Pi sessions                                                                                                                         |
+| `BARK_PLUGINS_DIR`            | `$DEVENV_STATE/bark/plugins`         | Fetched plugins (outside repo for `execIfModified`)                                                                                                       |
 | `BARK_IMAGE_NAME`             | `bark-pi`                            | Docker image name for workspace containers                                                                                                                |
 | `BARK_INSTANCE_ID`            | `default`                            | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup                                             |
 | `BARK_HOSTING_HOSTNAME`       | (auto-derived)                       | Hostname for hosted app URLs. Behind a reverse proxy: uses `X-Forwarded-Host` as-is. Direct access: uses `Host` header with `BARK_NGINX_PORT` substituted |
@@ -537,7 +537,7 @@ plugins:
 
 ### Data
 
-- All data stored in `$BARK_DATA_DIR` (defaults to `~/.bark/data`)
+- All data stored in `$BARK_DATA_DIR` (defaults to `$DEVENV_STATE/bark/data`)
 - SQLite database: `bark.db` (users, workspaces, port allocations, token blocklist, login attempts)
 - Workspace files: `workspaces/<user-id>/work/<workspace-id>/` (mounted as `/work`)
 - Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/bark` — dotfiles, bash history, Pi sessions)
