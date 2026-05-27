@@ -73,20 +73,20 @@ The CLI connects to the running Bark backend over HTTP + WebSocket — it works 
 
 All settings can be overridden in `.env`. Defaults are provided in `devenv.nix` at low priority so `.env` values take precedence.
 
-| Variable                   | Default           | Description                                                        |
-| -------------------------- | ----------------- | ------------------------------------------------------------------ |
-| `BARK_NGINX_PORT`          | `8995`            | **Primary access point** — nginx (UI, API, WebSocket, hosted apps) |
-| `BARK_PORT`                | `8997`            | Backend (FastAPI/uvicorn) — proxied through nginx                  |
-| `BARK_DATA_DIR`            | `~/.bark/data`    | Database, workspaces, Pi sessions                                  |
-| `BARK_PLUGINS_DIR`         | `~/.bark/plugins` | Fetched plugins (outside repo for `execIfModified`)                |
-| `SOLIPLEX_URL`             | (empty)           | Soliplex base URL as seen by browser (empty = same origin)         |
-| `LLM_API_KEY`              |                   | LLM provider API key                                               |
-| `LLM_BASE_URL`             |                   | LLM API URL (any OpenAI-compatible provider)                       |
-| `LLM_MODEL`                |                   | LLM model name                                                     |
-| `BARK_JWT_SECRET`          |                   | JWT signing secret                                                 |
-| `BARK_DEFAULT_USER`        |                   | Auto-seeded admin email on startup                                 |
-| `BARK_DEFAULT_PASSWORD`    |                   | Auto-seeded password on startup (omit to generate random)          |
-| `BARK_MIN_PASSWORD_LENGTH` | `4`               | Minimum password length                                            |
+| Variable                   | Default                      | Description                                                        |
+| -------------------------- | ---------------------------- | ------------------------------------------------------------------ |
+| `BARK_NGINX_PORT`          | `8995`                       | **Primary access point** — nginx (UI, API, WebSocket, hosted apps) |
+| `BARK_PORT`                | `8997`                       | Backend (FastAPI/uvicorn) — proxied through nginx                  |
+| `BARK_DATA_DIR`            | `$DEVENV_STATE/bark/data`    | Database, workspaces, Pi sessions                                  |
+| `BARK_PLUGINS_DIR`         | `$DEVENV_STATE/bark/plugins` | Fetched plugins (outside repo for `execIfModified`)                |
+| `SOLIPLEX_URL`             | (empty)                      | Soliplex base URL as seen by browser (empty = same origin)         |
+| `LLM_API_KEY`              |                              | LLM provider API key                                               |
+| `LLM_BASE_URL`             |                              | LLM API URL (any OpenAI-compatible provider)                       |
+| `LLM_MODEL`                |                              | LLM model name                                                     |
+| `BARK_JWT_SECRET`          |                              | JWT signing secret                                                 |
+| `BARK_DEFAULT_USER`        |                              | Auto-seeded admin email on startup                                 |
+| `BARK_DEFAULT_PASSWORD`    |                              | Auto-seeded password on startup (omit to generate random)          |
+| `BARK_MIN_PASSWORD_LENGTH` | `4`                          | Minimum password length                                            |
 
 ### Ports
 
@@ -126,11 +126,12 @@ nginx reverse proxy (port 8995)
 
 ### Plugins
 
-Plugins are fetched from git repos into `~/.bark/plugins` at development time. Run `update-plugins` to set up:
+Plugins are fetched from git repos into `$BARK_PLUGINS_DIR` at development
+time. Run `update-plugins` to set up:
 
 ```bash
-devenv shell -- update-plugins           # creates ~/.bark/plugins/plugins.yaml on first run
-# edit ~/.bark/plugins/plugins.yaml to add/remove plugins
+devenv shell -- update-plugins           # creates $BARK_PLUGINS_DIR/plugins.yaml on first run
+# edit $BARK_PLUGINS_DIR/plugins.yaml to add/remove plugins
 devenv shell -- update-plugins           # fetches all plugins
 devenv shell -- update-plugins soliplex  # fetch/update a single plugin
 devenv up                                # builds and starts

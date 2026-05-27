@@ -106,8 +106,8 @@
   env.BARK_PORT = lib.mkOverride 1500 "8997";
   env.BARK_NGINX_PORT = lib.mkOverride 1500 "8995";
   env.BARK_SOLIPLEX_PORT = lib.mkOverride 1500 "8555";
-  env.BARK_DATA_DIR = lib.mkOverride 1500 (builtins.getEnv "HOME" + "/.bark/data");
-  env.BARK_PLUGINS_DIR = lib.mkOverride 1500 (builtins.getEnv "HOME" + "/.bark/plugins");
+  env.BARK_DATA_DIR = lib.mkOverride 1500 (config.devenv.root + "/.devenv/state/bark/data");
+  env.BARK_PLUGINS_DIR = lib.mkOverride 1500 (config.devenv.root + "/.devenv/state/bark/plugins");
   env.BARK_IMAGE_NAME = lib.mkOverride 1500 "bark-pi";
   env.BARK_INSTANCE_ID = lib.mkOverride 1500 "default";
   dotenv.enable = true;
