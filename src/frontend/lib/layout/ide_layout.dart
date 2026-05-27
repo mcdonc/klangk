@@ -160,17 +160,10 @@ class _SkeuoTab extends StatelessWidget {
             topLeft: Radius.circular(8),
             topRight: Radius.circular(8),
           ),
-          border: Border(
-            bottom: BorderSide(
-              color: isSelected
-                  ? const Color(0xFFF7F6F2)
-                  : const Color(0xFF8A8880),
-              width: 2,
-            ),
-            right: const BorderSide(
-              color: Color(0xFFA0A098),
-              width: 1,
-            ),
+          border: Border.all(
+            color:
+                isSelected ? const Color(0xFFF7F6F2) : const Color(0xFF8A8880),
+            width: 1,
           ),
           boxShadow: isSelected
               ? const [

@@ -165,12 +165,22 @@
 
   scripts.test-frontend.exec = ''
     cd $DEVENV_ROOT/src/frontend
+    rm -rf coverage
     flutter test --coverage "$@"
-    exit_code=$?
+    test_exit=$?
+    cov_exit=0
     if [ -f coverage/lcov.info ]; then
-      python3 $DEVENV_ROOT/scripts/lcov-report.py coverage/lcov.info || exit_code=1
+      python3 $DEVENV_ROOT/scripts/lcov-report.py coverage/lcov.info
+      cov_exit=$?
     fi
-    exit $exit_code
+    if [ $test_exit -ne 0 ]; then
+      echo ""
+      echo "FAIL: some tests failed"
+      exit 1
+    fi
+    if [ $cov_exit -ne 0 ]; then
+      exit 1
+    fi
   '';
 
   # --- Pre-commit hooks ---

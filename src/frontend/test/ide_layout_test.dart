@@ -4,7 +4,6 @@ import 'package:bark_frontend/layout/ide_layout.dart';
 
 void main() {
   Widget buildLayout({
-    Widget? chat,
     Widget? fileViewer,
     Widget? terminal,
     Widget? debug,
@@ -15,7 +14,6 @@ void main() {
           width: 1280,
           height: 720,
           child: IdeLayout(
-            chat: chat ?? const Text('Chat'),
             fileViewer: fileViewer ?? const Text('Files'),
             terminal: terminal ?? const Text('Terminal'),
             debug: debug ?? const Text('Debug'),
@@ -28,15 +26,14 @@ void main() {
   group('IdeLayout', () {
     testWidgets('renders all child widgets', (tester) async {
       await tester.pumpWidget(buildLayout());
-      expect(find.text('Chat'), findsOneWidget);
       expect(find.text('Terminal'), findsWidgets);
       expect(find.text('Files'), findsWidgets);
-      expect(find.text('Debug'), findsOneWidget);
     });
 
-    testWidgets('has TabBar', (tester) async {
+    testWidgets('has Terminal and Files tabs', (tester) async {
       await tester.pumpWidget(buildLayout());
-      expect(find.byType(TabBar), findsOneWidget);
+      expect(find.text('Terminal'), findsWidgets);
+      expect(find.text('Files'), findsWidgets);
     });
 
     testWidgets('terminal tab content is visible by default', (tester) async {
@@ -44,8 +41,6 @@ void main() {
         terminal: const Text('TERMINAL_CONTENT'),
         fileViewer: const Text('FILES_CONTENT'),
       ));
-
-      // Terminal is the default tab (index 0)
       expect(find.text('TERMINAL_CONTENT'), findsOneWidget);
     });
 
@@ -55,11 +50,7 @@ void main() {
         fileViewer: const Text('FILES_CONTENT'),
       ));
 
-      final filesTab = find.descendant(
-        of: find.byType(TabBar),
-        matching: find.text('Files'),
-      );
-      await tester.tap(filesTab);
+      await tester.tap(find.text('Files'));
       await tester.pumpAndSettle();
 
       expect(find.text('FILES_CONTENT'), findsOneWidget);
@@ -68,38 +59,13 @@ void main() {
     testWidgets('tab switching works', (tester) async {
       await tester.pumpWidget(buildLayout());
 
-      final filesTab = find.descendant(
-        of: find.byType(TabBar),
-        matching: find.text('Files'),
-      );
-      expect(filesTab, findsOneWidget);
-      await tester.tap(filesTab);
+      await tester.tap(find.text('Files'));
       await tester.pumpAndSettle();
 
-      final terminalTab = find.descendant(
-        of: find.byType(TabBar),
-        matching: find.text('Terminal'),
-      );
-      await tester.tap(terminalTab);
+      await tester.tap(find.text('Terminal'));
       await tester.pumpAndSettle();
 
       expect(find.byType(IdeLayout), findsOneWidget);
-    });
-
-    testWidgets('has two tabs: Terminal and Files', (tester) async {
-      await tester.pumpWidget(buildLayout());
-
-      final tabBar = find.byType(TabBar);
-      expect(tabBar, findsOneWidget);
-
-      expect(
-        find.descendant(of: tabBar, matching: find.text('Terminal')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: tabBar, matching: find.text('Files')),
-        findsOneWidget,
-      );
     });
 
     testWidgets('uses IndexedStack for tab content', (tester) async {
@@ -107,84 +73,97 @@ void main() {
       expect(find.byType(IndexedStack), findsOneWidget);
     });
 
-    testWidgets('debug widget is always visible', (tester) async {
-      await tester.pumpWidget(buildLayout(
-        debug: const Text('DEBUG_OUTPUT'),
-      ));
-
-      expect(find.text('DEBUG_OUTPUT'), findsOneWidget);
-
-      // Switch to Files tab — debug should still be visible
-      final filesTab = find.descendant(
-        of: find.byType(TabBar),
-        matching: find.text('Files'),
-      );
-      await tester.tap(filesTab);
-      await tester.pumpAndSettle();
-
-      expect(find.text('DEBUG_OUTPUT'), findsOneWidget);
-    });
-
-    testWidgets('horizontal divider has resize cursor', (tester) async {
+    testWidgets('debug divider has resize cursor', (tester) async {
       await tester.pumpWidget(buildLayout());
 
       final mouseRegions = tester.widgetList<MouseRegion>(
         find.byType(MouseRegion),
       );
 
-      final resizeColumn = mouseRegions
-          .where((m) => m.cursor == SystemMouseCursors.resizeColumn);
       final resizeRow =
           mouseRegions.where((m) => m.cursor == SystemMouseCursors.resizeRow);
-
-      expect(resizeColumn.length, 1);
       expect(resizeRow.length, 1);
     });
 
-    testWidgets('chat panel is on the left', (tester) async {
-      await tester.pumpWidget(buildLayout(
-        chat: const Text('CHAT_LEFT'),
-      ));
-
-      expect(find.text('CHAT_LEFT'), findsOneWidget);
-    });
-
-    testWidgets('uses LayoutBuilder for responsive sizing', (tester) async {
-      await tester.pumpWidget(buildLayout());
-      expect(find.byType(LayoutBuilder), findsOneWidget);
-    });
-
-    testWidgets('vertical divider can be dragged', (tester) async {
+    testWidgets('debug divider can be dragged', (tester) async {
       await tester.pumpWidget(buildLayout());
       await tester.pumpAndSettle();
 
-      // Find the horizontal divider (resizeRow cursor)
       final resizeRow = find.byWidgetPredicate(
         (w) => w is MouseRegion && w.cursor == SystemMouseCursors.resizeRow,
       );
       expect(resizeRow, findsOneWidget);
 
-      // Drag it down
-      await tester.drag(resizeRow, const Offset(0, 50));
+      await tester.drag(resizeRow, const Offset(0, -50));
       await tester.pumpAndSettle();
 
       expect(find.byType(IdeLayout), findsOneWidget);
     });
 
-    testWidgets('horizontal divider can be dragged', (tester) async {
-      await tester.pumpWidget(buildLayout());
+    testWidgets('debug divider double tap toggles debug pane', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        debug: const Text('DEBUG_OUTPUT'),
+      ));
       await tester.pumpAndSettle();
 
-      // Find the vertical divider (resizeColumn cursor)
-      final resizeCol = find.byWidgetPredicate(
-        (w) => w is MouseRegion && w.cursor == SystemMouseCursors.resizeColumn,
+      final gestureDetector = find.byWidgetPredicate(
+        (w) =>
+            w is GestureDetector &&
+            w.onDoubleTap != null &&
+            w.onVerticalDragUpdate != null,
       );
-      expect(resizeCol, findsOneWidget);
 
-      // Drag it right
-      await tester.drag(resizeCol, const Offset(100, 0));
+      // Double tap to expand from 0 to 200
+      await tester.tap(gestureDetector);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(gestureDetector);
       await tester.pumpAndSettle();
 
+      expect(find.text('DEBUG_OUTPUT'), findsOneWidget);
+
+      // Double tap again to collapse back to 0
+      await tester.tap(gestureDetector);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(gestureDetector);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(IdeLayout), findsOneWidget);
+    });
+
+    testWidgets('no debug pane when debug is null', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1280,
+              height: 720,
+              child: IdeLayout(
+                fileViewer: const Text('Files'),
+                terminal: const Text('Terminal'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final mouseRegions = tester.widgetList<MouseRegion>(
+        find.byType(MouseRegion),
+      );
+      final resizeRow =
+          mouseRegions.where((m) => m.cursor == SystemMouseCursors.resizeRow);
+      expect(resizeRow.length, 0);
+    });
+
+    testWidgets('selecting same tab does not rebuild', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      // Terminal tab label appears in both the tab bar and content;
+      // tap only the one inside the GestureDetector (the tab).
+      final terminalTab = find.descendant(
+        of: find.byType(GestureDetector),
+        matching: find.text('Terminal'),
+      );
+      await tester.tap(terminalTab.first);
+      await tester.pumpAndSettle();
       expect(find.byType(IdeLayout), findsOneWidget);
     });
   });
