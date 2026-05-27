@@ -1,0 +1,10 @@
+{
+  "name": "@bark/celebrate",
+  "version": "1.0.0",
+  "description": "Celebrate with confetti when tasks complete",
+  "pi": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  }
+}

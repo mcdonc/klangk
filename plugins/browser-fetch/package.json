@@ -1,0 +1,10 @@
+{
+  "name": "@bark/browser-fetch",
+  "version": "1.0.0",
+  "description": "Fetch URLs using the user's browser session credentials",
+  "pi": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  }
+}

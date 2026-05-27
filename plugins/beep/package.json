@@ -1,0 +1,10 @@
+{
+  "name": "@bark/beep",
+  "version": "1.0.0",
+  "description": "Play beep sounds to get the user's attention",
+  "pi": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  }
+}

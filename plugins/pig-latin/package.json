@@ -1,0 +1,10 @@
+{
+  "name": "@bark/pig-latin",
+  "version": "1.0.0",
+  "description": "Convert text to Pig Latin",
+  "pi": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  }
+}
