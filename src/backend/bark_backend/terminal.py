@@ -6,6 +6,7 @@ import logging
 import os
 import struct
 import termios
+import tty
 from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,11 @@ class TerminalSession:
         """Start a shell session via docker exec with a PTY."""
         master_fd, slave_fd = openpty()
 
+        # Set the outer PTY to raw mode so it passes all bytes through
+        # without processing. Docker's -t creates an inner PTY for bash;
+        # our PTY must be transparent to avoid double-processing escape
+        # sequences (e.g., ESC being consumed, breaking arrow keys).
+        tty.setraw(master_fd)
         set_winsize(master_fd, rows, cols)
         set_winsize(slave_fd, rows, cols)
 
@@ -87,7 +93,7 @@ class TerminalSession:
         exec_cmd = [
             "docker",
             "exec",
-            "-i",
+            "-it",
             "-u",
             "bark",
             "-w",

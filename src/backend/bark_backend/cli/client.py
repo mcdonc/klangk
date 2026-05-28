@@ -210,7 +210,6 @@ async def _ws_shell(
 
         # 3. Drain messages until the first terminal_output (the shell prompt).
         # Timeout prevents hanging if the container fails to start a shell.
-        # Write the first output to stdout so the prompt is visible.
         try:
             deadline = asyncio.get_event_loop().time() + 30
             while True:
@@ -220,8 +219,6 @@ async def _ws_shell(
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                 msg = json.loads(raw)
                 if msg.get("type") == "terminal_output":
-                    sys.stdout.write(msg.get("data", ""))
-                    sys.stdout.flush()
                     break
                 if msg.get("type") == "error":  # pragma: no cover
                     raise ConnectionError(

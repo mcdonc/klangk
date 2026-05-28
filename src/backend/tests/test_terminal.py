@@ -38,6 +38,7 @@ def mock_os(real_pipe):
     with (
         patch.object(terminal, "openpty", return_value=(r, w)) as mopenpty,
         patch.object(terminal, "set_winsize") as m_winsize,
+        patch("tty.setraw") as m_setraw,
         patch.object(terminal, "fd_read", return_value=b"") as m_read,
         patch.object(terminal, "fd_write", return_value=0) as m_write,
         patch.object(terminal, "fd_close") as m_close,
@@ -45,6 +46,7 @@ def mock_os(real_pipe):
         yield {
             "openpty": mopenpty,
             "set_winsize": m_winsize,
+            "setraw": m_setraw,
             "fd_read": m_read,
             "fd_write": m_write,
             "fd_close": m_close,
