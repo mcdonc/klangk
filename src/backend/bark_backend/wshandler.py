@@ -392,8 +392,6 @@ async def handle_terminal_start(ws: WebSocket, state: dict, msg: dict) -> None:
     state["terminal_task"] = asyncio.create_task(
         forward_terminal_output(ws, session, state)
     )
-    # Clear the screen to hide the double-prompt on startup.
-    await ws.send_json({"type": "terminal_output", "data": "\x1b[2J\x1b[H"})
     container.registry.record_activity(container_id)
 
 

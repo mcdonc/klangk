@@ -235,6 +235,8 @@ async def _ws_shell(
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                 msg = json.loads(raw)
                 if msg.get("type") == "terminal_output":
+                    sys.stdout.write(msg.get("data", ""))
+                    sys.stdout.flush()
                     break
                 if msg.get("type") == "error":  # pragma: no cover
                     raise ConnectionError(
