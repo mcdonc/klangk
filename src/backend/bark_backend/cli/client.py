@@ -239,6 +239,17 @@ async def _ws_shell(
         finally:
             if raw_mode:
                 _raw_mode_exit(old_settings)
+                # Reset terminal: disable mouse tracking modes that apps
+                # like Pi/nano may have enabled. Without this, the terminal
+                # echoes ANSI mouse sequences after disconnect.
+                sys.stdout.write(
+                    "\x1b[?1000l"  # disable mouse click tracking
+                    "\x1b[?1002l"  # disable mouse button tracking
+                    "\x1b[?1003l"  # disable all mouse tracking
+                    "\x1b[?1006l"  # disable SGR mouse mode
+                    "\x1b[?25h"  # show cursor
+                )
+                sys.stdout.flush()
         await _send_ignore_closed(  # pragma: no cover
             ws, json.dumps({"cmd": "terminal_stop"})
         )
