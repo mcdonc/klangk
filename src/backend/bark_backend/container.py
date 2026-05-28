@@ -301,6 +301,30 @@ class ContainerRegistry:
         env_vars.append(f"BARK_HOSTING_PROTO={hosting_proto}")
         env_vars.append(f"BARK_HOSTING_BASE_PATH={hosting_base_path}")
 
+        # Ensure named volumes in extra_mounts exist with bark labels.
+        # Bind mounts (starting with /) are passed through as-is.
+        if extra_mounts:
+            for mount_spec in extra_mounts:
+                source = mount_spec.split(":")[0]
+                if not source.startswith("/"):
+                    # Named volume — ensure it exists with bark labels
+                    try:
+                        vol = await docker.volumes.get(source)
+                        await vol.show()
+                    except aiodocker.exceptions.DockerError as e:
+                        if e.status == 404:
+                            await docker.volumes.create(
+                                {
+                                    "Name": source,
+                                    "Labels": {
+                                        "bark.managed": "true",
+                                        "bark.instance": INSTANCE_ID,
+                                    },
+                                }
+                            )
+                        else:
+                            raise
+
         port_bindings = {}
         exposed_ports = {}
         for i, host_port in enumerate(host_ports):
