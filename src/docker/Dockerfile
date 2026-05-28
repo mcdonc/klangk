@@ -20,5 +20,6 @@ COPY entrypoint.sh /opt/bark/entrypoint.sh
 COPY clank.sh /usr/local/bin/clank
 RUN chmod +x /opt/bark/entrypoint.sh /usr/local/bin/clank
 COPY bash.bashrc /etc/bash.bashrc
+COPY tmux.conf /etc/tmux.conf
 
 ENTRYPOINT ["/opt/bark/entrypoint.sh"]
