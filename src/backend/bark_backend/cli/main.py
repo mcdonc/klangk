@@ -446,7 +446,7 @@ vol_app = typer.Typer(
 app.add_typer(vol_app, name="volumes")
 
 
-@vol_app.command("list")
+@vol_app.command("ls")
 def volumes_list(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
