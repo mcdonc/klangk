@@ -1,3 +1,4 @@
+import socket
 from contextlib import asynccontextmanager
 
 import aiosqlite
@@ -378,6 +379,16 @@ async def add_port_allocations(workspace_id: str, ports: list[int]) -> None:
         await db.close()
 
 
+def _port_in_use(port: int) -> bool:
+    """Check if a port is bound at the OS level."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("0.0.0.0", port))
+            return False
+        except OSError:
+            return True
+
+
 async def find_and_allocate_ports(
     workspace_id: str, count: int, start: int
 ) -> list[int]:
@@ -391,7 +402,7 @@ async def find_and_allocate_ports(
         ports = []
         port = start
         while len(ports) < count:
-            if port not in used:
+            if port not in used and not _port_in_use(port):
                 ports.append(port)
             port += 1
 

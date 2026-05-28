@@ -108,7 +108,7 @@ async function globalSetup() {
         BARK_DEFAULT_PASSWORD: "admin",
         BARK_TEST_MODE: "1",
         BARK_INSTANCE_ID: "e2e-test",
-        BARK_PORT_RANGE_START: "9200",
+        BARK_PORT_RANGE_START: "19200",
         LOGFIRE_TOKEN: "", // Disable Logfire tracing during E2E tests
       },
     },
