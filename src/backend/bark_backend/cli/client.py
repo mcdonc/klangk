@@ -219,12 +219,7 @@ async def _ws_shell(
 
         # 2. Start terminal
         cols, rows = _get_terminal_size()
-        start_msg = {
-            "cmd": "terminal_start",
-            "cols": cols,
-            "rows": rows,
-            "enableTmux": True,
-        }
+        start_msg = {"cmd": "terminal_start", "cols": cols, "rows": rows}
         if command_override is not None:
             start_msg["commandOverride"] = command_override
         await ws.send(json.dumps(start_msg))

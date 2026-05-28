@@ -26,12 +26,6 @@ PROMPT_COMMAND="history -a"
 alias ls='ls --color=auto'
 alias grep='grep --color=auto'
 
-# Auto-start tmux for scrollback, mouse support, and PgUp/PgDn.
-# Skip if already inside tmux or if this is a non-interactive session.
-if [ -z "$TMUX" ] && [ -z "$BARK_NO_TMUX" ] && [[ $- == *i* ]] && [ -t 0 ]; then
-  exec tmux new-session
-fi
-
 # Determine which command to exec into (if any).
 # BARK_CMD_OVERRIDE (set per-session via docker exec -e) takes priority.
 # Otherwise fall back to the workspace default from the config mount.

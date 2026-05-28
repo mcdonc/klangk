@@ -31,15 +31,12 @@ class TerminalSession:
         cols: int = 80,
         rows: int = 24,
         command_override: str | None = None,
-        enable_tmux: bool = False,
     ) -> None:
         """Start a shell session via Docker API exec."""
         self._running = True
 
         # Build environment for the exec
         env = ["TERM=xterm-256color"]
-        if not enable_tmux:
-            env.append("BARK_NO_TMUX=1")
         if command_override is not None:
             env.append(f"BARK_CMD_OVERRIDE={command_override}")
 
