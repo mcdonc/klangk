@@ -333,6 +333,98 @@ class TestSync:
         assert (dest / "remote-file.txt").read_text().strip() == "remote-data"
 
 
+class TestDefaultCommand:
+    def _login(self, cli_config):
+        env = cli_config["env"]
+        _run(
+            [
+                "bark",
+                "login",
+                "test@example.com",
+                "--server",
+                cli_config["server_url"],
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+
+    def test_default_command_written_to_container(self, cli_config):
+        """set-command → container gets BARK_DEFAULT_COMMAND → .bark-command."""
+        env = cli_config["env"]
+        self._login(cli_config)
+        _run(["bark", "ws", "create", "e2e-defcmd"], env=env)
+        try:
+            # Set command before container starts
+            result = _run(
+                ["bark", "ws", "set-command", "e2e-defcmd", "echo hello"],
+                env=env,
+            )
+            assert result.returncode == 0
+            assert "Default command set to" in result.stdout
+
+            # exec triggers container start with BARK_DEFAULT_COMMAND
+            result = _run(
+                [
+                    "bark",
+                    "ws",
+                    "exec",
+                    "e2e-defcmd",
+                    "cat",
+                    "/tmp/.bark-command",
+                ],
+                env=env,
+                timeout=60,
+            )
+            assert result.returncode == 0
+            assert result.stdout.strip() == "echo hello"
+
+            # Clear
+            result = _run(["bark", "ws", "set-command", "e2e-defcmd"], env=env)
+            assert result.returncode == 0
+            assert "cleared" in result.stdout
+        finally:
+            _run(["bark", "ws", "delete", "e2e-defcmd"], env=env)
+
+    def test_default_command_bash_no_infinite_loop(self, cli_config):
+        """Setting default command to bash should not cause infinite recursion."""
+        env = cli_config["env"]
+        self._login(cli_config)
+        _run(["bark", "ws", "create", "e2e-defbash"], env=env)
+        try:
+            _run(
+                ["bark", "ws", "set-command", "e2e-defbash", "bash"],
+                env=env,
+            )
+            # Start the container first
+            _run(
+                ["bark", "ws", "exec", "e2e-defbash", "true"],
+                env=env,
+                timeout=30,
+            )
+            # Run an interactive bash inside the container that sources
+            # .bashrc, which would exec bash again without the
+            # BARK_CMD_STARTED guard. If recursion happens, this hangs
+            # and times out. We pipe "exit" to terminate the shell.
+            result = _run(
+                [
+                    "bark",
+                    "ws",
+                    "exec",
+                    "e2e-defbash",
+                    "bash",
+                    "-ic",
+                    "exit 0",
+                ],
+                env=env,
+                timeout=15,
+            )
+            assert result.returncode == 0
+        finally:
+            _run(["bark", "ws", "delete", "e2e-defbash"], env=env)
+
+
 class TestLogout:
     def test_logout(self, cli_config):
         result = _run(
