@@ -44,10 +44,6 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
     && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# Determinate Nix (TODO: remove after testing — large layer, not needed for most workspaces)
-RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
-    | sh -s -- install linux --no-confirm --init none
-
 # fd-find installs as fdfind on Debian — symlink to fd
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 
@@ -75,3 +71,10 @@ WORKDIR /work
 
 # Allow bark user to sudo without a password (for installing packages, etc.)
 RUN echo "bark ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/bark
+
+# Determinate Nix in single-user mode for bark
+# (TODO: remove after testing — large layer, not needed for most workspaces)
+USER bark
+RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
+    | sh -s -- install linux --no-confirm --init none --no-start-daemon
+USER root
