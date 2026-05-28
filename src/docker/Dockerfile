@@ -1,4 +1,4 @@
-FROM ghcr.io/mcdonc/bark/bark-pi-base:latest
+FROM ghcr.io/mcdonc/bark/bark-base:latest
 
 # Install npm-based Pi extensions globally via pi install.
 # This layer is expensive (~30s) and rarely changes, so it goes first.

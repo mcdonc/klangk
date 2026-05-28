@@ -3,7 +3,7 @@
 # Logs in if not already authenticated.
 set -euo pipefail
 
-IMAGE="ghcr.io/mcdonc/bark/bark-pi-base:latest"
+IMAGE="ghcr.io/mcdonc/bark/bark-base:latest"
 
 # Check if already logged in to ghcr.io
 if ! docker manifest inspect "$IMAGE" >/dev/null 2>&1; then

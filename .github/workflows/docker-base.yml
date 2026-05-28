@@ -26,6 +26,6 @@ jobs:
             --build-arg BARK_UID=1000 \
             --build-arg BARK_GID=1000 \
             -f src/docker/Dockerfile.base \
-            -t ghcr.io/${{ github.repository }}/bark-pi-base:latest \
+            -t ghcr.io/${{ github.repository }}/bark-base:latest \
             src/docker/
-          docker push ghcr.io/${{ github.repository }}/bark-pi-base:latest
+          docker push ghcr.io/${{ github.repository }}/bark-base:latest

@@ -88,7 +88,7 @@ bark/
     nginx.sh                   # nginx reverse proxy: config generation and exec
 
   src/docker/
-    Dockerfile                  # Workspace image: FROM bark-pi-base + plugin extensions + tools + npm deps + entrypoint + /etc/bash.bashrc
+    Dockerfile                  # Workspace image: FROM bark-base + plugin extensions + tools + npm deps + entrypoint + /etc/bash.bashrc
     Dockerfile.base             # Base image: node:26-slim + Pi + Python3 + build-essential + SQLite + vim + emacs + net tools + /bin/sh→bash (pushed to GHCR)
     entrypoint.sh               # Sets up Pi config, system prompt, starts Pi in interactive mode
     system-prompt.md            # Static system prompt for Pi (copied into image)

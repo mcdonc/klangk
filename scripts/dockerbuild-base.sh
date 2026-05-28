@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
-IMAGE="ghcr.io/mcdonc/bark/bark-pi-base:latest"
+IMAGE="ghcr.io/mcdonc/bark/bark-base:latest"
 
 echo "==> Building base image"
 docker build --platform linux/amd64 \
