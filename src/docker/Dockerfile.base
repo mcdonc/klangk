@@ -78,3 +78,4 @@ USER bark
 RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
     | sh -s -- install linux --no-confirm --init none --no-start-daemon
 USER root
+RUN chown -R bark:bark /nix
