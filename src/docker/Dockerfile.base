@@ -91,7 +91,7 @@ USER bark
 RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
     | sh -s -- install linux --no-confirm --init none --no-start-daemon
 USER root
-RUN chown -R bark:bark /nix \
-    && usermod -aG nixbld bark
+RUN usermod -aG nixbld bark \
+    && chown -R bark:bark /nix/var
 RUN . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
     && nix profile install --profile /nix/var/nix/profiles/default nixpkgs#devenv nixpkgs#cachix
