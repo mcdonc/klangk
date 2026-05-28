@@ -182,6 +182,19 @@ class AuthService extends ChangeNotifier {
     return response;
   }
 
+  Future<http.Response> authPut(String path, {String? body}) async {
+    final response = await _client.put(
+      Uri.parse('$_baseUrl$path'),
+      headers: {
+        ..._authHeaders,
+        if (body != null) 'Content-Type': 'application/json',
+      },
+      body: body,
+    );
+    if (response.statusCode == 401) await _clearToken();
+    return response;
+  }
+
   Future<http.Response> authDelete(String path) async {
     final response = await _client.delete(
       Uri.parse('$_baseUrl$path'),

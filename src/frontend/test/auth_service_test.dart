@@ -461,6 +461,37 @@ void main() {
       expect(service.isLoggedIn, isFalse);
     });
 
+    test('authPut clears token on 401', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response('Unauthorized', 401);
+      });
+
+      SharedPreferences.setMockInitialValues({'bark_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      await service.authPut('/workspaces/123/command', body: '{}');
+      expect(service.isLoggedIn, isFalse);
+    });
+
+    test('authPut sends body and content-type', () async {
+      String? contentType;
+      String? body;
+      testAuthHttpClientOverride = MockClient((request) async {
+        contentType = request.headers['Content-Type'];
+        body = request.body;
+        return http.Response('{}', 200);
+      });
+
+      SharedPreferences.setMockInitialValues({'bark_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      await service.authPut('/test', body: '{"key":"val"}');
+      expect(contentType, 'application/json');
+      expect(body, '{"key":"val"}');
+    });
+
     test('authGet sends authorization header', () async {
       String? authHeader;
       testAuthHttpClientOverride = MockClient((request) async {

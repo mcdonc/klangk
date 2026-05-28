@@ -63,11 +63,13 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
           title: const Text('New Workspace'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const Text('Name', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
               TextField(
                 controller: nameController,
                 decoration: const InputDecoration(
-                  labelText: 'Workspace name',
                   border: OutlineInputBorder(),
                 ),
                 autofocus: true,
@@ -76,12 +78,13 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   'command': cmdController.text.trim(),
                 }),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
+              const Text('Default command',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
               TextField(
                 controller: cmdController,
                 decoration: const InputDecoration(
-                  labelText: 'Default command (optional)',
-                  hintText: 'e.g. bark-pi',
                   border: OutlineInputBorder(),
                 ),
                 onSubmitted: (_) => Navigator.pop(context, {
@@ -185,6 +188,81 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     }
   }
 
+  Future<void> _editWorkspace(Map<String, dynamic> ws) async {
+    final cmdController =
+        TextEditingController(text: ws['default_command'] as String? ?? '');
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Settings: ${ws['name']}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Default command',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              TextField(
+                controller: cmdController,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => Navigator.pop(context, true),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (saved != true) return;
+
+    final command = cmdController.text.trim();
+    try {
+      final response = await _auth.authPut(
+        '/workspaces/${ws['id']}/command',
+        body: jsonEncode({
+          'default_command': command.isEmpty ? null : command,
+        }),
+      );
+      if (response.statusCode == 200) {
+        await _loadWorkspaces();
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(days: 1),
+              showCloseIcon: true,
+              content: Text('Failed to update: ${response.body}'),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(days: 1),
+            showCloseIcon: true,
+            content: Text('Error: $e'),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -237,9 +315,19 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                         leading: const Icon(Icons.folder),
                         title: Text(ws['name'] as String),
                         subtitle: Text('Created: ${ws['created_at'] ?? ''}'),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () => _deleteWorkspace(ws['id'] as String),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.settings_outlined),
+                              onPressed: () => _editWorkspace(ws),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () =>
+                                  _deleteWorkspace(ws['id'] as String),
+                            ),
+                          ],
                         ),
                         onTap: () => context.go('/workspace/${ws['id']}'),
                       ),

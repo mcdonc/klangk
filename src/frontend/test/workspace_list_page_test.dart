@@ -225,8 +225,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(TextField), findsNWidgets(2));
-      expect(find.text('Workspace name'), findsOneWidget);
-      expect(find.text('Default command (optional)'), findsOneWidget);
+      expect(find.text('Name'), findsOneWidget);
+      expect(find.text('Default command'), findsOneWidget);
     });
 
     testWidgets('cancel button closes create dialog', (tester) async {
@@ -900,6 +900,220 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(navigatedTo, '/admin/users');
+    });
+
+    testWidgets('settings icon opens edit dialog', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': 'bark-pi',
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Settings: My WS'), findsOneWidget);
+      // The text field should have the current default command
+      final tf = tester.widget<TextField>(find.byType(TextField));
+      expect(tf.controller!.text, 'bark-pi');
+    });
+
+    testWidgets('edit dialog saves default command', (tester) async {
+      String? putBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1/command' &&
+            request.method == 'PUT') {
+          putBody = request.body;
+          return http.Response('{"status":"updated"}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'pi');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(putBody, isNotNull);
+      final body = jsonDecode(putBody!) as Map<String, dynamic>;
+      expect(body['default_command'], 'pi');
+    });
+
+    testWidgets('edit dialog submit via Enter', (tester) async {
+      var putCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.method == 'PUT') {
+          putCalled = true;
+          return http.Response('{"status":"updated"}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'pi');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(putCalled, isTrue);
+    });
+
+    testWidgets('edit dialog cancel does not save', (tester) async {
+      var putCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': 'bash',
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.method == 'PUT') {
+          putCalled = true;
+          return http.Response('{}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(putCalled, isFalse);
+    });
+
+    testWidgets('edit dialog error shows snackbar', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.method == 'PUT') {
+          return http.Response('{"detail":"fail"}', 500);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'pi');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Failed to update'), findsOneWidget);
+    });
+
+    testWidgets('edit dialog exception shows snackbar', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.method == 'PUT') {
+          throw Exception('Network error');
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'pi');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Error:'), findsOneWidget);
     });
   });
 }
