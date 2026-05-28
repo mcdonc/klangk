@@ -197,6 +197,7 @@ async def start_workspace_container(
         workspaces.get_workspace_host_path(user["id"], workspace_id)
     )
     home_path = str(workspaces.get_home_host_path(user["id"], workspace_id))
+    cfg_path = str(workspaces.get_config_host_path(user["id"], workspace_id))
 
     hosting_hostname, hosting_proto, hosting_base_path = derive_hosting_info(
         ws.headers
@@ -216,7 +217,7 @@ async def start_workspace_container(
         hosting_proto=hosting_proto,
         hosting_base_path=hosting_base_path,
         image=workspace.get("image"),
-        default_command=workspace.get("default_command"),
+        config_path=cfg_path,
     )
     state["container_status"] = container_status
     state["workspace_id"] = workspace_id

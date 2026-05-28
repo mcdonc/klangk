@@ -199,7 +199,7 @@ class ContainerRegistry:
         hosting_proto: str = "http",
         hosting_base_path: str = "",
         image: str | None = None,
-        default_command: str | None = None,
+        config_path: str | None = None,
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -298,8 +298,6 @@ class ContainerRegistry:
         env_vars.append(f"BARK_HOSTING_HOSTNAME={hosting_hostname}")
         env_vars.append(f"BARK_HOSTING_PROTO={hosting_proto}")
         env_vars.append(f"BARK_HOSTING_BASE_PATH={hosting_base_path}")
-        if default_command:
-            env_vars.append(f"BARK_DEFAULT_COMMAND={default_command}")
 
         port_bindings = {}
         exposed_ports = {}
@@ -322,7 +320,12 @@ class ContainerRegistry:
                 "Binds": [
                     f"{host_path}:/work",
                     f"{home_path}:/home/bark",
-                ],
+                ]
+                + (
+                    [f"{config_path}:/opt/bark/config:ro"]
+                    if config_path
+                    else []
+                ),
                 "Tmpfs": {
                     "/tmp": "rw,noexec,nosuid,size=256m",
                     "/run": "rw,noexec,nosuid,size=16m",

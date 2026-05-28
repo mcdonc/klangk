@@ -364,7 +364,7 @@ class TestDefaultCommand:
             assert result.returncode == 0
             assert "Default command set to" in result.stdout
 
-            # exec triggers container start with BARK_DEFAULT_COMMAND
+            # exec triggers container start; config mount has the command
             result = _run(
                 [
                     "bark",
@@ -372,7 +372,7 @@ class TestDefaultCommand:
                     "exec",
                     "e2e-defcmd",
                     "cat",
-                    "/tmp/.bark-command",
+                    "/opt/bark/config/default-command",
                 ],
                 env=env,
                 timeout=60,

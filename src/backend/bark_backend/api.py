@@ -394,6 +394,9 @@ async def update_workspace_command(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Workspace not found")
+    workspaces.write_default_command(
+        user["id"], workspace_id, body.default_command
+    )
     return {"status": "updated"}
 
 

@@ -6,11 +6,10 @@
 trap '' INT
 
 # Wait for the entrypoint to finish setup before showing a prompt.
-# Prevents races where the user runs pi before config files are ready.
-# /tmp is a tmpfs, so .bark-command is cleared on every container start.
-while [ ! -f /tmp/.bark-command ]; do sleep 0.1; done
+# /tmp is a tmpfs, so .bark-ready is cleared on every container start.
+while [ ! -f /tmp/.bark-ready ]; do sleep 0.1; done
 
-# No default command — restore Ctrl+C and set up interactive shell.
+# Restore Ctrl+C for interactive shell.
 trap - INT
 
 PS1='\[\033[01;34m\]\w\[\033[00m\]\$ '
@@ -22,11 +21,13 @@ PROMPT_COMMAND="history -a"
 alias ls='ls --color=auto'
 alias grep='grep --color=auto'
 
-# If .bark-command contains a command, exec into it (replaces this shell).
-# Guard against infinite recursion if the command is bash itself.
-BARK_CMD=$(cat /tmp/.bark-command)
-if [ -n "$BARK_CMD" ] && [ -z "$BARK_CMD_STARTED" ]; then
-  export BARK_CMD_STARTED=1
-  # shellcheck disable=SC2086
-  exec $BARK_CMD
+# If a default command is configured (read-only config mount), exec into it.
+# BARK_CMD_STARTED guard prevents infinite recursion if the command is bash.
+if [ -f /opt/bark/config/default-command ] && [ -z "$BARK_CMD_STARTED" ]; then
+  BARK_CMD=$(cat /opt/bark/config/default-command)
+  if [ -n "$BARK_CMD" ]; then
+    export BARK_CMD_STARTED=1
+    # shellcheck disable=SC2086
+    exec $BARK_CMD
+  fi
 fi

@@ -440,8 +440,8 @@ class TestStartContainer:
         host_config = call_kwargs[1]["config"]["HostConfig"]
         assert "host.docker.internal:host-gateway" in host_config["ExtraHosts"]
 
-    async def test_default_command_env_var(self, workspace):
-        """Container gets BARK_DEFAULT_COMMAND when set."""
+    async def test_config_mount_added(self, workspace):
+        """Container gets read-only config mount when config_path is set."""
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")
         mock_docker.containers.create_or_replace = AsyncMock(
@@ -455,15 +455,14 @@ class TestStartContainer:
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
-                default_command="pi",
+                config_path="/tmp/config",
             )
         call_kwargs = mock_docker.containers.create_or_replace.call_args
-        env = call_kwargs[1]["config"]["Env"]
-        env_dict = dict(e.split("=", 1) for e in env)
-        assert env_dict["BARK_DEFAULT_COMMAND"] == "pi"
+        binds = call_kwargs[1]["config"]["HostConfig"]["Binds"]
+        assert "/tmp/config:/opt/bark/config:ro" in binds
 
-    async def test_no_default_command_env_var(self, workspace):
-        """Container does not get BARK_DEFAULT_COMMAND when not set."""
+    async def test_no_config_mount_without_config_path(self, workspace):
+        """Container has no config mount when config_path is not set."""
         mock_docker = _mock_docker()
         mock_c = _mock_container("cid")
         mock_docker.containers.create_or_replace = AsyncMock(
@@ -479,8 +478,8 @@ class TestStartContainer:
                 "/tmp/home",
             )
         call_kwargs = mock_docker.containers.create_or_replace.call_args
-        env = call_kwargs[1]["config"]["Env"]
-        assert not any(e.startswith("BARK_DEFAULT_COMMAND=") for e in env)
+        binds = call_kwargs[1]["config"]["HostConfig"]["Binds"]
+        assert not any("config" in b for b in binds)
 
     async def test_hosting_env_vars(self, workspace):
         mock_docker = _mock_docker()
