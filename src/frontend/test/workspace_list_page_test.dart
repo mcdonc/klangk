@@ -224,8 +224,9 @@ void main() {
       await tester.tap(find.byType(FloatingActionButton));
       await tester.pumpAndSettle();
 
-      expect(find.byType(TextField), findsOneWidget);
+      expect(find.byType(TextField), findsNWidgets(2));
       expect(find.text('Workspace name'), findsOneWidget);
+      expect(find.text('Default command (optional)'), findsOneWidget);
     });
 
     testWidgets('cancel button closes create dialog', (tester) async {
@@ -396,7 +397,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Type workspace name and tap Create
-      await tester.enterText(find.byType(TextField), 'New WS');
+      await tester.enterText(find.byType(TextField).first, 'New WS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -425,7 +426,7 @@ void main() {
       await tester.tap(find.byType(FloatingActionButton));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField), 'Duplicate');
+      await tester.enterText(find.byType(TextField).first, 'Duplicate');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -613,12 +614,102 @@ void main() {
       await tester.pumpAndSettle();
 
       // Type and submit via keyboard (onSubmitted)
-      await tester.enterText(find.byType(TextField), 'Submitted');
+      await tester.enterText(find.byType(TextField).first, 'Submitted');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 
       expect(postCalled, isTrue);
       expect(find.text('Submitted'), findsOneWidget);
+    });
+
+    testWidgets('create dialog sends default_command when provided',
+        (tester) async {
+      String? postedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/workspaces' && request.method == 'POST') {
+          postedBody = request.body;
+          return http.Response(
+            jsonEncode({
+              'id': 'ws-cmd',
+              'name': 'CmdWS',
+              'container_id': null,
+              'created_at': '2026-05-28',
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      // Enter name and command
+      await tester.enterText(find.byType(TextField).first, 'CmdWS');
+      await tester.enterText(find.byType(TextField).last, 'bark-pi');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(postedBody, isNotNull);
+      final body = jsonDecode(postedBody!) as Map<String, dynamic>;
+      expect(body['name'], 'CmdWS');
+      expect(body['default_command'], 'bark-pi');
+    });
+
+    testWidgets('create dialog submit via command field onSubmitted',
+        (tester) async {
+      var postCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          if (postCalled) {
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 'ws-cmd2',
+                  'name': 'CmdSubmit',
+                  'container_id': null,
+                  'created_at': '2026-05-28',
+                },
+              ]),
+              200,
+            );
+          }
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/workspaces' && request.method == 'POST') {
+          postCalled = true;
+          return http.Response(
+            jsonEncode({
+              'id': 'ws-cmd2',
+              'name': 'CmdSubmit',
+              'container_id': null,
+              'created_at': '2026-05-28',
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      // Enter name, then focus command field and submit via Enter
+      await tester.enterText(find.byType(TextField).first, 'CmdSubmit');
+      await tester.enterText(find.byType(TextField).last, 'pi');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(postCalled, isTrue);
     });
 
     testWidgets('create workspace exception shows error snackbar',
@@ -639,7 +730,7 @@ void main() {
       await tester.tap(find.byType(FloatingActionButton));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField), 'Fail WS');
+      await tester.enterText(find.byType(TextField).first, 'Fail WS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 

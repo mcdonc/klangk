@@ -54,20 +54,42 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   }
 
   Future<void> _createWorkspace() async {
-    final name = await showDialog<String>(
+    final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (context) {
-        final controller = TextEditingController();
+        final nameController = TextEditingController();
+        final cmdController = TextEditingController();
         return AlertDialog(
           title: const Text('New Workspace'),
-          content: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              labelText: 'Workspace name',
-              border: OutlineInputBorder(),
-            ),
-            autofocus: true,
-            onSubmitted: (v) => Navigator.pop(context, v.trim()),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Workspace name',
+                  border: OutlineInputBorder(),
+                ),
+                autofocus: true,
+                onSubmitted: (_) => Navigator.pop(context, {
+                  'name': nameController.text.trim(),
+                  'command': cmdController.text.trim(),
+                }),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: cmdController,
+                decoration: const InputDecoration(
+                  labelText: 'Default command (optional)',
+                  hintText: 'e.g. bark-pi',
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => Navigator.pop(context, {
+                  'name': nameController.text.trim(),
+                  'command': cmdController.text.trim(),
+                }),
+              ),
+            ],
           ),
           actions: [
             TextButton(
@@ -75,7 +97,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              onPressed: () => Navigator.pop(context, {
+                'name': nameController.text.trim(),
+                'command': cmdController.text.trim(),
+              }),
               child: const Text('Create'),
             ),
           ],
@@ -83,12 +108,19 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       },
     );
 
-    if (name == null || name.isEmpty) return;
+    if (result == null || result['name']!.isEmpty) return;
+
+    final name = result['name']!;
+    final command = result['command']!;
+    final body = <String, dynamic>{'name': name};
+    if (command.isNotEmpty) {
+      body['default_command'] = command;
+    }
 
     try {
       final response = await _auth.authPost(
         '/workspaces',
-        body: jsonEncode({'name': name}),
+        body: jsonEncode(body),
       );
       if (response.statusCode == 200) {
         await _loadWorkspaces();
