@@ -53,6 +53,9 @@ Add to `pyproject.toml`:
 | `bark shell [WORKSPACE]`                                   | **Main command.** Connect to workspace, drop into bash inside the container.     |
 | `bark exec WORKSPACE COMMAND...`                           | Run a command in a container. Also usable as an rsync transport.                 |
 | `bark sync SRC DEST`                                       | Sync files to/from a container via rsync (wraps `bark exec`).                    |
+| `bark volumes ls [--plain]`                                | List bark-managed Docker volumes                                                 |
+| `bark volumes create NAME`                                 | Create a named Docker volume                                                     |
+| `bark volumes rm NAME`                                     | Delete a named Docker volume                                                     |
 
 ## `bark shell` — The Core Flow
 

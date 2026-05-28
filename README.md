@@ -57,6 +57,9 @@ bark shell my-project                 # drop into bash inside the container
 bark exec my-project ls /work         # run a command in the container
 bark sync ~/src my-project:/work      # sync files to/from the container
 bark rm my-project                # delete a workspace
+bark volumes ls                   # list Docker volumes
+bark volumes create nix-store     # create a named volume
+bark volumes rm nix-store         # delete a volume
 ```
 
 The CLI connects to the running Bark backend over HTTP + WebSocket — it works locally and against remote servers. See [CLI.md](CLI.md) for the full CLI reference and roadmap.
