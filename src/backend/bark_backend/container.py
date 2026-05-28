@@ -317,7 +317,7 @@ class ContainerRegistry:
             },
             "HostConfig": {
                 "Init": True,
-                "ReadonlyRootfs": True,
+                "ReadonlyRootfs": False,
                 "Binds": [
                     f"{host_path}:/work",
                     f"{home_path}:/home/bark",
