@@ -85,13 +85,11 @@ WORKDIR /work
 # Allow bark user to sudo without a password (for installing packages, etc.)
 RUN echo "bark ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/bark
 
-# Determinate Nix in single-user mode for bark
+# Determinate Nix + devenv + cachix
 # (TODO: remove after testing — large layer, not needed for most workspaces)
-USER bark
 RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
-    | sh -s -- install linux --no-confirm --init none --no-start-daemon
-USER root
-RUN usermod -aG nixbld bark \
+    | sh -s -- install linux --no-confirm --init none --no-start-daemon \
+    && . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
+    && nix profile install --profile /nix/var/nix/profiles/default nixpkgs#devenv nixpkgs#cachix \
+    && usermod -aG nixbld bark \
     && chown -R bark:bark /nix/var
-RUN . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
-    && nix profile install --profile /nix/var/nix/profiles/default nixpkgs#devenv nixpkgs#cachix
