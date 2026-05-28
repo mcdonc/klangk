@@ -24,6 +24,7 @@
 - **Idle timeout for heartbeat-only sessions**: Heartbeats prevent idle timeout, but a container kept alive solely by heartbeats (no user input, terminal output, or Pi events for an extended period) should eventually be stopped. Consider a two-tier timeout: a short one (e.g., 30 min) based on real activity, and a longer one (e.g., 4 hours) that heartbeats alone cannot extend.
 - **Per-user containers for shared workspaces**: Currently each workspace has one container shared by all connections. If two people open the same workspace (via the Flutter UI or `bark ws shell`), they share a single Pi instance and shell. Consider spawning a separate container per user per workspace so users don't interfere with each other's Pi sessions or terminal state. Trade-offs: higher resource usage, need to sync filesystem changes between containers (or use a shared volume), port allocation becomes per-container instead of per-workspace.
 - **Bark CLI (`bark ws shell`)**: Phase 1 done — CLI tool for accessing Bark containers from the terminal. Connects to the Bark backend over HTTP + WebSocket, drops into a bash shell inside a workspace container. Works locally and against remote Bark servers. See CLI.md for future phases (host path mounting, SSH access, custom Docker images, file sync).
+- **Initial command for `bark ws shell`**: Allow passing an initial command to `bark ws shell`, e.g. `bark ws shell my-project pi`. After entering the terminal, the command should be sent as input automatically so the user drops straight into the specified program.
 
 ## Production
 
