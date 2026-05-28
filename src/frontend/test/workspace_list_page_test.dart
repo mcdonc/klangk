@@ -983,10 +983,12 @@ void main() {
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
 
-      expect(find.text('Settings: My WS'), findsOneWidget);
-      // The text field should have the current default command
-      final tf = tester.widget<TextField>(find.byType(TextField));
-      expect(tf.controller!.text, 'bark-pi');
+      expect(find.text('Edit Workspace'), findsOneWidget);
+      // Name field has current name, command field has current command
+      final textFields = tester.widgetList<TextField>(find.byType(TextField));
+      final texts = textFields.map((tf) => tf.controller!.text).toList();
+      expect(texts, contains('My WS'));
+      expect(texts, contains('bark-pi'));
     });
 
     testWidgets('edit dialog saves default command', (tester) async {
@@ -1006,8 +1008,16 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/workspaces/ws-1/command' &&
-            request.method == 'PUT') {
+        if (request.url.path == '/images' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'default': 'bark-pi',
+              'allowed': ['bark-pi', 'bark-shell'],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1' && request.method == 'PUT') {
           putBody = request.body;
           return http.Response('{"status":"updated"}', 200);
         }
@@ -1020,13 +1030,67 @@ void main() {
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField), 'pi');
+      await tester.enterText(find.byType(TextField).last, 'pi');
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
       expect(putBody, isNotNull);
       final body = jsonDecode(putBody!) as Map<String, dynamic>;
+      expect(body['name'], 'My WS');
       expect(body['default_command'], 'pi');
+    });
+
+    testWidgets('edit dialog changes image', (tester) async {
+      String? putBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/images' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'default': 'bark-pi',
+              'allowed': ['bark-pi', 'bark-shell'],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1' && request.method == 'PUT') {
+          putBody = request.body;
+          return http.Response('{"status":"updated"}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      // Change image
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('bark-shell').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(putBody, isNotNull);
+      final body = jsonDecode(putBody!) as Map<String, dynamic>;
+      expect(body['image'], 'bark-shell');
     });
 
     testWidgets('edit dialog submit via Enter', (tester) async {
@@ -1059,7 +1123,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField), 'pi');
+      await tester.enterText(find.byType(TextField).last, 'pi');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 
@@ -1130,7 +1194,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField), 'pi');
+      await tester.enterText(find.byType(TextField).last, 'pi');
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -1165,7 +1229,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField), 'pi');
+      await tester.enterText(find.byType(TextField).last, 'pi');
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 

@@ -379,24 +379,35 @@ async def create_workspace(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-class UpdateCommandRequest(BaseModel):
+class UpdateWorkspaceRequest(BaseModel):
+    name: str | None = None
+    image: str | None = None
     default_command: str | None = None
 
 
-@router.put("/workspaces/{workspace_id}/command")
-async def update_workspace_command(
+@router.put("/workspaces/{workspace_id}")
+async def update_workspace(
     workspace_id: str,
-    body: UpdateCommandRequest,
+    body: UpdateWorkspaceRequest,
     user: dict = Depends(auth.get_current_user),
 ):
-    updated = await model.update_workspace_default_command(
-        workspace_id, user["id"], body.default_command
-    )
+    fields = body.model_dump(exclude_unset=True)
+    if "image" in fields and fields["image"] is not None:
+        if fields["image"] not in container.ALLOWED_IMAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image {fields['image']!r} is not allowed. "
+                f"Allowed: {sorted(container.ALLOWED_IMAGES)}",
+            )
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    updated = await model.update_workspace(workspace_id, user["id"], **fields)
     if not updated:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    workspaces.write_default_command(
-        user["id"], workspace_id, body.default_command
-    )
+    if "default_command" in fields:
+        workspaces.write_default_command(
+            user["id"], workspace_id, fields["default_command"]
+        )
     return {"status": "updated"}
 
 

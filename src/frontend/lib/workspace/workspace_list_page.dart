@@ -78,7 +78,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         final cmdController = TextEditingController();
         var selectedImage = defaultImage;
         final primary = Theme.of(context).colorScheme.primary;
-        final floatingStyle = TextStyle(color: primary);
+        final labelStyle = TextStyle(
+          color: primary,
+          fontWeight: FontWeight.bold,
+        );
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
             title: Text('New Workspace', style: TextStyle(color: primary)),
@@ -90,7 +93,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   controller: nameController,
                   decoration: InputDecoration(
                     labelText: 'Name',
-                    floatingLabelStyle: floatingStyle,
+                    labelStyle: labelStyle,
+                    floatingLabelStyle: labelStyle,
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
                     border: const OutlineInputBorder(),
                   ),
                   autofocus: true,
@@ -105,7 +110,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   value: selectedImage,
                   decoration: InputDecoration(
                     labelText: 'Image',
-                    floatingLabelStyle: floatingStyle,
+                    labelStyle: labelStyle,
+                    floatingLabelStyle: labelStyle,
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
                     border: const OutlineInputBorder(),
                   ),
                   items: allowedImages
@@ -122,7 +129,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   controller: cmdController,
                   decoration: InputDecoration(
                     labelText: 'Default command (optional)',
-                    floatingLabelStyle: floatingStyle,
+                    labelStyle: labelStyle,
+                    floatingLabelStyle: labelStyle,
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
                     border: const OutlineInputBorder(),
                   ),
                   onSubmitted: (_) => Navigator.pop(context, {
@@ -234,47 +243,107 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   }
 
   Future<void> _editWorkspace(Map<String, dynamic> ws) async {
+    final imageData = await _fetchImages();
+    final defaultImage = imageData?['default'] as String? ?? 'bark-pi';
+    final allowedImages =
+        (imageData?['allowed'] as List?)?.cast<String>() ?? [defaultImage];
+
+    if (!mounted) return;
+
+    final nameController =
+        TextEditingController(text: ws['name'] as String? ?? '');
     final cmdController =
         TextEditingController(text: ws['default_command'] as String? ?? '');
+    var selectedImage = ws['image'] as String? ?? defaultImage;
+    if (!allowedImages.contains(selectedImage)) {
+      selectedImage = defaultImage;
+    }
+
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) {
         final primary = Theme.of(context).colorScheme.primary;
-        final floatingStyle = TextStyle(color: primary);
-        return AlertDialog(
-          title:
-              Text('Settings: ${ws['name']}', style: TextStyle(color: primary)),
-          content: TextField(
-            controller: cmdController,
-            autofocus: true,
-            decoration: InputDecoration(
-              labelText: 'Default command (optional)',
-              floatingLabelStyle: floatingStyle,
-              border: const OutlineInputBorder(),
+        final labelStyle = TextStyle(
+          color: primary,
+          fontWeight: FontWeight.bold,
+        );
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text('Edit Workspace', style: TextStyle(color: primary)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'Name',
+                    labelStyle: labelStyle,
+                    floatingLabelStyle: labelStyle,
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: selectedImage,
+                  decoration: InputDecoration(
+                    labelText: 'Image',
+                    labelStyle: labelStyle,
+                    floatingLabelStyle: labelStyle,
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
+                    border: const OutlineInputBorder(),
+                  ),
+                  items: allowedImages
+                      .map((img) => DropdownMenuItem(
+                            value: img,
+                            child: Text(img),
+                          ))
+                      .toList(),
+                  onChanged: (v) =>
+                      setDialogState(() => selectedImage = v ?? defaultImage),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: cmdController,
+                  decoration: InputDecoration(
+                    labelText: 'Default command (optional)',
+                    labelStyle: labelStyle,
+                    floatingLabelStyle: labelStyle,
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
+                    border: const OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => Navigator.pop(context, true),
+                ),
+              ],
             ),
-            onSubmitted: (_) => Navigator.pop(context, true),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Save'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Save'),
-            ),
-          ],
         );
       },
     );
 
     if (saved != true) return;
 
+    final name = nameController.text.trim();
     final command = cmdController.text.trim();
+    if (name.isEmpty) return;
+
     try {
       final response = await _auth.authPut(
-        '/workspaces/${ws['id']}/command',
+        '/workspaces/${ws['id']}',
         body: jsonEncode({
+          'name': name,
+          'image': selectedImage,
           'default_command': command.isEmpty ? null : command,
         }),
       );

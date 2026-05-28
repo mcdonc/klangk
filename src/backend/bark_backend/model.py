@@ -495,15 +495,24 @@ async def update_workspace_container(
         await db.close()
 
 
-async def update_workspace_default_command(
-    workspace_id: str, user_id: str, default_command: str | None
+async def update_workspace(
+    workspace_id: str,
+    user_id: str,
+    **fields: str | None,
 ) -> bool:
+    """Update workspace fields. Only provided fields are changed."""
+    allowed = {"name", "image", "default_command"}
+    to_set = {k: v for k, v in fields.items() if k in allowed}
+    if not to_set:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in to_set)
+    values = list(to_set.values()) + [workspace_id, user_id]
     db = await get_db()
     try:
         cursor = await db.execute(
-            "UPDATE workspaces SET default_command = ?"
+            f"UPDATE workspaces SET {set_clause}"  # noqa: S608
             " WHERE id = ? AND user_id = ?",
-            (default_command, workspace_id, user_id),
+            values,
         )
         await db.commit()
         return cursor.rowcount > 0

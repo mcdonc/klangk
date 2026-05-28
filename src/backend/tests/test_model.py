@@ -156,28 +156,43 @@ class TestDefaultCommand:
         assert fetched["default_command"] == "pi"
 
     async def test_update_default_command(self, workspace, user):
-        updated = await model.update_workspace_default_command(
-            workspace["id"], user["id"], "pi"
+        updated = await model.update_workspace(
+            workspace["id"], user["id"], default_command="pi"
         )
         assert updated is True
         ws = await model.get_workspace(workspace["id"], user["id"])
         assert ws["default_command"] == "pi"
 
     async def test_clear_default_command(self, workspace, user):
-        await model.update_workspace_default_command(
-            workspace["id"], user["id"], "pi"
+        await model.update_workspace(
+            workspace["id"], user["id"], default_command="pi"
         )
-        await model.update_workspace_default_command(
-            workspace["id"], user["id"], None
+        await model.update_workspace(
+            workspace["id"], user["id"], default_command=None
         )
         ws = await model.get_workspace(workspace["id"], user["id"])
         assert ws["default_command"] is None
 
     async def test_update_nonexistent_workspace(self, user):
-        updated = await model.update_workspace_default_command(
-            "nonexistent", user["id"], "pi"
+        updated = await model.update_workspace(
+            "nonexistent", user["id"], default_command="pi"
         )
         assert updated is False
+
+    async def test_update_multiple_fields(self, workspace, user):
+        await model.update_workspace(
+            workspace["id"],
+            user["id"],
+            name="renamed",
+            default_command="pi",
+        )
+        ws = await model.get_workspace(workspace["id"], user["id"])
+        assert ws["name"] == "renamed"
+        assert ws["default_command"] == "pi"
+
+    async def test_update_no_fields(self, workspace, user):
+        result = await model.update_workspace(workspace["id"], user["id"])
+        assert result is False
 
     async def test_list_includes_default_command(self, user):
         await model.create_workspace(

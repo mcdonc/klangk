@@ -189,7 +189,7 @@ def set_command(
         _err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
     resp = client.put(
-        f"/workspaces/{ws.id}/command",
+        f"/workspaces/{ws.id}",
         json={"default_command": command},
     )
     if resp.status_code == 404:

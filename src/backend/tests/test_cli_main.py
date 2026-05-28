@@ -481,7 +481,7 @@ class TestMainCLI:
 
         client.put.assert_called_once()
         call_args = client.put.call_args
-        assert call_args[0][0] == f"/workspaces/{ws.id}/command"
+        assert call_args[0][0] == f"/workspaces/{ws.id}"
         assert call_args[1]["json"] == {"default_command": "pi"}
 
     def test_set_command_clear(self, logged_in_cfg, monkeypatch):

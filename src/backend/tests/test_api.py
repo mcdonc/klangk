@@ -635,32 +635,67 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json()["default_command"] == "pi"
 
-    async def test_update_workspace_command(self, client, user):
+    async def test_update_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
             "/workspaces",
-            json={"name": "upd-cmd"},
+            json={"name": "upd-ws"},
             headers=headers,
         )
         ws_id = resp.json()["id"]
         resp = await client.put(
-            f"/workspaces/{ws_id}/command",
-            json={"default_command": "pi"},
+            f"/workspaces/{ws_id}",
+            json={
+                "name": "renamed",
+                "default_command": "pi",
+            },
             headers=headers,
         )
         assert resp.status_code == 200
         resp = await client.get("/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["name"] == "renamed"
         assert match[0]["default_command"] == "pi"
 
-    async def test_update_workspace_command_not_found(self, client, user):
+    async def test_update_workspace_not_found(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.put(
-            "/workspaces/nonexistent/command",
+            "/workspaces/nonexistent",
             json={"default_command": "pi"},
             headers=headers,
         )
         assert resp.status_code == 404
+
+    async def test_update_workspace_bad_image(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces",
+            json={"name": "img-upd"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.put(
+            f"/workspaces/{ws_id}",
+            json={"image": "evil:latest"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "not allowed" in resp.json()["detail"]
+
+    async def test_update_workspace_no_fields(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces",
+            json={"name": "empty-upd"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.put(
+            f"/workspaces/{ws_id}",
+            json={},
+            headers=headers,
+        )
+        assert resp.status_code == 400
 
 
 # --- Messages ---
