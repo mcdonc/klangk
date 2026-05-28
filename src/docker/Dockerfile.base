@@ -93,4 +93,4 @@ RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/
 USER root
 RUN chown -R bark:bark /nix
 RUN . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
-    && nix profile install --profile /nix/var/nix/profiles/default nixpkgs#devenv
+    && nix profile install --profile /nix/var/nix/profiles/default nixpkgs#devenv nixpkgs#cachix
