@@ -383,13 +383,15 @@ def sync(
 ) -> None:
     """Sync files to/from a workspace container via rsync.
 
+    Any extra flags after src and dest are passed directly to rsync.
+
     Examples:
 
         bark sync ~/project my-workspace:/work/project
 
         bark sync my-workspace:/work/output ~/output
 
-    Extra flags are passed to rsync (e.g. --delete, --exclude).
+        bark sync ~/src ws:/work/src --delete --exclude .git
     """
     import shutil
     import subprocess
