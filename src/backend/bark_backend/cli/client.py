@@ -287,10 +287,20 @@ async def _run_shell(
             if not ready:
                 continue
             try:
-                data = stdin.read(1)
+                data = os.read(fd, 1)
+                if not data:  # EOF on stdin
+                    return
+                # If the first byte is ESC, read the rest of the escape
+                # sequence as a single unit. Without this, the sequence
+                # gets split across WebSocket messages and the terminal
+                # can't interpret arrow keys, etc.
+                if data == b"\x1b":
+                    # Brief wait for the rest of the sequence
+                    if select.select([fd], [], [], 0.05)[0]:
+                        more = os.read(fd, 32)
+                        if more:
+                            data += more
             except (OSError, io.UnsupportedOperation):  # pragma: no cover
-                return
-            if not data:  # EOF on stdin
                 return
             await ws.send(
                 json.dumps(

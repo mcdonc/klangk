@@ -1,46 +1,30 @@
-"""Terminal session: docker exec subprocess with PTY for interactive shell access."""
+"""Terminal session: Docker API exec with single PTY for interactive shell."""
 
 import asyncio
-import fcntl
 import logging
 import os
-import struct
-import termios
 from collections.abc import AsyncGenerator
+
+import aiodocker
 
 logger = logging.getLogger(__name__)
 
 
-def openpty() -> tuple[int, int]:  # pragma: no cover
-    return os.openpty()
-
-
-def set_winsize(fd: int, rows: int, cols: int) -> None:  # pragma: no cover
-    winsize = struct.pack("HHHH", rows, cols, 0, 0)
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
-
-
-def fd_read(fd: int, size: int) -> bytes:  # pragma: no cover
-    return os.read(fd, size)
-
-
-def fd_write(fd: int, data: bytes) -> int:  # pragma: no cover
-    return os.write(fd, data)
-
-
-def fd_close(fd: int) -> None:  # pragma: no cover
-    os.close(fd)
-
-
 class TerminalSession:
-    """Manages a docker exec shell session with PTY support."""
+    """Manages a Docker exec shell session via the Docker API.
+
+    Uses aiodocker's exec API to create a single PTY connection,
+    avoiding the double-PTY issue that occurs with `docker exec -it`
+    as a subprocess (which consumed ESC bytes from arrow key sequences).
+    """
 
     def __init__(self, container_id: str):
         self.container_id = container_id
-        self._master_fd: int | None = None
-        self._proc: asyncio.subprocess.Process | None = None
+        self._stream: aiodocker.stream.Stream | None = None
+        self._exec: aiodocker.execs.Exec | None = None
         self._output_queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._running = False
+        self._read_task: asyncio.Task | None = None
 
     async def start(
         self,
@@ -48,18 +32,17 @@ class TerminalSession:
         rows: int = 24,
         command_override: str | None = None,
     ) -> None:
-        """Start a shell session via docker exec with a PTY."""
-        master_fd, slave_fd = openpty()
-
-        set_winsize(master_fd, rows, cols)
-
-        self._master_fd = master_fd
+        """Start a shell session via Docker API exec."""
         self._running = True
 
-        # Build docker exec command that fully unsets sensitive env vars
-        # from the terminal session. Uses `env -u` inside the container
-        # instead of `docker exec -e KEY=` (which only blanks them).
-        env_unset = []
+        # Build environment for the exec
+        env = ["TERM=xterm-256color"]
+        if command_override is not None:
+            env.append(f"BARK_CMD_OVERRIDE={command_override}")
+
+        # Build the command: env -u KEY ... /bin/bash
+        # Strip sensitive env vars from the terminal session.
+        unset_args = []
         for key in os.environ:
             if key.startswith(
                 (
@@ -71,88 +54,89 @@ class TerminalSession:
                     "MISTRAL_",
                 )
             ):
-                env_unset.extend(["-u", key])
-        # Strip vars set on the container (not on the host, so not in
-        # os.environ — must be listed explicitly).
+                unset_args.extend(["-u", key])
         for key in (
             "OTEL_EXPORTER_OTLP_ENDPOINT",
             "OTEL_EXPORTER_OTLP_HEADERS",
             "OTEL_SERVICE_NAME",
         ):
-            env_unset.extend(["-u", key])
-        docker_env = ["-e", "TERM=xterm-256color"]
-        if command_override is not None:
-            docker_env.extend(["-e", f"BARK_CMD_OVERRIDE={command_override}"])
-        exec_cmd = [
-            "docker",
-            "exec",
-            "-it",
-            "-u",
-            "bark",
-            "-w",
-            "/work",
-            *docker_env,
-            self.container_id,
-            "env",
-            *env_unset,
-            "/bin/bash",
-        ]
+            unset_args.extend(["-u", key])
+        cmd = ["env", *unset_args, "/bin/bash"]
 
-        self._proc = await asyncio.create_subprocess_exec(
-            *exec_cmd,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            close_fds=True,
-        )
-        fd_close(slave_fd)  # Parent doesn't need the slave end
+        # Create and start exec via Docker API (single PTY)
+        docker = aiodocker.Docker()
+        try:
+            container = await docker.containers.get(self.container_id)
+            self._exec = await container.exec(
+                cmd,
+                tty=True,
+                stdin=True,
+                stdout=True,
+                stderr=True,
+                user="bark",
+                workdir="/work",
+                environment=env,
+            )
+            self._stream = self._exec.start()
 
-        # Register async reader on the master fd
-        loop = asyncio.get_event_loop()
-        loop.add_reader(master_fd, self.on_readable)
+            # Do the first read to establish the WebSocket connection,
+            # then resize. The stream connects lazily on first I/O.
+            first_msg = await self._stream.read_out()
+            if first_msg is not None:
+                self._output_queue.put_nowait(
+                    first_msg.data.decode("utf-8", errors="replace")
+                )
 
-        # Prompt and aliases come from /etc/bash.bashrc in the container image
+            await self._exec.resize(h=rows, w=cols)
+        except Exception:
+            await docker.close()
+            raise
+
+        self._docker = docker
+        self._read_task = asyncio.create_task(self._read_loop())
 
         logger.info(
             "Terminal session started for container %s", self.container_id
         )
 
-    def remove_reader(self) -> None:
-        """Deregister the PTY master fd from the event loop."""
-        if self._master_fd is not None:
-            try:
-                asyncio.get_event_loop().remove_reader(self._master_fd)
-            except (ValueError, OSError):
-                pass
-
-    def on_readable(self) -> None:
-        """Called when data is available on the PTY master fd."""
+    async def _read_loop(self) -> None:
+        """Read output from the Docker exec stream."""
         try:
-            data = fd_read(self._master_fd, 65536)
-            if data:
-                self._output_queue.put_nowait(
-                    data.decode("utf-8", errors="replace")
-                )
-            else:
-                self.remove_reader()
-                self._output_queue.put_nowait(None)
-        except OSError:
-            self.remove_reader()
+            while self._running and self._stream is not None:
+                msg = await self._stream.read_out()
+                if msg is None:
+                    break
+                text = msg.data.decode("utf-8", errors="replace")
+                if text:
+                    self._output_queue.put_nowait(text)
+        except (asyncio.CancelledError, Exception):
+            pass
+        finally:
             self._output_queue.put_nowait(None)
 
     @property
     def is_alive(self) -> bool:
-        return self._proc is not None and self._proc.returncode is None
+        if self._exec is None:
+            return False
+        if self._read_task is not None and self._read_task.done():
+            return False
+        return self._running
 
     async def write(self, data: str) -> None:
         """Write user input to the terminal."""
-        if self._master_fd is not None:
-            fd_write(self._master_fd, data.encode("utf-8"))
+        if self._stream is not None:
+            try:
+                await self._stream.write_in(data.encode("utf-8"))
+            except Exception:
+                pass
 
     async def resize(self, cols: int, rows: int) -> None:
-        """Resize the terminal PTY."""
-        if self._master_fd is not None:
-            set_winsize(self._master_fd, rows, cols)
+        """Resize the terminal."""
+        if self._exec is not None:
+            try:
+                await self._exec.resize(h=rows, w=cols)
+            except Exception:
+                pass
 
     async def output(self) -> AsyncGenerator[str, None]:
         """Yield terminal output as it arrives."""
@@ -166,32 +150,29 @@ class TerminalSession:
         """Stop the terminal session and clean up."""
         self._running = False
 
-        # Remove the fd reader
-        if self._master_fd is not None:
+        if self._read_task is not None:
+            self._read_task.cancel()
             try:
-                asyncio.get_event_loop().remove_reader(self._master_fd)
-            except (ValueError, OSError):
+                await self._read_task
+            except (asyncio.CancelledError, Exception):
                 pass
+            self._read_task = None
 
-        # Terminate the docker exec process
-        if self._proc:
+        if self._stream is not None:
             try:
-                self._proc.terminate()
-                await asyncio.wait_for(self._proc.wait(), timeout=5)
-            except (ProcessLookupError, asyncio.TimeoutError, OSError):
-                try:
-                    self._proc.kill()
-                except (ProcessLookupError, OSError):
-                    pass
-            self._proc = None
-
-        # Close the master fd
-        if self._master_fd is not None:
-            try:
-                fd_close(self._master_fd)
-            except OSError:
+                await self._stream.close()
+            except Exception:
                 pass
-            self._master_fd = None
+            self._stream = None
+
+        if hasattr(self, "_docker") and self._docker is not None:
+            try:
+                await self._docker.close()
+            except Exception:
+                pass
+            self._docker = None
+
+        self._exec = None
 
         logger.info(
             "Terminal session stopped for container %s", self.container_id

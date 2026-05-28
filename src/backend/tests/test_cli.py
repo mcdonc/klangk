@@ -537,10 +537,27 @@ class TestRunShell:
         )
 
         fake_buf = BytesIO(b"x")
-        fake_buf.fileno = lambda: 0
-        with patch(
-            "bark_backend.cli.client.select.select",
-            return_value=([0], [], []),
+        fake_buf.fileno = lambda: 99
+        call_count = 0
+
+        def fake_select(rlist, wlist, xlist, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return ([99], [], [])
+            return ([], [], [])
+
+        def fake_os_read(fd, n):
+            if fd == 99:
+                return b"x"
+            return b""
+
+        with (
+            patch(
+                "bark_backend.cli.client.select.select",
+                side_effect=fake_select,
+            ),
+            patch("bark_backend.cli.client.os.read", side_effect=fake_os_read),
         ):
             task = asyncio.create_task(_run_shell(ws, 80, 24, stdin=fake_buf))
             await asyncio.sleep(0.5)

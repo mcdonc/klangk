@@ -1,417 +1,270 @@
-"""Tests for terminal: PTY session lifecycle, I/O, resize."""
+"""Tests for terminal: Docker API exec-based terminal sessions."""
 
 import asyncio
-import os
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from bark_backend import terminal
+
 from bark_backend.terminal import TerminalSession
 
 
-def _mock_proc(returncode=None):
-    proc = MagicMock()
-    proc.returncode = returncode
-    proc.terminate = MagicMock()
-    proc.kill = MagicMock()
-    proc.wait = AsyncMock()
-    return proc
+def _mock_stream():
+    stream = MagicMock()
+    stream.write_in = AsyncMock()
+    stream.close = AsyncMock()
+    return stream
 
 
-@pytest.fixture
-def real_pipe():
-    """Create a real pipe so add_reader/remove_reader work with epoll."""
-    r, w = os.pipe()
-    yield r, w
-    for fd in (r, w):
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+def _mock_exec(stream):
+    exec_obj = MagicMock()
+    exec_obj.start = MagicMock(return_value=stream)
+    exec_obj.resize = AsyncMock()
+    return exec_obj
 
 
-# Patch all OS-level functions for every test in this module
-@pytest.fixture(autouse=True)
-def mock_os(real_pipe):
-    r, w = real_pipe
-    with (
-        patch.object(terminal, "openpty", return_value=(r, w)) as mopenpty,
-        patch.object(terminal, "set_winsize") as m_winsize,
-        patch.object(terminal, "fd_read", return_value=b"") as m_read,
-        patch.object(terminal, "fd_write", return_value=0) as m_write,
-        patch.object(terminal, "fd_close") as m_close,
-    ):
-        yield {
-            "openpty": mopenpty,
-            "set_winsize": m_winsize,
-            "fd_read": m_read,
-            "fd_write": m_write,
-            "fd_close": m_close,
-            "master_fd": r,
-            "slave_fd": w,
-        }
+def _mock_container(exec_obj):
+    container = MagicMock()
+    container.exec = AsyncMock(return_value=exec_obj)
+    return container
+
+
+def _mock_docker(container):
+    docker = MagicMock()
+    docker.containers = MagicMock()
+    docker.containers.get = AsyncMock(return_value=container)
+    docker.close = AsyncMock()
+    return docker
 
 
 class TestInit:
     def test_initial_state(self):
         s = TerminalSession("cid")
         assert s.container_id == "cid"
-        assert s._master_fd is None
-        assert s._proc is None
+        assert s._stream is None
+        assert s._exec is None
         assert s._running is False
-        assert not s.is_alive
+        assert s.is_alive is False
 
 
 class TestStart:
-    async def test_start_creates_pty_and_process(self, mock_os):
-        proc = _mock_proc()
-        master_fd = mock_os["master_fd"]
-        slave_fd = mock_os["slave_fd"]
-        loop = asyncio.get_event_loop()
+    async def test_start_creates_exec_session(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
 
-        with patch(
-            "asyncio.create_subprocess_exec", return_value=proc
-        ) as m_exec:
+        with patch("aiodocker.Docker", return_value=docker):
             s = TerminalSession("cid")
-            await s.start(cols=120, rows=40)
+            await s.start(120, 40)
 
-        assert s._master_fd == master_fd
+        docker.containers.get.assert_awaited_once_with("cid")
+        container.exec.assert_awaited_once()
+        call_kwargs = container.exec.call_args
+        assert call_kwargs[1]["tty"] is True
+        assert call_kwargs[1]["stdin"] is True
+        assert call_kwargs[1]["user"] == "bark"
+        assert call_kwargs[1]["workdir"] == "/work"
+        exec_obj.start.assert_called_once()
+        exec_obj.resize.assert_awaited_once_with(h=40, w=120)
+
         assert s._running is True
-        assert s._proc is proc
+        await s.stop()
 
-        mock_os["openpty"].assert_called_once()
-        mock_os["set_winsize"].assert_called_once_with(master_fd, 40, 120)
-        mock_os["fd_close"].assert_called_once_with(slave_fd)
-        exec_args = m_exec.call_args[0]
-        assert exec_args[0] == "docker"
-        assert exec_args[1] == "exec"
-        assert "cid" in exec_args
-        assert "/bin/bash" in exec_args
-
-        loop.remove_reader(master_fd)
-
-    async def test_start_unsets_sensitive_env_vars(self, mock_os, monkeypatch):
+    async def test_start_unsets_sensitive_env_vars(self, monkeypatch):
         monkeypatch.setenv("BARK_LLM_API_KEY", "secret")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "secret2")
-        proc = _mock_proc()
-        master_fd = mock_os["master_fd"]
-        loop = asyncio.get_event_loop()
 
-        with patch(
-            "asyncio.create_subprocess_exec", return_value=proc
-        ) as m_exec:
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
+
+        with patch("aiodocker.Docker", return_value=docker):
             s = TerminalSession("cid")
             await s.start()
 
-        exec_args = m_exec.call_args[0]
-        exec_args = m_exec.call_args[0]
-        # The command should use `env -u KEY` inside the container
-        assert "env" in exec_args
-        env_idx = exec_args.index("env")
-        env_args = exec_args[env_idx:]
-        assert "-u" in env_args
+        call_args = container.exec.call_args
+        cmd = call_args[0][0]
+        assert "env" in cmd
+        env_idx = cmd.index("env")
+        env_args = cmd[env_idx:]
         unset_keys = [
             env_args[i + 1] for i, a in enumerate(env_args) if a == "-u"
         ]
         assert "BARK_LLM_API_KEY" in unset_keys
         assert "ANTHROPIC_API_KEY" in unset_keys
 
-        loop.remove_reader(master_fd)
+        await s.stop()
 
-    async def test_command_override_sets_env_var(self, mock_os):
-        proc = _mock_proc()
-        master_fd = mock_os["master_fd"]
-        loop = asyncio.get_event_loop()
+    async def test_command_override_sets_env_var(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
 
-        with patch(
-            "asyncio.create_subprocess_exec", return_value=proc
-        ) as m_exec:
+        with patch("aiodocker.Docker", return_value=docker):
             s = TerminalSession("cid")
             await s.start(command_override="bash")
 
-        exec_args = m_exec.call_args[0]
-        assert "-e" in exec_args
-        # Find all -e flags and their values
-        env_flags = []
-        for i, arg in enumerate(exec_args):
-            if arg == "-e" and i + 1 < len(exec_args):
-                env_flags.append(exec_args[i + 1])
-        assert "BARK_CMD_OVERRIDE=bash" in env_flags
+        call_kwargs = container.exec.call_args[1]
+        assert "BARK_CMD_OVERRIDE=bash" in call_kwargs["environment"]
 
-        loop.remove_reader(master_fd)
+        await s.stop()
 
-    async def test_no_command_override_by_default(self, mock_os):
-        proc = _mock_proc()
-        master_fd = mock_os["master_fd"]
-        loop = asyncio.get_event_loop()
+    async def test_no_command_override_by_default(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
 
-        with patch(
-            "asyncio.create_subprocess_exec", return_value=proc
-        ) as m_exec:
+        with patch("aiodocker.Docker", return_value=docker):
             s = TerminalSession("cid")
             await s.start()
 
-        exec_args = m_exec.call_args[0]
-        env_flags = []
-        for i, arg in enumerate(exec_args):
-            if arg == "-e" and i + 1 < len(exec_args):
-                env_flags.append(exec_args[i + 1])
-        assert not any("BARK_CMD_OVERRIDE" in f for f in env_flags)
+        call_kwargs = container.exec.call_args[1]
+        assert not any(
+            "BARK_CMD_OVERRIDE" in e for e in call_kwargs["environment"]
+        )
 
-        loop.remove_reader(master_fd)
+        await s.stop()
 
 
-class TestOnReadable:
-    async def test_data_queued(self, mock_os):
-        mock_os["fd_read"].return_value = b"hello"
-        s = TerminalSession("cid")
-        s._master_fd = mock_os["master_fd"]
+class TestReadLoop:
+    async def test_output_from_stream(self):
+        msg = MagicMock()
+        msg.data = b"hello world"
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(side_effect=[msg, None])
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
 
-        s.on_readable()
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
 
-        assert s._output_queue.qsize() == 1
-        assert s._output_queue.get_nowait() == "hello"
+        await asyncio.sleep(0.1)
+        data = s._output_queue.get_nowait()
+        assert data == "hello world"
 
-    async def test_empty_read_sends_none(self, mock_os):
-        mock_os["fd_read"].return_value = b""
-        s = TerminalSession("cid")
-        s._master_fd = mock_os["master_fd"]
+        await s.stop()
 
-        s.on_readable()
+    async def test_stream_end_signals_none(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
 
-        assert s._output_queue.get_nowait() is None
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
 
-    async def test_oserror_sends_none(self, mock_os):
-        mock_os["fd_read"].side_effect = OSError("fd closed")
-        s = TerminalSession("cid")
-        s._master_fd = mock_os["master_fd"]
+        await asyncio.sleep(0.1)
+        data = s._output_queue.get_nowait()
+        assert data is None
 
-        s.on_readable()
-
-        assert s._output_queue.get_nowait() is None
-
-    async def test_binary_decoded_with_replacement(self, mock_os):
-        mock_os["fd_read"].return_value = b"\x80\x81\x82"
-        s = TerminalSession("cid")
-        s._master_fd = mock_os["master_fd"]
-
-        s.on_readable()
-
-        result = s._output_queue.get_nowait()
-        assert "\ufffd" in result
-
-
-class TestRemoveReader:
-    async def test_valueerror_suppressed(self):
-        s = TerminalSession("cid")
-        s._master_fd = 99
-        loop = asyncio.get_running_loop()
-        with patch.object(
-            loop, "remove_reader", side_effect=ValueError("bad fd")
-        ):
-            s.remove_reader()
-
-    async def test_oserror_suppressed(self):
-        s = TerminalSession("cid")
-        s._master_fd = 99
-        loop = asyncio.get_running_loop()
-        with patch.object(
-            loop, "remove_reader", side_effect=OSError("bad fd")
-        ):
-            s.remove_reader()
-
-
-class TestIsAlive:
-    def test_alive(self):
-        s = TerminalSession("cid")
-        s._proc = _mock_proc(returncode=None)
-        assert s.is_alive is True
-
-    def test_dead_no_proc(self):
-        s = TerminalSession("cid")
-        assert s.is_alive is False
-
-    def test_dead_with_returncode(self):
-        s = TerminalSession("cid")
-        s._proc = _mock_proc(returncode=1)
-        assert s.is_alive is False
+        await s.stop()
 
 
 class TestWrite:
-    async def test_write(self, mock_os):
+    async def test_write_sends_to_stream(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
+
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
+
+        await s.write("hello")
+        stream.write_in.assert_awaited_with(b"hello")
+
+        await s.stop()
+
+    async def test_write_when_stopped(self):
         s = TerminalSession("cid")
-        s._master_fd = mock_os["master_fd"]
-
-        await s.write("ls\n")
-
-        mock_os["fd_write"].assert_called_once_with(
-            mock_os["master_fd"], b"ls\n"
-        )
-
-    async def test_write_no_fd(self, mock_os):
-        s = TerminalSession("cid")
-        await s.write("ls\n")
-        mock_os["fd_write"].assert_not_called()
+        await s.write("hello")
 
 
 class TestResize:
-    async def test_resize(self, mock_os):
+    async def test_resize_calls_exec_resize(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
+
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
+
+        await s.resize(200, 50)
+        exec_obj.resize.assert_awaited_with(h=50, w=200)
+
+        await s.stop()
+
+    async def test_resize_when_stopped(self):
         s = TerminalSession("cid")
-        s._master_fd = mock_os["master_fd"]
-
-        await s.resize(cols=200, rows=50)
-
-        mock_os["set_winsize"].assert_called_once_with(
-            mock_os["master_fd"], 50, 200
-        )
-
-    async def test_resize_no_fd(self, mock_os):
-        s = TerminalSession("cid")
-        await s.resize(cols=200, rows=50)
-        mock_os["set_winsize"].assert_not_called()
-
-
-class TestOutput:
-    async def test_yields_data(self):
-        s = TerminalSession("cid")
-        s._running = True
-        s._output_queue.put_nowait("line1")
-        s._output_queue.put_nowait("line2")
-        s._output_queue.put_nowait(None)
-
-        results = []
-        async for data in s.output():
-            results.append(data)
-
-        assert results == ["line1", "line2"]
-
-    async def test_empty_stream(self):
-        s = TerminalSession("cid")
-        s._running = True
-        s._output_queue.put_nowait(None)
-
-        results = []
-        async for data in s.output():
-            results.append(data)
-
-        assert results == []
+        await s.resize(80, 24)
 
 
 class TestStop:
-    async def test_stop_cleans_up(self, mock_os):
-        fd = mock_os["master_fd"]
-        s = TerminalSession("cid")
-        s._master_fd = fd
-        s._proc = _mock_proc(returncode=None)
-        s._running = True
+    async def test_stop_cleans_up(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
 
-        loop = asyncio.get_event_loop()
-        loop.add_reader(fd, lambda: None)
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
 
         await s.stop()
-
         assert s._running is False
-        assert s._proc is None
-        assert s._master_fd is None
-        mock_os["fd_close"].assert_called_once_with(fd)
+        assert s._stream is None
+        assert s._exec is None
+        assert s.is_alive is False
+        docker.close.assert_awaited()
 
-    async def test_stop_no_proc_no_fd(self, mock_os):
+    async def test_stop_when_not_started(self):
         s = TerminalSession("cid")
-        s._running = True
+        await s.stop()
+
+
+class TestIsAlive:
+    async def test_not_alive_after_stream_ends(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
+
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
+
+        await asyncio.sleep(0.1)
+        assert s.is_alive is False
 
         await s.stop()
 
-        assert s._running is False
-        mock_os["fd_close"].assert_not_called()
+    async def test_not_alive_after_stop(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
 
-    async def test_stop_terminate_timeout_then_kill(self, mock_os):
-        fd = mock_os["master_fd"]
-        s = TerminalSession("cid")
-        s._master_fd = fd
-        proc = _mock_proc(returncode=None)
-        proc.wait = AsyncMock(side_effect=asyncio.TimeoutError)
-        s._proc = proc
-        s._running = True
-
-        loop = asyncio.get_event_loop()
-        loop.add_reader(fd, lambda: None)
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
 
         await s.stop()
-
-        proc.terminate.assert_called_once()
-        proc.kill.assert_called_once()
-        assert s._proc is None
-
-    async def test_stop_terminate_process_gone(self, mock_os):
-        fd = mock_os["master_fd"]
-        s = TerminalSession("cid")
-        s._master_fd = fd
-        proc = _mock_proc(returncode=None)
-        proc.terminate = MagicMock(side_effect=ProcessLookupError)
-        s._proc = proc
-        s._running = True
-
-        loop = asyncio.get_event_loop()
-        loop.add_reader(fd, lambda: None)
-
-        await s.stop()
-
-        assert s._proc is None
-
-    async def test_stop_kill_process_gone(self, mock_os):
-        fd = mock_os["master_fd"]
-        s = TerminalSession("cid")
-        s._master_fd = fd
-        proc = _mock_proc(returncode=None)
-        proc.wait = AsyncMock(side_effect=asyncio.TimeoutError)
-        proc.kill = MagicMock(side_effect=ProcessLookupError)
-        s._proc = proc
-        s._running = True
-
-        loop = asyncio.get_event_loop()
-        loop.add_reader(fd, lambda: None)
-
-        await s.stop()
-
-        assert s._proc is None
-
-    async def test_stopfd_close_error(self, mock_os):
-        mock_os["fd_close"].side_effect = OSError("already closed")
-        s = TerminalSession("cid")
-        s._master_fd = mock_os["master_fd"]
-        s._running = True
-
-        await s.stop()
-
-        assert s._master_fd is None
-
-    async def test_stopremove_reader_raises_valueerror(self, mock_os):
-        """remove_reader raising ValueError is handled gracefully."""
-        fd = mock_os["master_fd"]
-        s = TerminalSession("cid")
-        s._master_fd = fd
-        s._running = True
-
-        loop = asyncio.get_event_loop()
-        with patch.object(
-            loop, "remove_reader", side_effect=ValueError("bad fd")
-        ):
-            await s.stop()
-
-        assert s._master_fd is None
-
-    async def test_stopremove_reader_raises_oserror(self, mock_os):
-        """remove_reader raising OSError is handled gracefully."""
-        fd = mock_os["master_fd"]
-        s = TerminalSession("cid")
-        s._master_fd = fd
-        s._running = True
-
-        loop = asyncio.get_event_loop()
-        with patch.object(
-            loop, "remove_reader", side_effect=OSError("bad fd")
-        ):
-            await s.stop()
-
-        assert s._master_fd is None
+        assert s.is_alive is False
