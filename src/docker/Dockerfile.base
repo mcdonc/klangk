@@ -26,6 +26,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     rsync \
     sudo \
+    wget \
+    less \
+    strace \
+    ltrace \
+    file \
+    tree \
+    htop \
+    zip \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI (not in default Debian repos)
