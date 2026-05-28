@@ -391,7 +391,8 @@ async def create_volume(
             },
         }
     )
-    return {"name": vol["Name"], "created": vol.get("CreatedAt", "")}
+    info = await vol.show()
+    return {"name": info["Name"], "created": info.get("CreatedAt", "")}
 
 
 @router.delete("/volumes/{name}")
