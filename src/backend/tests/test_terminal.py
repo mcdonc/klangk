@@ -105,6 +105,7 @@ class TestStart:
             await s.start()
 
         exec_args = m_exec.call_args[0]
+        exec_args = m_exec.call_args[0]
         # The command should use `env -u KEY` inside the container
         assert "env" in exec_args
         env_idx = exec_args.index("env")
