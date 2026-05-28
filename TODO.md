@@ -14,7 +14,6 @@
 - **SIGWINCH not working**: Terminal resize signals don't seem to propagate correctly — resizing the browser window doesn't resize the terminal inside the container.
 - **Terminal focus requires precise click target**: In Firefox, the terminal only receives keyboard focus when clicking very specific areas of the terminal pane. Clicking elsewhere in the pane does nothing — the cursor doesn't appear and typing has no effect. The entire terminal pane should grant focus on click.
 - **Clipboard image paste in chat**: Investigate whether Pi supports image inputs and, if so, allow pasting images from the clipboard into the chat input field. Would need to intercept paste events, detect image MIME types, convert to a format Pi can accept (base64 or URL), and pass via the `images` parameter of `prompt()`.
-- **Flutter UI: image picker for workspace creation**: Add a dropdown to the create workspace dialog that fetches available images from `GET /images` and passes the selection in the POST body. Currently the Flutter UI always uses the default image.
 
 ## Backend
 
