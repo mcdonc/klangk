@@ -386,8 +386,11 @@ async def handle_terminal_start(ws: WebSocket, state: dict, msg: dict) -> None:
     cols = msg.get("cols", 80)
     rows = msg.get("rows", 24)
     command_override = msg.get("commandOverride")
+    enable_tmux = msg.get("enableTmux", False)
     session = TerminalSession(container_id)
-    await session.start(cols, rows, command_override=command_override)
+    await session.start(
+        cols, rows, command_override=command_override, enable_tmux=enable_tmux
+    )
     state["terminal_session"] = session
     state["terminal_task"] = asyncio.create_task(
         forward_terminal_output(ws, session, state)
