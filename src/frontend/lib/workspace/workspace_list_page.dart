@@ -391,7 +391,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error),
+                backgroundColor: KColors.accentRed,
+                foregroundColor: Colors.white),
             child: const Text('Delete'),
           ),
         ],

@@ -111,9 +111,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
               onPressed: () => Navigator.pop(ctx, false),
               style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
               child: const Text('Cancel')),
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: FilledButton.styleFrom(
+                backgroundColor: KColors.accentRed,
+                foregroundColor: Colors.white),
             child: const Text('Delete'),
           ),
         ],

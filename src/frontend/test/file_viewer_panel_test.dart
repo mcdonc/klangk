@@ -475,7 +475,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Confirm in dialog
-      await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
       await tester.pumpAndSettle();
 
       expect(deleteCalled, isTrue);
@@ -752,7 +752,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Confirm delete
-      await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Delete failed'), findsOneWidget);
@@ -997,7 +997,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Delete error'), findsOneWidget);
       client.close();

@@ -2,6 +2,7 @@
 
 ## Frontend
 
+- **Root file viewer at filesystem root**: The Files pane currently starts at `/work`. It should be rooted at `/` so users can browse the entire container filesystem.
 - **Consistent settings page styling**: The general settings page (gear icon in app bar) should use the same visual style as the add/edit workspace dialogs — green labels, outlined fields, consistent spacing and typography.
 - **UI redesign**: Let an AI agent freely redesign the Flutter web UI look and feel — colors, typography, spacing, component styles, layout proportions. The current UI is functional but visually basic. Give the agent permission to change any visual aspect without requiring approval for each change, as long as functionality is preserved and tests pass.
 - **Local files pane**: Add a browser-side file pane where users can upload files into an in-browser-memory filesystem (e.g., using the File System Access API or an in-memory store). These files would be accessible to client-side plugins and could be passed to the REPL as context without uploading to the server. Useful for working with sensitive files that shouldn't leave the browser, or for quick one-off analysis without persisting to the workspace.
@@ -17,6 +18,7 @@
 
 ## Backend
 
+- **Suppress idle check logging**: The periodic container idle-timeout check produces noisy log output on every interval. Either remove the log line entirely or gate it behind a debug/verbose flag.
 - **OTEL exporter needs CA cert bundle in worktrees**: The OpenTelemetry metrics exporter fails with `OSError: Could not find a suitable TLS CA certificate bundle` when running from a git worktree, because the certifi `cacert.pem` path resolves relative to the worktree's venv which may not have it. Either pin the `REQUESTS_CA_BUNDLE` env var to the main repo's cert bundle, or ensure the worktree venv has certifi installed.
 - **WorkspaceSessions singleton class in wshandler.py**: Extract `_sessions`, `_pending_browser_requests`, `get_session`, `get_or_create_session`, `remove_session` into a `Sessions` class for better encapsulation and testability. Create a singleton of it to replace `_sessions` global.
 - **Connections singleton class in wshandler.py**: Create a `Connections` class with a `handle_websocket` method that owns the `_connections` dict. Instantiate as a module-level singleton. Eliminates the `_connections` global and makes the WebSocket handler testable as an instance rather than module-level functions.
