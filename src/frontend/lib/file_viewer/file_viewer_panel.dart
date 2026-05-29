@@ -381,8 +381,13 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_entries.isEmpty) {
-      return const Center(
-          child: Text('Empty directory\nDrag files or folders here to upload'));
+      return const Align(
+          alignment: Alignment.bottomCenter,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: 32),
+            child: Text('Empty directory\nDrag files or folders here to upload',
+                textAlign: TextAlign.center),
+          ));
     }
     return Column(
       children: [
