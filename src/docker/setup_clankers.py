@@ -69,8 +69,7 @@ def setup_bin():
     for tool in ("fd", "rg"):
         link = AGENT_DIR / "bin" / tool
         target = Path(f"/usr/bin/{tool}")
-        if target.exists():
-            link.unlink(missing_ok=True)
+        if target.exists() and not link.exists():
             link.symlink_to(target)
 
 
