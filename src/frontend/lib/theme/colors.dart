@@ -9,7 +9,8 @@ class KColors {
 
   // ── Backgrounds ──────────────────────────────────────────────────────
   static const bgCanvas = Color(0xFF0D1117); // main page background
-  static const bgSurface = Color(0xFF161B22); // cards, app bar, panels
+  static const bgSurface = Color(0xFF161B22); // cards, active tabs, panels
+  static const bgAppBar = Color(0xFF11151B); // app bar, slightly darker
   static const bgOverlay = Color(0xFF1C2128); // elevated overlays, menus
   static const bgInset = Color(0xFF010409); // inset/recessed areas
   static const bgTerminal = Color(0xFF1D1F21); // xterm default dark bg

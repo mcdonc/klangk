@@ -134,7 +134,7 @@ class _KlangkAppState extends State<KlangkApp> {
     useMaterial3: true,
     scaffoldBackgroundColor: KColors.bgCanvas,
     appBarTheme: const AppBarTheme(
-      backgroundColor: KColors.bgSurface,
+      backgroundColor: KColors.bgAppBar,
       foregroundColor: KColors.textPrimary,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
