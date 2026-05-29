@@ -87,7 +87,7 @@ class _IdeLayoutState extends State<IdeLayout> {
                   child: widget.terminal,
                 ),
                 Container(
-                  color: KColors.bgSurface,
+                  color: KColors.bgOverlay,
                   child: widget.fileViewer,
                 ),
               ],
