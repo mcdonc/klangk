@@ -168,12 +168,28 @@ class _SettingsPageState extends State<SettingsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Account: $email',
-                    style: Theme.of(context).textTheme.titleLarge),
+                Row(
+                  children: [
+                    const Icon(Icons.account_circle,
+                        size: 28, color: KColors.textSecondary),
+                    const SizedBox(width: 12),
+                    Text(email, style: Theme.of(context).textTheme.titleLarge),
+                  ],
+                ),
                 const SizedBox(height: 32),
-                _buildPasswordSection(),
-                const Divider(height: 48),
-                _buildEmailSection(),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: _buildPasswordSection(),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: _buildEmailSection(),
+                  ),
+                ),
               ],
             ),
           ),
@@ -188,8 +204,15 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Change Password',
-              style: Theme.of(context).textTheme.titleSmall),
+          Row(
+            children: [
+              const Icon(Icons.lock_outline,
+                  size: 18, color: KColors.textSecondary),
+              const SizedBox(width: 8),
+              Text('Change Password',
+                  style: Theme.of(context).textTheme.titleSmall),
+            ],
+          ),
           const SizedBox(height: 16),
           TextFormField(
             controller: _currentPasswordController,
@@ -272,7 +295,15 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Change Email', style: Theme.of(context).textTheme.titleSmall),
+          Row(
+            children: [
+              const Icon(Icons.email_outlined,
+                  size: 18, color: KColors.textSecondary),
+              const SizedBox(width: 8),
+              Text('Change Email',
+                  style: Theme.of(context).textTheme.titleSmall),
+            ],
+          ),
           const SizedBox(height: 16),
           TextFormField(
             controller: _newEmailController,
