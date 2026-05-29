@@ -80,6 +80,51 @@ def setup_bin():
             link.symlink_to(target)
 
 
+def merge_settings():
+    """Merge image settings.json with user settings, preserving user packages.
+
+    Image-managed package names are tracked in a sidecar file. On each start:
+    - Packages in the old sidecar but not in the current image are removed
+    - Current image packages are added/updated
+    - User-installed packages (never in any sidecar) are preserved
+    """
+    import json
+
+    def pkg_name(p):
+        return p["name"] if isinstance(p, dict) else str(p)
+
+    sidecar = AGENT_DIR / ".image-packages"
+    image_settings = json.loads((IMAGE_DIR / "settings.json").read_text())
+    image_pkgs = image_settings.get("packages", [])
+    image_pkg_names = {pkg_name(p) for p in image_pkgs}
+
+    old_image_names = set()
+    if sidecar.exists():
+        old_image_names = {
+            n.strip() for n in sidecar.read_text().splitlines() if n.strip()
+        }
+
+    user_settings_path = AGENT_DIR / "settings.json"
+    if user_settings_path.exists():
+        settings = json.loads(user_settings_path.read_text())
+        existing_pkgs = settings.get("packages", [])
+
+        dropped = old_image_names - image_pkg_names
+        existing_pkgs = [p for p in existing_pkgs if pkg_name(p) not in dropped]
+        existing_pkgs = [p for p in existing_pkgs if pkg_name(p) not in image_pkg_names]
+
+        settings["packages"] = existing_pkgs + image_pkgs
+    else:
+        settings = image_settings
+
+    model = os.environ.get("KLANGK_LLM_MODEL", "")
+    settings["defaultProvider"] = "llm-proxy"
+    settings["defaultModel"] = model
+
+    user_settings_path.write_text(json.dumps(settings, indent=2))
+    sidecar.write_text("\n".join(sorted(image_pkg_names)) + "\n")
+
+
 def merge_models_json():
     """Merge the llm-proxy provider into models.json without overwriting.
 
@@ -167,6 +212,7 @@ def main():
     setup_dirs()
     sync_image_files()
     setup_bin()
+    merge_settings()
     merge_models_json()
     prompt_path = build_system_prompt()
     args = build_pi_args(prompt_path)
