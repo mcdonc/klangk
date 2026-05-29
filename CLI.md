@@ -42,20 +42,21 @@ Add to `pyproject.toml`:
 
 ## Commands
 
-| Command                                                    | Description                                                                      |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `bark login [EMAIL] [--server URL] [--password-file FILE]` | Authenticate. Reuses saved token if valid. `--password-file -` reads from stdin. |
-| `bark logout`                                              | Clear stored token                                                               |
-| `bark status [--plain]`                                    | Show connection info (server, user, login status)                                |
-| `bark list [--plain]`                                      | List workspaces                                                                  |
-| `bark create NAME [--mount SRC:DST]`                       | Create a workspace (with optional bind mounts or named volumes)                  |
-| `bark rm NAME`                                             | Delete a workspace                                                               |
-| `bark shell [WORKSPACE]`                                   | **Main command.** Connect to workspace, drop into bash inside the container.     |
-| `bark exec WORKSPACE COMMAND...`                           | Run a command in a container. Also usable as an rsync transport.                 |
-| `bark sync SRC DEST`                                       | Sync files to/from a container via rsync (wraps `bark exec`).                    |
-| `bark volumes ls [--plain]`                                | List bark-managed Docker volumes                                                 |
-| `bark volumes create NAME`                                 | Create a named Docker volume                                                     |
-| `bark volumes rm NAME`                                     | Delete a named Docker volume                                                     |
+| Command                                                           | Description                                                                      |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `bark login [EMAIL] [--server URL] [--password-file FILE]`        | Authenticate. Reuses saved token if valid. `--password-file -` reads from stdin. |
+| `bark logout`                                                     | Clear stored token                                                               |
+| `bark status [--plain]`                                           | Show connection info (server, user, login status)                                |
+| `bark list [--plain]`                                             | List workspaces                                                                  |
+| `bark create NAME [--mount SRC:DST] [--env KEY=VALUE]`            | Create a workspace (with optional mounts and env vars)                           |
+| `bark edit NAME [--name] [--image] [--command] [--mount] [--env]` | Edit workspace settings (flags mode or interactive)                              |
+| `bark rm NAME`                                                    | Delete a workspace                                                               |
+| `bark shell [WORKSPACE]`                                          | **Main command.** Connect to workspace, drop into bash inside the container.     |
+| `bark exec WORKSPACE COMMAND...`                                  | Run a command in a container. Also usable as an rsync transport.                 |
+| `bark sync SRC DEST`                                              | Sync files to/from a container via rsync (wraps `bark exec`).                    |
+| `bark volumes ls [--plain]`                                       | List bark-managed Docker volumes                                                 |
+| `bark volumes create NAME`                                        | Create a named Docker volume                                                     |
+| `bark volumes rm NAME`                                            | Delete a named Docker volume                                                     |
 
 ## `bark shell` — The Core Flow
 

@@ -53,6 +53,9 @@ bark list                             # list workspaces
 bark create my-project                # create a workspace
 bark create my-project --mount ~/src:/work/src          # with bind mount
 bark create my-project --mount nix-store:/nix           # with named volume
+bark create my-project --env BARK_SKILLS=stats,rdkit    # with env vars
+bark edit my-project                  # interactive edit (name, image, command, mounts, env)
+bark edit my-project --env FOO=bar    # set env var via flag
 bark shell my-project                 # drop into bash inside the container
 bark exec my-project ls /work         # run a command in the container
 bark sync ~/src my-project:/work      # sync files to/from the container
