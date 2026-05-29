@@ -4,11 +4,6 @@ set -e
 
 chown klangk:klangk /home/klangk /home/klangk/work
 
-# Allow klangk user to access the Docker socket (if mounted)
-if [ -S /var/run/docker.sock ]; then
-  chmod 666 /var/run/docker.sock
-fi
-
 # Set up Pi agent config as the klangk user (extensions, settings, models,
 # system prompt, Claude Code skills). Runs before the readiness signal so
 # terminal sessions find everything in place.
