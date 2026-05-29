@@ -4,6 +4,7 @@ FROM ghcr.io/mcdonc/klangk/klangk-base:latest
 # This layer is expensive (~30s) and rarely changes, so it goes first.
 # Records packages in settings.json for Pi to discover at runtime.
 RUN mkdir -p /opt/klangk/pi-agent/extensions \
+    && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:@demigodmode/pi-web-agent \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-otel-telemetry
 
 # Server-side tools per plugin (from plugin-tools named build context)

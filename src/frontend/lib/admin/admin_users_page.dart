@@ -158,9 +158,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false,
-        title: const AppBarTitle(
-            title: 'User Management', backRoute: '/workspaces'),
+        title: const AppBarTitle(title: 'User Management'),
         actions: const [
           AppBarActions(),
         ],

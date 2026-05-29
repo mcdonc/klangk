@@ -144,8 +144,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false,
-        title: const AppBarTitle(title: 'Settings', backRoute: '/workspaces'),
+        title: const AppBarTitle(title: 'Settings'),
         actions: const [
           AppBarActions(),
         ],
@@ -163,7 +162,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     const Icon(Icons.account_circle,
                         size: 28, color: KColors.textSecondary),
                     const SizedBox(width: 12),
-                    Text(email, style: Theme.of(context).textTheme.titleLarge),
+                    Text(email,
+                        style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: KColors.textSecondary)),
                   ],
                 ),
                 const SizedBox(height: 32),
@@ -200,7 +203,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   size: 18, color: KColors.textSecondary),
               const SizedBox(width: 8),
               Text('Change Password',
-                  style: Theme.of(context).textTheme.titleSmall),
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: KColors.textSecondary,
+                      letterSpacing: 0.3)),
             ],
           ),
           const SizedBox(height: 16),
@@ -208,8 +215,8 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _currentPasswordController,
             decoration: InputDecoration(
               labelText: 'Current Password',
-              labelStyle: TextStyle(color: KColors.textPrimary),
-              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              labelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
             ),
@@ -221,8 +228,8 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _newPasswordController,
             decoration: InputDecoration(
               labelText: 'New Password',
-              labelStyle: TextStyle(color: KColors.textPrimary),
-              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              labelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
             ),
@@ -238,8 +245,8 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _confirmPasswordController,
             decoration: InputDecoration(
               labelText: 'Confirm New Password',
-              labelStyle: TextStyle(color: KColors.textPrimary),
-              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              labelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
             ),
@@ -291,7 +298,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   size: 18, color: KColors.textSecondary),
               const SizedBox(width: 8),
               Text('Change Email',
-                  style: Theme.of(context).textTheme.titleSmall),
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: KColors.textSecondary,
+                      letterSpacing: 0.3)),
             ],
           ),
           const SizedBox(height: 16),
@@ -299,8 +310,8 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _newEmailController,
             decoration: InputDecoration(
               labelText: 'New Email',
-              labelStyle: TextStyle(color: KColors.textPrimary),
-              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              labelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
             ),
@@ -317,8 +328,8 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _emailPasswordController,
             decoration: InputDecoration(
               labelText: 'Password (to confirm)',
-              labelStyle: TextStyle(color: KColors.textPrimary),
-              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              labelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
             ),

@@ -3,12 +3,11 @@ import 'package:go_router/go_router.dart';
 import '../theme/colors.dart';
 import 'klangk_logo.dart';
 
-/// Shared app bar title: clickable logo + optional back arrow + page title.
+/// Shared app bar title: clickable logo + page title.
 class AppBarTitle extends StatelessWidget {
   final String title;
-  final String? backRoute;
 
-  const AppBarTitle({super.key, required this.title, this.backRoute});
+  const AppBarTitle({super.key, required this.title});
 
   @override
   Widget build(BuildContext context) {
@@ -28,17 +27,6 @@ class AppBarTitle extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 12),
           color: KColors.borderDefault,
         ),
-        if (backRoute != null) ...[
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => context.go(backRoute!),
-              child: const Icon(Icons.arrow_back,
-                  size: 18, color: KColors.textSecondary),
-            ),
-          ),
-          const SizedBox(width: 8),
-        ],
         Text(
           title,
           style: const TextStyle(
