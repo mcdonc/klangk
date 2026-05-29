@@ -327,7 +327,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              color: KColors.bgTerminal,
               boxShadow: const [
                 BoxShadow(
                     color: Color(0x30000000),
@@ -443,7 +443,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          color: KColors.bgTerminal,
           child: Row(
             children: [
               InkWell(

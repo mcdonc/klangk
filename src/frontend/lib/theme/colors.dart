@@ -12,6 +12,7 @@ class KColors {
   static const bgSurface = Color(0xFF161B22); // cards, app bar, panels
   static const bgOverlay = Color(0xFF1C2128); // elevated overlays, menus
   static const bgInset = Color(0xFF010409); // inset/recessed areas
+  static const bgTerminal = Color(0xFF1D1F21); // xterm default dark bg
 
   // ── Borders ──────────────────────────────────────────────────────────
   static const borderDefault = Color(0xFF30363D);
