@@ -109,7 +109,12 @@ def merge_settings():
     """
     image_settings = json.loads((IMAGE_DIR / "settings.json").read_text())
     image_pkgs = image_settings.get("packages", [])
-    image_pkg_names = {p["name"] for p in image_pkgs if "name" in p}
+
+    # Packages can be strings ("npm:foo") or dicts ({"name": "foo", ...})
+    def pkg_name(p):
+        return p["name"] if isinstance(p, dict) else str(p)
+
+    image_pkg_names = {pkg_name(p) for p in image_pkgs}
 
     # Read previous sidecar (what the image managed last time)
     old_image_names = set()
@@ -125,12 +130,10 @@ def merge_settings():
 
         # Remove packages that were image-managed but are no longer in image
         dropped = old_image_names - image_pkg_names
-        existing_pkgs = [p for p in existing_pkgs if p.get("name") not in dropped]
+        existing_pkgs = [p for p in existing_pkgs if pkg_name(p) not in dropped]
 
         # Remove existing image packages (will be re-added from current image)
-        existing_pkgs = [
-            p for p in existing_pkgs if p.get("name") not in image_pkg_names
-        ]
+        existing_pkgs = [p for p in existing_pkgs if pkg_name(p) not in image_pkg_names]
 
         # Add current image packages
         settings["packages"] = existing_pkgs + image_pkgs
