@@ -732,6 +732,65 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 400
         assert "Invalid mount" in resp.json()["detail"]
 
+    async def test_duplicate_workspace(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces",
+            json={
+                "name": "src-ws",
+                "image": "bark",
+                "default_command": "pi",
+                "mounts": ["/tmp:/mnt/tmp"],
+                "env": {"FOO": "bar"},
+            },
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/workspaces/{ws_id}/duplicate",
+            json={"name": "dup-ws"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "dup-ws"
+        assert data["image"] == "bark"
+        assert data["default_command"] == "pi"
+        assert data["mounts"] == ["/tmp:/mnt/tmp"]
+        assert data["env"] == {"FOO": "bar"}
+        assert data["id"] != ws_id
+
+    async def test_duplicate_workspace_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces/nonexistent/duplicate",
+            json={"name": "dup"},
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_duplicate_workspace_name_conflict(self, client, user):
+        headers = await _auth_headers(client)
+        await client.post(
+            "/workspaces",
+            json={"name": "orig"},
+            headers=headers,
+        )
+        ws_id = (
+            await client.post(
+                "/workspaces",
+                json={"name": "taken"},
+                headers=headers,
+            )
+        ).json()["id"]
+        resp = await client.post(
+            f"/workspaces/{ws_id}/duplicate",
+            json={"name": "orig"},
+            headers=headers,
+        )
+        assert resp.status_code == 409
+        assert "already exists" in resp.json()["detail"]
+
 
 # --- Messages ---
 

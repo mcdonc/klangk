@@ -503,6 +503,35 @@ async def update_workspace(
     return {"status": "updated"}
 
 
+class DuplicateWorkspaceRequest(BaseModel):
+    name: str
+
+
+@router.post("/workspaces/{workspace_id}/duplicate")
+async def duplicate_workspace(
+    workspace_id: str,
+    body: DuplicateWorkspaceRequest,
+    user: dict = Depends(auth.get_current_user),
+):
+    source = await workspaces.get_workspace(workspace_id, user["id"])
+    if source is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    try:
+        return await workspaces.create_workspace(
+            user["id"],
+            body.name,
+            image=source.get("image"),
+            default_command=source.get("default_command"),
+            mounts=source.get("mounts"),
+            env=source.get("env"),
+        )
+    except sqlite3.IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A workspace named {body.name!r} already exists",
+        )
+
+
 @router.delete("/workspaces/{workspace_id}")
 async def delete_workspace(
     workspace_id: str, user: dict = Depends(auth.get_current_user)

@@ -1884,5 +1884,228 @@ void main() {
       expect(find.textContaining('Expected KEY=VALUE'), findsNothing);
       expect(find.text('OK=yes'), findsOneWidget);
     });
+
+    testWidgets('duplicate button opens dialog and duplicates workspace',
+        (tester) async {
+      var postCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          if (postCalled) {
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 'ws-1',
+                  'name': 'Original',
+                  'container_id': null,
+                  'created_at': '2026-05-28',
+                },
+                {
+                  'id': 'ws-2',
+                  'name': 'Original-copy',
+                  'container_id': null,
+                  'created_at': '2026-05-28',
+                },
+              ]),
+              200,
+            );
+          }
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'Original',
+                'container_id': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1/duplicate' &&
+            request.method == 'POST') {
+          postCalled = true;
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({
+              'id': 'ws-2',
+              'name': body['name'],
+              'container_id': null,
+              'created_at': '2026-05-28',
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      // Tap the duplicate (copy) button
+      await tester.tap(find.byIcon(Icons.copy_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Duplicate Workspace'), findsOneWidget);
+      // Default name should be "Original-copy"
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller!.text, 'Original-copy');
+
+      // Submit
+      await tester.tap(find.text('Duplicate'));
+      await tester.pumpAndSettle();
+
+      expect(postCalled, isTrue);
+      expect(find.text('Original-copy'), findsOneWidget);
+    });
+
+    testWidgets('duplicate dialog cancel does not create', (tester) async {
+      var postCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'Original',
+                'container_id': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path.contains('/duplicate')) {
+          postCalled = true;
+          return http.Response('{}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.copy_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(postCalled, isFalse);
+    });
+
+    testWidgets('duplicate shows error on name conflict', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'Original',
+                'container_id': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path.contains('/duplicate')) {
+          return http.Response(
+            jsonEncode(
+                {'detail': 'A workspace named \'taken\' already exists'}),
+            409,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.copy_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'taken');
+      await tester.tap(find.text('Duplicate'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('already exists'), findsOneWidget);
+    });
+
+    testWidgets('duplicate shows error on exception', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'Original',
+                'container_id': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path.contains('/duplicate')) {
+          throw Exception('Network error');
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.copy_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Duplicate'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Error:'), findsOneWidget);
+    });
+
+    testWidgets('duplicate dialog submit via Enter key', (tester) async {
+      var postCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'Original',
+                'container_id': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path.contains('/duplicate')) {
+          postCalled = true;
+          return http.Response(
+            jsonEncode({
+              'id': 'ws-2',
+              'name': 'via-enter',
+              'container_id': null,
+              'created_at': '2026-05-28',
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.copy_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'via-enter');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(postCalled, isTrue);
+    });
   });
 }

@@ -179,6 +179,38 @@ def create(
     _out.print(f"Created workspace [bold]{name}[/bold] ({ws.id[:12]})")
 
 
+@app.command("dup")
+def dup(
+    source: str = typer.Argument(..., help="Source workspace name"),
+    new_name: str = typer.Argument(..., help="New workspace name"),
+) -> None:
+    """Duplicate a workspace."""
+    _require_auth()
+    client = _client()
+    try:
+        ws = client.resolve_workspace(source)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{source}'")
+        raise typer.Exit(code=1) from None
+    resp = client.post(
+        f"/workspaces/{ws.id}/duplicate", json={"name": new_name}
+    )
+    if resp.status_code == 409:
+        _err.print(
+            f"[red]A workspace named[/red] '{new_name}' [red]already exists[/red]"
+        )
+        raise typer.Exit(code=1)
+    if resp.status_code == 404:
+        _err.print("[red]Workspace not found[/red]")
+        raise typer.Exit(code=1)
+    resp.raise_for_status()
+    data = resp.json()
+    _out = Console()
+    _out.print(
+        f"Duplicated [bold]{source}[/bold] → [bold]{new_name}[/bold] ({data['id'][:12]})"
+    )
+
+
 @app.command("rm")
 def rm(
     name: str = typer.Argument(..., help="Workspace name"),

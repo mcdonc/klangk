@@ -50,6 +50,7 @@ Add to `pyproject.toml`:
 | `bark list [--plain]`                                             | List workspaces                                                                  |
 | `bark create NAME [--mount SRC:DST] [--env KEY=VALUE]`            | Create a workspace (with optional mounts and env vars)                           |
 | `bark edit NAME [--name] [--image] [--command] [--mount] [--env]` | Edit workspace settings (flags mode or interactive)                              |
+| `bark dup SOURCE NEW_NAME`                                        | Duplicate a workspace (copies image, command, mounts, env)                       |
 | `bark rm NAME`                                                    | Delete a workspace                                                               |
 | `bark shell [WORKSPACE]`                                          | **Main command.** Connect to workspace, drop into bash inside the container.     |
 | `bark exec WORKSPACE COMMAND...`                                  | Run a command in a container. Also usable as an rsync transport.                 |

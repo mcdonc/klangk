@@ -1037,6 +1037,80 @@ class TestMainCLI:
         body = client.put.call_args[1]["json"]
         assert body["env"] == {"A": "1"}
 
+    def test_dup_workspace(self, logged_in_cfg, monkeypatch):
+        from bark_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="orig",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"id": "new-id", "name": "copy"}),
+        )
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["dup", "orig", "copy"])
+            assert result.exit_code == 0
+            assert "copy" in result.stdout
+
+    def test_dup_workspace_not_found(self, logged_in_cfg, monkeypatch):
+        from bark_backend.cli import main
+
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["dup", "nope", "copy"])
+            assert result.exit_code == 1
+
+    def test_dup_workspace_conflict(self, logged_in_cfg, monkeypatch):
+        from bark_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="orig",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.post.return_value = MagicMock(status_code=409)
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["dup", "orig", "taken"])
+            assert result.exit_code == 1
+
+    def test_dup_workspace_404(self, logged_in_cfg, monkeypatch):
+        from bark_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="orig",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.post.return_value = MagicMock(status_code=404)
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["dup", "orig", "copy"])
+            assert result.exit_code == 1
+
     def test_edit_workspace_not_found(self, logged_in_cfg, monkeypatch):
         from bark_backend.cli import main
 

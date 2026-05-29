@@ -411,6 +411,74 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     }
   }
 
+  Future<void> _duplicateWorkspace(Map<String, dynamic> ws) async {
+    final nameController =
+        TextEditingController(text: '${ws['name'] as String}-copy');
+
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        final primary = Theme.of(context).colorScheme.primary;
+        return AlertDialog(
+          title: Text('Duplicate Workspace', style: TextStyle(color: primary)),
+          content: TextField(
+            controller: nameController,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'New workspace name',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (v) => Navigator.pop(context, v.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context, nameController.text.trim()),
+              child: const Text('Duplicate'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (newName == null || newName.isEmpty) return;
+
+    try {
+      final response = await _auth.authPost(
+        '/workspaces/${ws['id']}/duplicate',
+        body: jsonEncode({'name': newName}),
+      );
+      if (response.statusCode == 200) {
+        await _loadWorkspaces();
+      } else {
+        if (mounted) {
+          final error = jsonDecode(response.body);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(days: 1),
+              showCloseIcon: true,
+              content: Text(error['detail'] as String? ??
+                  'Failed to duplicate workspace'),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              duration: const Duration(days: 1),
+              showCloseIcon: true,
+              content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _editWorkspace(Map<String, dynamic> ws) async {
     final imageData = await _fetchImages();
     final defaultImage = imageData?['default'] as String? ?? 'bark-pi';
@@ -772,6 +840,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                             IconButton(
                               icon: const Icon(Icons.settings_outlined),
                               onPressed: () => _editWorkspace(ws),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.copy_outlined),
+                              onPressed: () => _duplicateWorkspace(ws),
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete_outline),

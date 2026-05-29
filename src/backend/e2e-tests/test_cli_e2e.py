@@ -221,6 +221,59 @@ class TestWorkspaceCRUD:
         assert "e2e-crud" not in result.stdout
 
 
+class TestDuplicate:
+    def _login(self, cli_config):
+        env = cli_config["env"]
+        _run(
+            [
+                "bark",
+                "login",
+                "test@example.com",
+                "--server",
+                cli_config["server_url"],
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+
+    def test_dup_workspace(self, cli_config):
+        env = cli_config["env"]
+        self._login(cli_config)
+        _run(
+            ["bark", "create", "e2e-dup-src", "--env", "FOO=bar"],
+            env=env,
+        )
+        try:
+            result = _run(
+                ["bark", "dup", "e2e-dup-src", "e2e-dup-copy"],
+                env=env,
+            )
+            assert result.returncode == 0
+            assert "e2e-dup-copy" in result.stdout
+
+            # Verify copy appears in list
+            result = _run(
+                ["bark", "list", "--plain"],
+                env=env,
+            )
+            assert "e2e-dup-src" in result.stdout
+            assert "e2e-dup-copy" in result.stdout
+        finally:
+            _run(["bark", "rm", "e2e-dup-copy"], env=env)
+            _run(["bark", "rm", "e2e-dup-src"], env=env)
+
+    def test_dup_nonexistent(self, cli_config):
+        env = cli_config["env"]
+        self._login(cli_config)
+        result = _run(
+            ["bark", "dup", "no-such-ws", "copy"],
+            env=env,
+        )
+        assert result.returncode != 0
+
+
 class TestExec:
     @pytest.fixture(autouse=True, scope="class")
     def workspace(self, cli_config):

@@ -17,7 +17,8 @@
 
 ## Backend
 
-- **Duplicate a workspace**: Add ability to duplicate an existing workspace, copying its configuration (image, default command, mounts, env vars) but with a new name. Useful for creating variations of an existing setup.
+- **Rename clank to klangk**: Rename `clank.sh` and all references to `klangk` (the agent launcher command).
+- **OTEL exporter needs CA cert bundle in worktrees**: The OpenTelemetry metrics exporter fails with `OSError: Could not find a suitable TLS CA certificate bundle` when running from a git worktree, because the certifi `cacert.pem` path resolves relative to the worktree's venv which may not have it. Either pin the `REQUESTS_CA_BUNDLE` env var to the main repo's cert bundle, or ensure the worktree venv has certifi installed.
 - **WorkspaceSessions singleton class in wshandler.py**: Extract `_sessions`, `_pending_browser_requests`, `get_session`, `get_or_create_session`, `remove_session` into a `Sessions` class for better encapsulation and testability. Create a singleton of it to replace `_sessions` global.
 - **Connections singleton class in wshandler.py**: Create a `Connections` class with a `handle_websocket` method that owns the `_connections` dict. Instantiate as a module-level singleton. Eliminates the `_connections` global and makes the WebSocket handler testable as an instance rather than module-level functions.
 - **Increase default terminal font size**: The terminal text is too small at the default 14px. Consider 16px or make it configurable.
