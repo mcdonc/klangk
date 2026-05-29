@@ -169,7 +169,7 @@ class _SettingsPageState extends State<SettingsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Account: $email',
-                    style: Theme.of(context).textTheme.titleMedium),
+                    style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 32),
                 _buildPasswordSection(),
                 const Divider(height: 48),
@@ -193,9 +193,12 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 16),
           TextFormField(
             controller: _currentPasswordController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Current Password',
-              border: OutlineInputBorder(),
+              labelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
             ),
             obscureText: true,
             validator: (v) => v == null || v.isEmpty ? 'Required' : null,
@@ -203,9 +206,12 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
           TextFormField(
             controller: _newPasswordController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'New Password',
-              border: OutlineInputBorder(),
+              labelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
             ),
             obscureText: true,
             validator: (v) {
@@ -217,9 +223,12 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
           TextFormField(
             controller: _confirmPasswordController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Confirm New Password',
-              border: OutlineInputBorder(),
+              labelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
             ),
             obscureText: true,
             validator: (v) {
@@ -267,9 +276,12 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 16),
           TextFormField(
             controller: _newEmailController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'New Email',
-              border: OutlineInputBorder(),
+              labelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
             ),
             validator: (v) {
               if (v == null || v.trim().isEmpty) return 'Required';
@@ -282,9 +294,12 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
           TextFormField(
             controller: _emailPasswordController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Password (to confirm)',
-              border: OutlineInputBorder(),
+              labelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelStyle: TextStyle(color: KColors.textPrimary),
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
             ),
             obscureText: true,
             validator: (v) => v == null || v.isEmpty ? 'Required' : null,
