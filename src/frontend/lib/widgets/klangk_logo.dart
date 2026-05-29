@@ -32,7 +32,7 @@ class KlangkLogo extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.smart_toy_outlined,
-                color: KColors.accentYellow, size: iconSize),
+                color: KColors.textPrimary, size: iconSize),
             Text(
               'klangk',
               style: TextStyle(

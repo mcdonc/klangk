@@ -35,7 +35,7 @@ void main() {
     testWidgets('icon uses accent cyan color', (tester) async {
       await tester.pumpWidget(buildLogo());
       final icon = tester.widget<Icon>(find.byIcon(Icons.smart_toy_outlined));
-      expect(icon.color, KColors.accentYellow);
+      expect(icon.color, KColors.textPrimary);
     });
 
     testWidgets('text uses primary color and thin weight', (tester) async {
