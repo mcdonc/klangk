@@ -144,11 +144,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: KColors.textSecondary),
-          onPressed: () => context.go('/workspaces'),
-        ),
-        title: const AppBarTitle(title: 'Settings'),
+        automaticallyImplyLeading: false,
+        title: const AppBarTitle(title: 'Settings', backRoute: '/workspaces'),
         actions: const [
           AppBarActions(),
         ],

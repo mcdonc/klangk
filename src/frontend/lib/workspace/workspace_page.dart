@@ -207,12 +207,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: KColors.textSecondary),
-          onPressed: () => context.go('/workspaces'),
-        ),
+        automaticallyImplyLeading: false,
         title: AppBarTitle(
-            title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace'),
+            title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace',
+            backRoute: '/workspaces'),
         actions: const [
           AppBarActions(),
         ],
