@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 IMAGE_DIR = Path("/opt/klangk/pi-agent")
@@ -197,6 +198,9 @@ def build_pi_args(system_prompt_path):
     # sessions = sorted(glob.glob(str(SESSION_DIR / "*.jsonl")))
     # if sessions:
     #    args.extend(["--session", sessions[-1]])
+
+    # Pass through any extra arguments from the command line
+    args.extend(sys.argv[1:])
 
     return args
 
