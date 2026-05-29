@@ -199,6 +199,33 @@ def setup_claude_code_skills():
             (cc_skills_dir / name).symlink_to(skills_dir / name)
 
 
+def setup_pi_skills():
+    """Symlink enabled skill dirs into Pi's discovery path.
+
+    KLANGK_SKILLS is a comma-separated list of skill directory names.
+    Skills are expected at /opt/klangk/skills/<name>/ (user-mounted).
+    Pi auto-discovers skills from ~/.pi/agent/skills/.
+    """
+    skills_env = os.environ.get("KLANGK_SKILLS", "")
+    skills_dir = Path("/opt/klangk/skills")
+    pi_skills_dir = AGENT_DIR / "skills"
+
+    if not skills_env or not skills_dir.is_dir():
+        return
+
+    # Clean and recreate
+    if pi_skills_dir.exists():
+        import shutil
+
+        shutil.rmtree(pi_skills_dir)
+    pi_skills_dir.mkdir(parents=True, exist_ok=True)
+
+    for name in skills_env.split(","):
+        name = name.strip()
+        if name and (skills_dir / name).is_dir():
+            (pi_skills_dir / name).symlink_to(skills_dir / name)
+
+
 def main():
     os.environ["PI_CODING_AGENT_DIR"] = str(AGENT_DIR)
 
@@ -209,6 +236,7 @@ def main():
     merge_models_json()
     build_system_prompt()
     setup_claude_code_skills()
+    setup_pi_skills()
 
 
 if __name__ == "__main__":

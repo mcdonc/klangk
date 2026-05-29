@@ -17,6 +17,9 @@ while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done
 # Restore Ctrl+C for interactive shell.
 trap - INT
 
+# Pi agent config directory (persistent home mount)
+export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+
 PS1='\[\033[01;34m\]\w\[\033[00m\]\$ '
 HISTFILE=~/.bash_history
 HISTSIZE=1000
