@@ -96,14 +96,14 @@ test.describe("Klangk E2E", () => {
 
       await terminalType(
         page,
-        "echo playwright-terminal-test > /work/.term-test",
+        "echo playwright-terminal-test > /home/klangk/work/.term-test",
         termX,
         termY,
       );
-      await waitForFile(request, workspaceId, ".term-test", headers);
+      await waitForFile(request, workspaceId, "work/.term-test", headers);
 
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.term-test`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.term-test`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -188,11 +188,16 @@ test.describe("Klangk E2E", () => {
       const termX = width / 2;
       const termY = height / 2;
 
-      await terminalType(page, 'echo "foo" > /work/foo.txt', termX, termY);
-      await waitForFile(request, workspaceId, "foo.txt", headers);
+      await terminalType(
+        page,
+        'echo "foo" > /home/klangk/work/foo.txt',
+        termX,
+        termY,
+      );
+      await waitForFile(request, workspaceId, "work/foo.txt", headers);
 
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=foo.txt`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/foo.txt`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -219,7 +224,7 @@ test.describe("Klangk E2E", () => {
 
     // Upload
     const uploadResp = await request.post(
-      `${API_BASE}/workspaces/${workspaceId}/files/upload?path=`,
+      `${API_BASE}/workspaces/${workspaceId}/files/upload?path=work/${fileName}`,
       {
         headers,
         multipart: {
@@ -235,7 +240,7 @@ test.describe("Klangk E2E", () => {
 
     // Verify upload in listing
     let listResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
+      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
       { headers },
     );
     let files = await listResp.json();
@@ -244,7 +249,7 @@ test.describe("Klangk E2E", () => {
 
     // Verify content
     const readResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files/content?path=${fileName}`,
+      `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/${fileName}`,
       { headers },
     );
     expect(readResp.ok()).toBeTruthy();
@@ -254,12 +259,15 @@ test.describe("Klangk E2E", () => {
     // Rename
     const renameResp = await request.post(
       `${API_BASE}/workspaces/${workspaceId}/files/rename`,
-      { headers, data: { old_path: fileName, new_path: renamedName } },
+      {
+        headers,
+        data: { old_path: `work/${fileName}`, new_path: `work/${renamedName}` },
+      },
     );
     expect(renameResp.ok()).toBeTruthy();
 
     listResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
+      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
       { headers },
     );
     files = await listResp.json();
@@ -269,13 +277,13 @@ test.describe("Klangk E2E", () => {
 
     // Delete
     const deleteResp = await request.delete(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=${renamedName}`,
+      `${API_BASE}/workspaces/${workspaceId}/files?path=work/${renamedName}`,
       { headers },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     listResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
+      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
       { headers },
     );
     files = await listResp.json();
@@ -307,7 +315,7 @@ test.describe("Klangk E2E", () => {
     // Upload each file into the folder structure
     for (const [filePath, content] of Object.entries(testFiles)) {
       const resp = await request.post(
-        `${API_BASE}/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(filePath)}`,
+        `${API_BASE}/workspaces/${workspaceId}/files/upload?path=work/${encodeURIComponent(filePath)}`,
         {
           headers,
           multipart: {
@@ -324,7 +332,7 @@ test.describe("Klangk E2E", () => {
 
     // Verify folder appears in listing
     const listResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=.`,
+      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
       { headers },
     );
     expect(listResp.ok()).toBeTruthy();
@@ -334,7 +342,7 @@ test.describe("Klangk E2E", () => {
 
     // Download folder as zip
     const dlResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(folder)}`,
+      `${API_BASE}/workspaces/${workspaceId}/files/download?path=work/${encodeURIComponent(folder)}`,
       { headers },
     );
     expect(dlResp.ok()).toBeTruthy();
@@ -399,15 +407,15 @@ test.describe("Klangk E2E", () => {
     const cx = width / 2;
     const f = fv(page);
 
-    await f.click({ position: { x: cx, y: height * 0.52 }, force: true });
+    await f.click({ position: { x: cx, y: height * 0.46 }, force: true });
     await page.waitForTimeout(200);
     await page.keyboard.type(email);
 
-    await f.click({ position: { x: cx, y: height * 0.6 }, force: true });
+    await f.click({ position: { x: cx, y: height * 0.56 }, force: true });
     await page.waitForTimeout(200);
     await page.keyboard.type(password);
 
-    await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
+    await f.click({ position: { x: cx, y: height * 0.64 }, force: true });
 
     await expect(page).toHaveTitle(/Workspaces/i, { timeout: 10_000 });
   });
@@ -419,7 +427,7 @@ test.describe("Klangk E2E", () => {
     expect(wsResp.status()).toBe(401);
 
     const filesResp = await request.get(
-      `${API_BASE}/workspaces/fake-id/files?path=.`,
+      `${API_BASE}/workspaces/fake-id/files?path=work`,
       { headers },
     );
     expect(filesResp.status()).toBe(401);
@@ -448,20 +456,20 @@ test.describe("Klangk E2E", () => {
       // Run a multi-command sequence
       await terminalType(
         page,
-        "mkdir -p /work/.e2e-multitest/sub && echo done > /work/.e2e-multitest/sub/result.txt",
+        "mkdir -p /home/klangk/work/.e2e-multitest/sub && echo done > /home/klangk/work/.e2e-multitest/sub/result.txt",
         termX,
         termY,
       );
       await waitForFile(
         request,
         workspaceId,
-        ".e2e-multitest/sub/result.txt",
+        "work/.e2e-multitest/sub/result.txt",
         headers,
       );
 
       // Verify file content
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.e2e-multitest/sub/result.txt`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.e2e-multitest/sub/result.txt`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -507,14 +515,14 @@ test.describe("Klangk E2E", () => {
       const termY = 200;
       await terminalType(
         page,
-        "echo tab-survive-test > /work/.tab-survive",
+        "echo tab-survive-test > /home/klangk/work/.tab-survive",
         termX,
         termY,
       );
-      await waitForFile(request, workspaceId, ".tab-survive", headers);
+      await waitForFile(request, workspaceId, "work/.tab-survive", headers);
 
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.tab-survive`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.tab-survive`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -595,7 +603,7 @@ test.describe("Klangk E2E", () => {
 
     // Upload a file to workspace A only
     const uploadResp = await request.post(
-      `${API_BASE}/workspaces/${wsA.id}/files/upload?path=only-in-a.txt`,
+      `${API_BASE}/workspaces/${wsA.id}/files/upload?path=work/only-in-a.txt`,
       {
         headers,
         multipart: {
@@ -611,7 +619,7 @@ test.describe("Klangk E2E", () => {
 
     // Verify file exists in A
     const filesA = await request.get(
-      `${API_BASE}/workspaces/${wsA.id}/files?path=.`,
+      `${API_BASE}/workspaces/${wsA.id}/files?path=work`,
       { headers },
     );
     const namesA = (await filesA.json()).map((e: any) => e.name);
@@ -619,7 +627,7 @@ test.describe("Klangk E2E", () => {
 
     // Verify file does NOT exist in B
     const filesB = await request.get(
-      `${API_BASE}/workspaces/${wsB.id}/files?path=.`,
+      `${API_BASE}/workspaces/${wsB.id}/files?path=work`,
       { headers },
     );
     const namesB = (await filesB.json()).map((e: any) => e.name);
@@ -644,18 +652,18 @@ test.describe("Klangk E2E", () => {
       // Create nested directory structure via terminal
       await terminalType(
         page,
-        "mkdir -p /work/.e2e-nav/inner && echo nav-test > /work/.e2e-nav/inner/file.txt",
+        "mkdir -p /home/klangk/work/.e2e-nav/inner && echo nav-test > /home/klangk/work/.e2e-nav/inner/file.txt",
       );
       await waitForFile(
         request,
         workspaceId,
-        ".e2e-nav/inner/file.txt",
+        "work/.e2e-nav/inner/file.txt",
         headers,
       );
 
       // Verify structure via API
       const innerFiles = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files?path=.e2e-nav/inner`,
+        `${API_BASE}/workspaces/${workspaceId}/files?path=work/.e2e-nav/inner`,
         { headers },
       );
       expect(innerFiles.ok()).toBeTruthy();
@@ -664,7 +672,7 @@ test.describe("Klangk E2E", () => {
 
       // Read nested file content
       const content = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.e2e-nav/inner/file.txt`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.e2e-nav/inner/file.txt`,
         { headers },
       );
       expect(content.ok()).toBeTruthy();
@@ -702,12 +710,9 @@ test.describe("Klangk E2E", () => {
     try {
       await openWorkspace(page, email, workspaceId);
 
-      // Copy the file from ~ to /work so the file API can read it
-      await terminalType(page, "cp ~/.host-created-file /work/.host-check");
-      await waitForFile(request, workspaceId, ".host-check", headers);
-
+      // File API now roots at home, so we can read it directly
       const resp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.host-check`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.host-created-file`,
         { headers },
       );
       expect(resp.ok()).toBeTruthy();
@@ -728,15 +733,12 @@ test.describe("Klangk E2E", () => {
     );
 
     try {
-      // Create a file in ~ and copy it to /work so the file API can read it
-      await terminalType(
-        page,
-        "echo home-test > ~/.home-persist-test && cp ~/.home-persist-test /work/.home-result",
-      );
-      await waitForFile(request, workspaceId, ".home-result", headers);
+      // File API roots at home, so create a file in ~ and read it directly
+      await terminalType(page, "echo home-test > ~/.home-persist-test");
+      await waitForFile(request, workspaceId, ".home-persist-test", headers);
 
       const resp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.home-result`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.home-persist-test`,
         { headers },
       );
       expect(resp.ok()).toBeTruthy();

@@ -20,7 +20,6 @@ docker run -it --rm \
   --tmpfs /tmp:rw,noexec,nosuid,size=256m \
   --tmpfs /run:rw,noexec,nosuid,size=16m \
   --tmpfs /var/log:rw,noexec,nosuid,size=16m \
-  --mount type=bind,source="$HOST_PATH",target=/work \
   --mount type=bind,source="$HOME_PATH",target=/home/klangk \
   --add-host=host.docker.internal:host-gateway \
   -p 9000:8000 -p 9001:8001 -p 9002:8002 -p 9003:8003 -p 9004:8004 \

@@ -25,7 +25,7 @@ class ExecSession:
             "-u",
             "klangk",
             "-w",
-            "/work",
+            "/home/klangk/work",
             self.container_id,
             *command,
         ]

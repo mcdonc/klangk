@@ -393,7 +393,6 @@ class ContainerRegistry:
                 "Init": True,
                 "ReadonlyRootfs": False,
                 "Binds": [
-                    f"{host_path}:/work",
                     f"{home_path}:/home/klangk",
                     "/var/run/docker.sock:/var/run/docker.sock",
                 ]

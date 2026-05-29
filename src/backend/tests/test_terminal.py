@@ -63,7 +63,7 @@ class TestStart:
         assert call_kwargs[1]["tty"] is True
         assert call_kwargs[1]["stdin"] is True
         assert call_kwargs[1]["user"] == "klangk"
-        assert call_kwargs[1]["workdir"] == "/work"
+        assert call_kwargs[1]["workdir"] == "/home/klangk/work"
         exec_obj.start.assert_called_once()
         exec_obj.resize.assert_awaited_once_with(h=40, w=120)
 

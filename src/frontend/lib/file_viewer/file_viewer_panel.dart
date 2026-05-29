@@ -32,7 +32,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   String get _baseUrl => baseUrl;
   http.Client get _client => testHttpClientOverride ?? http.Client();
   List<Map<String, dynamic>> _entries = [];
-  String _currentPath = '.';
+  String _currentPath = 'work';
   String? _selectedFile;
   String? _fileContent;
   bool _loading = false;
@@ -271,16 +271,16 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   Widget _buildBreadcrumbs() {
     if (_currentPath == '.') {
-      return const Text('/', style: TextStyle(fontWeight: FontWeight.bold));
+      return const Text('~', style: TextStyle(fontWeight: FontWeight.bold));
     }
     final parts = _currentPath.split('/');
     final children = <InlineSpan>[];
-    // Leading "/" goes to root
+    // Leading "~/" goes to home root
     children.add(WidgetSpan(
       alignment: PlaceholderAlignment.middle,
       child: InkWell(
         onTap: () => _navigateTo('.'),
-        child: const Text('/', style: TextStyle(fontWeight: FontWeight.bold)),
+        child: const Text('~/', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
     ));
     for (var i = 0; i < parts.length; i++) {

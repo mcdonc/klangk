@@ -2,7 +2,7 @@
 # Minimal container entrypoint.
 set -e
 
-chown klangk:klangk /home/klangk /work
+chown klangk:klangk /home/klangk /home/klangk/work
 
 # Mark all directories as safe for git (bind mounts may have different ownership)
 su -c "git config --global --add safe.directory '*'" klangk

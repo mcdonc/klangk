@@ -7,8 +7,8 @@ from klangk_backend import files, workspaces as ws_mod
 
 @pytest.fixture
 async def workspace_dir(workspace, user, temp_data_dir):
-    """Create the workspace directory on disk and return (user_id, workspace_id, path)."""
-    path = ws_mod.get_workspace_host_path(user["id"], workspace["id"])
+    """Create the home directory on disk and return (user_id, workspace_id, path)."""
+    path = ws_mod.get_home_host_path(user["id"], workspace["id"])
     path.mkdir(parents=True, exist_ok=True)
     return user["id"], workspace["id"], path
 

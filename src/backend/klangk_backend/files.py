@@ -1,4 +1,4 @@
-"""File operations on workspace directories (host-side mount)."""
+"""File operations on workspace home directories (host-side mount)."""
 
 from pathlib import Path
 
@@ -7,7 +7,7 @@ from . import workspaces
 
 def resolve_path(user_id: str, workspace_id: str, relative_path: str) -> Path:
     """Resolve a relative path within a workspace, preventing directory traversal."""
-    root = workspaces.get_workspace_host_path(user_id, workspace_id)
+    root = workspaces.get_home_host_path(user_id, workspace_id)
     resolved = (root / relative_path).resolve()
     if not str(resolved).startswith(str(root.resolve())):
         raise ValueError("Path traversal not allowed")
@@ -29,9 +29,7 @@ def list_files(
                 "name": entry.name,
                 "path": str(
                     entry.relative_to(
-                        workspaces.get_workspace_host_path(
-                            user_id, workspace_id
-                        )
+                        workspaces.get_home_host_path(user_id, workspace_id)
                     )
                 ),
                 "is_dir": entry.is_dir(),
@@ -71,9 +69,7 @@ def delete_path(user_id: str, workspace_id: str, relative_path: str) -> str:
     else:
         path.unlink()
     return str(
-        path.relative_to(
-            workspaces.get_workspace_host_path(user_id, workspace_id)
-        )
+        path.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
     )
 
 
@@ -90,9 +86,7 @@ def rename_path(
     dst.parent.mkdir(parents=True, exist_ok=True)
     src.rename(dst)
     return str(
-        dst.relative_to(
-            workspaces.get_workspace_host_path(user_id, workspace_id)
-        )
+        dst.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
     )
 
 
@@ -104,7 +98,5 @@ def write_file(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
     return str(
-        path.relative_to(
-            workspaces.get_workspace_host_path(user_id, workspace_id)
-        )
+        path.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
     )

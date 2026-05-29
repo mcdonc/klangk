@@ -65,7 +65,7 @@ async def archive_user_data(user_id: str, email: str) -> Path | None:
 
 
 def workspace_path(user_id: str, workspace_id: str) -> Path:
-    return WORKSPACES_ROOT / user_id / "work" / workspace_id
+    return home_path(user_id, workspace_id) / "work"
 
 
 def home_path(user_id: str, workspace_id: str) -> Path:
@@ -111,10 +111,10 @@ async def create_workspace(
         mounts=mounts,
         env=env,
     )
-    path = workspace_path(user_id, workspace["id"])
-    path.mkdir(parents=True, exist_ok=True)
     home = home_path(user_id, workspace["id"])
     home.mkdir(parents=True, exist_ok=True)
+    work = workspace_path(user_id, workspace["id"])
+    work.mkdir(parents=True, exist_ok=True)
     if default_command:
         write_default_command(user_id, workspace["id"], default_command)
     # Allocate ports at creation time so ranges are sequential
@@ -125,7 +125,6 @@ async def create_workspace(
     except Exception:
         # Clean up the DB record and directories on port allocation failure
         await model.delete_workspace(workspace["id"], user_id)
-        await asyncio.to_thread(shutil.rmtree, path, True)
         await asyncio.to_thread(shutil.rmtree, home, True)
         raise
     return workspace
@@ -146,9 +145,8 @@ async def delete_workspace(workspace_id: str, user_id: str) -> bool:
 
     deleted = await model.delete_workspace(workspace_id, user_id)
     if deleted:
-        for dir_fn in (workspace_path, home_path):
-            p = dir_fn(user_id, workspace_id)
-            await asyncio.to_thread(shutil.rmtree, p, True)
+        p = home_path(user_id, workspace_id)
+        await asyncio.to_thread(shutil.rmtree, p, True)
     return deleted
 
 

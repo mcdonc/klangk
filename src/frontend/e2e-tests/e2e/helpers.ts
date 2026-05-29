@@ -47,15 +47,15 @@ export async function loginViaUI(page: Page, email: string, password: string) {
     await page.waitForTimeout(300);
   }
 
-  await f.click({ position: { x: cx, y: height * 0.52 }, force: true });
+  await f.click({ position: { x: cx, y: height * 0.46 }, force: true });
   await page.waitForTimeout(200);
   await page.keyboard.type(email);
 
-  await f.click({ position: { x: cx, y: height * 0.6 }, force: true });
+  await f.click({ position: { x: cx, y: height * 0.56 }, force: true });
   await page.waitForTimeout(200);
   await page.keyboard.type(password);
 
-  await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
+  await f.click({ position: { x: cx, y: height * 0.64 }, force: true });
   await expect(page).toHaveTitle(/Workspaces/i, { timeout: 10_000 });
 }
 
@@ -77,15 +77,15 @@ export async function tryLogin(page: Page, email: string, password: string) {
     await page.waitForTimeout(300);
   }
 
-  await f.click({ position: { x: cx, y: height * 0.52 }, force: true });
+  await f.click({ position: { x: cx, y: height * 0.46 }, force: true });
   await page.waitForTimeout(200);
   await page.keyboard.type(email);
 
-  await f.click({ position: { x: cx, y: height * 0.6 }, force: true });
+  await f.click({ position: { x: cx, y: height * 0.56 }, force: true });
   await page.waitForTimeout(200);
   await page.keyboard.type(password);
 
-  await f.click({ position: { x: cx, y: height * 0.66 }, force: true });
+  await f.click({ position: { x: cx, y: height * 0.64 }, force: true });
   await page.waitForTimeout(500);
 }
 

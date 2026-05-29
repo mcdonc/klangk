@@ -74,7 +74,7 @@ class TerminalSession:
                 stdout=True,
                 stderr=True,
                 user="klangk",
-                workdir="/work",
+                workdir="/home/klangk/work",
                 environment=env,
             )
             self._stream = self._exec.start()

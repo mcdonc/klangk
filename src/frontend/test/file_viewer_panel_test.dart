@@ -55,7 +55,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('/'), findsOneWidget);
+      expect(find.text('~/'), findsOneWidget);
       expect(find.byIcon(Icons.refresh), findsOneWidget);
       expect(find.byIcon(Icons.folder), findsOneWidget);
       client.close();
@@ -143,25 +143,25 @@ void main() {
 
     testWidgets('clicking folder navigates into it', (tester) async {
       testHttpClientOverride = MockClient((request) async {
-        final path = request.url.queryParameters['path'] ?? '.';
-        if (path == '.') {
+        final path = request.url.queryParameters['path'] ?? 'work';
+        if (path == 'work') {
           return http.Response(
             jsonEncode([
               {
                 'name': 'subdir',
-                'path': 'subdir',
+                'path': 'work/subdir',
                 'is_dir': true,
                 'size': null
               },
             ]),
             200,
           );
-        } else if (path == 'subdir') {
+        } else if (path == 'work/subdir') {
           return http.Response(
             jsonEncode([
               {
                 'name': 'inner.txt',
-                'path': 'subdir/inner.txt',
+                'path': 'work/subdir/inner.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -1425,8 +1425,8 @@ void main() {
       await tester.tap(find.text('sub'));
       await tester.pumpAndSettle();
 
-      // Tap the "/" root breadcrumb
-      await tester.tap(find.text('/').first);
+      // Tap the "~/" home breadcrumb
+      await tester.tap(find.text('~/').first);
       await tester.pumpAndSettle();
 
       expect(lastPath, '.');

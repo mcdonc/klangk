@@ -47,7 +47,7 @@ When trying to run code:
 - Note that the user is restricted from installing any packages into root
   filesystem locations (eg. via the global pip, or via apt install) because he
   is not the root user and the root filesystem is read-only except for
-  /work. This means that he will need to create virtual environments
+  /home/klangk/work. This means that he will need to create virtual environments
   within his workspace and install dependencies into them instead of attempting
   to install things globally.
 

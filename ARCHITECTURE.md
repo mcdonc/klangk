@@ -23,7 +23,7 @@ Pi container per workspace (interactive terminal mode)
     ├── Pi extensions (from $KLANGK_PLUGINS_DIR/*/extension.ts)
     ├── AGENTS.md (dynamically generated on container start)
     ↕ bind mount
-$KLANGK_DATA_DIR/workspaces/<user-id>/work/<workspace-id>/
+$KLANGK_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 ```
 
 ### Components
@@ -104,8 +104,7 @@ In CI, `devenv processes up -d` starts nginx before E2E tests run.
 - 30-minute idle timeout (configurable via `KLANGK_IDLE_TIMEOUT_SECONDS`) with automatic container stop, debug notification, and terminal overlay with restart button. Activity is recorded on user actions (prompt, steer, terminal input) and on every Pi event (tool calls, text streaming), so containers stay alive during long-running LLM requests as long as events are flowing. Stuck tool executions (e.g., foreground server) produce no events and will eventually time out.
 - All user containers stopped on logout and backend shutdown
 - Read-only root filesystem (`ReadonlyRootfs: True`) — the agent cannot modify system files or install packages outside the workspace. Writable paths:
-  - `/work` — bind mount to host (user files, `$KLANGK_DATA_DIR/workspaces/<user>/work/<workspace>/`)
-  - `/home/klangk` — bind mount to host (persistent home, `$KLANGK_DATA_DIR/workspaces/<user>/home/<workspace>/`). Dotfiles (`.bashrc`, `.vimrc`, `.gitconfig`), bash history, and Pi sessions persist across container restarts. Pi agent config (`.pi/agent/`) is cleaned and regenerated each start.
+  - `/home/klangk` — bind mount to host (`$KLANGK_DATA_DIR/workspaces/<user>/home/<workspace>/`). Contains `work/` subdirectory for user files, plus dotfiles (`.bashrc`, `.vimrc`, `.gitconfig`), bash history, and Pi sessions. All persist across container restarts. Pi agent config (`.pi/agent/`) is cleaned and regenerated each start.
   - `/tmp` — tmpfs (scratch space)
   - `/run`, `/var/log` — tmpfs (runtime)
 - `klangk` user baked into the image at build time with the host UID/GID (passed as Docker build args)
@@ -118,7 +117,7 @@ In CI, `devenv processes up -d` starts nginx before E2E tests run.
 - Direct shell access to the workspace container via the Terminal tab in the right panel
 - Uses xterm.dart (pure Flutter terminal emulator) with a dark theme (Tomorrow Night palette)
 - Backend spawns `docker exec` subprocess with PTY (`os.openpty`) piped over the existing WebSocket
-- Runs as `klangk` user in `/work` with bash, tab completion, readline, colored prompt/ls, and persistent history (defaults from `/etc/bash.bashrc` in the image, overridable via `~/.bashrc` on the persistent home mount). History is flushed to `~/.bash_history` after each command via `PROMPT_COMMAND` so it survives terminal kills.
+- Runs as `klangk` user in `/home/klangk/work` with bash, tab completion, readline, colored prompt/ls, and persistent history (defaults from `/etc/bash.bashrc` in the image, overridable via `~/.bashrc` on the persistent home mount). History is flushed to `~/.bash_history` after each command via `PROMPT_COMMAND` so it survives terminal kills.
 - Terminal interaction bumps the container idle timeout via `record_activity()`
 - On-demand: subprocess starts when user clicks the Terminal tab
 - State preserved across tab switches (IndexedStack keeps all panels alive)
@@ -439,7 +438,7 @@ plugins:
 
 - All data stored in `$KLANGK_DATA_DIR` (defaults to `$DEVENV_STATE/klangk/data`)
 - SQLite database: `klangk.db` (users, workspaces, port allocations, token blocklist, login attempts)
-- Workspace files: `workspaces/<user-id>/work/<workspace-id>/` (mounted as `/work`)
+- Workspace files: `workspaces/<user-id>/home/<workspace-id>/work/` (inside the `/home/klangk` bind mount)
 - Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/klangk` — dotfiles, bash history, Pi sessions)
 - Database persists across restarts and rebuilds
 

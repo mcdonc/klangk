@@ -175,5 +175,5 @@ email = "admin@example.com"
    - `klangk create cli-test` — creates a workspace
    - `klangk shell cli-test` — drops into bash inside container
    - `klangk exec cli-test ls /work` — runs a command
-   - `klangk sync ~/project cli-test:/work/project` — syncs files
+   - `klangk sync ~/project cli-test:/home/klangk/work/project` — syncs files
    - `klangk rm cli-test` — cleans up

@@ -3,7 +3,7 @@
 # Sets up Pi agent config, then finds the most recent session file to resume.
 set -e
 
-git config --global --add safe.directory /work 2>/dev/null
+git config --global --add safe.directory /home/klangk/work 2>/dev/null
 
 PI_AGENT_DIR="/home/klangk/.pi/agent"
 export PI_CODING_AGENT_DIR="$PI_AGENT_DIR"
