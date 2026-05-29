@@ -5,8 +5,8 @@ import 'package:provider/provider.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../auth/auth_service.dart';
 
-/// Shared widget for the email chip, settings, admin, and logout icons in the
-/// app bar. Renders icons based on auth state.
+/// Shared widget for the email chip, admin, and logout icons in the app bar.
+/// The email chip navigates to Settings when tapped.
 class AppBarActions extends StatelessWidget {
   final VoidCallback? onSettingsPressed;
   final VoidCallback? onLogoutPressed;
@@ -28,17 +28,28 @@ class AppBarActions extends StatelessWidget {
         if (email != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: KColors.bgCanvas,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: KColors.borderDefault),
-              ),
-              child: Text(
-                email,
-                style:
-                    const TextStyle(fontSize: 12, color: KColors.textSecondary),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: onSettingsPressed ??
+                    () => context.go('/settings'), // coverage:ignore-line
+                child: Tooltip(
+                  message: 'Settings',
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: KColors.bgCanvas,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: KColors.borderDefault),
+                    ),
+                    child: Text(
+                      email,
+                      style: const TextStyle(
+                          fontSize: 12, color: KColors.textSecondary),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -49,12 +60,6 @@ class AppBarActions extends StatelessWidget {
             tooltip: 'User Management',
             onPressed: onAdminPressed ?? () => context.go('/admin/users'),
           ),
-        IconButton(
-          icon: const Icon(Icons.settings, color: KColors.textSecondary),
-          tooltip: 'Settings',
-          onPressed: onSettingsPressed ??
-              () => context.go('/settings'), // coverage:ignore-line
-        ),
         IconButton(
           icon: const Icon(Icons.logout, color: KColors.textSecondary),
           tooltip: 'Logout',

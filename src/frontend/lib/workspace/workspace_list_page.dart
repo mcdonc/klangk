@@ -791,6 +791,38 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     }
   }
 
+  String _formatCreatedAt(String? raw) {
+    if (raw == null || raw.isEmpty) return '';
+    try {
+      // Backend sends UTC datetime as "YYYY-MM-DD HH:MM:SS"
+      final utc = DateTime.parse('${raw}Z');
+      final local = utc.toLocal();
+      final months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      final h = local.hour > 12
+          ? local.hour - 12
+          : (local.hour == 0 ? 12 : local.hour);
+      final ampm = local.hour >= 12 ? 'PM' : 'AM';
+      final min = local.minute.toString().padLeft(2, '0');
+      return '${months[local.month - 1]} ${local.day}, ${local.year}'
+          ' at $h:$min $ampm';
+    } catch (_) {
+      return raw;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -819,7 +851,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                       child: ListTile(
                         leading: const Icon(Icons.folder),
                         title: Text(ws['name'] as String),
-                        subtitle: Text('Created: ${ws['created_at'] ?? ''}'),
+                        subtitle:
+                            Text(_formatCreatedAt(ws['created_at'] as String?)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [

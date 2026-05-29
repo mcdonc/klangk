@@ -80,13 +80,13 @@ void main() {
                 'id': 'ws-1',
                 'name': 'Project A',
                 'container_id': null,
-                'created_at': '2026-01-01'
+                'created_at': '2026-01-15 14:30:00'
               },
               {
                 'id': 'ws-2',
                 'name': 'Project B',
                 'container_id': null,
-                'created_at': '2026-01-02'
+                'created_at': '2026-06-02 09:00:00'
               },
             ]),
             200,
@@ -101,6 +101,55 @@ void main() {
       expect(find.text('Project A'), findsOneWidget);
       expect(find.text('Project B'), findsOneWidget);
       expect(find.byIcon(Icons.folder), findsNWidgets(2));
+      // Dates formatted as local time (VM tests run in UTC)
+      expect(find.textContaining('Jan 15, 2026'), findsOneWidget);
+      expect(find.textContaining('Jun 2, 2026'), findsOneWidget);
+    });
+
+    testWidgets('handles missing and invalid created_at gracefully',
+        (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'No Date',
+                'container_id': null,
+                'created_at': null
+              },
+              {
+                'id': 'ws-2',
+                'name': 'Bad Date',
+                'container_id': null,
+                'created_at': 'not-a-date'
+              },
+              {
+                'id': 'ws-3',
+                'name': 'Empty Date',
+                'container_id': null,
+                'created_at': ''
+              },
+              {
+                'id': 'ws-4',
+                'name': 'Midnight',
+                'container_id': null,
+                'created_at': '2026-03-01 00:15:00'
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('No Date'), findsOneWidget);
+      expect(find.text('Bad Date'), findsOneWidget);
+      // Invalid date falls back to raw string
+      expect(find.text('not-a-date'), findsOneWidget);
     });
 
     testWidgets('shows empty state when no workspaces', (tester) async {
