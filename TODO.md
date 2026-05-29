@@ -17,6 +17,7 @@
 
 ## Backend
 
+- **Default password generator runs on every startup**: The default admin user seeding generates a random password each time the server starts if `KLANGK_DEFAULT_PASSWORD` is not set. It should only generate and log the password on first run (when the user is actually created), not on subsequent startups when the user already exists.
 - **OTEL exporter needs CA cert bundle in worktrees**: The OpenTelemetry metrics exporter fails with `OSError: Could not find a suitable TLS CA certificate bundle` when running from a git worktree, because the certifi `cacert.pem` path resolves relative to the worktree's venv which may not have it. Either pin the `REQUESTS_CA_BUNDLE` env var to the main repo's cert bundle, or ensure the worktree venv has certifi installed.
 - **WorkspaceSessions singleton class in wshandler.py**: Extract `_sessions`, `_pending_browser_requests`, `get_session`, `get_or_create_session`, `remove_session` into a `Sessions` class for better encapsulation and testability. Create a singleton of it to replace `_sessions` global.
 - **Connections singleton class in wshandler.py**: Create a `Connections` class with a `handle_websocket` method that owns the `_connections` dict. Instantiate as a module-level singleton. Eliminates the `_connections` global and makes the WebSocket handler testable as an instance rather than module-level functions.
@@ -56,6 +57,7 @@
 ## Docker
 
 - **Use `pi install` for plugins in Docker build**: Replace the staging/copy approach in `dockerbuild.sh` with `pi install` for each plugin. Plugins now have `package.json` with a `"pi"` section, so `pi install /path/to/plugin` should work during the Docker build. This would eliminate the `$KLANGK_PLUGINS_DIR/.docker/` staging directory, the named build contexts (`plugin-extensions`, `plugin-tools`), and the manual extension/tools file copying. Challenge: plugins live in subdirectories of the klangk repo, so installing from npm/GitHub requires either publishing to npm, splitting into separate repos, or using local paths during the build.
+- **Consistent Docker image naming**: Some references use `docker.io/library/klangk` (local builds via `docker build -t klangk`) while others use `ghcr.io/mcdonc/klangk/klangk-base` (registry). The Dockerfile `FROM` line, `dockerbuild.sh`, `dockerbuild-base.sh`, `push-base-image.sh`, and `pull-base-image.sh` should use a consistent naming scheme. Consider always using `ghcr.io/` prefixed names so local and CI builds reference the same image tags.
 - **Lock npm extension versions**: The `pi install npm:pi-subagents` commands in the Dockerfile install whatever `latest` resolves to at build time, with no lock file. Pin to specific versions (e.g., `pi install npm:pi-subagents@0.25.0`) or find a way to lock versions so builds are reproducible.
 
 ## CI
