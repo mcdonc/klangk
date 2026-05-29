@@ -7,7 +7,7 @@ A container orchestration system powered by Docker, which specializes in sandbox
 Klangk gives its users isolated coding environments (aka "workspaces") using
 Docker containers. Within each workspace, any task can be run, but special
 consideration is given to LLM-focused tasks. Coding harnesses like `pi` and
-``claude` are made available in each workspace.
+`claude` are made available in each workspace.
 
 ## Quick Start
 
