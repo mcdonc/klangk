@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
-import '../widgets/klangk_logo.dart';
 import '../widgets/app_bar_actions.dart';
+import '../widgets/app_bar_title.dart';
 
 class AdminUsersPage extends StatefulWidget {
   const AdminUsersPage({super.key});
@@ -158,20 +158,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            onTap: () => context.go('/'),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                KlangkLogo(height: 36),
-                SizedBox(width: 12),
-                Text('User Management', style: TextStyle(fontSize: 16)),
-              ],
-            ),
-          ),
-        ),
+        title: const AppBarTitle(title: 'User Management'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go('/workspaces'),
@@ -222,15 +209,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                               style:
                                   const TextStyle(color: KColors.textSecondary),
                             ),
+                            onTap: () => _editUser(user),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit_outlined,
-                                      color: KColors.textSecondary),
-                                  tooltip: 'Edit user',
-                                  onPressed: () => _editUser(user),
-                                ),
                                 if (!isSelf) ...[
                                   IconButton(
                                     icon: Icon(
@@ -288,23 +270,42 @@ class _AddUserDialogState extends State<_AddUserDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final labelStyle = const TextStyle(
+      color: KColors.textPrimary,
+      fontWeight: FontWeight.bold,
+    );
     return AlertDialog(
-      title: const Text('Add User'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _emailController,
-            decoration: const InputDecoration(labelText: 'Email'),
-            autofocus: true,
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _passwordController,
-            decoration: const InputDecoration(labelText: 'Password'),
-            obscureText: true,
-          ),
-        ],
+      title: Text('Add User', style: TextStyle(color: KColors.textPrimary)),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _emailController,
+              decoration: InputDecoration(
+                labelText: 'Email',
+                labelStyle: labelStyle,
+                floatingLabelStyle: labelStyle,
+                floatingLabelBehavior: FloatingLabelBehavior.always,
+                border: const OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _passwordController,
+              decoration: InputDecoration(
+                labelText: 'Password',
+                labelStyle: labelStyle,
+                floatingLabelStyle: labelStyle,
+                floatingLabelBehavior: FloatingLabelBehavior.always,
+                border: const OutlineInputBorder(),
+              ),
+              obscureText: true,
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -312,7 +313,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
           style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
           child: const Text('Cancel'),
         ),
-        TextButton(
+        FilledButton(
           onPressed: () {
             final email = _emailController.text.trim();
             final password = _passwordController.text;
@@ -357,26 +358,43 @@ class _EditUserDialogState extends State<_EditUserDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final labelStyle = const TextStyle(
+      color: KColors.textPrimary,
+      fontWeight: FontWeight.bold,
+    );
     return AlertDialog(
-      title: const Text('Edit User'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _emailController,
-            decoration: const InputDecoration(labelText: 'Email'),
-            autofocus: true,
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _passwordController,
-            decoration: const InputDecoration(
-              labelText: 'New Password',
-              hintText: 'Leave blank to keep current',
+      title: Text('Edit User', style: TextStyle(color: KColors.textPrimary)),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _emailController,
+              decoration: InputDecoration(
+                labelText: 'Email',
+                labelStyle: labelStyle,
+                floatingLabelStyle: labelStyle,
+                floatingLabelBehavior: FloatingLabelBehavior.always,
+                border: const OutlineInputBorder(),
+              ),
+              autofocus: true,
             ),
-            obscureText: true,
-          ),
-        ],
+            const SizedBox(height: 16),
+            TextField(
+              controller: _passwordController,
+              decoration: InputDecoration(
+                labelText: 'New Password',
+                labelStyle: labelStyle,
+                floatingLabelStyle: labelStyle,
+                floatingLabelBehavior: FloatingLabelBehavior.always,
+                hintText: 'Leave blank to keep current',
+                border: const OutlineInputBorder(),
+              ),
+              obscureText: true,
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -384,7 +402,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
           style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
           child: const Text('Cancel'),
         ),
-        TextButton(
+        FilledButton(
           onPressed: () {
             final email = _emailController.text.trim();
             final password = _passwordController.text;

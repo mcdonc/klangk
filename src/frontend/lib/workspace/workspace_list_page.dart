@@ -8,7 +8,7 @@ import '../auth/auth_service.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../utils/page_title.dart';
 import '../widgets/app_bar_actions.dart';
-import '../widgets/klangk_logo.dart';
+import '../widgets/app_bar_title.dart';
 
 const _validMountOptions = {
   'ro',
@@ -795,20 +795,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            onTap: () => context.go('/'),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                KlangkLogo(height: 36),
-                SizedBox(width: 12),
-                Text('Workspaces', style: TextStyle(fontSize: 16)),
-              ],
-            ),
-          ),
-        ),
+        title: const AppBarTitle(title: 'Workspaces'),
         actions: const [
           AppBarActions(),
         ],

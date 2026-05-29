@@ -10,8 +10,8 @@ import '../auth/auth_service.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:klangk_plugins/klangk_plugins.dart';
 import '../utils/page_title.dart';
-import '../widgets/klangk_logo.dart';
 import '../widgets/app_bar_actions.dart';
+import '../widgets/app_bar_title.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../layout/ide_layout.dart';
 import '../terminal/container_terminal.dart';
@@ -211,22 +211,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
           icon: const Icon(Icons.arrow_back, color: KColors.textSecondary),
           onPressed: () => context.go('/workspaces'),
         ),
-        title: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            onTap: () => context.go('/'),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const KlangkLogo(height: 36),
-                if (_workspaceName.isNotEmpty) ...[
-                  const SizedBox(width: 12),
-                  Text(_workspaceName, style: const TextStyle(fontSize: 16)),
-                ],
-              ],
-            ),
-          ),
-        ),
+        title: AppBarTitle(
+            title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace'),
         actions: const [
           AppBarActions(),
         ],

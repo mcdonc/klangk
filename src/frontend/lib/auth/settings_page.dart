@@ -6,8 +6,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'auth_service.dart';
 import '../utils/page_title.dart';
-import '../widgets/klangk_logo.dart';
 import '../widgets/app_bar_actions.dart';
+import '../widgets/app_bar_title.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -148,14 +148,7 @@ class _SettingsPageState extends State<SettingsPage> {
           icon: const Icon(Icons.arrow_back, color: KColors.textSecondary),
           onPressed: () => context.go('/workspaces'),
         ),
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const KlangkLogo(height: 36),
-            const SizedBox(width: 12),
-            const Text('Settings', style: TextStyle(fontSize: 16)),
-          ],
-        ),
+        title: const AppBarTitle(title: 'Settings'),
         actions: const [
           AppBarActions(),
         ],
