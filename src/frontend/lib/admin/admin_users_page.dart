@@ -201,6 +201,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               : _users.isEmpty
                   ? const Center(child: Text('No users'))
                   : ListView.builder(
+                      padding: const EdgeInsets.all(16),
                       itemCount: _users.length,
                       itemBuilder: (ctx, i) {
                         final user = _users[i];
@@ -208,58 +209,69 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                         final isAdmin = roles.contains('admin');
                         final isSelf =
                             user['id'] == context.read<AuthService>().userId;
-                        return ListTile(
-                          leading: Icon(
-                            isAdmin ? Icons.admin_panel_settings : Icons.person,
-                            color:
-                                isAdmin ? KColors.textSecondary : Colors.grey,
-                          ),
-                          title: Text(user['email'] ?? ''),
-                          subtitle: Text(
-                            roles.isEmpty
-                                ? 'No roles'
-                                : 'Roles: ${roles.join(", ")}',
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Edit user
-                              IconButton(
-                                icon: const Icon(Icons.edit,
-                                    color: KColors.textSecondary),
-                                tooltip: 'Edit user',
-                                onPressed: () => _editUser(user),
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: isAdmin
+                                  ? KColors.accentGreen
+                                  : KColors.borderDefault,
+                              child: Icon(
+                                isAdmin
+                                    ? Icons.admin_panel_settings
+                                    : Icons.person,
+                                color: Colors.white,
+                                size: 20,
                               ),
-                              if (!isSelf) ...[
-                                // Toggle admin role
+                            ),
+                            title: Text(user['email'] ?? ''),
+                            subtitle: Text(
+                              roles.isEmpty
+                                  ? 'No roles'
+                                  : 'Roles: ${roles.join(", ")}',
+                              style:
+                                  const TextStyle(color: KColors.textSecondary),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
                                 IconButton(
-                                  icon: Icon(
-                                    isAdmin
-                                        ? Icons.shield
-                                        : Icons.shield_outlined,
-                                    color: isAdmin ? Colors.amber : Colors.grey,
-                                  ),
-                                  tooltip: isAdmin
-                                      ? 'Remove admin role'
-                                      : 'Grant admin role',
-                                  onPressed: () => _toggleRole(
-                                    user['id'],
-                                    'admin',
-                                    isAdmin,
-                                  ),
+                                  icon: const Icon(Icons.edit_outlined,
+                                      color: KColors.textSecondary),
+                                  tooltip: 'Edit user',
+                                  onPressed: () => _editUser(user),
                                 ),
-                                // Delete user
-                                IconButton(
-                                  icon: const Icon(Icons.delete,
-                                      color: Colors.red),
-                                  tooltip: 'Delete user',
-                                  onPressed: () => _deleteUser(
-                                    user['id'],
-                                    user['email'],
+                                if (!isSelf) ...[
+                                  IconButton(
+                                    icon: Icon(
+                                      isAdmin
+                                          ? Icons.shield
+                                          : Icons.shield_outlined,
+                                      color: isAdmin
+                                          ? KColors.accentAmber
+                                          : KColors.textMuted,
+                                    ),
+                                    tooltip: isAdmin
+                                        ? 'Remove admin role'
+                                        : 'Grant admin role',
+                                    onPressed: () => _toggleRole(
+                                      user['id'],
+                                      'admin',
+                                      isAdmin,
+                                    ),
                                   ),
-                                ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline,
+                                        color: KColors.accentRed),
+                                    tooltip: 'Delete user',
+                                    onPressed: () => _deleteUser(
+                                      user['id'],
+                                      user['email'],
+                                    ),
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
                         );
                       },
