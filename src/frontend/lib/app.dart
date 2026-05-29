@@ -197,8 +197,8 @@ class _KlangkAppState extends State<KlangkApp> {
       hintStyle: const TextStyle(color: KColors.textMuted),
     ),
     listTileTheme: const ListTileThemeData(
-      textColor: KColors.textPrimary,
-      subtitleTextStyle: TextStyle(color: KColors.textSecondary, fontSize: 14),
+      textColor: KColors.textSecondary,
+      subtitleTextStyle: TextStyle(color: KColors.textMuted, fontSize: 14),
     ),
     dividerColor: KColors.borderDefault,
     iconTheme: const IconThemeData(color: KColors.textSecondary),
