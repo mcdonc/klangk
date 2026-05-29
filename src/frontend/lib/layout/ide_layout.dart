@@ -159,7 +159,7 @@ class _SkeuoTab extends StatelessWidget {
           color: isSelected ? KColors.bgSurface : KColors.bgCanvas,
           border: Border(
             top: BorderSide(
-              color: isSelected ? KColors.accentBlue : Colors.transparent,
+              color: isSelected ? KColors.accentGreen : Colors.transparent,
               width: 2,
             ),
             bottom: BorderSide(
