@@ -186,22 +186,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                         final isAdmin = roles.contains('admin');
                         final isSelf =
                             user['id'] == context.read<AuthService>().userId;
+                        final email = user['email'] as String? ?? '';
+                        final initial =
+                            email.isNotEmpty ? email[0].toUpperCase() : '?';
                         return Card(
                           margin: const EdgeInsets.only(bottom: 8),
                           child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: isAdmin
-                                  ? KColors.accentGreen
-                                  : KColors.borderDefault,
-                              child: Icon(
-                                isAdmin
-                                    ? Icons.admin_panel_settings
-                                    : Icons.person,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                            ),
-                            title: Text(user['email'] ?? ''),
+                            leading:
+                                _UserAvatar(initial: initial, isAdmin: isAdmin),
+                            title: Text(email),
                             subtitle: Text(
                               roles.isEmpty
                                   ? 'No roles'
@@ -414,6 +407,67 @@ class _EditUserDialogState extends State<_EditUserDialog> {
           child: const Text('Save'),
         ),
       ],
+    );
+  }
+}
+
+class _UserAvatar extends StatelessWidget {
+  final String initial;
+  final bool isAdmin;
+
+  const _UserAvatar({required this.initial, required this.isAdmin});
+
+  static const _letterColors = [
+    Color(0xFF3B82F6), // blue
+    Color(0xFF8B5CF6), // violet
+    Color(0xFFEC4899), // pink
+    Color(0xFFEF4444), // red
+    Color(0xFFF97316), // orange
+    Color(0xFFF59E0B), // amber
+    Color(0xFF10B981), // emerald
+    Color(0xFF14B8A6), // teal
+    Color(0xFF06B6D4), // cyan
+    Color(0xFF6366F1), // indigo
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final colorIndex = initial.codeUnitAt(0) % _letterColors.length;
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: _letterColors[colorIndex],
+            child: Text(
+              initial,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 16,
+              ),
+            ),
+          ),
+          if (isAdmin)
+            Positioned(
+              right: -2,
+              bottom: -2,
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: KColors.accentAmber,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: KColors.bgSurface, width: 2),
+                ),
+                child: const Icon(Icons.shield, size: 10, color: Colors.white),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
