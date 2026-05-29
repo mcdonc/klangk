@@ -160,15 +160,7 @@ class _SkeuoTab extends StatelessWidget {
         ),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: isSelected ? KColors.bgSurface : KColors.bgCanvas,
-            border: Border(
-              top: BorderSide(
-                color: isSelected ? KColors.accentGreen : Colors.transparent,
-                width: 2,
-              ),
-            ),
-          ),
+          color: isSelected ? KColors.bgSurface : KColors.bgCanvas,
           child: Row(
             children: [
               Icon(
