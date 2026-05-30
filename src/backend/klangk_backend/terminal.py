@@ -55,12 +55,6 @@ class TerminalSession:
                 )
             ):
                 unset_args.extend(["-u", key])
-        for key in (
-            "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "OTEL_EXPORTER_OTLP_HEADERS",
-            "OTEL_SERVICE_NAME",
-        ):
-            unset_args.extend(["-u", key])
         cmd = ["env", *unset_args, "/bin/bash"]
 
         # Create and start exec via Docker API (single PTY)
