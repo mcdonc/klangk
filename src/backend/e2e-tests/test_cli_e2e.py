@@ -30,11 +30,13 @@ def _run(args, timeout=30, input=None, **kwargs):
     )
 
 
-@pytest.fixture(scope="session")
-def server():
-    """Start a real Klangk server for the test session."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-cli-e2e-")
-    port = "18995"
+def _start_server(data_dir, port, instance_id, extra_env=None):
+    """Start a Klangk server and wait for it to be ready.
+
+    Returns (proc, base_url).
+    """
+    import httpx
+
     env = {
         **os.environ,
         "KLANGK_PORT": port,
@@ -43,10 +45,11 @@ def server():
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
-        "KLANGK_INSTANCE_ID": "cli-e2e",
+        "KLANGK_INSTANCE_ID": instance_id,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         "KLANGK_PORT_RANGE_START": "9000",
         "LOGFIRE_TOKEN": "",
+        **(extra_env or {}),
     }
     proc = subprocess.Popen(
         [
@@ -62,14 +65,10 @@ def server():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    # Wait for server to be ready
     base_url = f"http://localhost:{port}"
     for _ in range(60):
         try:
-            import httpx
-
-            resp = httpx.get(f"{base_url}/health", timeout=2)
-            if resp.status_code == 200:
+            if httpx.get(f"{base_url}/health", timeout=2).status_code == 200:
                 break
         except Exception:
             pass
@@ -78,23 +77,23 @@ def server():
         proc.kill()
         stdout = proc.stdout.read().decode() if proc.stdout else ""
         raise RuntimeError(f"Server failed to start:\n{stdout}")
+    return proc, base_url
 
-    yield {"url": base_url, "port": port, "data_dir": data_dir, "proc": proc}
 
-    # Cleanup
+def _stop_server(proc, data_dir, instance_id):
+    """Stop a server, clean up containers and data."""
     proc.send_signal(signal.SIGTERM)
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
-    # Clean up containers
     result = subprocess.run(
         [
             "docker",
             "ps",
             "-a",
             "--filter",
-            "label=klangk.instance=cli-e2e",
+            f"label=klangk.instance={instance_id}",
             "-q",
         ],
         capture_output=True,
@@ -106,6 +105,20 @@ def server():
             capture_output=True,
         )
     shutil.rmtree(data_dir, ignore_errors=True)
+
+
+@pytest.fixture(scope="session")
+def server():
+    """Start a real Klangk server for the test session."""
+    data_dir = tempfile.mkdtemp(prefix="klangk-cli-e2e-")
+    proc, base_url = _start_server(data_dir, "18995", "cli-e2e")
+    yield {
+        "url": base_url,
+        "port": "18995",
+        "data_dir": data_dir,
+        "proc": proc,
+    }
+    _stop_server(proc, data_dir, "cli-e2e")
 
 
 @pytest.fixture(scope="session")
@@ -608,6 +621,75 @@ class TestEnvVars:
             assert "Updated" in result.stdout
         finally:
             _run(["klangk", "rm", "e2e-env-edit"], env=env)
+
+
+class TestOtelEnvVars:
+    """Verify OTEL env vars are injected when LOGFIRE_TOKEN is set.
+
+    Uses its own server with a fake LOGFIRE_TOKEN so the main test
+    server isn't affected by OTEL exporter attempts.
+    """
+
+    @pytest.fixture(autouse=True)
+    def otel_server(self, tmp_path):
+        """Start a separate server with LOGFIRE_TOKEN set."""
+        data_dir = str(tmp_path / "data")
+        os.makedirs(data_dir, exist_ok=True)
+        proc, server_url = _start_server(
+            data_dir,
+            "18996",
+            "cli-e2e-otel",
+            extra_env={
+                "LOGFIRE_TOKEN": "e2e-test-token",
+                "KLANGK_PORT_RANGE_START": "9100",
+            },
+        )
+
+        cli_env = {**os.environ, "HOME": str(tmp_path / "home")}
+        (tmp_path / "home" / ".config" / "klangk").mkdir(parents=True)
+
+        self._server_url = server_url
+        self._env = cli_env
+        yield
+        _stop_server(proc, data_dir, "cli-e2e-otel")
+
+    def test_otel_env_vars_in_container(self):
+        env = self._env
+        _run(
+            [
+                "klangk",
+                "login",
+                "test@example.com",
+                "--server",
+                self._server_url,
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+        _run(["klangk", "create", "e2e-otel"], env=env)
+        try:
+            result = _run(
+                ["klangk", "exec", "e2e-otel", "env"],
+                env=env,
+                timeout=60,
+            )
+            assert result.returncode == 0
+            container_env = dict(
+                line.split("=", 1)
+                for line in result.stdout.splitlines()
+                if "=" in line
+            )
+            assert "OTEL_EXPORTER_OTLP_ENDPOINT" in container_env
+            assert "OTEL_EXPORTER_OTLP_HEADERS" in container_env
+            assert (
+                "Authorization=Bearer e2e-test-token"
+                in (container_env["OTEL_EXPORTER_OTLP_HEADERS"])
+            )
+            assert container_env["OTEL_SERVICE_NAME"] == "klangk-pi-agent"
+        finally:
+            _run(["klangk", "rm", "e2e-otel"], env=env)
 
 
 class TestVolumes:
