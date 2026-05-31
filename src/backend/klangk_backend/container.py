@@ -341,6 +341,11 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
 
+        # Forward host SSH agent if available
+        ssh_auth_sock = os.environ.get("SSH_AUTH_SOCK", "")
+        if ssh_auth_sock and os.path.exists(ssh_auth_sock):
+            env_vars.append("SSH_AUTH_SOCK=/run/ssh-agent.sock")
+
         if extra_env:
             for k, v in extra_env.items():
                 env_vars.append(f"{k}={v}")
@@ -392,6 +397,11 @@ class ContainerRegistry:
                     f"{home_path}:/home/klangk",
                     "/var/run/docker.sock:/var/run/docker.sock",
                 ]
+                + (
+                    [f"{ssh_auth_sock}:/run/ssh-agent.sock:ro"]
+                    if ssh_auth_sock and os.path.exists(ssh_auth_sock)
+                    else []
+                )
                 + (
                     [f"{config_path}:/opt/klangk/config:ro"]
                     if config_path

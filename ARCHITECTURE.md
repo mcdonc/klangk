@@ -111,6 +111,7 @@ In CI, `devenv processes up -d` starts nginx before E2E tests run.
 - Root escalation prevented: root password locked, suid removed from `su`/`chsh`/`chfn`/`newgrp`
 - Containers labeled with `klangk.managed=true`, `klangk.instance=<KLANGK_INSTANCE_ID>`, and `klangk.workspace-id=<id>` for identification, cleanup, and orphan detection (not reliant on image name). Multiple Klangk instances on the same host use different `KLANGK_INSTANCE_ID` values to isolate their containers.
 - `Init: True` (Docker `--init`) runs `tini` as PID 1 to reap zombie processes from terminal sessions and tool executions
+- **SSH agent forwarding**: If the host has an SSH agent running (`SSH_AUTH_SOCK` set and socket exists), it is automatically bind-mounted into the container at `/run/ssh-agent.sock`. Private keys never enter the container — the agent socket forwards signing requests back to the host. Use `ssh-add -c` on the host to require per-operation confirmation.
 
 ### Container Terminal
 

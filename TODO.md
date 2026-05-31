@@ -2,6 +2,7 @@
 
 ## Frontend
 
+- **Restart button on container stopped overlay doesn't restart the container**: When a container stops (idle timeout or unexpected), the overlay shows a "Restart" button, but clicking it doesn't actually restart the container.
 - **Consistent settings page styling**: The general settings page (gear icon in app bar) should use the same visual style as the add/edit workspace dialogs — green labels, outlined fields, consistent spacing and typography.
 - **UI redesign**: Let an AI agent freely redesign the Flutter web UI look and feel — colors, typography, spacing, component styles, layout proportions. The current UI is functional but visually basic. Give the agent permission to change any visual aspect without requiring approval for each change, as long as functionality is preserved and tests pass.
 - **Local files pane**: Add a browser-side file pane where users can upload files into an in-browser-memory filesystem (e.g., using the File System Access API or an in-memory store). These files would be accessible to client-side plugins and could be passed to the REPL as context without uploading to the server. Useful for working with sensitive files that shouldn't leave the browser, or for quick one-off analysis without persisting to the workspace.

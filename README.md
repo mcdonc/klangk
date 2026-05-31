@@ -97,6 +97,20 @@ All settings can be overridden in `.env`. Defaults are provided in `devenv.nix` 
 - `KLANGK_PORT` (default `8997`): Backend (FastAPI/uvicorn)
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
 
+### SSH Agent Forwarding
+
+If you have an SSH agent running on the host (`ssh-agent` or 1Password/Secretive), Klangk automatically forwards it into workspace containers. This means `git clone`, `git push`, and `ssh` work inside containers without copying your private keys — the keys never leave the host.
+
+```bash
+# On the host, add your key to the agent (if not already)
+ssh-add ~/.ssh/id_ed25519
+
+# Inside a container, git/ssh just works
+git clone git@github.com:yourorg/private-repo.git
+```
+
+For extra security, use `ssh-add -c` to require confirmation on the host for each SSH operation, preventing malicious code from silently using your key.
+
 ### Rebuilding
 
 The devenv environment rebuilds necessary components at `devenv processes up` time.

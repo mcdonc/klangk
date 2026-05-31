@@ -279,6 +279,52 @@ class TestStartContainer:
         mock_c.start.assert_awaited_once()
         assert workspace["id"] in container.registry.states
 
+    async def test_ssh_agent_forwarded_when_socket_exists(
+        self, workspace, monkeypatch, tmp_path
+    ):
+        sock = tmp_path / "agent.sock"
+        sock.touch()
+        monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+
+        with patch.object(
+            container.registry, "get_docker", return_value=mock_docker
+        ):
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        call_kwargs = mock_docker.containers.create_or_replace.call_args
+        env_list = call_kwargs[1]["config"]["Env"]
+        binds = call_kwargs[1]["config"]["HostConfig"]["Binds"]
+        assert "SSH_AUTH_SOCK=/run/ssh-agent.sock" in env_list
+        assert f"{sock}:/run/ssh-agent.sock:ro" in binds
+
+    async def test_ssh_agent_not_forwarded_when_unset(
+        self, workspace, monkeypatch
+    ):
+        monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+
+        with patch.object(
+            container.registry, "get_docker", return_value=mock_docker
+        ):
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        call_kwargs = mock_docker.containers.create_or_replace.call_args
+        env_list = call_kwargs[1]["config"]["Env"]
+        binds = call_kwargs[1]["config"]["HostConfig"]["Binds"]
+        assert "SSH_AUTH_SOCK=/run/ssh-agent.sock" not in env_list
+        assert not any("ssh-agent" in b for b in binds)
+
     async def test_reuse_running_container(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("existing-cid", running=True)
