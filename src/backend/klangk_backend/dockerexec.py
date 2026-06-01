@@ -13,7 +13,9 @@ class ExecSession:
     def __init__(self, container_id: str):
         self.container_id = container_id
         self._proc: asyncio.subprocess.Process | None = None
-        self._output_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._output_queue: asyncio.Queue[bytes | None] = asyncio.Queue(
+            maxsize=64
+        )
         self._running = False
 
     async def start(self, command: list[str]) -> None:
@@ -53,7 +55,9 @@ class ExecSession:
                 data = await self._proc.stdout.read(65536)
                 if not data:
                     break
-                self._output_queue.put_nowait(data)
+                # Bounded queue: blocks when full, back-pressuring the
+                # process via its kernel pipe buffer.
+                await self._output_queue.put(data)
         except (OSError, asyncio.CancelledError):
             pass
         # Wait for the process to exit so returncode is set before
@@ -67,7 +71,9 @@ class ExecSession:
                 OSError,
             ):  # pragma: no cover
                 pass
-        self._output_queue.put_nowait(None)
+        # Blocks until consumer drains a slot; no deadlock since
+        # consumer and producer are different tasks.
+        await self._output_queue.put(None)
 
     @property
     def is_alive(self) -> bool:

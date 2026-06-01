@@ -321,6 +321,25 @@ class TestExec:
         )
         assert result.returncode != 0
 
+    def test_exec_yes_backpressure(self, cli_config):
+        """Smoke test: run `yes` briefly to exercise bounded queue back-pressure."""
+        result = _run(
+            [
+                "klangk",
+                "exec",
+                "e2e-exec",
+                "bash",
+                "-c",
+                "yes | head -1000",
+            ],
+            env=cli_config["env"],
+            timeout=30,
+        )
+        assert result.returncode == 0
+        lines = result.stdout.strip().splitlines()
+        assert len(lines) == 1000
+        assert all(line == "y" for line in lines)
+
 
 class TestSync:
     @pytest.fixture(autouse=True, scope="class")

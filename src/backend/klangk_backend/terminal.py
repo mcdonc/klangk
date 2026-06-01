@@ -22,7 +22,9 @@ class TerminalSession:
         self.container_id = container_id
         self._stream: aiodocker.stream.Stream | None = None
         self._exec: aiodocker.execs.Exec | None = None
-        self._output_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._output_queue: asyncio.Queue[str | None] = asyncio.Queue(
+            maxsize=64
+        )
         self._running = False
         self._read_task: asyncio.Task | None = None
 
@@ -77,7 +79,7 @@ class TerminalSession:
             # then resize. The stream connects lazily on first I/O.
             first_msg = await self._stream.read_out()
             if first_msg is not None:
-                self._output_queue.put_nowait(
+                await self._output_queue.put(
                     first_msg.data.decode("utf-8", errors="replace")
                 )
 
@@ -102,11 +104,15 @@ class TerminalSession:
                     break
                 text = msg.data.decode("utf-8", errors="replace")
                 if text:
-                    self._output_queue.put_nowait(text)
+                    # Bounded queue: blocks when full, back-pressuring the
+                    # PTY via its kernel buffer.
+                    await self._output_queue.put(text)
         except (asyncio.CancelledError, Exception):
             pass
         finally:
-            self._output_queue.put_nowait(None)
+            # Blocks until consumer drains a slot; no deadlock since
+            # consumer and producer are different tasks.
+            await self._output_queue.put(None)
 
     @property
     def is_alive(self) -> bool:
