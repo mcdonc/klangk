@@ -1,0 +1,82 @@
+name: Debug rsync
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: "klangk:docker-build"
+
+      - name: Build Docker image
+        run: devenv tasks run klangk:docker-build
+
+      - name: Check rsync versions
+        run: |
+          echo "=== Host rsync ==="
+          devenv shell -- rsync --version | head -2
+          echo "=== Container rsync ==="
+          docker run --rm klangk rsync --version | head -2
+
+      - name: Test raw docker exec rsync
+        run: |
+          # Start a container manually
+          CID=$(docker run -d --name rsync-test klangk sleep infinity)
+          echo "Container: $CID"
+
+          # Wait for ready
+          sleep 3
+
+          # Create test files
+          TMPDIR=$(mktemp -d)
+          echo "test content" > "$TMPDIR/test.txt"
+
+          echo "=== Test 1: rsync via docker exec directly ==="
+          devenv shell -- rsync -avz --blocking-io -e "docker exec -i" "$TMPDIR/" rsync-test:/home/klangk/work/test/ 2>&1 || true
+
+          echo "=== Test 2: Check if file arrived ==="
+          docker exec rsync-test ls -la /home/klangk/work/test/ 2>&1 || true
+
+          echo "=== Test 3: rsync back from container ==="
+          DESTDIR=$(mktemp -d)
+          docker exec rsync-test bash -c 'echo "from-container" > /home/klangk/work/test/remote.txt'
+          devenv shell -- rsync -avz --blocking-io -e "docker exec -i" rsync-test:/home/klangk/work/test/remote.txt "$DESTDIR/" 2>&1 || true
+          cat "$DESTDIR/remote.txt" 2>&1 || echo "File not found"
+
+          echo "=== Test 4: rsync via klangk exec (full stack) ==="
+          # Start the server
+          export KLANGK_PORT=18995
+          export KLANGK_DATA_DIR="$TMPDIR/data"
+          export KLANGK_JWT_SECRET=debug-secret
+          export KLANGK_DEFAULT_USER=test@example.com
+          export KLANGK_DEFAULT_PASSWORD=testpass
+          export KLANGK_TEST_MODE=1
+          export KLANGK_INSTANCE_ID=debug-rsync
+          export KLANGK_IDLE_TIMEOUT_SECONDS=300
+          export KLANGK_PORT_RANGE_START=9300
+          export LOGFIRE_TOKEN=
+
+          devenv shell -- uvicorn klangk_backend.main:app --host 0.0.0.0 --port 18995 &
+          sleep 5
+
+          # Login
+          DEBUGHOME=$(mktemp -d)
+          mkdir -p "$DEBUGHOME/.config/klangk"
+          HOME=$DEBUGHOME devenv shell -- klangk login test@example.com --server http://localhost:18995 --password-file - <<< 'testpass'
+
+          # Create workspace
+          HOME=$DEBUGHOME devenv shell -- klangk create debug-ws
+
+          # Try sync
+          echo "test sync content" > "$TMPDIR/sync-test.txt"
+          HOME=$DEBUGHOME devenv shell -- klangk sync "$TMPDIR/sync-test.txt" debug-ws:/home/klangk/work/ 2>&1
+          echo "Sync exit code: $?"
+
+          # Cleanup
+          docker rm -f rsync-test 2>/dev/null
+          docker ps -a --filter "label=klangk.instance=debug-rsync" -q | xargs -r docker rm -f 2>/dev/null
+          kill %1 2>/dev/null
