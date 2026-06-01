@@ -504,10 +504,10 @@ async def handle_terminal_start(
                 forward_terminal_output(ws, session, state)
             )
             container.registry.record_activity(container_id)
-            await ws.send_json({"type": "terminal_started"})
+            ws.send_json({"type": "terminal_started"})
         except Exception as e:
             logger.error("Terminal start failed: %s", e)
-            await send_error(ws, f"Terminal start failed: {e}")
+            send_error(ws, f"Terminal start failed: {e}")
 
     asyncio.create_task(_start_terminal())
 
@@ -692,6 +692,10 @@ async def forward_exec_output(
         ConnectionError,
     ) as e:
         logger.error("Exec output forwarding error: %s", e)
+    finally:
+        # Stop the exec session so the process doesn't linger.
+        await session.stop()
+        state["dockerexec"] = None
 
 
 async def stop_terminal(state: dict) -> None:
@@ -758,6 +762,10 @@ async def forward_terminal_output(
             ConnectionError,
         ):
             pass
+    finally:
+        # Stop the terminal session so the PTY doesn't linger.
+        await session.stop()
+        state["terminal_session"] = None
 
 
 async def _broadcast(workspace_id: str, message: dict) -> int:

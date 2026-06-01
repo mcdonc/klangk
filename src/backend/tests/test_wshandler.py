@@ -46,8 +46,8 @@ from klangk_backend.wshandler import (
 def _mock_ws(headers=None, query_params=None):
     """Create a mock SafeWebSocket for testing.
 
-    send_json is a MagicMock (synchronous) matching the real
-    SafeWebSocket.send_json which enqueues without awaiting.
+    send_json is MagicMock (sync) because SafeWebSocket.send_json is
+    synchronous — it enqueues via put_nowait, not await.
     """
     ws = AsyncMock()
     ws.headers = headers or {}
@@ -56,8 +56,6 @@ def _mock_ws(headers=None, query_params=None):
     ws.close = AsyncMock()
     ws.send_json = MagicMock()
     ws.receive_text = AsyncMock()
-    ws.start_sender = MagicMock()
-    ws.stop_sender = AsyncMock()
     ws.raw = ws  # identity for subscriber sets
     return ws
 
@@ -119,6 +117,12 @@ class TestSafeWebSocket:
         sw = SafeWebSocket(raw)
         await sw.close(code=4001)
         raw.close.assert_awaited_once_with(code=4001)
+
+    async def test_headers_delegates(self):
+        raw = AsyncMock()
+        raw.headers = {"host": "example.com"}
+        sw = SafeWebSocket(raw)
+        assert sw.headers == {"host": "example.com"}
 
     async def test_raw_returns_underlying(self):
         raw = AsyncMock()
@@ -400,7 +404,7 @@ class TestHandleTerminalStart:
         assert state["terminal_session"] is mock_session
         assert state["terminal_task"] is not None
         # Should have sent terminal_started ack
-        ws.send_json.assert_awaited_with({"type": "terminal_started"})
+        ws.send_json.assert_called_with({"type": "terminal_started"})
 
         # Clean up
         state["terminal_task"].cancel()
