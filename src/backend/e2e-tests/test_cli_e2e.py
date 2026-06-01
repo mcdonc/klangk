@@ -137,6 +137,28 @@ def cli_config(server, tmp_path_factory):
     }
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _ensure_login(cli_config):
+    """Log in once for the entire test session.
+
+    This allows any test class to run in isolation with -k without
+    depending on TestLogin having run first.
+    """
+    _run(
+        [
+            "klangk",
+            "login",
+            "test@example.com",
+            "--server",
+            cli_config["server_url"],
+            "--password-file",
+            "-",
+        ],
+        input="testpass\n",
+        env=cli_config["env"],
+    )
+
+
 class TestLogin:
     def test_login_with_email_arg(self, server, cli_config):
         result = _run(

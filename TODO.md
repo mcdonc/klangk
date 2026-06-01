@@ -17,7 +17,6 @@
 
 ## Backend
 
-- **CLI E2E tests can't run in isolation**: Each test class (TestExec, TestSync, etc.) relies on TestLogin having run first in the session. Running a single class with `-k` fails with "Not logged in". Each class should either have its own login fixture or a shared autouse fixture that ensures auth.
 - **Append /v1 to proxy URL in models.json instead of .env**: `KLANGK_LLM_BASE_URL` currently includes `/v1` (e.g., `http://bizon:4001/v1`). The `/v1` should be appended in `setup_pi.py` when writing `models.json` instead, so the `.env` value is just the base host URL (`http://bizon:4001`). This makes the proxy URL more natural for other uses (e.g., `curl $KLANGK_LLM_PROXY_URL/models` from inside the container) and avoids double `/v1/v1` mistakes.
 - **Default password generator runs on every startup**: The default admin user seeding generates a random password each time the server starts if `KLANGK_DEFAULT_PASSWORD` is not set. It should only generate and log the password on first run (when the user is actually created), not on subsequent startups when the user already exists.
 - **OTEL exporter needs CA cert bundle in worktrees**: The OpenTelemetry metrics exporter fails with `OSError: Could not find a suitable TLS CA certificate bundle` when running from a git worktree, because the certifi `cacert.pem` path resolves relative to the worktree's venv which may not have it. Either pin the `REQUESTS_CA_BUNDLE` env var to the main repo's cert bundle, or ensure the worktree venv has certifi installed.
