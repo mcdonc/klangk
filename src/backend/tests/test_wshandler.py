@@ -15,6 +15,7 @@ from klangk_backend import (
 )
 from klangk_backend.wshandler import (
     SafeWebSocket,
+    SlowClientError,
     WorkspaceSession,
     derive_hosting_info,
     start_workspace_container,
@@ -38,14 +39,33 @@ from klangk_backend.wshandler import (
     reset_workspace_state,
     _broadcast,
     _log_ws_msg,
+    _SEND_QUEUE_SIZE,
 )
 
 
 def _mock_ws(headers=None, query_params=None):
     """Create a mock SafeWebSocket for testing.
 
-    The mock has send_json as an AsyncMock so tests can assert on sent
-    messages. The lock is real so concurrent-send tests work correctly.
+    send_json is a MagicMock (synchronous) matching the real
+    SafeWebSocket.send_json which enqueues without awaiting.
+    """
+    ws = AsyncMock()
+    ws.headers = headers or {}
+    ws.query_params = query_params or {}
+    ws.accept = AsyncMock()
+    ws.close = AsyncMock()
+    ws.send_json = MagicMock()
+    ws.receive_text = AsyncMock()
+    ws.start_sender = MagicMock()
+    ws.stop_sender = AsyncMock()
+    ws.raw = ws  # identity for subscriber sets
+    return ws
+
+
+def _mock_raw_ws(headers=None, query_params=None):
+    """Create a mock raw FastAPI WebSocket for handle_websocket tests.
+
+    send_json is AsyncMock because the sender task awaits it.
     """
     ws = AsyncMock()
     ws.headers = headers or {}
@@ -54,7 +74,6 @@ def _mock_ws(headers=None, query_params=None):
     ws.close = AsyncMock()
     ws.send_json = AsyncMock()
     ws.receive_text = AsyncMock()
-    ws.raw = ws  # identity for subscriber sets
     return ws
 
 
@@ -106,21 +125,76 @@ class TestSafeWebSocket:
         sw = SafeWebSocket(raw)
         assert sw.raw is raw
 
-    async def test_send_json_serializes_writes(self):
+    async def test_send_json_enqueues(self):
         raw = AsyncMock()
         sw = SafeWebSocket(raw)
-        await sw.send_json({"type": "test"})
-        raw.send_json.assert_awaited_once_with({"type": "test"})
+        sw.send_json({"type": "test"})
+        # Message is in the queue, not yet sent to raw
+        assert sw._queue.qsize() == 1
+
+    async def test_sender_loop_drains_queue(self):
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw)
+        sw.send_json({"type": "a"})
+        sw.send_json({"type": "b"})
+        sw.start_sender()
+        await sw.stop_sender()
+        assert raw.send_json.call_count == 2
+        raw.send_json.assert_any_await({"type": "a"})
+        raw.send_json.assert_any_await({"type": "b"})
+
+    async def test_send_json_queue_full_raises(self):
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw, maxsize=2)
+        sw.send_json({"type": "a"})
+        sw.send_json({"type": "b"})
+        with pytest.raises(SlowClientError):
+            sw.send_json({"type": "c"})
+
+    async def test_stop_sender_when_queue_full(self):
+        raw = AsyncMock()
+        # Block the sender on the first send so the queue stays full
+        blocked = asyncio.Event()
+
+        async def block_forever(data):
+            blocked.set()
+            await asyncio.sleep(3600)
+
+        raw.send_json = AsyncMock(side_effect=block_forever)
+        sw = SafeWebSocket(raw, maxsize=1)
+        sw.send_json({"type": "a"})
+        sw.start_sender()
+        # Wait for sender to pick up "a" and block
+        await blocked.wait()
+        # Queue is now empty; fill it so sentinel can't be put
+        sw.send_json({"type": "b"})
+        await sw.stop_sender()
+        # Should complete without hanging — stop_sender cancels the task
+
+    async def test_stop_sender_no_task(self):
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw)
+        await sw.stop_sender()
+        # Should be a no-op without error
+
+    async def test_sender_loop_handles_ws_error(self):
+        raw = AsyncMock()
+        raw.send_json = AsyncMock(side_effect=RuntimeError("ws dead"))
+        sw = SafeWebSocket(raw)
+        sw.send_json({"type": "test"})
+        sw.start_sender()
+        await sw.stop_sender()
+        # Sender should exit gracefully
 
 
 # --- send_error ---
 
 
 class TestSendError:
-    async def test_sends_error_json(self):
+    def test_sends_error_json(self):
         ws = _mock_ws()
-        await send_error(ws, "bad thing")
-        ws.send_json.assert_awaited_once_with(
+        send_error(ws, "bad thing")
+        ws.send_json.assert_called_once_with(
             {"type": "error", "message": "bad thing"}
         )
 
@@ -436,7 +510,7 @@ class TestForwardTerminalOutput:
 
     async def test_ws_error_logged(self):
         ws = _mock_ws()
-        ws.send_json = AsyncMock(side_effect=RuntimeError("ws closed"))
+        ws.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
         t = _mock_terminal()
         state = _base_state()
 
@@ -454,7 +528,7 @@ class TestForwardTerminalOutput:
         t = _mock_terminal()
         state = _base_state()
 
-        ws.send_json = AsyncMock(side_effect=ConnectionError("ws dead"))
+        ws.send_json = MagicMock(side_effect=ConnectionError("ws dead"))
 
         async def fake_output():
             yield "data"
@@ -704,7 +778,7 @@ class TestStartWorkspaceContainer:
             )
 
         # Test idle callback when WS send fails
-        ws.send_json = AsyncMock(side_effect=RuntimeError("ws closed"))
+        ws.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
         idle_cb = state["_idle_cb"]
         await idle_cb(workspace["id"])  # should not raise
         assert ws.send_json.call_count == 1
@@ -723,7 +797,7 @@ class TestHandleWebsocketDispatch:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         msgs = [json.dumps(c) for c in commands] + [WebSocketDisconnect()]
         ws.receive_text = AsyncMock(side_effect=msgs)
         await handle_websocket(ws)
@@ -768,7 +842,7 @@ class TestHandleWebsocketDispatch:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
 
         workspace = await ws_mod.create_workspace(user["id"], "stop-ws")
         ws.receive_text = AsyncMock(
@@ -814,12 +888,12 @@ class TestHandleWebsocketDispatch:
 
 class TestHandleWebsocket:
     async def test_missing_token(self):
-        ws = _mock_ws(query_params={})
+        ws = _mock_raw_ws(query_params={})
         await handle_websocket(ws)
         ws.close.assert_awaited_once_with(code=4001, reason="Missing token")
 
     async def test_invalid_token(self, db):
-        ws = _mock_ws(query_params={"token": "bad"})
+        ws = _mock_raw_ws(query_params={"token": "bad"})
         await handle_websocket(ws)
         ws.close.assert_awaited_once_with(code=4001, reason="Invalid token")
 
@@ -827,7 +901,7 @@ class TestHandleWebsocket:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
 
         await handle_websocket(ws)
@@ -838,7 +912,7 @@ class TestHandleWebsocket:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=["not json", WebSocketDisconnect()]
         )
@@ -852,7 +926,7 @@ class TestHandleWebsocket:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "bogus"}),
@@ -869,7 +943,7 @@ class TestHandleWebsocket:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         workspace = await ws_mod.create_workspace(user["id"], "ui-ready-ws")
 
         async def fake_start(ws_arg, state, wid, ws_obj):
@@ -923,7 +997,7 @@ class TestHandleWebsocket:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "ui_ready"}),
@@ -947,7 +1021,7 @@ class TestHandleWebsocket:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(side_effect=RuntimeError("unexpected"))
 
         await handle_websocket(ws)
@@ -971,7 +1045,7 @@ class TestExecHandlers:
             "exec_task": None,
         }
         await handle_exec_start(ws, state, {"command": []})
-        ws.send_json.assert_awaited()
+        ws.send_json.assert_called()
         assert "command" in ws.send_json.call_args[0][0].get("message", "")
 
     async def test_exec_start_success(self):
@@ -1087,7 +1161,7 @@ class TestExecHandlers:
             yield b"data"
 
         session.output = fake_output
-        ws.send_json = AsyncMock(side_effect=RuntimeError("ws dead"))
+        ws.send_json = MagicMock(side_effect=RuntimeError("ws dead"))
         state = {"container_id": "cid"}
         with patch.object(container.registry, "record_activity"):
             await forward_exec_output(ws, session, state)
@@ -1117,7 +1191,7 @@ class TestExecDispatch:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "exec_start", "command": ["ls"]}),
@@ -1134,7 +1208,7 @@ class TestExecDispatch:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "exec_input", "data": "AA=="}),
@@ -1151,7 +1225,7 @@ class TestExecDispatch:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "exec_stop"}),
@@ -1168,7 +1242,7 @@ class TestExecDispatch:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "exec_close_stdin"}),
@@ -1185,7 +1259,7 @@ class TestExecDispatch:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "heartbeat"}),
@@ -1222,7 +1296,7 @@ class TestBrowserBridge:
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "browser_response", "id": "req-1"}),
@@ -1279,7 +1353,7 @@ class TestBrowserBridge:
     async def test_dispatch_browser_request_cli_only(self):
         """CLI-only connections get immediate error, not 30s timeout."""
         session = wshandler.get_or_create_session("ws-cli-only")
-        mock_ws = AsyncMock()
+        mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         # No browser_subscribers — CLI never sends ui_ready
         try:
@@ -1294,7 +1368,7 @@ class TestBrowserBridge:
 
     async def test_dispatch_browser_request_success(self):
         session = wshandler.get_or_create_session("ws-bridge")
-        mock_ws = AsyncMock()
+        mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         session.browser_subscribers.add(mock_ws)
 
@@ -1326,7 +1400,7 @@ class TestBrowserBridge:
 
     async def test_dispatch_browser_request_timeout(self):
         session = wshandler.get_or_create_session("ws-timeout")
-        mock_ws = AsyncMock()
+        mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         session.browser_subscribers.add(mock_ws)
         try:
@@ -1352,7 +1426,7 @@ class TestWsDebugLogging:
 
         monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
         token = auth_mod.create_token(user["id"], user["email"])
-        ws = _mock_ws(query_params={"token": token})
+        ws = _mock_raw_ws(query_params={"token": token})
         ws.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "heartbeat"}),
@@ -1362,16 +1436,16 @@ class TestWsDebugLogging:
         await handle_websocket(ws)
         ws.accept.assert_awaited_once()
 
-    async def test_send_error_logged_when_debug(self, monkeypatch):
+    def test_send_error_logged_when_debug(self, monkeypatch):
         monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
         ws = _mock_ws()
-        await send_error(ws, "test error")
-        ws.send_json.assert_awaited_once()
+        send_error(ws, "test error")
+        ws.send_json.assert_called_once()
 
     async def test_broadcast_logged_when_debug(self, monkeypatch):
         monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
         session = wshandler.get_or_create_session("ws-debug-bcast")
-        mock_ws = AsyncMock()
+        mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         try:
             delivered = await _broadcast("ws-debug-bcast", {"type": "test"})
@@ -1382,7 +1456,7 @@ class TestWsDebugLogging:
     async def test_broadcast_to_browsers_logged_when_debug(self, monkeypatch):
         monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
         session = wshandler.get_or_create_session("ws-debug-browser")
-        mock_ws = AsyncMock()
+        mock_ws = _mock_ws()
         session.browser_subscribers.add(mock_ws)
         try:
             delivered = await wshandler._broadcast_to_browsers(
@@ -1421,9 +1495,9 @@ class TestLogWsMsg:
 class TestBroadcastDeadSubscribers:
     async def test_dead_subscriber_removed(self):
         session = wshandler.get_or_create_session("ws-dead-sub")
-        live_ws = AsyncMock()
-        dead_ws = AsyncMock()
-        dead_ws.send_json = AsyncMock(side_effect=RuntimeError("ws closed"))
+        live_ws = _mock_ws()
+        dead_ws = _mock_ws()
+        dead_ws.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
         session.subscribers.add(live_ws)
         session.subscribers.add(dead_ws)
         try:
@@ -1640,7 +1714,7 @@ class TestFractionalTimeout:
 class TestDispatchBrowserRequestCancelled:
     async def test_cancelled_cleans_up(self):
         session = wshandler.get_or_create_session("ws-cancel")
-        mock_ws = AsyncMock()
+        mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         session.browser_subscribers.add(mock_ws)
         try:
@@ -1669,8 +1743,8 @@ class TestDispatchBrowserRequestCancelled:
 class TestDispatchBrowserRequestDeadSubscribers:
     async def test_all_subscribers_dead(self):
         session = wshandler.get_or_create_session("ws-all-dead")
-        dead_ws = AsyncMock()
-        dead_ws.send_json = AsyncMock(side_effect=RuntimeError("ws closed"))
+        dead_ws = _mock_ws()
+        dead_ws.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
         session.subscribers.add(dead_ws)
         session.browser_subscribers.add(dead_ws)
         try:
@@ -1682,3 +1756,90 @@ class TestDispatchBrowserRequestDeadSubscribers:
             assert "No browser client" in result["error"]
         finally:
             wshandler._sessions.pop("ws-all-dead", None)
+
+
+class TestSendQueueBehavior:
+    """Tests for the bounded outbound send queue (BRYAN5)."""
+
+    async def test_slow_client_closes_connection(self, user):
+        """When the send queue is full, handle_websocket drops the client."""
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        ws = _mock_raw_ws(query_params={"token": token})
+
+        # Make the raw ws.send_json block forever so the queue fills up
+        send_blocked = asyncio.Event()
+
+        async def blocking_send(data):
+            send_blocked.set()
+            await asyncio.sleep(3600)
+
+        ws.send_json = AsyncMock(side_effect=blocking_send)
+
+        # Client sends many messages that trigger send_json responses
+        msgs = [json.dumps({"cmd": "bogus"})] * (_SEND_QUEUE_SIZE + 5) + [
+            WebSocketDisconnect()
+        ]
+        ws.receive_text = AsyncMock(side_effect=msgs)
+
+        # Should complete without hanging — SlowClientError triggers exit
+        await asyncio.wait_for(handle_websocket(ws), timeout=5.0)
+
+    async def test_normal_sends_go_through_queue(self):
+        """Messages sent via SafeWebSocket.send_json arrive at raw ws."""
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw, maxsize=10)
+        sw.start_sender()
+        sw.send_json({"type": "hello"})
+        sw.send_json({"type": "world"})
+        await sw.stop_sender()
+        assert raw.send_json.await_count == 2
+        raw.send_json.assert_any_await({"type": "hello"})
+        raw.send_json.assert_any_await({"type": "world"})
+
+    async def test_slow_client_in_broadcast(self):
+        """Broadcast drops slow subscribers instead of blocking."""
+        session = wshandler.get_or_create_session("ws-slow-bcast")
+        live_ws = _mock_ws()
+        slow_ws = _mock_ws()
+        slow_ws.send_json = MagicMock(side_effect=SlowClientError("full"))
+        session.subscribers.add(live_ws)
+        session.subscribers.add(slow_ws)
+        try:
+            delivered = await _broadcast("ws-slow-bcast", {"type": "test"})
+            assert delivered == 1
+            assert slow_ws not in session.subscribers
+            assert live_ws in session.subscribers
+        finally:
+            wshandler._sessions.pop("ws-slow-bcast", None)
+
+    async def test_slow_client_in_terminal_forwarding(self):
+        """Terminal forwarder handles SlowClientError gracefully."""
+        ws = _mock_ws()
+        ws.send_json = MagicMock(side_effect=SlowClientError("full"))
+        t = _mock_terminal()
+        state = _base_state()
+
+        async def fake_output():
+            yield "data"
+
+        t.output = fake_output
+
+        # Should not raise — SlowClientError is caught
+        await forward_terminal_output(ws, t, state)
+
+    async def test_slow_client_in_exec_forwarding(self):
+        """Exec forwarder handles SlowClientError gracefully."""
+        ws = _mock_ws()
+        ws.send_json = MagicMock(side_effect=SlowClientError("full"))
+        session = AsyncMock()
+
+        async def fake_output():
+            yield b"data"
+
+        session.output = fake_output
+        state = {"container_id": "cid"}
+        with patch.object(container.registry, "record_activity"):
+            await forward_exec_output(ws, session, state)
+        # Should not raise

@@ -19,22 +19,75 @@ _WS_DEBUG = bool(resolve_env_secret("KLANGK_WS_DEBUG"))
 # Max size for terminal/exec input data (base64-decoded bytes).
 _MAX_INPUT_SIZE = 65536
 
+# Max outbound messages before we declare the client too slow and close.
+_SEND_QUEUE_SIZE = 256
+
+
+class SlowClientError(Exception):
+    """Raised when the outbound queue is full (client can't keep up)."""
+
 
 class SafeWebSocket:
-    """Serialize WebSocket writes with an asyncio.Lock.
+    """Bounded-queue WebSocket writer.
 
-    Starlette doesn't protect against concurrent send calls.
-    Wrapping the WebSocket ensures that forwarder tasks, dispatch
-    handlers, and broadcast helpers never interleave frames.
+    All outbound messages are placed on a bounded asyncio.Queue.
+    A dedicated sender task drains the queue and writes to the
+    underlying WebSocket, serializing concurrent sends.  If the
+    queue is full the client is too slow — we drop it immediately
+    rather than blocking the read loop or forwarder tasks.
     """
 
-    def __init__(self, ws: WebSocket):
+    def __init__(self, ws: WebSocket, *, maxsize: int = _SEND_QUEUE_SIZE):
         self._ws = ws
-        self._lock = asyncio.Lock()
+        self._queue: asyncio.Queue[dict | None] = asyncio.Queue(
+            maxsize=maxsize
+        )
+        self._sender_task: asyncio.Task | None = None
 
-    async def send_json(self, data: dict) -> None:
-        async with self._lock:
-            await self._ws.send_json(data)
+    def start_sender(self) -> None:
+        """Launch the background sender coroutine."""
+        self._sender_task = asyncio.create_task(self._sender_loop())
+
+    async def _sender_loop(self) -> None:
+        """Drain the outbound queue and write to the WebSocket."""
+        try:
+            while True:
+                msg = await self._queue.get()
+                if msg is None:
+                    break
+                await self._ws.send_json(msg)
+        except asyncio.CancelledError:
+            raise
+        except (WebSocketDisconnect, RuntimeError, ConnectionError, OSError):
+            # Socket gone — nothing to do, cleanup_connection handles the rest.
+            pass
+
+    async def stop_sender(self) -> None:
+        """Signal the sender task to exit and wait for it."""
+        task = self._sender_task
+        if task is None:
+            return
+        # Sentinel to break out of the loop.
+        try:
+            self._queue.put_nowait(None)
+        except asyncio.QueueFull:
+            # Queue is full — cancel the task directly.
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        self._sender_task = None
+
+    def send_json(self, data: dict) -> None:
+        """Enqueue *data* for sending.  Non-blocking.
+
+        Raises ``SlowClientError`` if the queue is full.
+        """
+        try:
+            self._queue.put_nowait(data)
+        except asyncio.QueueFull:
+            raise SlowClientError("outbound queue full — closing slow client")
 
     async def accept(self) -> None:
         await self._ws.accept()
@@ -44,6 +97,11 @@ class SafeWebSocket:
 
     async def close(self, code: int = 1000) -> None:
         await self._ws.close(code=code)
+
+    @property
+    def headers(self):
+        """Proxy header access to the underlying WebSocket."""
+        return self._ws.headers
 
     @property
     def raw(self) -> WebSocket:
@@ -111,6 +169,7 @@ async def handle_websocket(ws: WebSocket) -> None:
 
     await ws.accept()
     safe_ws = SafeWebSocket(ws)
+    safe_ws.start_sender()
     conn_state: dict = {
         "user": user,
         "container_id": None,
@@ -127,7 +186,7 @@ async def handle_websocket(ws: WebSocket) -> None:
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await send_error(safe_ws, "Invalid JSON")
+                send_error(safe_ws, "Invalid JSON")
                 continue
 
             if _WS_DEBUG:
@@ -148,7 +207,7 @@ async def handle_websocket(ws: WebSocket) -> None:
                         sess.browser_subscribers.add(safe_ws)
                 status_msg = conn_state.pop("pending_status_msg", None)
                 if status_msg:
-                    await safe_ws.send_json(
+                    safe_ws.send_json(
                         {
                             "type": "event",
                             "event": {
@@ -181,13 +240,16 @@ async def handle_websocket(ws: WebSocket) -> None:
             elif cmd == "browser_response":
                 handle_browser_response(msg)
             else:
-                await send_error(safe_ws, f"Unknown command: {cmd}")
+                send_error(safe_ws, f"Unknown command: {cmd}")
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for user %s", user["email"])
+    except SlowClientError:
+        logger.warning("Slow client dropped for user %s", user["email"])
     except Exception as e:
         logger.error("WebSocket error: %s", e)
     finally:
+        await safe_ws.stop_sender()
         await cleanup_connection(safe_ws, conn_state)
         # Container is intentionally left running — idle timeout will clean it up.
         # This allows instant reconnection when navigating back to the workspace.
@@ -269,7 +331,7 @@ async def start_workspace_container(
     # Register idle timeout notification (per-connection)
     async def on_idle(wid: str) -> None:
         try:
-            await ws.send_json(
+            ws.send_json(
                 {
                     "type": "event",
                     "event": {
@@ -279,7 +341,12 @@ async def start_workspace_container(
                     },
                 }
             )
-        except (WebSocketDisconnect, RuntimeError, ConnectionError):
+        except (
+            SlowClientError,
+            WebSocketDisconnect,
+            RuntimeError,
+            ConnectionError,
+        ):
             pass
 
     state["_idle_cb"] = on_idle
@@ -296,13 +363,13 @@ async def handle_workspace_connect(
 ) -> None:
     workspace_id = msg.get("workspaceId")
     if not workspace_id:
-        await send_error(ws, "Missing workspaceId")
+        send_error(ws, "Missing workspaceId")
         return
 
     user = state["user"]
     workspace = await workspaces.get_workspace(workspace_id, user["id"])
     if workspace is None:
-        await send_error(ws, "Workspace not found")
+        send_error(ws, "Workspace not found")
         return
 
     # Disconnect from any current workspace
@@ -326,7 +393,7 @@ async def handle_workspace_connect(
     else:
         status_msg += f" — idle timeout: {timeout_mins:.1f}m"
 
-    await ws.send_json(
+    ws.send_json(
         {
             "type": "workspace_ready",
             "workspaceId": workspace_id,
@@ -354,14 +421,14 @@ async def handle_restart_container(ws: SafeWebSocket, state: dict) -> None:
     """Restart a stopped container (e.g., after idle timeout)."""
     workspace_id = state.get("workspace_id")
     if not workspace_id:
-        await send_error(ws, "Not connected to a workspace")
+        send_error(ws, "Not connected to a workspace")
         return
 
     # Save before cleanup — cleanup_connection clears state fields.
     user = state["user"]
     workspace = state.get("workspace")
 
-    await ws.send_json(
+    ws.send_json(
         {
             "type": "event",
             "event": {
@@ -380,7 +447,7 @@ async def handle_restart_container(ws: SafeWebSocket, state: dict) -> None:
     if workspace is None:
         workspace = await workspaces.get_workspace(workspace_id, user["id"])
     if workspace is None:
-        await send_error(ws, "Workspace not found")
+        send_error(ws, "Workspace not found")
         return
 
     await start_workspace_container(ws, state, workspace_id, workspace)
@@ -397,7 +464,7 @@ async def handle_restart_container(ws: SafeWebSocket, state: dict) -> None:
     else:
         status_msg += f" — idle timeout: {timeout_mins:.1f}m"
 
-    await ws.send_json(
+    ws.send_json(
         {
             "type": "event",
             "event": {
@@ -477,7 +544,7 @@ async def handle_exec_start(ws: SafeWebSocket, state: dict, msg: dict) -> None:
     await stop_exec(state)
     command = msg.get("command", [])
     if not command:
-        await send_error(ws, "exec_start requires a command list")
+        send_error(ws, "exec_start requires a command list")
         return
     session = ExecSession(container_id)
     await session.start(command)
@@ -597,7 +664,7 @@ async def forward_exec_output(
 
     try:
         async for data in session.output():
-            await ws.send_json(
+            ws.send_json(
                 {
                     "type": "exec_output",
                     "data": base64.b64encode(data).decode("ascii"),
@@ -607,7 +674,7 @@ async def forward_exec_output(
             if container_id:
                 container.registry.record_activity(container_id)
         # Process exited — send exit code
-        await ws.send_json(
+        ws.send_json(
             {
                 "type": "exec_exit",
                 "code": session.returncode
@@ -617,7 +684,13 @@ async def forward_exec_output(
         )
     except asyncio.CancelledError:  # pragma: no cover
         raise
-    except (OSError, WebSocketDisconnect, RuntimeError, ConnectionError) as e:
+    except (
+        SlowClientError,
+        OSError,
+        WebSocketDisconnect,
+        RuntimeError,
+        ConnectionError,
+    ) as e:
         logger.error("Exec output forwarding error: %s", e)
 
 
@@ -642,12 +715,12 @@ async def forward_terminal_output(
     """Forward terminal output to the frontend via WebSocket."""
     try:
         async for data in session.output():
-            await ws.send_json({"type": "terminal_output", "data": data})
+            ws.send_json({"type": "terminal_output", "data": data})
             container_id = state.get("container_id")
             if container_id:
                 container.registry.record_activity(container_id)
         # Stream ended without cancellation — container likely died
-        await ws.send_json(
+        ws.send_json(
             {
                 "type": "event",
                 "event": {
@@ -659,10 +732,16 @@ async def forward_terminal_output(
         )
     except asyncio.CancelledError:
         raise  # Normal cleanup, don't send event
-    except (OSError, WebSocketDisconnect, RuntimeError, ConnectionError) as e:
+    except (
+        SlowClientError,
+        OSError,
+        WebSocketDisconnect,
+        RuntimeError,
+        ConnectionError,
+    ) as e:
         logger.error("Terminal output forwarding error: %s", e)
         try:
-            await ws.send_json(
+            ws.send_json(
                 {
                     "type": "event",
                     "event": {
@@ -672,7 +751,12 @@ async def forward_terminal_output(
                     },
                 }
             )
-        except (WebSocketDisconnect, RuntimeError, ConnectionError):
+        except (
+            SlowClientError,
+            WebSocketDisconnect,
+            RuntimeError,
+            ConnectionError,
+        ):
             pass
 
 
@@ -690,9 +774,14 @@ async def _broadcast(workspace_id: str, message: dict) -> int:
     delivered = 0
     for sub_ws in list(session.subscribers):
         try:
-            await sub_ws.send_json(message)
+            sub_ws.send_json(message)
             delivered += 1
-        except (WebSocketDisconnect, RuntimeError, ConnectionError):
+        except (
+            SlowClientError,
+            WebSocketDisconnect,
+            RuntimeError,
+            ConnectionError,
+        ):
             dead.append(sub_ws)
     for sub_ws in dead:
         session.subscribers.discard(sub_ws)
@@ -710,9 +799,14 @@ async def _broadcast_to_browsers(workspace_id: str, message: dict) -> int:
     delivered = 0
     for sub_ws in list(session.browser_subscribers):
         try:
-            await sub_ws.send_json(message)
+            sub_ws.send_json(message)
             delivered += 1
-        except (WebSocketDisconnect, RuntimeError, ConnectionError):
+        except (
+            SlowClientError,
+            WebSocketDisconnect,
+            RuntimeError,
+            ConnectionError,
+        ):
             dead.append(sub_ws)
     for sub_ws in dead:
         session.browser_subscribers.discard(sub_ws)
@@ -755,11 +849,11 @@ async def reset_workspace_state(workspace_id: str) -> None:
     logger.info("Reset workspace state for %s", workspace_id)
 
 
-async def send_error(ws: SafeWebSocket, message: str) -> None:
+def send_error(ws: SafeWebSocket, message: str) -> None:
     msg = {"type": "error", "message": message}
     if _WS_DEBUG:
         _log_ws_msg("SEND", msg)
-    await ws.send_json(msg)
+    ws.send_json(msg)
 
 
 def _log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
