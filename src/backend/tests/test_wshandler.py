@@ -14,6 +14,7 @@ from klangk_backend import (
     workspaces as ws_mod,
 )
 from klangk_backend.wshandler import (
+    SafeWebSocket,
     WorkspaceSession,
     derive_hosting_info,
     start_workspace_container,
@@ -41,6 +42,11 @@ from klangk_backend.wshandler import (
 
 
 def _mock_ws(headers=None, query_params=None):
+    """Create a mock SafeWebSocket for testing.
+
+    The mock has send_json as an AsyncMock so tests can assert on sent
+    messages. The lock is real so concurrent-send tests work correctly.
+    """
     ws = AsyncMock()
     ws.headers = headers or {}
     ws.query_params = query_params or {}
@@ -48,6 +54,7 @@ def _mock_ws(headers=None, query_params=None):
     ws.close = AsyncMock()
     ws.send_json = AsyncMock()
     ws.receive_text = AsyncMock()
+    ws.raw = ws  # identity for subscriber sets
     return ws
 
 
@@ -69,6 +76,41 @@ def _base_state(user=None):
         "terminal_session": None,
         "terminal_task": None,
     }
+
+
+# --- SafeWebSocket ---
+
+
+class TestSafeWebSocket:
+    async def test_accept_delegates(self):
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw)
+        await sw.accept()
+        raw.accept.assert_awaited_once()
+
+    async def test_receive_text_delegates(self):
+        raw = AsyncMock()
+        raw.receive_text = AsyncMock(return_value="hello")
+        sw = SafeWebSocket(raw)
+        result = await sw.receive_text()
+        assert result == "hello"
+
+    async def test_close_delegates(self):
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw)
+        await sw.close(code=4001)
+        raw.close.assert_awaited_once_with(code=4001)
+
+    async def test_raw_returns_underlying(self):
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw)
+        assert sw.raw is raw
+
+    async def test_send_json_serializes_writes(self):
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw)
+        await sw.send_json({"type": "test"})
+        raw.send_json.assert_awaited_once_with({"type": "test"})
 
 
 # --- send_error ---

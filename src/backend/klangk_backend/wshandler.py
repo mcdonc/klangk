@@ -16,8 +16,40 @@ logger = logging.getLogger(__name__)
 
 _WS_DEBUG = bool(resolve_env_secret("KLANGK_WS_DEBUG"))
 
+
+class SafeWebSocket:
+    """Serialize WebSocket writes with an asyncio.Lock.
+
+    Starlette doesn't protect against concurrent send calls.
+    Wrapping the WebSocket ensures that forwarder tasks, dispatch
+    handlers, and broadcast helpers never interleave frames.
+    """
+
+    def __init__(self, ws: WebSocket):
+        self._ws = ws
+        self._lock = asyncio.Lock()
+
+    async def send_json(self, data: dict) -> None:
+        async with self._lock:
+            await self._ws.send_json(data)
+
+    async def accept(self) -> None:
+        await self._ws.accept()
+
+    async def receive_text(self) -> str:
+        return await self._ws.receive_text()
+
+    async def close(self, code: int = 1000) -> None:
+        await self._ws.close(code=code)
+
+    @property
+    def raw(self) -> WebSocket:
+        """Access the underlying WebSocket (e.g. for identity checks)."""
+        return self._ws
+
+
 # Active connections: ws -> {user, workspace_id, container_id, ...}
-_connections: dict[WebSocket, dict] = {}
+_connections: dict[SafeWebSocket, dict] = {}
 
 
 class WorkspaceSession:
@@ -29,8 +61,8 @@ class WorkspaceSession:
     def __init__(self, workspace_id: str):
         self.workspace_id = workspace_id
         self.container_id: str | None = None
-        self.subscribers: set[WebSocket] = set()
-        self.browser_subscribers: set[WebSocket] = set()
+        self.subscribers: set[SafeWebSocket] = set()
+        self.browser_subscribers: set[SafeWebSocket] = set()
         self.lock = asyncio.Lock()
 
     async def reset(self) -> None:
@@ -75,6 +107,7 @@ async def handle_websocket(ws: WebSocket) -> None:
         return
 
     await ws.accept()
+    safe_ws = SafeWebSocket(ws)
     conn_state: dict = {
         "user": user,
         "container_id": None,
@@ -83,15 +116,15 @@ async def handle_websocket(ws: WebSocket) -> None:
         "dockerexec": None,
         "exec_task": None,
     }
-    _connections[ws] = conn_state
+    _connections[safe_ws] = conn_state
 
     try:
         while True:
-            raw = await ws.receive_text()
+            raw = await safe_ws.receive_text()
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await send_error(ws, "Invalid JSON")
+                await send_error(safe_ws, "Invalid JSON")
                 continue
 
             if _WS_DEBUG:
@@ -99,9 +132,9 @@ async def handle_websocket(ws: WebSocket) -> None:
 
             cmd = msg.get("cmd")
             if cmd == "workspace_connect":
-                await handle_workspace_connect(ws, conn_state, msg)
+                await handle_workspace_connect(safe_ws, conn_state, msg)
             elif cmd == "workspace_disconnect":
-                await handle_workspace_disconnect(ws, conn_state)
+                await handle_workspace_disconnect(safe_ws, conn_state)
             elif cmd == "ui_ready":
                 # Mark this connection as a browser (Flutter) client.
                 # CLI connections never send ui_ready.
@@ -109,10 +142,10 @@ async def handle_websocket(ws: WebSocket) -> None:
                 if wid:
                     sess = get_session(wid)
                     if sess:
-                        sess.browser_subscribers.add(ws)
+                        sess.browser_subscribers.add(safe_ws)
                 status_msg = conn_state.pop("pending_status_msg", None)
                 if status_msg:
-                    await ws.send_json(
+                    await safe_ws.send_json(
                         {
                             "type": "event",
                             "event": {
@@ -123,7 +156,7 @@ async def handle_websocket(ws: WebSocket) -> None:
                         }
                     )
             elif cmd == "terminal_start":
-                await handle_terminal_start(ws, conn_state, msg)
+                await handle_terminal_start(safe_ws, conn_state, msg)
             elif cmd == "terminal_input":
                 await handle_terminal_input(conn_state, msg)
             elif cmd == "terminal_resize":
@@ -131,9 +164,9 @@ async def handle_websocket(ws: WebSocket) -> None:
             elif cmd == "terminal_stop":
                 await handle_terminal_stop(conn_state)
             elif cmd == "restart_container":
-                await handle_restart_container(ws, conn_state)
+                await handle_restart_container(safe_ws, conn_state)
             elif cmd == "exec_start":
-                await handle_exec_start(ws, conn_state, msg)
+                await handle_exec_start(safe_ws, conn_state, msg)
             elif cmd == "exec_input":
                 await handle_exec_input(conn_state, msg)
             elif cmd == "exec_close_stdin":
@@ -145,17 +178,17 @@ async def handle_websocket(ws: WebSocket) -> None:
             elif cmd == "browser_response":
                 handle_browser_response(msg)
             else:
-                await send_error(ws, f"Unknown command: {cmd}")
+                await send_error(safe_ws, f"Unknown command: {cmd}")
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for user %s", user["email"])
     except Exception as e:
         logger.error("WebSocket error: %s", e)
     finally:
-        await cleanup_connection(ws, conn_state)
+        await cleanup_connection(safe_ws, conn_state)
         # Container is intentionally left running — idle timeout will clean it up.
         # This allows instant reconnection when navigating back to the workspace.
-        _connections.pop(ws, None)
+        _connections.pop(safe_ws, None)
 
 
 def derive_hosting_info(headers) -> tuple[str, str, str]:
@@ -189,7 +222,7 @@ def derive_hosting_info(headers) -> tuple[str, str, str]:
 
 
 async def start_workspace_container(
-    ws: WebSocket, state: dict, workspace_id: str, workspace: dict
+    ws: SafeWebSocket, state: dict, workspace_id: str, workspace: dict
 ) -> None:
     """Start/restart container for a workspace."""
     user = state["user"]
@@ -256,7 +289,7 @@ async def start_workspace_container(
 
 
 async def handle_workspace_connect(
-    ws: WebSocket, state: dict, msg: dict
+    ws: SafeWebSocket, state: dict, msg: dict
 ) -> None:
     workspace_id = msg.get("workspaceId")
     if not workspace_id:
@@ -308,13 +341,13 @@ async def handle_workspace_connect(
     )
 
 
-async def handle_workspace_disconnect(ws: WebSocket, state: dict) -> None:
+async def handle_workspace_disconnect(ws: SafeWebSocket, state: dict) -> None:
     await cleanup_connection(ws, state)
     state["workspace_id"] = None
     state["container_id"] = None
 
 
-async def handle_restart_container(ws: WebSocket, state: dict) -> None:
+async def handle_restart_container(ws: SafeWebSocket, state: dict) -> None:
     """Restart a stopped container (e.g., after idle timeout)."""
     workspace_id = state.get("workspace_id")
     if not workspace_id:
@@ -378,7 +411,9 @@ async def handle_restart_container(ws: WebSocket, state: dict) -> None:
     )
 
 
-async def handle_terminal_start(ws: WebSocket, state: dict, msg: dict) -> None:
+async def handle_terminal_start(
+    ws: SafeWebSocket, state: dict, msg: dict
+) -> None:
     container_id = state.get("container_id")
     if not container_id:
         return
@@ -415,7 +450,7 @@ async def handle_terminal_stop(state: dict) -> None:
     await stop_terminal(state)
 
 
-async def handle_exec_start(ws: WebSocket, state: dict, msg: dict) -> None:
+async def handle_exec_start(ws: SafeWebSocket, state: dict, msg: dict) -> None:
     container_id = state.get("container_id")
     if not container_id:
         return
@@ -532,7 +567,7 @@ async def stop_exec(state: dict) -> None:
 
 
 async def forward_exec_output(
-    ws: WebSocket, session: ExecSession, state: dict
+    ws: SafeWebSocket, session: ExecSession, state: dict
 ) -> None:
     """Forward exec stdout to the client via WebSocket as base64."""
     import base64
@@ -579,7 +614,7 @@ async def stop_terminal(state: dict) -> None:
 
 
 async def forward_terminal_output(
-    ws: WebSocket, session: TerminalSession, state: dict
+    ws: SafeWebSocket, session: TerminalSession, state: dict
 ) -> None:
     """Forward terminal output to the frontend via WebSocket."""
     try:
@@ -661,7 +696,7 @@ async def _broadcast_to_browsers(workspace_id: str, message: dict) -> int:
     return delivered
 
 
-async def cleanup_connection(ws: WebSocket, state: dict) -> None:
+async def cleanup_connection(ws: SafeWebSocket, state: dict) -> None:
     # Remove idle callback
     workspace_id = state.get("workspace_id")
     idle_cb = state.get("_idle_cb")
@@ -697,7 +732,7 @@ async def reset_workspace_state(workspace_id: str) -> None:
     logger.info("Reset workspace state for %s", workspace_id)
 
 
-async def send_error(ws: WebSocket, message: str) -> None:
+async def send_error(ws: SafeWebSocket, message: str) -> None:
     msg = {"type": "error", "message": message}
     if _WS_DEBUG:
         _log_ws_msg("SEND", msg)
