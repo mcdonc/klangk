@@ -8,6 +8,7 @@ import {
   waitForFlutter,
   fv,
   flutterClick,
+  clickBackToWorkspaces,
   waitForFile,
   vp,
   terminalType,
@@ -118,8 +119,7 @@ test.describe("Klangk E2E", () => {
     const { cleanup } = await createAndOpenWorkspace(page, request, "nav-back");
 
     try {
-      await flutterClick(page, 25, 28);
-      await expect(page).toHaveTitle(/Workspaces/i, { timeout: 30_000 });
+      await clickBackToWorkspaces(page);
     } finally {
       await cleanup();
     }
@@ -558,8 +558,7 @@ test.describe("Klangk E2E", () => {
       expect(containersBefore.length).toBeGreaterThan(0);
 
       // Navigate away (click back button)
-      await flutterClick(page, 25, 28);
-      await expect(page).toHaveTitle(/Workspaces/i, { timeout: 30_000 });
+      await clickBackToWorkspaces(page);
 
       // Container should still be running after navigating away
       // (idle timeout handles cleanup, not disconnect)

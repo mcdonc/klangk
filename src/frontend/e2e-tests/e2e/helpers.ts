@@ -119,6 +119,50 @@ export async function flutterClick(page: Page, x: number, y: number) {
   await page.mouse.click(absX, absY);
 }
 
+/** Click the logo/back button in the AppBar to navigate back to Workspaces.
+ *  WebKit renders the Flutter canvas at a slightly different offset than
+ *  Chromium/Firefox, so a single fixed-coordinate click can miss the 36x36
+ *  logo target.  This helper tries multiple positions across the logo area
+ *  until the page title changes to "Workspaces", or throws after all
+ *  attempts are exhausted. */
+export async function clickBackToWorkspaces(page: Page, timeout = 30_000) {
+  // The logo is a 36x36 widget in the AppBar (~56px tall).  Try a grid
+  // of candidate coordinates covering the logo area.  The first hit that
+  // triggers navigation wins.
+  const candidates = [
+    { x: 25, y: 28 }, // original center estimate
+    { x: 18, y: 28 }, // slightly left
+    { x: 32, y: 28 }, // slightly right
+    { x: 25, y: 20 }, // slightly higher
+    { x: 25, y: 36 }, // slightly lower
+    { x: 18, y: 20 }, // top-left corner
+    { x: 32, y: 36 }, // bottom-right corner
+  ];
+
+  const deadline = Date.now() + timeout;
+
+  for (const { x, y } of candidates) {
+    if (Date.now() >= deadline) break;
+
+    await flutterClick(page, x, y);
+
+    // Give Flutter time to process the tap and start navigation
+    try {
+      await expect(page).toHaveTitle(/Workspaces/i, {
+        timeout: Math.min(5_000, deadline - Date.now()),
+      });
+      return; // success
+    } catch {
+      // Title didn't change — try next coordinate
+    }
+  }
+
+  // Final check with remaining timeout
+  await expect(page).toHaveTitle(/Workspaces/i, {
+    timeout: Math.max(1_000, deadline - Date.now()),
+  });
+}
+
 /** Poll the files API until a specific file appears. */
 export async function waitForFile(
   request: APIRequestContext,
