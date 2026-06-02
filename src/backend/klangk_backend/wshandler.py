@@ -264,7 +264,7 @@ async def handle_websocket(ws: WebSocket) -> None:
     except SlowClientError:
         logger.warning("Slow client dropped for user %s", user["email"])
     except Exception as e:
-        logger.error("WebSocket error: %s", e)
+        logger.exception("WebSocket error: %s", e)
     finally:
         await safe_ws.stop_sender()
         await cleanup_connection(safe_ws, conn_state)
@@ -523,7 +523,7 @@ async def handle_terminal_start(
             container.registry.record_activity(container_id)
             ws.send_json({"type": "terminal_started"})
         except Exception as e:
-            logger.error("Terminal start failed: %s", e)
+            logger.exception("Terminal start failed: %s", e)
             send_error(ws, f"Terminal start failed: {e}")
 
     asyncio.create_task(_start_terminal())
