@@ -52,6 +52,7 @@ class WorkspaceListPage extends StatefulWidget {
 
 class _WorkspaceListPageState extends State<WorkspaceListPage> {
   List<Map<String, dynamic>> _workspaces = [];
+  List<Map<String, dynamic>> _sharedWorkspaces = [];
   Map<String, List<Map<String, dynamic>>> _workspaceMembers = {};
   bool _loading = true;
 
@@ -83,8 +84,18 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
             }
           } catch (_) {} // coverage:ignore-line
         }));
+        // Fetch shared workspaces
+        List<Map<String, dynamic>> shared = [];
+        try {
+          final sharedResp = await _auth.authGet('/workspaces/shared');
+          if (sharedResp.statusCode == 200) {
+            shared = List<Map<String, dynamic>>.from(
+                jsonDecode(sharedResp.body) as List);
+          }
+        } catch (_) {} // coverage:ignore-line
         setState(() {
           _workspaces = workspaces;
+          _sharedWorkspaces = shared;
           _workspaceMembers = members;
         });
       }
@@ -939,76 +950,120 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _workspaces.isEmpty
+          : (_workspaces.isEmpty && _sharedWorkspaces.isEmpty)
               ? const Center(
                   child: Text('No workspaces yet. Create one to get started.'),
                 )
-              : ListView.builder(
+              : ListView(
                   padding: const EdgeInsets.all(16),
-                  itemCount: _workspaces.length,
-                  itemBuilder: (context, index) {
-                    final ws = _workspaces[index];
-                    final wsMembers =
-                        _workspaceMembers[ws['id'] as String] ?? [];
-                    return Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.folder,
-                            color: KColors.accentGreen),
-                        title: Text(ws['name'] as String),
-                        subtitle: Row(
-                          children: [
-                            Text(_formatCreatedAt(ws['created_at'] as String?)),
-                            if (wsMembers.isNotEmpty) ...[
-                              const SizedBox(width: 8),
-                              ...wsMembers.map((m) {
-                                final email = m['email'] as String;
-                                final letter = email.isNotEmpty
-                                    ? email[0].toUpperCase()
-                                    : '?';
-                                return Padding(
-                                  padding: const EdgeInsets.only(right: 2),
-                                  child: Tooltip(
-                                    message: email,
-                                    child: CircleAvatar(
-                                      radius: 10,
-                                      backgroundColor: KColors.accentGreen,
-                                      child: Text(
-                                        letter,
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
+                  children: [
+                    if (_workspaces.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'Owned by Me',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: KColors.textPrimary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ..._workspaces.map((ws) {
+                      final wsMembers =
+                          _workspaceMembers[ws['id'] as String] ?? [];
+                      return Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.folder,
+                              color: KColors.accentGreen),
+                          title: Text(ws['name'] as String),
+                          subtitle: Row(
+                            children: [
+                              Text(_formatCreatedAt(
+                                  ws['created_at'] as String?)),
+                              if (wsMembers.isNotEmpty) ...[
+                                const SizedBox(width: 8),
+                                ...wsMembers.map((m) {
+                                  final email = m['email'] as String;
+                                  final letter = email.isNotEmpty
+                                      ? email[0].toUpperCase()
+                                      : '?';
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 2),
+                                    child: Tooltip(
+                                      message: email,
+                                      child: CircleAvatar(
+                                        radius: 10,
+                                        backgroundColor: KColors.accentGreen,
+                                        child: Text(
+                                          letter,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                );
-                              }),
+                                  );
+                                }),
+                              ],
                             ],
-                          ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.settings_outlined),
+                                onPressed: () => _editWorkspace(ws),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.copy_outlined),
+                                onPressed: () => _duplicateWorkspace(ws),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () =>
+                                    _deleteWorkspace(ws['id'] as String),
+                              ),
+                            ],
+                          ),
+                          onTap: () => context.go('/workspace/${ws['id']}'),
                         ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.settings_outlined),
-                              onPressed: () => _editWorkspace(ws),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.copy_outlined),
-                              onPressed: () => _duplicateWorkspace(ws),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () =>
-                                  _deleteWorkspace(ws['id'] as String),
-                            ),
-                          ],
-                        ),
-                        onTap: () => context.go('/workspace/${ws['id']}'),
+                      );
+                    }),
+                    if (_sharedWorkspaces.isNotEmpty) ...[
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Divider(),
                       ),
-                    );
-                  },
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'Shared with Me',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: KColors.textPrimary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      ..._sharedWorkspaces.map((ws) => Card(
+                            child: ListTile(
+                              leading: const Icon(Icons.folder_shared,
+                                  color: KColors.accentGreen),
+                              title: Text(ws['name'] as String),
+                              subtitle: Text(
+                                  '${ws['owner_email']} · ${_formatCreatedAt(ws['created_at'] as String?)}'),
+                              // coverage:ignore-start
+                              onTap: () => context.go('/workspace/${ws['id']}'),
+                              // coverage:ignore-end
+                            ),
+                          )),
+                    ],
+                  ],
                 ),
     );
   }

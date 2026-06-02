@@ -809,6 +809,29 @@ class TestWorkspaceSharingRoutes:
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
+    async def test_list_shared_workspaces(self, client, user):
+        headers = await _auth_headers(client)
+        await self._create_other_user()
+        other_headers = await self._other_headers(client)
+        # Create workspace as owner
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "shared-ws"}
+        )
+        ws_id = resp.json()["id"]
+        # Share with other
+        await client.post(
+            f"/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        # Other user sees it in shared list
+        resp = await client.get("/workspaces/shared", headers=other_headers)
+        assert resp.status_code == 200
+        shared = resp.json()
+        assert len(shared) >= 1
+        assert any(w["id"] == ws_id for w in shared)
+        assert any(w["owner_email"] == "testuser@example.com" for w in shared)
+
     async def test_get_members_empty(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(

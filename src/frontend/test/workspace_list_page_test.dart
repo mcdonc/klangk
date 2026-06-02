@@ -144,6 +144,80 @@ void main() {
       expect(find.text('B'), findsOneWidget);
     });
 
+    testWidgets('shows shared workspaces section', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My Project',
+                'container_id': null,
+                'created_at': '2026-01-15 14:30:00',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/shared') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-shared-1',
+                'name': 'Team Project',
+                'container_id': null,
+                'created_at': '2026-02-01 10:00:00',
+                'owner_email': 'alice@example.com',
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Owned by Me'), findsOneWidget);
+      expect(find.text('My Project'), findsOneWidget);
+      expect(find.text('Shared with Me'), findsOneWidget);
+      expect(find.text('Team Project'), findsOneWidget);
+      expect(find.textContaining('alice@example.com'), findsOneWidget);
+      expect(find.byIcon(Icons.folder_shared), findsOneWidget);
+    });
+
+    testWidgets('shows only shared section when no owned workspaces',
+        (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/workspaces/shared') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-s1',
+                'name': 'Guest Project',
+                'container_id': null,
+                'created_at': '2026-03-01 08:00:00',
+                'owner_email': 'owner@example.com',
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Owned by Me'), findsNothing);
+      expect(find.text('Shared with Me'), findsOneWidget);
+      expect(find.text('Guest Project'), findsOneWidget);
+    });
+
     testWidgets('handles missing and invalid created_at gracefully',
         (tester) async {
       testAuthHttpClientOverride = MockClient((request) async {

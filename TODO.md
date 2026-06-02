@@ -18,6 +18,7 @@
 
 ## Backend
 
+- **Per-connection bridge tokens**: The bridge token is per-workspace, baked into the container env at creation time. If user A connects and user B connects to the same shared workspace, Pi's browser-delegate requests fan out to all browser subscribers. Bridge tokens should be per-connection so browser actions only route to the connection that initiated them. This requires the container to learn about multiple tokens or the backend to inject a connection ID into bridge requests.
 - **Admin add-user dialog should offer "send verification email?" checkbox**: Currently the admin create-user endpoint (`POST /admin/users`) always creates verified users. Add an optional `send_email` flag — when checked, send the verification email instead of auto-verifying, so the user can set their own password via the verification link.
 - **Append /v1 to proxy URL in models.json instead of .env**: `KLANGK_LLM_BASE_URL` currently includes `/v1` (e.g., `http://bizon:4001/v1`). The `/v1` should be appended in `setup_pi.py` when writing `models.json` instead, so the `.env` value is just the base host URL (`http://bizon:4001`). This makes the proxy URL more natural for other uses (e.g., `curl $KLANGK_LLM_PROXY_URL/models` from inside the container) and avoids double `/v1/v1` mistakes.
 - **Increase default terminal font size**: The terminal text is too small at the default 14px. Consider 16px or make it configurable.

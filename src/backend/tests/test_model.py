@@ -134,6 +134,19 @@ class TestWorkspaceSharing:
         members = await model.get_workspace_members(workspace["id"])
         assert members == []
 
+    async def test_list_shared_workspaces(self, workspace, user):
+        other = await model.create_user("other@example.com", "hash")
+        await model.share_workspace(workspace["id"], other["id"])
+        shared = await model.list_shared_workspaces(other["id"])
+        assert len(shared) == 1
+        assert shared[0]["id"] == workspace["id"]
+        assert shared[0]["name"] == "test-workspace"
+        assert shared[0]["owner_email"] == user["email"]
+
+    async def test_list_shared_workspaces_empty(self, user):
+        shared = await model.list_shared_workspaces(user["id"])
+        assert shared == []
+
 
 class TestSearchUsers:
     async def test_search_by_prefix(self, user):

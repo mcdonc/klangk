@@ -342,6 +342,11 @@ async def list_workspaces(user: dict = Depends(auth.get_current_user)):
     return await workspaces.list_workspaces(user["id"])
 
 
+@router.get("/workspaces/shared")
+async def list_shared_workspaces(user: dict = Depends(auth.get_current_user)):
+    return await model.list_shared_workspaces(user["id"])
+
+
 class CreateWorkspaceRequest(BaseModel):
     name: str
     image: str | None = None

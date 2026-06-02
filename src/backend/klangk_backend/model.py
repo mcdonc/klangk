@@ -398,6 +398,40 @@ async def list_workspaces(user_id: str) -> list[dict]:
         await db.close()
 
 
+async def list_shared_workspaces(user_id: str) -> list[dict]:
+    """List workspaces shared with (but not owned by) this user."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT w.id, w.name, w.container_id, w.image,"
+            " w.default_command, w.mounts, w.env, w.created_at,"
+            " u.email AS owner_email"
+            " FROM workspaces w"
+            " JOIN workspace_access wa ON w.id = wa.workspace_id"
+            " JOIN users u ON w.user_id = u.id"
+            " WHERE wa.user_id = ?"
+            " ORDER BY w.created_at",
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "container_id": row["container_id"],
+                "image": row["image"],
+                "default_command": row["default_command"],
+                "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
+                "env": json.loads(row["env"]) if row["env"] else None,
+                "created_at": row["created_at"],
+                "owner_email": row["owner_email"],
+            }
+            for row in rows
+        ]
+    finally:
+        await db.close()
+
+
 async def get_workspace(workspace_id: str, user_id: str) -> dict | None:
     db = await get_db()
     try:
