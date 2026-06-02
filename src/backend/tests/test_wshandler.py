@@ -191,6 +191,25 @@ class TestSafeWebSocket:
         await sw.stop_sender()
         # Sender should exit gracefully
 
+    async def test_stop_sender_catches_unexpected_exception(self):
+        """stop_sender doesn't propagate unexpected exceptions from the sender task."""
+        raw = AsyncMock()
+        raw.send_json = AsyncMock(side_effect=ValueError("bad value"))
+        sw = SafeWebSocket(raw)
+        sw.send_json({"type": "boom"})
+        sw.start_sender()
+        # stop_sender should not raise even though the sender dies with ValueError
+        await sw.stop_sender()
+
+    async def test_send_json_after_stop_raises(self):
+        """send_json raises SlowClientError after stop_sender is called."""
+        raw = AsyncMock()
+        sw = SafeWebSocket(raw)
+        sw.start_sender()
+        await sw.stop_sender()
+        with pytest.raises(SlowClientError):
+            sw.send_json({"type": "late"})
+
 
 # --- send_error ---
 
@@ -1784,6 +1803,51 @@ class TestHandleRestartContainer:
 
         async def fail_cleanup(ws_arg, st):
             raise RuntimeError("cleanup boom")
+
+        async def fake_start(ws_arg, st, wid, ws_obj):
+            st["container_id"] = "cid-new"
+            st["workspace_id"] = wid
+
+        with (
+            patch.object(
+                wshandler,
+                "cleanup_connection",
+                side_effect=fail_cleanup,
+            ),
+            patch.object(
+                wshandler,
+                "start_workspace_container",
+                side_effect=fake_start,
+            ),
+            patch.object(container.registry, "record_activity"),
+            patch.object(
+                container.registry,
+                "get_workspace_ports",
+                return_value=[],
+            ),
+        ):
+            await handle_restart_container(ws, state)
+
+        calls = [c[0][0] for c in ws.send_json.call_args_list]
+        ready = [
+            c
+            for c in calls
+            if isinstance(c, dict)
+            and c.get("type") == "event"
+            and c.get("event", {}).get("name") == "container_ready"
+        ]
+        assert len(ready) == 1
+
+    async def test_restart_cleanup_ws_disconnect(self, user):
+        ws = _mock_ws(headers={"host": "localhost:8997"})
+        workspace = await ws_mod.create_workspace(user["id"], "restart-disc")
+        state = _base_state(user=user)
+        state["workspace_id"] = workspace["id"]
+        state["container_id"] = "cid-disc"
+        state["workspace"] = workspace
+
+        async def fail_cleanup(ws_arg, st):
+            raise WebSocketDisconnect()
 
         async def fake_start(ws_arg, st, wid, ws_obj):
             st["container_id"] = "cid-new"

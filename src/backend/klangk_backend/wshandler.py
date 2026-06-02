@@ -43,6 +43,7 @@ class SafeWebSocket:
             maxsize=maxsize
         )
         self._sender_task: asyncio.Task | None = None
+        self._closed = False
 
     def start_sender(self) -> None:
         """Launch the background sender coroutine."""
@@ -64,6 +65,7 @@ class SafeWebSocket:
 
     async def stop_sender(self) -> None:
         """Signal the sender task to exit and wait for it."""
+        self._closed = True
         task = self._sender_task
         if task is None:
             return
@@ -77,13 +79,18 @@ class SafeWebSocket:
             await task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            logger.exception("Sender task failed unexpectedly")
         self._sender_task = None
 
     def send_json(self, data: dict) -> None:
         """Enqueue *data* for sending.  Non-blocking.
 
-        Raises ``SlowClientError`` if the queue is full.
+        Raises ``SlowClientError`` if the queue is full or the sender
+        has been stopped.
         """
+        if self._closed:
+            raise SlowClientError("sender stopped — cannot enqueue")
         try:
             self._queue.put_nowait(data)
         except asyncio.QueueFull:
@@ -367,6 +374,9 @@ async def start_workspace_container(
             pass
 
     conn_state["_idle_cb"] = on_idle
+    # No await between lock release and callback registration — the idle
+    # loop cannot interleave here in asyncio's single-threaded model.
+    # If an await is added before on_idle_stop, move registration inside the lock.
     container.registry.on_idle_stop(workspace_id, on_idle)
 
     # Cache workspace info for auto-restart
@@ -458,7 +468,7 @@ async def handle_restart_container(ws: SafeWebSocket, state: dict) -> None:
 
     try:
         await cleanup_connection(ws, state)
-    except (RuntimeError, OSError, ConnectionError) as e:
+    except (WebSocketDisconnect, RuntimeError, OSError, ConnectionError) as e:
         logger.warning("Cleanup error during restart: %s", e)
 
     if workspace is None:
