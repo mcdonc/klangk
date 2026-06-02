@@ -106,6 +106,44 @@ void main() {
       expect(find.textContaining('Jun 2, 2026'), findsOneWidget);
     });
 
+    testWidgets('shows member avatars on workspace cards', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'Shared Project',
+                'container_id': null,
+                'created_at': '2026-01-15 14:30:00',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1/members') {
+          return http.Response(
+            jsonEncode([
+              {'id': 'uid-2', 'email': 'alice@example.com'},
+              {'id': 'uid-3', 'email': 'bob@example.com'},
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Shared Project'), findsOneWidget);
+      // Two CircleAvatar widgets for the two members
+      expect(find.byType(CircleAvatar), findsNWidgets(2));
+      // First letters of email addresses
+      expect(find.text('A'), findsOneWidget);
+      expect(find.text('B'), findsOneWidget);
+    });
+
     testWidgets('handles missing and invalid created_at gracefully',
         (tester) async {
       testAuthHttpClientOverride = MockClient((request) async {
@@ -2156,6 +2194,175 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(postCalled, isTrue);
+    });
+
+    testWidgets('edit dialog shows Shared With section with members',
+        (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1/members' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {'id': 'user-2', 'email': 'bob@example.com'},
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Shared With'), findsOneWidget);
+      expect(find.text('bob@example.com'), findsOneWidget);
+    });
+
+    testWidgets('edit dialog adds member via search', (tester) async {
+      var addMemberCalled = false;
+      String? addMemberBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1/members' &&
+            request.method == 'GET') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/workspaces/ws-1/members' &&
+            request.method == 'POST') {
+          addMemberCalled = true;
+          addMemberBody = request.body;
+          return http.Response(jsonEncode({'status': 'ok'}), 200);
+        }
+        if (request.url.path == '/users/search') {
+          return http.Response(
+            jsonEncode([
+              {'id': 'user-3', 'email': 'alice@example.com'},
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      final shareFinder = find.byWidgetPredicate((w) =>
+          w is TextField && w.decoration?.hintText == 'Type email to share...');
+
+      // Type then clear to exercise the empty-input branch
+      await tester.enterText(shareFinder, 'x');
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.enterText(shareFinder, '');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      // Now type a real query
+      await tester.enterText(shareFinder, 'alice');
+      // Wait for debounce
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      // Search result should appear
+      expect(find.text('alice@example.com'), findsOneWidget);
+
+      // Tap the search result
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pumpAndSettle();
+
+      expect(addMemberCalled, isTrue);
+      expect(addMemberBody, contains('alice@example.com'));
+      // Member should now show in the list
+      expect(find.text('alice@example.com'), findsOneWidget);
+    });
+
+    testWidgets('edit dialog removes member', (tester) async {
+      var removeMemberCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces' && request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'default_command': null,
+                'created_at': '2026-05-28',
+              },
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1/members' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode([
+              {'id': 'user-2', 'email': 'bob@example.com'},
+            ]),
+            200,
+          );
+        }
+        if (request.url.path == '/workspaces/ws-1/members/user-2' &&
+            request.method == 'DELETE') {
+          removeMemberCalled = true;
+          return http.Response('', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('bob@example.com'), findsOneWidget);
+
+      // Scroll down in the dialog to ensure the member row is visible
+      await tester.drag(
+          find.byType(SingleChildScrollView).last, const Offset(0, -200));
+      await tester.pumpAndSettle();
+
+      // Tap the close/remove button for the member
+      final closeIcons = find.byIcon(Icons.close);
+      await tester.tap(closeIcons.last);
+      await tester.pumpAndSettle();
+
+      expect(removeMemberCalled, isTrue);
+      expect(find.text('bob@example.com'), findsNothing);
     });
   });
 }

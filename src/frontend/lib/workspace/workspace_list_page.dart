@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../theme/colors.dart';
@@ -51,6 +52,7 @@ class WorkspaceListPage extends StatefulWidget {
 
 class _WorkspaceListPageState extends State<WorkspaceListPage> {
   List<Map<String, dynamic>> _workspaces = [];
+  Map<String, List<Map<String, dynamic>>> _workspaceMembers = {};
   bool _loading = true;
 
   @override
@@ -68,8 +70,22 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       final response = await _auth.authGet('/workspaces');
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as List;
+        final workspaces = data.cast<Map<String, dynamic>>();
+        // Fetch members for each workspace in parallel
+        final members = <String, List<Map<String, dynamic>>>{};
+        await Future.wait(workspaces.map((ws) async {
+          final id = ws['id'] as String;
+          try {
+            final resp = await _auth.authGet('/workspaces/$id/members');
+            if (resp.statusCode == 200) {
+              members[id] = List<Map<String, dynamic>>.from(
+                  jsonDecode(resp.body) as List);
+            }
+          } catch (_) {} // coverage:ignore-line
+        }));
         setState(() {
-          _workspaces = data.cast<Map<String, dynamic>>();
+          _workspaces = workspaces;
+          _workspaceMembers = members;
         });
       }
     } catch (e) {
@@ -492,6 +508,17 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     final allowedImages =
         (imageData?['allowed'] as List?)?.cast<String>() ?? [defaultImage];
 
+    // Load current members
+    List<Map<String, dynamic>> initialMembers = [];
+    try {
+      final membersResp =
+          await _auth.authGet('/workspaces/${ws['id']}/members');
+      if (membersResp.statusCode == 200) {
+        initialMembers = List<Map<String, dynamic>>.from(
+            jsonDecode(membersResp.body) as List);
+      }
+    } catch (_) {} // no-cover
+
     if (!mounted) return;
 
     final nameController =
@@ -500,6 +527,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         TextEditingController(text: ws['default_command'] as String? ?? '');
     final mountController = TextEditingController();
     final envController = TextEditingController();
+    final shareController = TextEditingController();
     var selectedImage = ws['image'] as String? ?? defaultImage;
     if (!allowedImages.contains(selectedImage)) {
       selectedImage = defaultImage;
@@ -520,6 +548,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         String? errorMessage;
         String? mountError;
         String? envError;
+        final members = List<Map<String, dynamic>>.from(initialMembers);
+        List<Map<String, dynamic>> searchResults = [];
+        Timer? searchDebounce;
 
         void tryAddMount(void Function(void Function()) setState) {
           final v = mountController.text.trim();
@@ -766,6 +797,76 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Shared With', style: labelStyle),
+                    ),
+                    const SizedBox(height: 8),
+                    ...members.map((m) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                  child: Text(m['email'] as String,
+                                      style: const TextStyle(fontSize: 13))),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () async {
+                                  await _auth.authDelete(
+                                      '/workspaces/${ws['id']}/members/${m['id']}');
+                                  setDialogState(() => members.remove(m));
+                                },
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ],
+                          ),
+                        )),
+                    TextField(
+                      controller: shareController,
+                      decoration: const InputDecoration(
+                        hintText: 'Type email to share...',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                      style: const TextStyle(fontSize: 13),
+                      onChanged: (v) {
+                        searchDebounce?.cancel();
+                        if (v.trim().isEmpty) {
+                          setDialogState(() => searchResults = []);
+                          return;
+                        }
+                        searchDebounce =
+                            Timer(const Duration(milliseconds: 300), () async {
+                          try {
+                            final resp = await _auth.authGet(
+                                '/users/search?q=${Uri.encodeQueryComponent(v.trim())}');
+                            if (resp.statusCode == 200) {
+                              final results = List<Map<String, dynamic>>.from(
+                                  jsonDecode(resp.body) as List);
+                              setDialogState(() => searchResults = results);
+                            }
+                          } catch (_) {} // no-cover
+                        });
+                      },
+                    ),
+                    ...searchResults.map((r) => ListTile(
+                          dense: true,
+                          title: Text(r['email'] as String,
+                              style: const TextStyle(fontSize: 13)),
+                          onTap: () async {
+                            await _auth.authPost(
+                                '/workspaces/${ws['id']}/members',
+                                body: jsonEncode(
+                                    {'email': r['email'] as String}));
+                            setDialogState(() {
+                              members.add(r);
+                              searchResults = [];
+                              shareController.clear();
+                            });
+                          },
+                        )),
                   ],
                 ),
               ),
@@ -847,13 +948,45 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   itemCount: _workspaces.length,
                   itemBuilder: (context, index) {
                     final ws = _workspaces[index];
+                    final wsMembers =
+                        _workspaceMembers[ws['id'] as String] ?? [];
                     return Card(
                       child: ListTile(
                         leading: const Icon(Icons.folder,
                             color: KColors.accentGreen),
                         title: Text(ws['name'] as String),
-                        subtitle:
+                        subtitle: Row(
+                          children: [
                             Text(_formatCreatedAt(ws['created_at'] as String?)),
+                            if (wsMembers.isNotEmpty) ...[
+                              const SizedBox(width: 8),
+                              ...wsMembers.map((m) {
+                                final email = m['email'] as String;
+                                final letter = email.isNotEmpty
+                                    ? email[0].toUpperCase()
+                                    : '?';
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 2),
+                                  child: Tooltip(
+                                    message: email,
+                                    child: CircleAvatar(
+                                      radius: 10,
+                                      backgroundColor: KColors.accentGreen,
+                                      child: Text(
+                                        letter,
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ],
+                          ],
+                        ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [

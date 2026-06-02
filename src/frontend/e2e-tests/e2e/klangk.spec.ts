@@ -1002,6 +1002,112 @@ test.describe("Klangk E2E", () => {
     ).toBeFalsy();
   });
 
+  test("workspace sharing via API", async ({ request }) => {
+    // Register two users
+    const ownerEmail = `share-owner-${Date.now()}@test.example.com`;
+    const memberEmail = `share-member-${Date.now()}@test.example.com`;
+    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+    const { headers: memberHeaders } = await registerUser(request, memberEmail);
+
+    // Create a workspace as owner
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers: ownerHeaders,
+      data: { name: `e2e-share-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspace = await wsResp.json();
+    const workspaceId = workspace.id;
+
+    // Upload a file so we can test access
+    const uploadResp = await request.post(
+      `${API_BASE}/workspaces/${workspaceId}/files/upload?path=work/shared.txt`,
+      {
+        headers: ownerHeaders,
+        multipart: {
+          file: {
+            name: "shared.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from("shared content"),
+          },
+        },
+      },
+    );
+    expect(uploadResp.ok()).toBeTruthy();
+
+    // Initially, no members
+    let membersResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/members`,
+      { headers: ownerHeaders },
+    );
+    expect(membersResp.ok()).toBeTruthy();
+    let members = await membersResp.json();
+    expect(members).toHaveLength(0);
+
+    // Member cannot access the workspace files before sharing
+    const preShareFiles = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      { headers: memberHeaders },
+    );
+    expect(preShareFiles.ok()).toBeFalsy();
+
+    // Share workspace with member
+    const addResp = await request.post(
+      `${API_BASE}/workspaces/${workspaceId}/members`,
+      {
+        headers: ownerHeaders,
+        data: { email: memberEmail },
+      },
+    );
+    expect(addResp.ok()).toBeTruthy();
+
+    // Verify member shows up in members list
+    membersResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/members`,
+      { headers: ownerHeaders },
+    );
+    expect(membersResp.ok()).toBeTruthy();
+    members = await membersResp.json();
+    expect(members).toHaveLength(1);
+    expect(members[0].email).toBe(memberEmail);
+    const memberId = members[0].id;
+
+    // Member can now access workspace files
+    const postShareFiles = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      { headers: memberHeaders },
+    );
+    expect(postShareFiles.ok()).toBeTruthy();
+    const files = await postShareFiles.json();
+    expect(files.some((f: any) => f.name === "shared.txt")).toBeTruthy();
+
+    // Unshare
+    const removeResp = await request.delete(
+      `${API_BASE}/workspaces/${workspaceId}/members/${memberId}`,
+      { headers: ownerHeaders },
+    );
+    expect(removeResp.ok()).toBeTruthy();
+
+    // Verify member is gone
+    membersResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/members`,
+      { headers: ownerHeaders },
+    );
+    members = await membersResp.json();
+    expect(members).toHaveLength(0);
+
+    // Member can no longer access workspace files
+    const postUnshareFiles = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      { headers: memberHeaders },
+    );
+    expect(postUnshareFiles.ok()).toBeFalsy();
+
+    // Clean up
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers: ownerHeaders,
+    });
+  });
+
   test("container recreated on page refresh", async ({ page, request }) => {
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
