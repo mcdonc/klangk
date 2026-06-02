@@ -837,7 +837,7 @@ class TestExtraMountsVolumeCreation:
             )
 
         # No bridge tokens should remain for this workspace
-        for token, ws_id in container.registry._bridge_tokens.items():
+        for token, (ws_id, _sock) in container.registry._bridge_tokens.items():
             assert ws_id != workspace["id"]
 
 
@@ -1418,3 +1418,53 @@ class TestAdoptOrphanedContainers:
         ):
             await container.registry.adopt_orphaned_containers()
         # Should not raise
+
+
+class TestBridgeTokens:
+    def setup_method(self):
+        container.registry._bridge_tokens.clear()
+
+    def teardown_method(self):
+        container.registry._bridge_tokens.clear()
+
+    def test_create_and_resolve(self):
+        sock = object()
+        token = container.registry.create_bridge_token("ws-1", sock)
+        result = container.registry.resolve_bridge_token(token)
+        assert result == ("ws-1", sock)
+
+    def test_resolve_unknown_token(self):
+        assert container.registry.resolve_bridge_token("nonexistent") is None
+
+    def test_revoke_bridge_token_removes_all(self):
+        sock1 = object()
+        sock2 = object()
+        t1 = container.registry.create_bridge_token("ws-1", sock1)
+        t2 = container.registry.create_bridge_token("ws-1", sock2)
+        container.registry.revoke_bridge_token("ws-1")
+        assert container.registry.resolve_bridge_token(t1) is None
+        assert container.registry.resolve_bridge_token(t2) is None
+
+    def test_revoke_connection_token(self):
+        sock1 = object()
+        sock2 = object()
+        t1 = container.registry.create_bridge_token("ws-1", sock1)
+        t2 = container.registry.create_bridge_token("ws-1", sock2)
+        container.registry.revoke_connection_token(sock1)
+        assert container.registry.resolve_bridge_token(t1) is None
+        assert container.registry.resolve_bridge_token(t2) == ("ws-1", sock2)
+
+    def test_revoke_connection_token_no_match(self):
+        sock = object()
+        other_sock = object()
+        token = container.registry.create_bridge_token("ws-1", sock)
+        container.registry.revoke_connection_token(other_sock)
+        assert container.registry.resolve_bridge_token(token) == ("ws-1", sock)
+
+    def test_multiple_connections_same_workspace(self):
+        sock1 = object()
+        sock2 = object()
+        t1 = container.registry.create_bridge_token("ws-1", sock1)
+        t2 = container.registry.create_bridge_token("ws-1", sock2)
+        assert container.registry.resolve_bridge_token(t1) == ("ws-1", sock1)
+        assert container.registry.resolve_bridge_token(t2) == ("ws-1", sock2)

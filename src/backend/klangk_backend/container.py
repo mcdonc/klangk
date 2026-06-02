@@ -135,8 +135,10 @@ class ContainerRegistry:
         self.states: dict[str, ContainerState] = {}
         # Reverse lookup: container_id → workspace_id
         self._cid_to_wsid: dict[str, str] = {}
-        # Bridge token → workspace_id (for browser-delegate auth)
-        self._bridge_tokens: dict[str, str] = {}
+        # Bridge token → (workspace_id, sock_or_none) for browser-delegate auth.
+        # sock is None for workspace-level fallback tokens, or a specific
+        # SafeWebSocket for per-connection tokens.
+        self._bridge_tokens: dict[str, tuple[str, object | None]] = {}
         self.docker: aiodocker.Docker | None = None
         self.cleanup_task: asyncio.Task | None = None
         self.port_lock: asyncio.Lock = asyncio.Lock()
@@ -175,24 +177,38 @@ class ContainerRegistry:
             if state:
                 state.record_activity()
 
-    def create_bridge_token(self, workspace_id: str) -> str:
-        """Generate a unique token that maps to a workspace_id.
+    def create_bridge_token(self, workspace_id: str, sock: object) -> str:
+        """Generate a unique token that maps to (workspace_id, sock).
 
-        Revokes any existing tokens for this workspace first.
+        Each terminal exec session gets its own token so browser-delegate
+        requests route to the specific browser connection that owns the
+        terminal.
         """
-        self.revoke_bridge_token(workspace_id)
         token = str(uuid.uuid4())
-        self._bridge_tokens[token] = workspace_id
+        self._bridge_tokens[token] = (workspace_id, sock)
         return token
 
-    def resolve_bridge_token(self, token: str) -> str | None:
-        """Look up the workspace_id for a bridge token."""
+    def resolve_bridge_token(self, token: str) -> tuple[str, object] | None:
+        """Look up (workspace_id, sock) for a bridge token."""
         return self._bridge_tokens.get(token)
 
     def revoke_bridge_token(self, workspace_id: str) -> None:
-        """Remove all bridge tokens for a workspace."""
+        """Remove ALL bridge tokens for a workspace.
+
+        Called when a container is recreated or stopped.
+        """
         to_remove = [
-            t for t, ws in self._bridge_tokens.items() if ws == workspace_id
+            t
+            for t, (ws, _s) in self._bridge_tokens.items()
+            if ws == workspace_id
+        ]
+        for t in to_remove:
+            del self._bridge_tokens[t]
+
+    def revoke_connection_token(self, sock: object) -> None:
+        """Remove all bridge tokens bound to a specific connection."""
+        to_remove = [
+            t for t, (_ws, s) in self._bridge_tokens.items() if s is sock
         ]
         for t in to_remove:
             del self._bridge_tokens[t]
@@ -332,11 +348,12 @@ class ContainerRegistry:
         ]
         env_vars.append(f"KLANGK_PORT_MAPPINGS={','.join(mappings)}")
         env_vars.append(f"KLANGK_WORKSPACE_ID={workspace_id}")
-        bridge_token = self.create_bridge_token(workspace_id)
+        # KLANGK_BRIDGE_URL is set at container level so all exec sessions
+        # know the backend URL.  KLANGK_BRIDGE_TOKEN is set per-exec
+        # session (in terminal.py) so each connection has its own token.
         env_vars.append(
             f"KLANGK_BRIDGE_URL=http://host.docker.internal:{nginx_port}"
         )
-        env_vars.append(f"KLANGK_BRIDGE_TOKEN={bridge_token}")
         env_vars.append(f"KLANGK_HOSTING_HOSTNAME={hosting_hostname}")
         env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
@@ -426,17 +443,11 @@ class ContainerRegistry:
             "Tty": False,
         }
 
-        try:
-            created = await docker.containers.create_or_replace(
-                name=f"klangk-{INSTANCE_ID}-{workspace_id[:12]}",
-                config=config,
-            )
-            await created.start()
-        except Exception:
-            # Revoke the bridge token allocated above so a stale token
-            # doesn't linger for a workspace with no container.
-            self.revoke_bridge_token(workspace_id)
-            raise
+        created = await docker.containers.create_or_replace(
+            name=f"klangk-{INSTANCE_ID}-{workspace_id[:12]}",
+            config=config,
+        )
+        await created.start()
         container_id = created.id
 
         await model.update_workspace_container(workspace_id, container_id)

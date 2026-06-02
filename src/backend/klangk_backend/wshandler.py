@@ -205,6 +205,37 @@ class WorkspaceSession:
             state.pending_browser_requests.pop(request_id, None)
             raise
 
+    async def dispatch_browser_request_to(
+        self, target_sock: SafeWebSocket, request: dict, timeout: float = 30.0
+    ) -> dict:
+        """Send a browser_request to a specific browser connection.
+
+        Used when a per-connection bridge token identifies the exact
+        browser that should handle the request.
+        """
+        request_id = str(uuid.uuid4())
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+        state.pending_browser_requests[request_id] = future
+
+        message = {**request, "type": "browser_request", "id": request_id}
+        _log_ws_msg("BCAST", message)
+        try:
+            target_sock.send_json(message)
+        except _WS_ERRORS:
+            state.pending_browser_requests.pop(request_id, None)
+            return {"error": "Browser connection not available"}
+
+        try:
+            result = await asyncio.wait_for(future, timeout=timeout)
+            return result
+        except asyncio.TimeoutError:
+            state.pending_browser_requests.pop(request_id, None)
+            return {"error": "Browser client did not respond within timeout"}
+        except asyncio.CancelledError:
+            state.pending_browser_requests.pop(request_id, None)
+            raise
+
     async def full_reset(self) -> None:
         """Clean up all shared state for this workspace.
 
@@ -326,6 +357,7 @@ class Connection:
         self.workspace: dict | None = None
         self._idle_cb = None
         self.pending_status_msg: str | None = None
+        self._bridge_token: str | None = None
 
     async def start_workspace_container(
         self, workspace_id: str, workspace: dict
@@ -500,6 +532,14 @@ class Connection:
         command_override = msg.get("commandOverride")
         session = TerminalSession(self.container_id)
 
+        # Create a per-connection bridge token so browser-delegate
+        # requests from this terminal route to the specific browser
+        # that owns this connection.
+        bridge_token = container.registry.create_bridge_token(
+            self.workspace_id, sock=self.sock
+        )
+        self._bridge_token = bridge_token
+
         # Store session immediately so stop_terminal can clean it up
         # if another terminal_start arrives before this one finishes.
         self.terminal_session = session
@@ -508,7 +548,10 @@ class Connection:
         async def _start_terminal() -> None:
             try:
                 await session.start(
-                    cols, rows, command_override=command_override
+                    cols,
+                    rows,
+                    command_override=command_override,
+                    bridge_token=bridge_token,
                 )
                 # Check we're still the active session — stop_terminal may have
                 # replaced us while session.start() was awaited.
@@ -695,6 +738,10 @@ class Connection:
         if workspace_id and idle_cb:
             container.registry.remove_idle_callback(workspace_id, idle_cb)
             self._idle_cb = None
+
+        # Revoke per-connection bridge tokens
+        container.registry.revoke_connection_token(self.sock)
+        self._bridge_token = None
 
         await self.stop_terminal()
         await self.stop_exec()

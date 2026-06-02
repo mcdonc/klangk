@@ -385,6 +385,7 @@ class TestHandleTerminalStart:
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
+        conn.workspace_id = "ws"
         container.registry.track_activity("cid", "ws")
 
         with patch.object(wshandler, "TerminalSession") as MockTS:
@@ -402,9 +403,11 @@ class TestHandleTerminalStart:
             await asyncio.sleep(0)
 
         MockTS.assert_called_once_with("cid")
-        mock_session.start.assert_awaited_once_with(
-            100, 30, command_override=None
-        )
+        # bridge_token should be passed (a UUID string)
+        start_kwargs = mock_session.start.call_args
+        assert start_kwargs[1]["command_override"] is None
+        assert start_kwargs[1]["bridge_token"] is not None
+        assert conn._bridge_token == start_kwargs[1]["bridge_token"]
         assert conn.terminal_session is mock_session
         assert conn.terminal_task is not None
         # Should have sent terminal_started ack
@@ -416,12 +419,14 @@ class TestHandleTerminalStart:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
+        container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 
     async def test_passes_command_override(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
+        conn.workspace_id = "ws"
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -435,7 +440,7 @@ class TestHandleTerminalStart:
             await asyncio.sleep(0)
 
         mock_session.start.assert_awaited_once_with(
-            80, 24, command_override="bash"
+            80, 24, command_override="bash", bridge_token=conn._bridge_token
         )
 
         conn.terminal_task.cancel()
@@ -443,12 +448,14 @@ class TestHandleTerminalStart:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
+        container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 
     async def test_start_failure_sends_error(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
+        conn.workspace_id = "ws"
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -465,12 +472,14 @@ class TestHandleTerminalStart:
         assert any(call.args[0].get("type") == "error" for call in sent)
         # Session is stored immediately but stop() is called on failure
         mock_session.stop.assert_awaited_once()
+        container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 
     async def test_cancellation_during_start_cleans_up(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
+        conn.workspace_id = "ws"
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -484,6 +493,7 @@ class TestHandleTerminalStart:
 
         # session.stop() must be called to avoid leaking the aiodocker client
         mock_session.stop.assert_awaited_once()
+        container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 
     async def test_session_replaced_during_start_aborts(self):
@@ -493,6 +503,7 @@ class TestHandleTerminalStart:
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
+        conn.workspace_id = "ws"
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -512,6 +523,7 @@ class TestHandleTerminalStart:
         # terminal_started must NOT be sent
         for call in sock.send_json.call_args_list:
             assert call.args[0].get("type") != "terminal_started"
+        container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 
     async def test_no_container(self):
@@ -1500,6 +1512,131 @@ class TestBrowserBridge:
             assert "timeout" in result["error"].lower()
         finally:
             wshandler.state.sessions.pop("ws-timeout", None)
+
+
+class TestDispatchBrowserRequestTo:
+    async def test_success(self):
+        session = wshandler.state.get_or_create_session("ws-to")
+        mock_sock = _mock_sock()
+        session.subscribers.add(mock_sock)
+        session.browser_subscribers.add(mock_sock)
+
+        async def respond_later():
+            await asyncio.sleep(0.1)
+            for (
+                req_id,
+                future,
+            ) in wshandler.state.pending_browser_requests.items():
+                if not future.done():
+                    future.set_result(
+                        {"id": req_id, "status": 200, "body": "targeted"}
+                    )
+                    break
+
+        task = asyncio.create_task(respond_later())
+        try:
+            result = await session.dispatch_browser_request_to(
+                mock_sock,
+                {"action": "fetch", "url": "http://example.com"},
+                timeout=5.0,
+            )
+            assert result["body"] == "targeted"
+            # Message should have been sent to the specific socket
+            mock_sock.send_json.assert_called_once()
+            sent = mock_sock.send_json.call_args[0][0]
+            assert sent["type"] == "browser_request"
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            wshandler.state.sessions.pop("ws-to", None)
+
+    async def test_dead_socket(self):
+        session = wshandler.state.get_or_create_session("ws-to-dead")
+        mock_sock = _mock_sock()
+        mock_sock.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
+        session.subscribers.add(mock_sock)
+        session.browser_subscribers.add(mock_sock)
+        try:
+            result = await session.dispatch_browser_request_to(
+                mock_sock,
+                {"action": "fetch"},
+            )
+            assert "error" in result
+            assert "not available" in result["error"]
+        finally:
+            wshandler.state.sessions.pop("ws-to-dead", None)
+
+    async def test_timeout(self):
+        session = wshandler.state.get_or_create_session("ws-to-timeout")
+        mock_sock = _mock_sock()
+        session.subscribers.add(mock_sock)
+        session.browser_subscribers.add(mock_sock)
+        try:
+            result = await session.dispatch_browser_request_to(
+                mock_sock,
+                {"action": "fetch"},
+                timeout=0.1,
+            )
+            assert "error" in result
+            assert "timeout" in result["error"].lower()
+        finally:
+            wshandler.state.sessions.pop("ws-to-timeout", None)
+
+    async def test_cancelled_cleans_up(self):
+        session = wshandler.state.get_or_create_session("ws-to-cancel")
+        mock_sock = _mock_sock()
+        session.subscribers.add(mock_sock)
+        session.browser_subscribers.add(mock_sock)
+        try:
+            before = set(wshandler.state.pending_browser_requests.keys())
+            task = asyncio.create_task(
+                session.dispatch_browser_request_to(
+                    mock_sock,
+                    {"action": "fetch"},
+                    timeout=10.0,
+                )
+            )
+            await asyncio.sleep(0.05)
+            new_ids = (
+                set(wshandler.state.pending_browser_requests.keys()) - before
+            )
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            for rid in new_ids:
+                assert rid not in wshandler.state.pending_browser_requests
+        finally:
+            wshandler.state.sessions.pop("ws-to-cancel", None)
+
+
+class TestCleanupRevokesBridgeToken:
+    async def test_cleanup_revokes_connection_token(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.workspace_id = "ws-revoke"
+        conn.container_id = "cid-revoke"
+
+        # Create a per-connection bridge token
+        token = container.registry.create_bridge_token("ws-revoke", sock)
+        conn._bridge_token = token
+
+        container.registry.track_activity("cid-revoke", "ws-revoke")
+        session = WorkspaceSession("ws-revoke")
+        session.subscribers.add(sock)
+        wshandler.state.sessions["ws-revoke"] = session
+
+        await conn.cleanup()
+
+        # Per-connection token should be revoked
+        assert container.registry.resolve_bridge_token(token) is None
+        assert conn._bridge_token is None
+
+        container.registry.revoke_bridge_token("ws-revoke")
+        container.registry.states.pop("ws-revoke", None)
+        wshandler.state.sessions.pop("ws-revoke", None)
 
 
 class TestLogoutUser:

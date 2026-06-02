@@ -1009,11 +1009,16 @@ class TestBrowserBridge:
         assert resp.status_code == 403
         assert "Invalid bridge token" in resp.json()["detail"]
 
-    async def test_valid_token_success(self, client, user):
-        token = container.registry.create_bridge_token("ws-1")
+    async def test_per_connection_token_success(self, client, user):
+        """Per-connection token routes to a specific browser."""
+        mock_sock = MagicMock()
+        token = container.registry.create_bridge_token(
+            "ws-conn", sock=mock_sock
+        )
         mock_session = AsyncMock()
-        mock_session.dispatch_browser_request = AsyncMock(
-            return_value={"status": 200, "body": "ok"},
+        mock_session.browser_subscribers = {mock_sock}
+        mock_session.dispatch_browser_request_to = AsyncMock(
+            return_value={"status": 200, "body": "targeted"},
         )
         try:
             with patch.object(
@@ -1023,18 +1028,44 @@ class TestBrowserBridge:
             ):
                 resp = await client.post(
                     "/api/browser-delegate",
-                    json={"action": "celebrate", "token": token},
+                    json={"action": "fetch", "token": token},
                 )
             assert resp.status_code == 200
-            assert resp.json()["body"] == "ok"
-            mock_session.dispatch_browser_request.assert_awaited_once_with(
-                {"action": "celebrate"},
+            assert resp.json()["body"] == "targeted"
+            mock_session.dispatch_browser_request_to.assert_awaited_once_with(
+                mock_sock, {"action": "fetch"}
             )
         finally:
-            container.registry.revoke_bridge_token("ws-1")
+            container.registry.revoke_bridge_token("ws-conn")
 
-    async def test_valid_token_no_subscribers_returns_502(self, client, user):
-        token = container.registry.create_bridge_token("ws-nosub")
+    async def test_per_connection_token_browser_not_subscribed(
+        self, client, user
+    ):
+        """Per-connection token returns 502 when target not in browser_subscribers."""
+        mock_sock = MagicMock()
+        token = container.registry.create_bridge_token(
+            "ws-nosub", sock=mock_sock
+        )
+        mock_session = AsyncMock()
+        mock_session.browser_subscribers = set()  # target not subscribed
+        try:
+            with patch.object(
+                wshandler.state,
+                "get_session",
+                return_value=mock_session,
+            ):
+                resp = await client.post(
+                    "/api/browser-delegate",
+                    json={"action": "fetch", "token": token},
+                )
+            assert resp.status_code == 502
+            assert "Browser connection not available" in resp.json()["detail"]
+        finally:
+            container.registry.revoke_bridge_token("ws-nosub")
+
+    async def test_valid_token_no_session_returns_502(self, client, user):
+        mock_sock = MagicMock()
+        token = container.registry.create_bridge_token("ws-nosess", mock_sock)
         try:
             resp = await client.post(
                 "/api/browser-delegate",
@@ -1043,12 +1074,14 @@ class TestBrowserBridge:
             assert resp.status_code == 502
             assert "No browser client" in resp.json()["detail"]
         finally:
-            container.registry.revoke_bridge_token("ws-nosub")
+            container.registry.revoke_bridge_token("ws-nosess")
 
     async def test_dispatch_error_returns_502(self, client, user):
-        token = container.registry.create_bridge_token("ws-err")
+        mock_sock = MagicMock()
+        token = container.registry.create_bridge_token("ws-err", mock_sock)
         mock_session = AsyncMock()
-        mock_session.dispatch_browser_request = AsyncMock(
+        mock_session.browser_subscribers = {mock_sock}
+        mock_session.dispatch_browser_request_to = AsyncMock(
             return_value={
                 "error": "Browser client did not respond within timeout"
             },

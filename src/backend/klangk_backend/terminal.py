@@ -36,6 +36,7 @@ class TerminalSession:
         cols: int = 80,
         rows: int = 24,
         command_override: str | None = None,
+        bridge_token: str | None = None,
     ) -> None:
         """Start a shell session via Docker API exec."""
         self._running = True
@@ -44,6 +45,8 @@ class TerminalSession:
         env = ["TERM=xterm-256color"]
         if command_override is not None:
             env.append(f"KLANGK_CMD_OVERRIDE={command_override}")
+        if bridge_token is not None:
+            env.append(f"KLANGK_BRIDGE_TOKEN={bridge_token}")
 
         # Build the command: env -u KEY ... /bin/bash
         # Strip sensitive env vars from the terminal session.

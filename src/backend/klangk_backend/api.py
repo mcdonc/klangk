@@ -807,21 +807,31 @@ async def browser_delegate(body: BrowserDelegateRequest):
 
     The container calls this endpoint with a bridge token (set as
     KLANGK_BRIDGE_TOKEN in the container env). The backend resolves the
-    token to a workspace_id, relays the request to the Flutter client
-    over WebSocket, and returns the browser's response.
+    token to a workspace_id (and optionally a specific browser connection),
+    relays the request to the Flutter client over WebSocket, and returns
+    the browser's response.
     """
-    workspace_id = container.registry.resolve_bridge_token(body.token)
-    if workspace_id is None:
+    resolved = container.registry.resolve_bridge_token(body.token)
+    if resolved is None:
         raise HTTPException(status_code=403, detail="Invalid bridge token")
+    workspace_id, target_sock = resolved
+
     session = wshandler.state.get_session(workspace_id)
     if not session:
         raise HTTPException(
             status_code=502,
             detail="No browser client connected to this workspace",
         )
-    result = await session.dispatch_browser_request(
-        body.model_dump(exclude={"token"}),
-    )
+
+    payload = body.model_dump(exclude={"token"})
+
+    if target_sock not in session.browser_subscribers:
+        raise HTTPException(
+            status_code=502,
+            detail="Browser connection not available",
+        )
+    result = await session.dispatch_browser_request_to(target_sock, payload)
+
     if result.get("error"):
         raise HTTPException(status_code=502, detail=result["error"])
     return result

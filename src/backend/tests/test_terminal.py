@@ -131,6 +131,40 @@ class TestStart:
 
         await s.stop()
 
+    async def test_bridge_token_sets_env_var(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
+
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start(bridge_token="tok-123")
+
+        call_kwargs = container.exec.call_args[1]
+        assert "KLANGK_BRIDGE_TOKEN=tok-123" in call_kwargs["environment"]
+
+        await s.stop()
+
+    async def test_no_bridge_token_by_default(self):
+        stream = _mock_stream()
+        stream.read_out = AsyncMock(return_value=None)
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
+
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
+
+        call_kwargs = container.exec.call_args[1]
+        assert not any(
+            "KLANGK_BRIDGE_TOKEN" in e for e in call_kwargs["environment"]
+        )
+
+        await s.stop()
+
     async def test_start_exception_closes_docker(self):
         stream = _mock_stream()
         exec_obj = _mock_exec(stream)
