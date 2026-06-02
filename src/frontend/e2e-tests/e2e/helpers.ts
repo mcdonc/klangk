@@ -302,6 +302,33 @@ export async function createAndOpenWorkspace(
   return { workspaceId, email, token, headers, cleanup };
 }
 
+/** Set up a WebSocket listener that resolves when a `terminal_started`
+ *  frame is received. Call this BEFORE the action that triggers terminal
+ *  start (e.g. openWorkspace), then await the returned promise. */
+export function waitForTerminalReady(
+  page: Page,
+  timeout = 30_000,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error("Terminal did not become ready within " + timeout + "ms"),
+        ),
+      timeout,
+    );
+    const handler = (ws: { on: Function }) => {
+      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+        if (frame.payload.toString().includes("terminal_started")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    };
+    page.on("websocket", handler);
+  });
+}
+
 export function dockerContainersForWorkspace(workspaceId: string): string[] {
   const output = execSync(
     `docker ps --filter "label=klangk.workspace-id=${workspaceId}" --format "{{.ID}}"`,

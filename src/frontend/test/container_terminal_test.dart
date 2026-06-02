@@ -80,18 +80,32 @@ void main() {
       client.close();
     });
 
-    testWidgets('sends terminal_start on first build', (tester) async {
+    testWidgets('sends terminal_start on container_ready', (tester) async {
       final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
+      expect(client.sentCommands, isNot(contains('terminal_start')));
+      client.emit({
+        'type': 'event',
+        'event': {'type': 'CUSTOM', 'name': 'container_ready', 'value': {}},
+      });
+      await tester.pump();
       expect(client.sentCommands, contains('terminal_start'));
       client.close();
     });
 
-    testWidgets('only sends terminal_start once', (tester) async {
+    testWidgets('only sends terminal_start once per container_ready',
+        (tester) async {
       final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
+      client.emit({
+        'type': 'event',
+        'event': {'type': 'CUSTOM', 'name': 'container_ready', 'value': {}},
+      });
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
       final count =
           client.sentCommands.where((c) => c == 'terminal_start').length;
       expect(count, 1);
@@ -102,6 +116,11 @@ void main() {
       final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
+      client.emit({
+        'type': 'event',
+        'event': {'type': 'CUSTOM', 'name': 'container_ready', 'value': {}},
+      });
+      await tester.pump();
       client.sentCommands.clear();
 
       await tester
@@ -162,6 +181,11 @@ void main() {
       final key = GlobalKey<ContainerTerminalState>();
       await tester.pumpWidget(_buildTerminal(client, key: key));
       await tester.pumpAndSettle();
+      client.emit({
+        'type': 'event',
+        'event': {'type': 'CUSTOM', 'name': 'container_ready', 'value': {}},
+      });
+      await tester.pump();
 
       // Access the Terminal's onOutput callback indirectly by
       // checking that typing sends terminal_input

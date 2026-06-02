@@ -75,13 +75,28 @@ class TerminalSession:
                 environment=env,
             )
             self._stream = self._exec.start()
+            logger.info(
+                "Exec created for container %s, exec_id=%s",
+                self.container_id,
+                self._exec._id,
+            )
 
             # Do the first read to establish the WebSocket connection,
             # then resize. The stream connects lazily on first I/O.
             first_msg = await self._stream.read_out()
             if first_msg is not None:
+                logger.info(
+                    "First read OK (%d bytes), exec_id=%s",
+                    len(first_msg.data),
+                    self._exec._id,
+                )
                 await self._output_queue.put(
                     first_msg.data.decode("utf-8", errors="replace")
+                )
+            else:
+                logger.info(
+                    "First read returned None (exec exited?), exec_id=%s",
+                    self._exec._id,
                 )
 
             await self._exec.resize(h=rows, w=cols)

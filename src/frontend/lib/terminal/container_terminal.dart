@@ -133,8 +133,6 @@ class ContainerTerminalState extends State<ContainerTerminal> {
             style: TextStyle(fontSize: 12)),
       );
     }
-    // Start on first build when workspace is connected
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startTerminal());
     final terminalView = ScrollbarTheme(
       data: const ScrollbarThemeData(
         thumbColor: WidgetStatePropertyAll(Color(0x80C5C8C6)),

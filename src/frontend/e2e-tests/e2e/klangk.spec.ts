@@ -17,6 +17,7 @@ import {
   createAndOpenWorkspace,
   dockerContainersForWorkspace,
   tryLogin,
+  waitForTerminalReady,
 } from "./helpers";
 
 test.describe("Klangk E2E", () => {
@@ -84,11 +85,13 @@ test.describe("Klangk E2E", () => {
   });
 
   test("terminal accepts keyboard input", async ({ page, request }) => {
+    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-input",
     );
+    await termReady;
 
     try {
       const { width, height } = vp(page);
@@ -177,11 +180,13 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
+    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-file",
     );
+    await termReady;
 
     try {
       const { width, height } = vp(page);
@@ -442,11 +447,13 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
+    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-seq",
     );
+    await termReady;
 
     try {
       const { width, height } = vp(page);
@@ -481,11 +488,13 @@ test.describe("Klangk E2E", () => {
   });
 
   test("terminal works after tab switching", async ({ page, request }) => {
+    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "tab-switch",
     );
+    await termReady;
 
     try {
       const { width, height } = vp(page);
@@ -641,11 +650,13 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
+    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "subdir-nav",
     );
+    await termReady;
 
     try {
       // Create nested directory structure via terminal
@@ -725,11 +736,13 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
+    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "home-persist",
     );
+    await termReady;
 
     try {
       // File API roots at home, so create a file in ~ and read it directly
