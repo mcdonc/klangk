@@ -460,7 +460,27 @@ class TestHandleTerminalStart:
         # Should have sent an error, not terminal_started
         sent = ws.send_json.call_args_list
         assert any(call.args[0].get("type") == "error" for call in sent)
-        assert state.get("terminal_session") is None
+        # Session is stored immediately but stop() is called on failure
+        mock_session.stop.assert_awaited_once()
+        container.registry.states.pop("ws", None)
+
+    async def test_cancellation_during_start_cleans_up(self):
+        ws = _mock_ws()
+        state = _base_state()
+        state["container_id"] = "cid"
+        container.registry.track_activity("cid", "ws")
+
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock(side_effect=asyncio.CancelledError)
+        MockTS = MagicMock(return_value=mock_session)
+        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+            await handle_terminal_start(ws, state, {"cols": 80, "rows": 24})
+            task = state["terminal_task"]
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        # session.stop() must be called to avoid leaking the aiodocker client
+        mock_session.stop.assert_awaited_once()
         container.registry.states.pop("ws", None)
 
     async def test_no_container(self):
