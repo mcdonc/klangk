@@ -47,8 +47,10 @@ class SafeWebSocket:
     rather than blocking the read loop or forwarder tasks.
     """
 
-    def __init__(self, ws: WebSocket, *, maxsize: int = _SEND_QUEUE_SIZE):
-        self._ws = ws
+    def __init__(
+        self, websocket: WebSocket, *, maxsize: int = _SEND_QUEUE_SIZE
+    ):
+        self._sock = websocket
         self._queue: asyncio.Queue[dict | None] = asyncio.Queue(
             maxsize=maxsize
         )
@@ -66,7 +68,7 @@ class SafeWebSocket:
                 msg = await self._queue.get()
                 if msg is None:
                     break
-                await self._ws.send_json(msg)
+                await self._sock.send_json(msg)
         except asyncio.CancelledError:
             raise
         except _WS_ERRORS:
@@ -107,23 +109,23 @@ class SafeWebSocket:
             raise SlowClientError("outbound queue full — closing slow client")
 
     async def accept(self) -> None:
-        await self._ws.accept()
+        await self._sock.accept()
 
     async def receive_text(self) -> str:
-        return await self._ws.receive_text()
+        return await self._sock.receive_text()
 
     async def close(self, code: int = 1000) -> None:
-        await self._ws.close(code=code)
+        await self._sock.close(code=code)
 
     @property
     def headers(self):
         """Proxy header access to the underlying WebSocket."""
-        return self._ws.headers
+        return self._sock.headers
 
     @property
     def raw(self) -> WebSocket:
         """Access the underlying WebSocket (e.g. for identity checks)."""
-        return self._ws
+        return self._sock
 
 
 class WorkspaceSession:
@@ -144,21 +146,21 @@ class WorkspaceSession:
         self.browser_subscribers.clear()
 
     async def add_subscriber(
-        self, ws: SafeWebSocket, container_id: str
+        self, sock: SafeWebSocket, container_id: str
     ) -> None:
         """Register a connection as a subscriber (acquires lock)."""
         async with self.lock:
             self.container_id = container_id
-            self.subscribers.add(ws)
+            self.subscribers.add(sock)
 
-    async def remove_subscriber(self, ws: SafeWebSocket) -> bool:
+    async def remove_subscriber(self, sock: SafeWebSocket) -> bool:
         """Unregister a connection (acquires lock).
 
         Returns True if no subscribers remain (session should be removed).
         """
         async with self.lock:
-            self.subscribers.discard(ws)
-            self.browser_subscribers.discard(ws)
+            self.subscribers.discard(sock)
+            self.browser_subscribers.discard(sock)
             return not self.subscribers
 
     def broadcast(self, message: dict) -> int:
@@ -218,7 +220,7 @@ class WebSocketState:
     """Module-level singleton holding mutable WebSocket handler state."""
 
     def __init__(self) -> None:
-        # Active connections: ws -> Connection
+        # Active connections: SafeWebSocket -> Connection
         self.connections: dict[SafeWebSocket, "Connection"] = {}
         # Active sessions keyed by workspace_id.
         self.sessions: dict[str, WorkspaceSession] = {}
@@ -290,7 +292,7 @@ class Connection:
     """Per-WebSocket connection state and command handlers."""
 
     def __init__(self, ws: SafeWebSocket, user: dict):
-        self.ws = ws
+        self.sock = ws
         self.user = user
         self.workspace_id: str | None = None
         self.container_id: str | None = None
@@ -317,7 +319,7 @@ class Connection:
         )
 
         hosting_hostname, hosting_proto, hosting_base_path = (
-            derive_hosting_info(self.ws.headers)
+            derive_hosting_info(self.sock.headers)
         )
         (
             container_id,
@@ -343,14 +345,14 @@ class Connection:
         self.container_id = container_id
 
         session = state.get_or_create_session(workspace_id)
-        await session.add_subscriber(self.ws, container_id)
+        await session.add_subscriber(self.sock, container_id)
 
         # Register idle timeout notification (per-connection)
-        ws = self.ws
+        sock = self.sock
 
         async def on_idle(wid: str) -> None:
             try:
-                _send_event(ws, "container_stopped", "idle timeout")
+                _send_event(sock, "container_stopped", "idle timeout")
             except _WS_ERRORS:
                 pass
 
@@ -371,14 +373,14 @@ class Connection:
     async def handle_workspace_connect(self, msg: dict) -> None:
         workspace_id = msg.get("workspaceId")
         if not workspace_id:
-            send_error(self.ws, "Missing workspaceId")
+            send_error(self.sock, "Missing workspaceId")
             return
 
         workspace = await workspaces.get_workspace(
             workspace_id, self.user["id"]
         )
         if workspace is None:
-            send_error(self.ws, "Workspace not found")
+            send_error(self.sock, "Workspace not found")
             return
 
         # Disconnect from any current workspace
@@ -397,7 +399,7 @@ class Connection:
 
         status_msg += _format_idle_timeout(container.IDLE_TIMEOUT_SECONDS)
 
-        self.ws.send_json(
+        self.sock.send_json(
             {
                 "type": "workspace_ready",
                 "workspaceId": workspace_id,
@@ -422,7 +424,7 @@ class Connection:
     async def handle_restart_container(self) -> None:
         """Restart a stopped container (e.g., after idle timeout)."""
         if not self.workspace_id:
-            send_error(self.ws, "Not connected to a workspace")
+            send_error(self.sock, "Not connected to a workspace")
             return
 
         # Save before cleanup — cleanup clears state fields.
@@ -430,7 +432,7 @@ class Connection:
         user = self.user
         workspace = self.workspace
 
-        _send_event(self.ws, "container_restart", "Restarting container...")
+        _send_event(self.sock, "container_restart", "Restarting container...")
 
         try:
             await self.cleanup()
@@ -442,7 +444,7 @@ class Connection:
                 workspace_id, user["id"]
             )
         if workspace is None:
-            send_error(self.ws, "Workspace not found")
+            send_error(self.sock, "Workspace not found")
             return
 
         await self.start_workspace_container(workspace_id, workspace)
@@ -458,7 +460,7 @@ class Connection:
         else:
             status_msg += f" — idle timeout: {timeout_mins:.1f}m"
 
-        _send_event(self.ws, "container_ready", status_msg)
+        _send_event(self.sock, "container_ready", status_msg)
 
         logger.info(
             "Container restarted via restart_container command for workspace %s",
@@ -494,14 +496,14 @@ class Connection:
                     conn.forward_terminal_output(session)
                 )
                 container.registry.record_activity(conn.container_id)
-                conn.ws.send_json({"type": "terminal_started"})
+                conn.sock.send_json({"type": "terminal_started"})
             except asyncio.CancelledError:
                 await session.stop()
                 raise
             except Exception as e:
                 await session.stop()
                 logger.exception("Terminal start failed: %s", e)
-                send_error(conn.ws, f"Terminal start failed: {e}")
+                send_error(conn.sock, f"Terminal start failed: {e}")
 
         self.terminal_task = asyncio.create_task(_start_terminal())
 
@@ -533,7 +535,7 @@ class Connection:
         await self.stop_exec()
         command = msg.get("command", [])
         if not command:
-            send_error(self.ws, "exec_start requires a command list")
+            send_error(self.sock, "exec_start requires a command list")
             return
         session = ExecSession(self.container_id)
         await session.start(command)
@@ -573,11 +575,11 @@ class Connection:
         if self.workspace_id:
             sess = state.get_session(self.workspace_id)
             if sess:
-                sess.browser_subscribers.add(self.ws)
+                sess.browser_subscribers.add(self.sock)
         status_msg = self.pending_status_msg
         self.pending_status_msg = None
         if status_msg:
-            _send_event(self.ws, "container_ready", status_msg)
+            _send_event(self.sock, "container_ready", status_msg)
 
     async def _claim_and_stop_terminal(self) -> None:
         session = self.terminal_session
@@ -608,7 +610,7 @@ class Connection:
 
         try:
             async for data in session.output():
-                self.ws.send_json(
+                self.sock.send_json(
                     {
                         "type": "exec_output",
                         "data": base64.b64encode(data).decode("ascii"),
@@ -617,7 +619,7 @@ class Connection:
                 if self.container_id:
                     container.registry.record_activity(self.container_id)
             # Process exited — send exit code
-            self.ws.send_json(
+            self.sock.send_json(
                 {
                     "type": "exec_exit",
                     "code": session.returncode
@@ -647,17 +649,17 @@ class Connection:
         """Forward terminal output to the frontend via WebSocket."""
         try:
             async for data in session.output():
-                self.ws.send_json({"type": "terminal_output", "data": data})
+                self.sock.send_json({"type": "terminal_output", "data": data})
                 if self.container_id:
                     container.registry.record_activity(self.container_id)
             # Stream ended without cancellation — container likely died
-            _send_event(self.ws, "container_stopped")
+            _send_event(self.sock, "container_stopped")
         except asyncio.CancelledError:
             raise  # Normal cleanup, don't send event
         except _WS_ERRORS as e:
             logger.error("Terminal output forwarding error: %s", e)
             try:
-                _send_event(self.ws, "container_stopped")
+                _send_event(self.sock, "container_stopped")
             except _WS_ERRORS:
                 pass
         finally:
@@ -679,28 +681,28 @@ class Connection:
         # is NOT killed — idle timeout handles that.
         session = state.get_session(workspace_id) if workspace_id else None
         if session:
-            empty = await session.remove_subscriber(self.ws)
+            empty = await session.remove_subscriber(self.sock)
             if empty:
                 # Lock is released by remove_subscriber, so use the
                 # lock-acquiring version.
                 await state.remove_session(workspace_id)
 
 
-async def handle_websocket(ws: WebSocket) -> None:
+async def handle_websocket(websocket: WebSocket) -> None:
     """Main WebSocket handler."""
     # Authenticate via query param
-    token = ws.query_params.get("token")
+    token = websocket.query_params.get("token")
     if not token:
-        await ws.close(code=4001, reason="Missing token")
+        await websocket.close(code=4001, reason="Missing token")
         return
 
     user = await auth.get_user_from_token(token)
     if user is None:
-        await ws.close(code=4001, reason="Invalid token")
+        await websocket.close(code=4001, reason="Invalid token")
         return
 
-    await ws.accept()
-    safe_ws = SafeWebSocket(ws)
+    await websocket.accept()
+    safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
     conn = Connection(safe_ws, user)
     state.connections[safe_ws] = conn
@@ -769,14 +771,14 @@ def _broadcast_to_set(subscribers: set[SafeWebSocket], message: dict) -> int:
     """
     dead = []
     delivered = 0
-    for sub_ws in list(subscribers):
+    for sub in list(subscribers):
         try:
-            sub_ws.send_json(message)
+            sub.send_json(message)
             delivered += 1
         except _WS_ERRORS:
-            dead.append(sub_ws)
-    for sub_ws in dead:
-        subscribers.discard(sub_ws)
+            dead.append(sub)
+    for sub in dead:
+        subscribers.discard(sub)
     return delivered
 
 
@@ -786,11 +788,11 @@ async def reset_workspace_state(workspace_id: str) -> None:
 
 
 def _send_event(
-    ws: SafeWebSocket, name: str, reason: str | None = None
+    sock: SafeWebSocket, name: str, reason: str | None = None
 ) -> None:
     """Send a CUSTOM event (container_ready, container_stopped, etc.)."""
     value = {"reason": reason} if reason else {}
-    ws.send_json(
+    sock.send_json(
         {
             "type": "event",
             "event": {"type": "CUSTOM", "name": name, "value": value},
@@ -813,10 +815,10 @@ def _format_container_info(workspace_id: str, ports: list) -> tuple[str, str]:
     return name, ports_str
 
 
-def send_error(ws: SafeWebSocket, message: str) -> None:
+def send_error(sock: SafeWebSocket, message: str) -> None:
     msg = {"type": "error", "message": message}
     _log_ws_msg("SEND", msg)
-    ws.send_json(msg)
+    sock.send_json(msg)
 
 
 def _log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
