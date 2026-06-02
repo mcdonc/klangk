@@ -562,6 +562,85 @@ async def delete_workspace(
     return {"status": "deleted"}
 
 
+# --- Workspace sharing endpoints ---
+
+
+@router.get("/workspaces/{workspace_id}/members")
+async def get_workspace_members(
+    workspace_id: str, user: dict = Depends(auth.get_current_user)
+):
+    workspace = await model.get_workspace(workspace_id, user["id"])
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if workspace["user_id"] != user["id"]:
+        raise HTTPException(
+            status_code=403, detail="Only the owner can manage members"
+        )
+    return await model.get_workspace_members(workspace_id)
+
+
+class AddMemberRequest(BaseModel):
+    email: str
+
+
+@router.post("/workspaces/{workspace_id}/members")
+async def add_workspace_member(
+    workspace_id: str,
+    body: AddMemberRequest,
+    user: dict = Depends(auth.get_current_user),
+):
+    workspace = await model.get_workspace(workspace_id, user["id"])
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if workspace["user_id"] != user["id"]:
+        raise HTTPException(
+            status_code=403, detail="Only the owner can manage members"
+        )
+    target = await model.get_user_by_email(body.email)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target["id"] == user["id"]:
+        raise HTTPException(
+            status_code=400, detail="Cannot share with yourself"
+        )
+    await model.share_workspace(workspace_id, target["id"])
+    return {
+        "status": "shared",
+        "user_id": target["id"],
+        "email": target["email"],
+    }
+
+
+@router.delete("/workspaces/{workspace_id}/members/{member_id}")
+async def remove_workspace_member(
+    workspace_id: str,
+    member_id: str,
+    user: dict = Depends(auth.get_current_user),
+):
+    workspace = await model.get_workspace(workspace_id, user["id"])
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if workspace["user_id"] != user["id"]:
+        raise HTTPException(
+            status_code=403, detail="Only the owner can manage members"
+        )
+    await model.unshare_workspace(workspace_id, member_id)
+    return {"status": "removed"}
+
+
+# --- User search endpoint ---
+
+
+@router.get("/users/search")
+async def search_users(
+    q: str,
+    _user: dict = Depends(auth.get_current_user),
+):
+    if len(q) < 1:
+        raise HTTPException(status_code=400, detail="Query too short")
+    return await model.search_users(q)
+
+
 # --- File endpoints ---
 
 

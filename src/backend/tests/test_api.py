@@ -792,6 +792,185 @@ class TestWorkspaceRoutes:
         assert "already exists" in resp.json()["detail"]
 
 
+# --- Workspace sharing ---
+
+
+class TestWorkspaceSharingRoutes:
+    async def _create_other_user(self):
+        password_hash = auth.hash_password("otherpass")
+        return await model.create_user(
+            "other@example.com", password_hash, verified=True
+        )
+
+    async def _other_headers(self, client):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "other@example.com", "password": "otherpass"},
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_get_members_empty(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.get(
+            f"/workspaces/{ws_id}/members", headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_add_member(self, client, user):
+        headers = await _auth_headers(client)
+        other = await self._create_other_user()
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "shared"
+        assert resp.json()["user_id"] == other["id"]
+        # Verify member is listed
+        resp = await client.get(
+            f"/workspaces/{ws_id}/members", headers=headers
+        )
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["email"] == "other@example.com"
+
+    async def test_add_member_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "nobody@example.com"},
+        )
+        assert resp.status_code == 404
+        assert "User not found" in resp.json()["detail"]
+
+    async def test_add_member_self(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "testuser@example.com"},
+        )
+        assert resp.status_code == 400
+        assert "yourself" in resp.json()["detail"]
+
+    async def test_remove_member(self, client, user):
+        headers = await _auth_headers(client)
+        other = await self._create_other_user()
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        await client.post(
+            f"/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        resp = await client.delete(
+            f"/workspaces/{ws_id}/members/{other['id']}", headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "removed"
+        # Verify member is gone
+        resp = await client.get(
+            f"/workspaces/{ws_id}/members", headers=headers
+        )
+        assert resp.json() == []
+
+    async def test_non_owner_cannot_manage_members(self, client, user):
+        headers = await _auth_headers(client)
+        other = await self._create_other_user()
+        other_headers = await self._other_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        # Share with other so they can see the workspace
+        await model.share_workspace(ws_id, other["id"])
+        # Other tries to list members
+        resp = await client.get(
+            f"/workspaces/{ws_id}/members", headers=other_headers
+        )
+        assert resp.status_code == 403
+        # Other tries to add a member
+        resp = await client.post(
+            f"/workspaces/{ws_id}/members",
+            headers=other_headers,
+            json={"email": "testuser@example.com"},
+        )
+        assert resp.status_code == 403
+        # Other tries to remove a member
+        resp = await client.delete(
+            f"/workspaces/{ws_id}/members/{other['id']}", headers=other_headers
+        )
+        assert resp.status_code == 403
+
+    async def test_members_workspace_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/workspaces/nonexistent/members", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_add_member_workspace_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces/nonexistent/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        assert resp.status_code == 404
+
+    async def test_remove_member_workspace_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.delete(
+            "/workspaces/nonexistent/members/some-id", headers=headers
+        )
+        assert resp.status_code == 404
+
+
+class TestUserSearch:
+    async def test_search_users(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/users/search?q=testuser", headers=headers)
+        assert resp.status_code == 200
+        results = resp.json()
+        assert len(results) >= 1
+        assert any(r["email"] == "testuser@example.com" for r in results)
+
+    async def test_search_no_results(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/users/search?q=zzzzz", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_search_requires_auth(self, client, db):
+        resp = await client.get("/users/search?q=test")
+        assert resp.status_code == 401
+
+    async def test_search_empty_query(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/users/search?q=", headers=headers)
+        assert resp.status_code == 400
+
+
 # --- Messages ---
 
 

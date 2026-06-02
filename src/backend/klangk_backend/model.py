@@ -62,6 +62,13 @@ async def init_db() -> None:
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS workspace_access (
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                PRIMARY KEY (workspace_id, user_id)
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,
                 workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE
@@ -297,6 +304,22 @@ async def get_user_by_id(user_id: str) -> dict | None:
         await db.close()
 
 
+async def search_users(query: str, limit: int = 10) -> list[dict]:
+    """Search users by email prefix."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, email FROM users WHERE email LIKE ? ORDER BY email LIMIT ?",
+            (f"{query}%", limit),
+        )
+        return [
+            {"id": row["id"], "email": row["email"]}
+            for row in await cursor.fetchall()
+        ]
+    finally:
+        await db.close()
+
+
 # Workspace operations
 
 
@@ -381,8 +404,10 @@ async def get_workspace(workspace_id: str, user_id: str) -> dict | None:
         cursor = await db.execute(
             "SELECT id, user_id, name, container_id, num_ports, image,"
             " default_command, mounts, env"
-            " FROM workspaces WHERE id = ? AND user_id = ?",
-            (workspace_id, user_id),
+            " FROM workspaces WHERE id = ? AND (user_id = ? OR id IN ("
+            "   SELECT workspace_id FROM workspace_access WHERE user_id = ?"
+            " ))",
+            (workspace_id, user_id, user_id),
         )
         row = await cursor.fetchone()
         if row is None:
@@ -398,6 +423,51 @@ async def get_workspace(workspace_id: str, user_id: str) -> dict | None:
             "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
             "env": json.loads(row["env"]) if row["env"] else None,
         }
+    finally:
+        await db.close()
+
+
+async def share_workspace(workspace_id: str, user_id: str) -> None:
+    """Grant a user access to a workspace."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "INSERT OR IGNORE INTO workspace_access (workspace_id, user_id) VALUES (?, ?)",
+            (workspace_id, user_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def unshare_workspace(workspace_id: str, user_id: str) -> None:
+    """Revoke a user's access to a workspace."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "DELETE FROM workspace_access WHERE workspace_id = ? AND user_id = ?",
+            (workspace_id, user_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_workspace_members(workspace_id: str) -> list[dict]:
+    """Get users who have been granted access to a workspace."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT u.id, u.email FROM users u"
+            " JOIN workspace_access wa ON u.id = wa.user_id"
+            " WHERE wa.workspace_id = ?"
+            " ORDER BY u.email",
+            (workspace_id,),
+        )
+        return [
+            {"id": row["id"], "email": row["email"]}
+            for row in await cursor.fetchall()
+        ]
     finally:
         await db.close()
 

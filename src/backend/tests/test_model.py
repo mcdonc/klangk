@@ -71,6 +71,90 @@ class TestWorkspaces:
             await model.create_workspace(user["id"], "unique-name")
 
 
+class TestWorkspaceSharing:
+    async def test_share_workspace(self, workspace, user):
+        other = await model.create_user("other@example.com", "hash")
+        await model.share_workspace(workspace["id"], other["id"])
+        members = await model.get_workspace_members(workspace["id"])
+        assert len(members) == 1
+        assert members[0]["id"] == other["id"]
+        assert members[0]["email"] == "other@example.com"
+
+    async def test_get_workspace_shared_user(self, workspace, user):
+        other = await model.create_user("other@example.com", "hash")
+        # Before sharing, other cannot access
+        found = await model.get_workspace(workspace["id"], other["id"])
+        assert found is None
+        # After sharing, other can access
+        await model.share_workspace(workspace["id"], other["id"])
+        found = await model.get_workspace(workspace["id"], other["id"])
+        assert found is not None
+        assert found["name"] == "test-workspace"
+
+    async def test_get_workspace_still_none_for_unshared(
+        self, workspace, user
+    ):
+        other = await model.create_user("other@example.com", "hash")
+        found = await model.get_workspace(workspace["id"], other["id"])
+        assert found is None
+
+    async def test_unshare_workspace(self, workspace, user):
+        other = await model.create_user("other@example.com", "hash")
+        await model.share_workspace(workspace["id"], other["id"])
+        await model.unshare_workspace(workspace["id"], other["id"])
+        found = await model.get_workspace(workspace["id"], other["id"])
+        assert found is None
+        members = await model.get_workspace_members(workspace["id"])
+        assert len(members) == 0
+
+    async def test_get_workspace_members_empty(self, workspace):
+        members = await model.get_workspace_members(workspace["id"])
+        assert members == []
+
+    async def test_share_workspace_idempotent(self, workspace, user):
+        other = await model.create_user("other@example.com", "hash")
+        await model.share_workspace(workspace["id"], other["id"])
+        await model.share_workspace(workspace["id"], other["id"])
+        members = await model.get_workspace_members(workspace["id"])
+        assert len(members) == 1
+
+    async def test_get_workspace_members_ordered(self, workspace, user):
+        u_b = await model.create_user("b@example.com", "hash")
+        u_a = await model.create_user("a@example.com", "hash")
+        await model.share_workspace(workspace["id"], u_b["id"])
+        await model.share_workspace(workspace["id"], u_a["id"])
+        members = await model.get_workspace_members(workspace["id"])
+        assert members[0]["email"] == "a@example.com"
+        assert members[1]["email"] == "b@example.com"
+
+    async def test_workspace_access_cascade_on_delete(self, workspace, user):
+        other = await model.create_user("other@example.com", "hash")
+        await model.share_workspace(workspace["id"], other["id"])
+        await model.delete_workspace(workspace["id"], user["id"])
+        members = await model.get_workspace_members(workspace["id"])
+        assert members == []
+
+
+class TestSearchUsers:
+    async def test_search_by_prefix(self, user):
+        await model.create_user("alice@example.com", "hash")
+        await model.create_user("alice2@example.com", "hash")
+        await model.create_user("bob@example.com", "hash")
+        results = await model.search_users("alice")
+        assert len(results) == 2
+        assert all(r["email"].startswith("alice") for r in results)
+
+    async def test_search_no_results(self, db):
+        results = await model.search_users("zzzzz")
+        assert results == []
+
+    async def test_search_with_limit(self, user):
+        for i in range(5):
+            await model.create_user(f"match{i}@example.com", "hash")
+        results = await model.search_users("match", limit=3)
+        assert len(results) == 3
+
+
 class TestPortAllocations:
     async def test_add_and_get_ports(self, workspace):
         await model.add_port_allocations(workspace["id"], [9000, 9001, 9002])
