@@ -372,6 +372,9 @@ async def start_workspace_container(
     # Cache workspace info for auto-restart
     conn_state["workspace"] = workspace
 
+    # Clear any stale pending_status_msg from a prior connect/restart.
+    conn_state.pop("pending_status_msg", None)
+
     logger.info("Container ready for workspace %s", workspace_id)
 
 

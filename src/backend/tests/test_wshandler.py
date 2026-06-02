@@ -815,6 +815,33 @@ class TestStartWorkspaceContainer:
         wshandler.state.sessions.pop(workspace["id"], None)
         container.registry.states.pop(workspace["id"], None)
 
+    async def test_clears_pending_status_msg(self, user):
+        ws = _mock_ws(headers={"host": "localhost:8997"})
+        state = _base_state(user=user)
+        state["pending_status_msg"] = "stale message from prior connect"
+        workspace = await ws_mod.create_workspace(user["id"], "pending-ws")
+
+        async def fake_start(*a, **kw):
+            container.registry.track_activity("cid-p", workspace["id"])
+            return ("cid-p", "created")
+
+        with (
+            patch.object(
+                container.registry,
+                "start_container",
+                side_effect=fake_start,
+            ),
+            patch("glob.glob", return_value=[]),
+        ):
+            await start_workspace_container(
+                ws, state, workspace["id"], workspace
+            )
+
+        assert "pending_status_msg" not in state
+
+        wshandler.state.sessions.pop(workspace["id"], None)
+        container.registry.states.pop(workspace["id"], None)
+
 
 # --- handle_websocket dispatch branches ---
 
