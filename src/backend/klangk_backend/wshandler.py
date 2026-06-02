@@ -663,6 +663,18 @@ async def dispatch_browser_request(
         raise
 
 
+async def _claim_and_stop(state: dict, key: str) -> None:
+    """Atomically remove a session from state and stop it.
+
+    dict.pop() under the GIL ensures only one caller claims the
+    session, preventing concurrent double-stop between forwarders
+    and stop functions.
+    """
+    session = state.pop(key, None)
+    if session is not None:
+        await session.stop()
+
+
 async def stop_exec(state: dict) -> None:
     task = state.get("exec_task")
     if task:
@@ -672,10 +684,7 @@ async def stop_exec(state: dict) -> None:
         except asyncio.CancelledError:
             pass
         state["exec_task"] = None
-    session: ExecSession | None = state.get("dockerexec")
-    if session:
-        await session.stop()
-        state["dockerexec"] = None
+    await _claim_and_stop(state, "dockerexec")
 
 
 async def forward_exec_output(
@@ -715,9 +724,7 @@ async def forward_exec_output(
     ) as e:
         logger.error("Exec output forwarding error: %s", e)
     finally:
-        # Stop the exec session so the process doesn't linger.
-        await session.stop()
-        state["dockerexec"] = None
+        await _claim_and_stop(state, "dockerexec")
 
 
 async def stop_terminal(state: dict) -> None:
@@ -729,10 +736,7 @@ async def stop_terminal(state: dict) -> None:
         except asyncio.CancelledError:
             pass
         state["terminal_task"] = None
-    session: TerminalSession | None = state.get("terminal_session")
-    if session:
-        await session.stop()
-        state["terminal_session"] = None
+    await _claim_and_stop(state, "terminal_session")
 
 
 async def forward_terminal_output(
@@ -785,9 +789,7 @@ async def forward_terminal_output(
         ):
             pass
     finally:
-        # Stop the terminal session so the PTY doesn't linger.
-        await session.stop()
-        state["terminal_session"] = None
+        await _claim_and_stop(state, "terminal_session")
 
 
 async def _broadcast(workspace_id: str, message: dict) -> int:

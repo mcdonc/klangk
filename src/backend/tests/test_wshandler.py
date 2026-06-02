@@ -364,13 +364,13 @@ class TestHandleTerminalStop:
         await handle_terminal_stop(state)
 
         t.stop.assert_awaited_once()
-        assert state["terminal_session"] is None
+        assert state.get("terminal_session") is None
         assert state["terminal_task"] is None
 
     async def test_no_session(self):
         state = _base_state()
         await handle_terminal_stop(state)
-        assert state["terminal_session"] is None
+        assert state.get("terminal_session") is None
         assert state["terminal_task"] is None
 
 
@@ -499,6 +499,7 @@ class TestForwardTerminalOutput:
         t = _mock_terminal()
         state = _base_state()
         state["container_id"] = "ctr-fwd"
+        state["terminal_session"] = t
         container.registry.track_activity("ctr-fwd", "ws-fwd")
 
         async def fake_output():
@@ -509,6 +510,9 @@ class TestForwardTerminalOutput:
 
         await forward_terminal_output(ws, t, state)
 
+        # Session claimed and stopped by finally block
+        assert state.get("terminal_session") is None
+        t.stop.assert_awaited_once()
         calls = ws.send_json.call_args_list
         assert calls[0][0][0] == {"type": "terminal_output", "data": "line1"}
         assert calls[1][0][0] == {"type": "terminal_output", "data": "line2"}
@@ -604,7 +608,7 @@ class TestCleanupConnection:
 
         t.stop.assert_awaited_once()
         assert state["_idle_cb"] is None
-        assert state["terminal_session"] is None
+        assert state.get("terminal_session") is None
         # Session removed when last subscriber disconnects
         assert "ws-cleanup-1" not in wshandler.state.sessions
 
@@ -648,7 +652,7 @@ class TestCleanupConnection:
         ws = _mock_ws()
         state = _base_state()
         await cleanup_connection(ws, state)
-        assert state["terminal_session"] is None
+        assert state.get("terminal_session") is None
 
 
 # --- handle_prompt ---
@@ -1146,7 +1150,7 @@ class TestExecHandlers:
         task = asyncio.create_task(asyncio.sleep(10))
         state = {"dockerexec": session, "exec_task": task}
         await handle_exec_stop(state)
-        assert state["dockerexec"] is None
+        assert state.get("dockerexec") is None
         assert state["exec_task"] is None
 
     async def test_stop_exec_no_session(self):
@@ -1165,9 +1169,12 @@ class TestExecHandlers:
             yield b"chunk2"
 
         session.output = fake_output
-        state = {"container_id": "cid"}
+        state = {"container_id": "cid", "dockerexec": session}
         with patch.object(container.registry, "record_activity"):
             await forward_exec_output(ws, session, state)
+        # Session claimed and stopped by finally block
+        assert state.get("dockerexec") is None
+        session.stop.assert_awaited_once()
         calls = ws.send_json.call_args_list
         output_calls = [
             c for c in calls if c[0][0].get("type") == "exec_output"
@@ -1208,7 +1215,7 @@ class TestExecHandlers:
         ws = _mock_ws()
         await cleanup_connection(ws, state)
         session.stop.assert_awaited_once()
-        assert state["dockerexec"] is None
+        assert state.get("dockerexec") is None
 
 
 class TestExecDispatch:
