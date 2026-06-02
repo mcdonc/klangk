@@ -17,6 +17,7 @@ from klangk_backend.wshandler import (
     SafeWebSocket,
     SlowClientError,
     WorkspaceSession,
+    state,
     derive_hosting_info,
     start_workspace_container,
     handle_workspace_connect,
@@ -38,7 +39,6 @@ from klangk_backend.wshandler import (
     stop_exec,
     reset_workspace_state,
     _broadcast,
-    _remove_session_locked,
     _log_ws_msg,
     _SEND_QUEUE_SIZE,
 )
@@ -553,11 +553,11 @@ def _setup_workspace_state(workspace_id, ws, pi, container_id="cid-1"):
     session = WorkspaceSession(workspace_id)
     session.container_id = container_id
     session.subscribers = {ws}
-    wshandler._sessions[workspace_id] = session
+    wshandler.state.sessions[workspace_id] = session
 
 
 def _teardown_workspace_state(workspace_id):
-    wshandler._sessions.pop(workspace_id, None)
+    wshandler.state.sessions.pop(workspace_id, None)
     container.registry.states.pop(workspace_id, None)
 
 
@@ -575,7 +575,7 @@ class TestCleanupConnection:
         container.registry.track_activity("ctr-full", "ws-cleanup-1")
         session = WorkspaceSession("ws-cleanup-1")
         session.subscribers.add(ws)
-        wshandler._sessions["ws-cleanup-1"] = session
+        wshandler.state.sessions["ws-cleanup-1"] = session
         container.registry.states["ws-cleanup-1"].idle_callbacks.append(
             state["_idle_cb"]
         )
@@ -586,7 +586,7 @@ class TestCleanupConnection:
         assert state["_idle_cb"] is None
         assert state["terminal_session"] is None
         # Session removed when last subscriber disconnects
-        assert "ws-cleanup-1" not in wshandler._sessions
+        assert "ws-cleanup-1" not in wshandler.state.sessions
 
         container.registry.states.pop("ws-cleanup-1", None)
 
@@ -606,7 +606,7 @@ class TestCleanupConnection:
         session = WorkspaceSession("ws-cleanup-2")
         session.subscribers.add(ws)
         session.subscribers.add(other_ws)
-        wshandler._sessions["ws-cleanup-2"] = session
+        wshandler.state.sessions["ws-cleanup-2"] = session
         container.registry.states["ws-cleanup-2"].idle_callbacks.append(
             state["_idle_cb"]
         )
@@ -616,13 +616,13 @@ class TestCleanupConnection:
         # Terminal for THIS connection should be stopped
         t.stop.assert_awaited_once()
         # Session still present — other subscriber remains
-        assert "ws-cleanup-2" in wshandler._sessions
+        assert "ws-cleanup-2" in wshandler.state.sessions
         assert other_ws in session.subscribers
         assert ws not in session.subscribers
 
         # Cleanup
         container.registry.states.pop("ws-cleanup-2", None)
-        wshandler._sessions.pop("ws-cleanup-2", None)
+        wshandler.state.sessions.pop("ws-cleanup-2", None)
 
     async def test_cleanup_minimal(self):
         ws = _mock_ws()
@@ -755,10 +755,10 @@ class TestStartWorkspaceContainer:
 
         assert state["container_id"] == "cid-1"
         assert state["workspace"] == workspace
-        assert workspace["id"] in wshandler._sessions
+        assert workspace["id"] in wshandler.state.sessions
         assert state["_idle_cb"] is not None
 
-        wshandler._sessions.pop(workspace["id"], None)
+        wshandler.state.sessions.pop(workspace["id"], None)
         container.registry.states.pop(workspace["id"], None)
 
     async def test_idle_callback_ws_error(self, user):
@@ -788,7 +788,7 @@ class TestStartWorkspaceContainer:
         await idle_cb(workspace["id"])  # should not raise
         assert ws.send_json.call_count == 1
 
-        wshandler._sessions.pop(workspace["id"], None)
+        wshandler.state.sessions.pop(workspace["id"], None)
         container.registry.states.pop(workspace["id"], None)
 
 
@@ -954,7 +954,7 @@ class TestHandleWebsocket:
         async def fake_start(ws_arg, state, wid, ws_obj):
             state["container_id"] = "cid"
             state["workspace_id"] = wid
-            wshandler.get_or_create_session(wid)
+            wshandler.state.get_or_create_session(wid)
 
         ws.receive_text = AsyncMock(
             side_effect=[
@@ -1032,7 +1032,7 @@ class TestHandleWebsocket:
         await handle_websocket(ws)
 
         ws.accept.assert_awaited_once()
-        assert ws not in wshandler._connections
+        assert ws not in wshandler.state.connections
 
 
 class TestExecHandlers:
@@ -1319,7 +1319,7 @@ class TestBrowserBridge:
     async def test_handle_browser_response_resolves_future(self):
         loop = asyncio.get_event_loop()
         future = loop.create_future()
-        wshandler._pending_browser_requests["req-1"] = future
+        wshandler.state.pending_browser_requests["req-1"] = future
 
         wshandler.handle_browser_response(
             {"id": "req-1", "status": 200, "body": "hello"}
@@ -1345,7 +1345,7 @@ class TestBrowserBridge:
         assert "No browser client" in result["error"]
 
     async def test_dispatch_browser_request_no_subscribers(self):
-        wshandler.get_or_create_session("ws-empty")
+        wshandler.state.get_or_create_session("ws-empty")
         try:
             result = await wshandler.dispatch_browser_request(
                 "ws-empty", {"action": "fetch", "url": "http://example.com"}
@@ -1353,11 +1353,11 @@ class TestBrowserBridge:
             assert "error" in result
             assert "No browser client" in result["error"]
         finally:
-            wshandler._sessions.pop("ws-empty", None)
+            wshandler.state.sessions.pop("ws-empty", None)
 
     async def test_dispatch_browser_request_cli_only(self):
         """CLI-only connections get immediate error, not 30s timeout."""
-        session = wshandler.get_or_create_session("ws-cli-only")
+        session = wshandler.state.get_or_create_session("ws-cli-only")
         mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         # No browser_subscribers — CLI never sends ui_ready
@@ -1369,10 +1369,10 @@ class TestBrowserBridge:
             assert "error" in result
             assert "No browser client" in result["error"]
         finally:
-            wshandler._sessions.pop("ws-cli-only", None)
+            wshandler.state.sessions.pop("ws-cli-only", None)
 
     async def test_dispatch_browser_request_success(self):
-        session = wshandler.get_or_create_session("ws-bridge")
+        session = wshandler.state.get_or_create_session("ws-bridge")
         mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         session.browser_subscribers.add(mock_ws)
@@ -1380,7 +1380,10 @@ class TestBrowserBridge:
         async def respond_later():
             await asyncio.sleep(0.1)
             # Find the pending request and resolve it
-            for req_id, future in wshandler._pending_browser_requests.items():
+            for (
+                req_id,
+                future,
+            ) in wshandler.state.pending_browser_requests.items():
                 if not future.done():
                     future.set_result(
                         {"id": req_id, "status": 200, "body": "response-data"}
@@ -1401,10 +1404,10 @@ class TestBrowserBridge:
                 await task
             except asyncio.CancelledError:
                 pass
-            wshandler._sessions.pop("ws-bridge", None)
+            wshandler.state.sessions.pop("ws-bridge", None)
 
     async def test_dispatch_browser_request_timeout(self):
-        session = wshandler.get_or_create_session("ws-timeout")
+        session = wshandler.state.get_or_create_session("ws-timeout")
         mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         session.browser_subscribers.add(mock_ws)
@@ -1417,7 +1420,7 @@ class TestBrowserBridge:
             assert "error" in result
             assert "timeout" in result["error"].lower()
         finally:
-            wshandler._sessions.pop("ws-timeout", None)
+            wshandler.state.sessions.pop("ws-timeout", None)
 
 
 class TestResetWorkspaceState:
@@ -1426,40 +1429,40 @@ class TestResetWorkspaceState:
 
     async def test_removes_session_with_no_subscribers(self):
         """remove_session acquires lock and removes empty session."""
-        wshandler.get_or_create_session("ws-reset-empty")
-        assert "ws-reset-empty" in wshandler._sessions
+        wshandler.state.get_or_create_session("ws-reset-empty")
+        assert "ws-reset-empty" in wshandler.state.sessions
         container.registry.track_activity("cid-reset", "ws-reset-empty")
         try:
             await reset_workspace_state("ws-reset-empty")
-            assert "ws-reset-empty" not in wshandler._sessions
+            assert "ws-reset-empty" not in wshandler.state.sessions
         finally:
-            wshandler._sessions.pop("ws-reset-empty", None)
+            wshandler.state.sessions.pop("ws-reset-empty", None)
             container.registry.states.pop("ws-reset-empty", None)
 
     async def test_remove_session_skips_if_subscribers_reappear(self):
         """remove_session re-checks subscribers under lock and aborts if non-empty."""
-        session = wshandler.get_or_create_session("ws-reappear")
+        session = wshandler.state.get_or_create_session("ws-reappear")
         mock_ws = _mock_ws()
         # Add subscriber so the re-check inside the lock finds a non-empty set
         session.subscribers.add(mock_ws)
         try:
-            await wshandler.remove_session("ws-reappear")
+            await wshandler.state.remove_session("ws-reappear")
             # Session should NOT have been removed
-            assert "ws-reappear" in wshandler._sessions
+            assert "ws-reappear" in wshandler.state.sessions
             assert mock_ws in session.subscribers
         finally:
-            wshandler._sessions.pop("ws-reappear", None)
+            wshandler.state.sessions.pop("ws-reappear", None)
 
 
 class TestRemoveSessionLocked:
     async def test_removes_session(self):
-        session = wshandler.get_or_create_session("ws-locked-rm")
+        session = wshandler.state.get_or_create_session("ws-locked-rm")
         try:
             async with session.lock:
-                await _remove_session_locked(session)
-            assert "ws-locked-rm" not in wshandler._sessions
+                await state.remove_session_locked(session)
+            assert "ws-locked-rm" not in wshandler.state.sessions
         finally:
-            wshandler._sessions.pop("ws-locked-rm", None)
+            wshandler.state.sessions.pop("ws-locked-rm", None)
 
 
 class TestCleanupSubscriberRace:
@@ -1469,7 +1472,7 @@ class TestCleanupSubscriberRace:
         ws2 = _mock_ws()
         session = WorkspaceSession("ws-race")
         session.subscribers.add(ws1)
-        wshandler._sessions["ws-race"] = session
+        wshandler.state.sessions["ws-race"] = session
 
         state = _base_state()
         state["workspace_id"] = "ws-race"
@@ -1488,17 +1491,17 @@ class TestCleanupSubscriberRace:
         await cleanup_connection(ws1, state)
 
         # Session should be removed since ws1 was the last subscriber
-        assert "ws-race" not in wshandler._sessions
+        assert "ws-race" not in wshandler.state.sessions
 
         # Now create a fresh session for ws2 (simulating start_workspace_container)
-        session2 = wshandler.get_or_create_session("ws-race")
+        session2 = wshandler.state.get_or_create_session("ws-race")
         async with session2.lock:
             session2.subscribers.add(ws2)
 
         assert ws2 in session2.subscribers
-        assert "ws-race" in wshandler._sessions
+        assert "ws-race" in wshandler.state.sessions
 
-        wshandler._sessions.pop("ws-race", None)
+        wshandler.state.sessions.pop("ws-race", None)
 
     async def test_concurrent_cleanup_and_add(self):
         """When cleanup holds the lock, a concurrent add waits and is not lost."""
@@ -1507,7 +1510,7 @@ class TestCleanupSubscriberRace:
         session = WorkspaceSession("ws-conc")
         session.subscribers.add(ws1)
         session.subscribers.add(ws2)
-        wshandler._sessions["ws-conc"] = session
+        wshandler.state.sessions["ws-conc"] = session
 
         state1 = _base_state()
         state1["workspace_id"] = "ws-conc"
@@ -1522,11 +1525,11 @@ class TestCleanupSubscriberRace:
         await cleanup_connection(ws1, state1)
 
         # Session should still exist because ws2 is still subscribed
-        assert "ws-conc" in wshandler._sessions
+        assert "ws-conc" in wshandler.state.sessions
         assert ws2 in session.subscribers
         assert ws1 not in session.subscribers
 
-        wshandler._sessions.pop("ws-conc", None)
+        wshandler.state.sessions.pop("ws-conc", None)
 
 
 class TestWsDebugLogging:
@@ -1553,18 +1556,18 @@ class TestWsDebugLogging:
 
     async def test_broadcast_logged_when_debug(self, monkeypatch):
         monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
-        session = wshandler.get_or_create_session("ws-debug-bcast")
+        session = wshandler.state.get_or_create_session("ws-debug-bcast")
         mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         try:
             delivered = await _broadcast("ws-debug-bcast", {"type": "test"})
             assert delivered == 1
         finally:
-            wshandler._sessions.pop("ws-debug-bcast", None)
+            wshandler.state.sessions.pop("ws-debug-bcast", None)
 
     async def test_broadcast_to_browsers_logged_when_debug(self, monkeypatch):
         monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
-        session = wshandler.get_or_create_session("ws-debug-browser")
+        session = wshandler.state.get_or_create_session("ws-debug-browser")
         mock_ws = _mock_ws()
         session.browser_subscribers.add(mock_ws)
         try:
@@ -1573,7 +1576,7 @@ class TestWsDebugLogging:
             )
             assert delivered == 1
         finally:
-            wshandler._sessions.pop("ws-debug-browser", None)
+            wshandler.state.sessions.pop("ws-debug-browser", None)
 
 
 class TestLogWsMsg:
@@ -1603,7 +1606,7 @@ class TestLogWsMsg:
 
 class TestBroadcastDeadSubscribers:
     async def test_dead_subscriber_removed(self):
-        session = wshandler.get_or_create_session("ws-dead-sub")
+        session = wshandler.state.get_or_create_session("ws-dead-sub")
         live_ws = _mock_ws()
         dead_ws = _mock_ws()
         dead_ws.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
@@ -1615,7 +1618,7 @@ class TestBroadcastDeadSubscribers:
             assert dead_ws not in session.subscribers
             assert live_ws in session.subscribers
         finally:
-            wshandler._sessions.pop("ws-dead-sub", None)
+            wshandler.state.sessions.pop("ws-dead-sub", None)
 
 
 class TestHandleRestartContainer:
@@ -1822,13 +1825,13 @@ class TestFractionalTimeout:
 
 class TestDispatchBrowserRequestCancelled:
     async def test_cancelled_cleans_up(self):
-        session = wshandler.get_or_create_session("ws-cancel")
+        session = wshandler.state.get_or_create_session("ws-cancel")
         mock_ws = _mock_ws()
         session.subscribers.add(mock_ws)
         session.browser_subscribers.add(mock_ws)
         try:
             # Snapshot request IDs before so we can check ours was cleaned up
-            before = set(wshandler._pending_browser_requests.keys())
+            before = set(wshandler.state.pending_browser_requests.keys())
             task = asyncio.create_task(
                 wshandler.dispatch_browser_request(
                     "ws-cancel",
@@ -1838,20 +1841,22 @@ class TestDispatchBrowserRequestCancelled:
             )
             await asyncio.sleep(0.05)
             # Find the new request_id added by our dispatch
-            new_ids = set(wshandler._pending_browser_requests.keys()) - before
+            new_ids = (
+                set(wshandler.state.pending_browser_requests.keys()) - before
+            )
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
             # Our request should have been cleaned up
             for rid in new_ids:
-                assert rid not in wshandler._pending_browser_requests
+                assert rid not in wshandler.state.pending_browser_requests
         finally:
-            wshandler._sessions.pop("ws-cancel", None)
+            wshandler.state.sessions.pop("ws-cancel", None)
 
 
 class TestDispatchBrowserRequestDeadSubscribers:
     async def test_all_subscribers_dead(self):
-        session = wshandler.get_or_create_session("ws-all-dead")
+        session = wshandler.state.get_or_create_session("ws-all-dead")
         dead_ws = _mock_ws()
         dead_ws.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
         session.subscribers.add(dead_ws)
@@ -1864,7 +1869,7 @@ class TestDispatchBrowserRequestDeadSubscribers:
             assert "error" in result
             assert "No browser client" in result["error"]
         finally:
-            wshandler._sessions.pop("ws-all-dead", None)
+            wshandler.state.sessions.pop("ws-all-dead", None)
 
 
 class TestSendQueueBehavior:
@@ -1909,7 +1914,7 @@ class TestSendQueueBehavior:
 
     async def test_slow_client_in_broadcast(self):
         """Broadcast drops slow subscribers instead of blocking."""
-        session = wshandler.get_or_create_session("ws-slow-bcast")
+        session = wshandler.state.get_or_create_session("ws-slow-bcast")
         live_ws = _mock_ws()
         slow_ws = _mock_ws()
         slow_ws.send_json = MagicMock(side_effect=SlowClientError("full"))
@@ -1921,7 +1926,7 @@ class TestSendQueueBehavior:
             assert slow_ws not in session.subscribers
             assert live_ws in session.subscribers
         finally:
-            wshandler._sessions.pop("ws-slow-bcast", None)
+            wshandler.state.sessions.pop("ws-slow-bcast", None)
 
     async def test_slow_client_in_terminal_forwarding(self):
         """Terminal forwarder handles SlowClientError gracefully."""

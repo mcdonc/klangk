@@ -109,10 +109,6 @@ class SafeWebSocket:
         return self._ws
 
 
-# Active connections: ws -> {user, workspace_id, container_id, ...}
-_connections: dict[SafeWebSocket, dict] = {}
-
-
 class WorkspaceSession:
     """Shared state for a single workspace.
 
@@ -131,44 +127,48 @@ class WorkspaceSession:
         self.browser_subscribers.clear()
 
 
-# Active sessions keyed by workspace_id.
-_sessions: dict[str, WorkspaceSession] = {}
+class State:
+    """Module-level singleton holding mutable WebSocket handler state."""
 
-# Pending browser-delegate requests: request_id -> asyncio.Future
-_pending_browser_requests: dict[str, asyncio.Future] = {}
+    def __init__(self) -> None:
+        # Active connections: ws -> {user, workspace_id, container_id, ...}
+        self.connections: dict[SafeWebSocket, dict] = {}
+        # Active sessions keyed by workspace_id.
+        self.sessions: dict[str, WorkspaceSession] = {}
+        # Pending browser-delegate requests: request_id -> asyncio.Future
+        self.pending_browser_requests: dict[str, asyncio.Future] = {}
 
+    def get_session(self, workspace_id: str) -> WorkspaceSession | None:
+        return self.sessions.get(workspace_id)
 
-def get_session(workspace_id: str) -> WorkspaceSession | None:
-    return _sessions.get(workspace_id)
+    def get_or_create_session(self, workspace_id: str) -> WorkspaceSession:
+        if workspace_id not in self.sessions:
+            self.sessions[workspace_id] = WorkspaceSession(workspace_id)
+        return self.sessions[workspace_id]
 
+    async def remove_session(self, workspace_id: str) -> None:
+        """Remove workspace session (acquires session lock).
 
-def get_or_create_session(workspace_id: str) -> WorkspaceSession:
-    if workspace_id not in _sessions:
-        _sessions[workspace_id] = WorkspaceSession(workspace_id)
-    return _sessions[workspace_id]
-
-
-async def remove_session(workspace_id: str) -> None:
-    """Remove workspace session (acquires session lock).
-
-    For internal use when the caller does NOT already hold the lock.
-    Use ``_remove_session_locked`` when the lock is already held.
-    """
-    session = _sessions.get(workspace_id)
-    if not session:
-        return
-    async with session.lock:
-        # Re-check: someone may have added a subscriber while we waited.
-        if session.subscribers:
+        For internal use when the caller does NOT already hold the lock.
+        Use ``remove_session_locked`` when the lock is already held.
+        """
+        session = self.sessions.get(workspace_id)
+        if not session:
             return
-        _sessions.pop(workspace_id, None)
+        async with session.lock:
+            # Re-check: someone may have added a subscriber while we waited.
+            if session.subscribers:
+                return
+            self.sessions.pop(workspace_id, None)
+            await session.reset()
+
+    async def remove_session_locked(self, session: WorkspaceSession) -> None:
+        """Remove session when caller already holds ``session.lock``."""
+        self.sessions.pop(session.workspace_id, None)
         await session.reset()
 
 
-async def _remove_session_locked(session: WorkspaceSession) -> None:
-    """Remove session when caller already holds ``session.lock``."""
-    _sessions.pop(session.workspace_id, None)
-    await session.reset()
+state = State()
 
 
 async def handle_websocket(ws: WebSocket) -> None:
@@ -195,7 +195,7 @@ async def handle_websocket(ws: WebSocket) -> None:
         "dockerexec": None,
         "exec_task": None,
     }
-    _connections[safe_ws] = conn_state
+    state.connections[safe_ws] = conn_state
 
     try:
         while True:
@@ -219,7 +219,7 @@ async def handle_websocket(ws: WebSocket) -> None:
                 # CLI connections never send ui_ready.
                 wid = conn_state.get("workspace_id")
                 if wid:
-                    sess = get_session(wid)
+                    sess = state.get_session(wid)
                     if sess:
                         sess.browser_subscribers.add(safe_ws)
                 status_msg = conn_state.pop("pending_status_msg", None)
@@ -270,7 +270,7 @@ async def handle_websocket(ws: WebSocket) -> None:
         await cleanup_connection(safe_ws, conn_state)
         # Container is intentionally left running — idle timeout will clean it up.
         # This allows instant reconnection when navigating back to the workspace.
-        _connections.pop(safe_ws, None)
+        state.connections.pop(safe_ws, None)
 
 
 def derive_hosting_info(headers) -> tuple[str, str, str]:
@@ -304,10 +304,10 @@ def derive_hosting_info(headers) -> tuple[str, str, str]:
 
 
 async def start_workspace_container(
-    ws: SafeWebSocket, state: dict, workspace_id: str, workspace: dict
+    ws: SafeWebSocket, conn_state: dict, workspace_id: str, workspace: dict
 ) -> None:
     """Start/restart container for a workspace."""
-    user = state["user"]
+    user = conn_state["user"]
     host_path = str(
         workspaces.get_workspace_host_path(user["id"], workspace_id)
     )
@@ -336,11 +336,11 @@ async def start_workspace_container(
         extra_mounts=workspace.get("mounts"),
         extra_env=workspace.get("env"),
     )
-    state["container_status"] = container_status
-    state["workspace_id"] = workspace_id
-    state["container_id"] = container_id
+    conn_state["container_status"] = container_status
+    conn_state["workspace_id"] = workspace_id
+    conn_state["container_id"] = container_id
 
-    session = get_or_create_session(workspace_id)
+    session = state.get_or_create_session(workspace_id)
     async with session.lock:
         session.container_id = container_id
         session.subscribers.add(ws)
@@ -366,11 +366,11 @@ async def start_workspace_container(
         ):
             pass
 
-    state["_idle_cb"] = on_idle
+    conn_state["_idle_cb"] = on_idle
     container.registry.on_idle_stop(workspace_id, on_idle)
 
     # Cache workspace info for auto-restart
-    state["workspace"] = workspace
+    conn_state["workspace"] = workspace
 
     logger.info("Container ready for workspace %s", workspace_id)
 
@@ -608,7 +608,7 @@ def handle_browser_response(msg: dict) -> None:
     request_id = msg.get("id")
     if not request_id:
         return
-    future = _pending_browser_requests.pop(request_id, None)
+    future = state.pending_browser_requests.pop(request_id, None)
     if future and not future.done():
         future.set_result(msg)
     elif request_id:
@@ -630,11 +630,11 @@ async def dispatch_browser_request(
     request_id = str(uuid.uuid4())
     loop = asyncio.get_running_loop()
     future: asyncio.Future = loop.create_future()
-    _pending_browser_requests[request_id] = future
+    state.pending_browser_requests[request_id] = future
 
-    session = get_session(workspace_id)
+    session = state.get_session(workspace_id)
     if not session or not session.browser_subscribers:
-        _pending_browser_requests.pop(request_id, None)
+        state.pending_browser_requests.pop(request_id, None)
         return {"error": "No browser client connected to this workspace"}
 
     message = {
@@ -644,17 +644,17 @@ async def dispatch_browser_request(
     }
     delivered = await _broadcast_to_browsers(workspace_id, message)
     if delivered == 0:
-        _pending_browser_requests.pop(request_id, None)
+        state.pending_browser_requests.pop(request_id, None)
         return {"error": "No browser client connected to this workspace"}
 
     try:
         result = await asyncio.wait_for(future, timeout=timeout)
         return result
     except asyncio.TimeoutError:
-        _pending_browser_requests.pop(request_id, None)
+        state.pending_browser_requests.pop(request_id, None)
         return {"error": "Browser client did not respond within timeout"}
     except asyncio.CancelledError:
-        _pending_browser_requests.pop(request_id, None)
+        state.pending_browser_requests.pop(request_id, None)
         raise
 
 
@@ -792,7 +792,7 @@ async def _broadcast(workspace_id: str, message: dict) -> int:
     """
     if _WS_DEBUG:
         _log_ws_msg("BCAST", message)
-    session = get_session(workspace_id)
+    session = state.get_session(workspace_id)
     if not session:  # pragma: no cover
         return 0
     dead = []
@@ -817,7 +817,7 @@ async def _broadcast_to_browsers(workspace_id: str, message: dict) -> int:
     """Send a message to browser (Flutter) subscribers only, removing dead ones."""
     if _WS_DEBUG:
         _log_ws_msg("BCAST", message)
-    session = get_session(workspace_id)
+    session = state.get_session(workspace_id)
     if not session:  # pragma: no cover
         return 0
     dead = []
@@ -838,22 +838,22 @@ async def _broadcast_to_browsers(workspace_id: str, message: dict) -> int:
     return delivered
 
 
-async def cleanup_connection(ws: SafeWebSocket, state: dict) -> None:
+async def cleanup_connection(ws: SafeWebSocket, conn_state: dict) -> None:
     # Remove idle callback
-    workspace_id = state.get("workspace_id")
-    idle_cb = state.get("_idle_cb")
+    workspace_id = conn_state.get("workspace_id")
+    idle_cb = conn_state.get("_idle_cb")
     if workspace_id and idle_cb:
         container.registry.remove_idle_callback(workspace_id, idle_cb)
-        state["_idle_cb"] = None
+        conn_state["_idle_cb"] = None
 
-    await stop_terminal(state)
-    await stop_exec(state)
+    await stop_terminal(conn_state)
+    await stop_exec(conn_state)
 
     # Remove this WebSocket from subscribers.  Hold the session lock so
     # no new subscriber can sneak in between the discard and the emptiness
     # check (the "add" side in start_workspace_container already acquires
     # the lock before adding to subscribers).
-    session = get_session(workspace_id) if workspace_id else None
+    session = state.get_session(workspace_id) if workspace_id else None
     if session:
         async with session.lock:
             session.subscribers.discard(ws)
@@ -864,7 +864,7 @@ async def cleanup_connection(ws: SafeWebSocket, state: dict) -> None:
             # the race where disconnecting one of several connections kills the
             # container while others are still active.
             if not session.subscribers:
-                await _remove_session_locked(session)
+                await state.remove_session_locked(session)
 
 
 async def reset_workspace_state(workspace_id: str) -> None:
@@ -873,7 +873,7 @@ async def reset_workspace_state(workspace_id: str) -> None:
     Called when a container is killed externally (idle timeout,
     manual stop) so the next workspace_connect starts fresh.
     """
-    await remove_session(workspace_id)
+    await state.remove_session(workspace_id)
     container.registry.remove_state(workspace_id)
     logger.info("Reset workspace state for %s", workspace_id)
 
