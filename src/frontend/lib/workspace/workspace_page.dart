@@ -35,6 +35,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String _workspaceName = '';
   bool _containerStopped = false;
   bool _restarting = false;
+  bool _disconnected = false;
   String _stopReason = '';
   BrowserDelegate? _browserDelegate;
   StreamSubscription<Map<String, dynamic>>? _customEventSub;
@@ -131,10 +132,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
   void _onClientUpdate() {
     final wsClient = context.read<WsClient>();
     if (wsClient.currentWorkspaceId == widget.workspaceId) {
-      setState(() => _connecting = false);
+      setState(() {
+        _connecting = false;
+        _disconnected = false;
+      });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         wsClient.sendUiReady();
       });
+    }
+    // Detect WebSocket disconnect after we were connected
+    if (!wsClient.connected && !_connecting && !_disconnected) {
+      setState(() => _disconnected = true);
     }
   }
 
@@ -142,6 +150,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
     setState(() => _restarting = true);
     final wsClient = context.read<WsClient>();
     wsClient.sendRestartContainer();
+  }
+
+  Future<void> _reconnect() async {
+    setState(() => _connecting = true);
+    final wsClient = context.read<WsClient>();
+    await wsClient.connect();
+    if (wsClient.connected) {
+      wsClient.connectWorkspace(widget.workspaceId);
+    } else {
+      setState(() => _connecting = false);
+    }
   }
 
   @override
@@ -255,6 +274,40 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             onPressed: _restartContainer,
                             icon: const Icon(Icons.refresh, size: 18),
                             label: const Text('Restart'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: KColors.accentGreen,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          if (_disconnected && !_containerStopped)
+            Container(
+              color: Colors.black54,
+              child: Center(
+                child: _connecting
+                    ? const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(color: Colors.white),
+                          SizedBox(height: 12),
+                          Text('Reconnecting...',
+                              style: TextStyle(color: Colors.white)),
+                        ],
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text('Disconnected from server',
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 16)),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: _reconnect,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Reconnect'),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: KColors.accentGreen,
                               foregroundColor: Colors.white,
