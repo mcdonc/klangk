@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 
 from klangk_backend.dockerexec import ExecSession
 
@@ -137,3 +139,64 @@ class TestExecSession:
         # _read_stdout should have queued None
         data = await session._output_queue.get()
         assert data is None
+
+    async def test_read_task_held_after_start(self):
+        session = ExecSession("cid")
+        assert session._read_task is None
+        proc = _mock_proc(b"hello")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ):
+            await session.start(["echo", "hello"])
+        assert session._read_task is not None
+        assert isinstance(session._read_task, asyncio.Task)
+
+    async def test_stop_cancels_read_task(self):
+        session = ExecSession("cid")
+        proc = _mock_proc(b"", returncode=None)
+        proc.wait = AsyncMock()
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ):
+            await session.start(["sleep", "10"])
+        assert session._read_task is not None
+        await session.stop()
+        assert session._read_task is None
+
+    async def test_read_stdout_reraises_cancelled_error(self):
+        session = ExecSession("cid")
+        proc = _mock_proc(b"")
+        blocked = asyncio.Event()
+
+        async def _blocking_read(n):
+            blocked.set()
+            await asyncio.sleep(999)
+
+        proc.stdout.read = _blocking_read
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ):
+            await session.start(["cat"])
+        # Wait until the read task is blocked inside stdout.read
+        await blocked.wait()
+        session._read_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await session._read_task
+
+    async def test_is_alive_false_when_read_task_done(self):
+        session = ExecSession("cid")
+        proc = _mock_proc(b"output")
+        # returncode stays None so is_alive would be True without
+        # the read_task.done() check
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ):
+            await session.start(["echo", "output"])
+        # Wait for the read task to finish (it reads one chunk then EOF)
+        await session._read_task
+        assert session._read_task.done()
+        assert not session.is_alive

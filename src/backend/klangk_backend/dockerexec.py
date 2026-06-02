@@ -17,6 +17,7 @@ class ExecSession:
             maxsize=64
         )
         self._running = False
+        self._read_task: asyncio.Task | None = None
 
     async def start(self, command: list[str]) -> None:
         """Start a command via docker exec with piped stdin/stdout."""
@@ -39,7 +40,7 @@ class ExecSession:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        asyncio.create_task(self._read_stdout())
+        self._read_task = asyncio.create_task(self._read_stdout())
         logger.info(
             "Exec session started for container %s: %s",
             self.container_id,
@@ -58,7 +59,9 @@ class ExecSession:
                 # Bounded queue: blocks when full, back-pressuring the
                 # process via its kernel pipe buffer.
                 await self._output_queue.put(data)
-        except (OSError, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            raise
+        except OSError:
             pass
         # Wait for the process to exit so returncode is set before
         # the caller reads it.
@@ -77,7 +80,11 @@ class ExecSession:
 
     @property
     def is_alive(self) -> bool:
-        return self._proc is not None and self._proc.returncode is None
+        if self._proc is None:
+            return False
+        if self._read_task is not None and self._read_task.done():
+            return False
+        return self._proc.returncode is None
 
     async def write(self, data: bytes) -> None:
         """Write data to the process stdin."""
@@ -108,6 +115,17 @@ class ExecSession:
     async def stop(self) -> None:
         """Stop the exec session and clean up."""
         self._running = False
+
+        if self._read_task is not None:
+            self._read_task.cancel()
+            try:
+                await self._read_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # pragma: no cover
+                logger.exception("Error awaiting exec read task")
+            self._read_task = None
+
         if self._proc:
             try:
                 self._proc.terminate()
