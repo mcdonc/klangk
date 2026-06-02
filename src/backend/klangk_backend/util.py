@@ -30,6 +30,36 @@ def resolve_env_secret(key: str, default: str | None = None) -> str | None:
     return val
 
 
+def derive_hosting_info(headers) -> tuple[str, str, str]:
+    """Derive hosting hostname, proto, and base path from env vars or request headers.
+
+    Returns (hostname, proto, base_path). Env vars take precedence over headers.
+    Works with both Request.headers and WebSocket.headers.
+    """
+    hostname = resolve_env_secret("KLANGK_HOSTING_HOSTNAME")
+    proto = resolve_env_secret("KLANGK_HOSTING_PROTO")
+    base_path = resolve_env_secret("KLANGK_HOSTING_BASE_PATH")
+    if not hostname:
+        forwarded_host = headers.get("x-forwarded-host")
+        if forwarded_host:
+            # Behind an external reverse proxy — trust its hostname as-is
+            hostname = forwarded_host
+        else:
+            # Direct access (local dev) — use nginx port for hosted app URLs
+            nginx_port = resolve_env_secret("KLANGK_NGINX_PORT")
+            host = headers.get("host") or "localhost"
+            if nginx_port:
+                host_no_port = host.split(":")[0]
+                hostname = f"{host_no_port}:{nginx_port}"
+            else:
+                hostname = host
+    if not proto:
+        proto = headers.get("x-forwarded-proto") or "http"
+    if base_path is None:
+        base_path = headers.get("x-forwarded-prefix") or ""
+    return hostname, proto, base_path
+
+
 class BoundedOutputQueue(asyncio.Queue[T | None]):
     """Bounded asyncio.Queue with non-blocking sentinel support.
 

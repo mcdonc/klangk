@@ -21,7 +21,7 @@ from . import (
     model,
     workspaces,
 )
-from .util import resolve_env_secret
+from .util import derive_hosting_info, resolve_env_secret
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ async def register(
     password_hash = auth.hash_password(req.password)
     user_id = str(uuid.uuid4())
 
-    hostname, proto, base_path = wshandler.derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(request.headers)
     logger.info(
         "Hosting info: hostname=%s proto=%s base_path=%s",
         hostname,
@@ -179,7 +179,7 @@ async def resend_verification(
         )
     _resend_timestamps[req.email] = now
 
-    hostname, proto, base_path = wshandler.derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(request.headers)
     verification_token = auth.create_verification_token(user["id"])
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
@@ -214,7 +214,7 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
         )
     _reset_timestamps[req.email] = now
 
-    hostname, proto, base_path = wshandler.derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(request.headers)
     reset_token = auth.create_password_reset_token(user["id"])
     reset_url = (
         f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
@@ -314,7 +314,7 @@ async def change_email(
             (user["id"],),
         )
 
-    hostname, proto, base_path = wshandler.derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(request.headers)
     token = auth.create_verification_token(user["id"])
     url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
     await emailsvc.send_verification_email(req.email, url)

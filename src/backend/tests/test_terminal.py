@@ -487,6 +487,44 @@ class TestOutput:
         assert result == []
         await s.stop()
 
+    async def test_output_exits_when_read_task_done_without_sentinel(self):
+        """When sentinel is dropped and _running is True, output() exits
+        via _read_task.done() check after timeout."""
+        stream = _mock_stream()
+        first_msg = MagicMock()
+        first_msg.data = b"prompt"
+        stream.read_out = AsyncMock(side_effect=[first_msg, None])
+        exec_obj = _mock_exec(stream)
+        container = _mock_container(exec_obj)
+        docker = _mock_docker(container)
+
+        with patch("aiodocker.Docker", return_value=docker):
+            s = TerminalSession("cid")
+            await s.start()
+
+        # Wait for read_loop to finish (it gets None from read_out)
+        await asyncio.sleep(0.1)
+        assert s._read_task.done()
+
+        # Drain the queue (prompt + sentinel)
+        while not s._output_queue.empty():
+            s._output_queue.get_nowait()
+
+        # _running is still True — only _read_task.done() signals exit
+        assert s._running
+
+        async def _consume():
+            collected = []
+            async for data in s.output():
+                collected.append(data)
+            return collected
+
+        result = await asyncio.wait_for(
+            asyncio.create_task(_consume()), timeout=3.0
+        )
+        assert result == []
+        await s.stop()
+
 
 class TestIsAlive:
     async def test_alive_while_running(self):

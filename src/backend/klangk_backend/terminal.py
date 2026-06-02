@@ -170,7 +170,10 @@ class TerminalSession:
                     self._output_queue.get(), timeout=1.0
                 )
             except asyncio.TimeoutError:
-                continue
+                # Producer finished but sentinel was dropped (queue was full).
+                if self._read_task is not None and self._read_task.done():
+                    break
+                continue  # pragma: no cover
             if data is None:
                 break
             yield data

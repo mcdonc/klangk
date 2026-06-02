@@ -265,3 +265,37 @@ class TestExecSession:
         result = await asyncio.wait_for(task, timeout=3.0)
         assert result == []
         await session.stop()
+
+    async def test_output_exits_when_read_task_done_without_sentinel(self):
+        """When sentinel is dropped and _running is True, output() exits
+        via _read_task.done() check after timeout."""
+        session = ExecSession("cid")
+        proc = _mock_proc(b"data")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ):
+            await session.start(["echo", "data"])
+
+        # Wait for read task to finish
+        await asyncio.sleep(0.1)
+        assert session._read_task.done()
+
+        # Drain the queue (data + sentinel)
+        while not session._output_queue.empty():
+            session._output_queue.get_nowait()
+
+        # _running is still True — only _read_task.done() signals exit
+        assert session._running
+
+        async def _consume():
+            collected = []
+            async for data in session.output():
+                collected.append(data)
+            return collected
+
+        result = await asyncio.wait_for(
+            asyncio.create_task(_consume()), timeout=3.0
+        )
+        assert result == []
+        await session.stop()

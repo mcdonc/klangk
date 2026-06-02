@@ -13,12 +13,14 @@ from klangk_backend import (
     container,
     workspaces as ws_mod,
 )
+from klangk_backend.util import (
+    derive_hosting_info,
+)
 from klangk_backend.wshandler import (
     SafeWebSocket,
     SlowClientError,
     WorkspaceSession,
     state,
-    derive_hosting_info,
     start_workspace_container,
     handle_workspace_connect,
     handle_workspace_disconnect,
