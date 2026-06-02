@@ -587,6 +587,10 @@ class ContainerRegistry:
     async def shutdown(self) -> None:
         if self.cleanup_task:
             self.cleanup_task.cancel()
+            try:
+                await self.cleanup_task
+            except asyncio.CancelledError:
+                pass
             self.cleanup_task = None
         # Skip container cleanup when running inside a container
         # (developing klangk in klangk — don't kill our own container).

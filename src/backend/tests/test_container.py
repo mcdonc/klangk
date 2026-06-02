@@ -1011,15 +1011,20 @@ class TestShutdown:
     async def test_shutdown_cancels_cleanup_task(self):
         mock_docker = _mock_docker()
         mock_docker.containers.list = AsyncMock(return_value=[])
-        mock_task = MagicMock()
-        container.registry.cleanup_task = mock_task
+
+        # Create a real cancellable task so shutdown can await it.
+        async def fake_cleanup():
+            await asyncio.sleep(999)
+
+        task = asyncio.create_task(fake_cleanup())
+        container.registry.cleanup_task = task
 
         with patch.object(
             container.registry, "get_docker", return_value=mock_docker
         ):
             container.registry.docker = mock_docker
             await container.registry.shutdown()
-        mock_task.cancel.assert_called_once()
+        assert task.cancelled()
         assert container.registry.cleanup_task is None
 
     async def test_shutdown_handles_docker_error(self):

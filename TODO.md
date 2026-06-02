@@ -18,7 +18,10 @@
 
 ## Backend
 
-- **`ExecSession.returncode` race with `stop()`**: `ExecSession.stop()` sets `self._proc = None` (`dockerexec.py:138`). If `stop()` runs between the output iterator ending and `forward_exec_output` reading `session.returncode` (`wshandler.py:697`), `returncode` returns `None` and the client gets exit code `1` instead of the real value.
+- **Stale bridge token on container creation failure** (`container.py:335`): `create_bridge_token()` is called before `docker.containers.create_or_replace()`. If creation fails, the token remains in `_bridge_tokens` mapping to a workspace with no container. Fix: wrap in try/except and revoke on failure.
+- **`ExecSession.returncode` race with `stop()`** (`dockerexec.py:146`): `stop()` sets `self._proc = None`. If `stop()` runs between the output iterator ending and `forward_exec_output` reading `session.returncode` (`wshandler.py`), `returncode` returns `None` and the client gets exit code `1` instead of the real value.
+- **Duplicated `on_workspace_killed` callback pattern** (`container.py:482-490` and `539-547`): Identical try/except/log blocks for calling the workspace killed callback. Extract into a helper method.
+- **`attach_container` is dead code** (`container.py:447-456`): Never called anywhere. Remove it.
 
 - **Append /v1 to proxy URL in models.json instead of .env**: `KLANGK_LLM_BASE_URL` currently includes `/v1` (e.g., `http://bizon:4001/v1`). The `/v1` should be appended in `setup_pi.py` when writing `models.json` instead, so the `.env` value is just the base host URL (`http://bizon:4001`). This makes the proxy URL more natural for other uses (e.g., `curl $KLANGK_LLM_PROXY_URL/models` from inside the container) and avoids double `/v1/v1` mistakes.
 - **Default password generator runs on every startup**: The default admin user seeding generates a random password each time the server starts if `KLANGK_DEFAULT_PASSWORD` is not set. It should only generate and log the password on first run (when the user is actually created), not on subsequent startups when the user already exists.
