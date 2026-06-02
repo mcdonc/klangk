@@ -129,14 +129,21 @@ export async function clickBackToWorkspaces(page: Page, timeout = 30_000) {
   // The logo is a 36x36 widget in the AppBar (~56px tall).  Try a grid
   // of candidate coordinates covering the logo area.  The first hit that
   // triggers navigation wins.
+  // Wider grid to handle webkit's larger offset from the Flutter canvas.
   const candidates = [
     { x: 25, y: 28 }, // original center estimate
-    { x: 18, y: 28 }, // slightly left
-    { x: 32, y: 28 }, // slightly right
-    { x: 25, y: 20 }, // slightly higher
-    { x: 25, y: 36 }, // slightly lower
-    { x: 18, y: 20 }, // top-left corner
-    { x: 32, y: 36 }, // bottom-right corner
+    { x: 18, y: 28 }, // left
+    { x: 32, y: 28 }, // right
+    { x: 25, y: 20 }, // higher
+    { x: 25, y: 36 }, // lower
+    { x: 18, y: 20 }, // top-left
+    { x: 32, y: 36 }, // bottom-right
+    { x: 40, y: 28 }, // further right
+    { x: 12, y: 28 }, // further left
+    { x: 25, y: 14 }, // much higher
+    { x: 25, y: 44 }, // much lower
+    { x: 40, y: 20 }, // top far-right
+    { x: 40, y: 36 }, // bottom far-right
   ];
 
   const deadline = Date.now() + timeout;
@@ -149,7 +156,7 @@ export async function clickBackToWorkspaces(page: Page, timeout = 30_000) {
     // Give Flutter time to process the tap and start navigation
     try {
       await expect(page).toHaveTitle(/Workspaces/i, {
-        timeout: Math.min(5_000, deadline - Date.now()),
+        timeout: Math.min(3_000, deadline - Date.now()),
       });
       return; // success
     } catch {
