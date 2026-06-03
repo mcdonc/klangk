@@ -1478,15 +1478,39 @@ class TestBrowserBridge:
     async def test_handle_browser_response_resolves_future(self):
         loop = asyncio.get_event_loop()
         future = loop.create_future()
-        wshandler.state.pending_browser_requests["req-1"] = future
+        mock_sock = _mock_sock()
+        wshandler.state.pending_browser_requests["req-1"] = (
+            future,
+            mock_sock,
+        )
 
         wshandler.state.handle_browser_response(
-            {"id": "req-1", "status": 200, "body": "hello"}
+            {"id": "req-1", "status": 200, "body": "hello"}, sender=mock_sock
         )
 
         assert future.done()
         result = future.result()
         assert result["body"] == "hello"
+
+    async def test_handle_browser_response_wrong_sender_rejected(self):
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        expected = _mock_sock()
+        imposter = _mock_sock()
+        wshandler.state.pending_browser_requests["req-2"] = (
+            future,
+            expected,
+        )
+
+        wshandler.state.handle_browser_response(
+            {"id": "req-2", "status": 200}, sender=imposter
+        )
+
+        # Future should NOT be resolved — wrong sender
+        assert not future.done()
+        # Entry should still be pending
+        assert "req-2" in wshandler.state.pending_browser_requests
+        wshandler.state.pending_browser_requests.pop("req-2", None)
 
     async def test_handle_browser_response_missing_id(self):
         # Should not raise
@@ -1531,9 +1555,9 @@ class TestBrowserBridge:
         async def respond_later():
             await asyncio.sleep(0.1)
             # Find the pending request and resolve it
-            for (
-                req_id,
+            for req_id, (
                 future,
+                _sock,
             ) in wshandler.state.pending_browser_requests.items():
                 if not future.done():
                     future.set_result(
@@ -1581,9 +1605,9 @@ class TestDispatchBrowserRequestTo:
 
         async def respond_later():
             await asyncio.sleep(0.1)
-            for (
-                req_id,
+            for req_id, (
                 future,
+                _sock,
             ) in wshandler.state.pending_browser_requests.items():
                 if not future.done():
                     future.set_result(

@@ -182,7 +182,7 @@ class WorkspaceSession:
         request_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
-        state.pending_browser_requests[request_id] = future
+        state.pending_browser_requests[request_id] = (future, None)
 
         if not self.browser_subscribers:
             state.pending_browser_requests.pop(request_id, None)
@@ -211,12 +211,13 @@ class WorkspaceSession:
         """Send a browser_request to a specific browser connection.
 
         Used when a per-connection bridge token identifies the exact
-        browser that should handle the request.
+        browser that should handle the request.  Only a response from
+        target_sock is accepted.
         """
         request_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
-        state.pending_browser_requests[request_id] = future
+        state.pending_browser_requests[request_id] = (future, target_sock)
 
         message = {**request, "type": "browser_request", "id": request_id}
         _log_ws_msg("BCAST", message)
@@ -256,7 +257,11 @@ class WebSocketState:
         # Active sessions keyed by workspace_id.
         self.sessions: dict[str, WorkspaceSession] = {}
         # Pending browser-delegate requests: request_id -> asyncio.Future
-        self.pending_browser_requests: dict[str, asyncio.Future] = {}
+        # request_id → (future, expected_sock) — the expected_sock is the
+        # connection that should send the response.  None means any connection.
+        self.pending_browser_requests: dict[
+            str, tuple[asyncio.Future, SafeWebSocket | None]
+        ] = {}
 
     def get_session(self, workspace_id: str) -> WorkspaceSession | None:
         return self.sessions.get(workspace_id)
@@ -324,19 +329,34 @@ class WebSocketState:
             )
             await self.reset_workspace(ws["id"])
 
-    def handle_browser_response(self, msg: dict) -> None:
-        """Resolve a pending browser-delegate request."""
+    def handle_browser_response(
+        self, msg: dict, sender: SafeWebSocket | None = None
+    ) -> None:
+        """Resolve a pending browser-delegate request.
+
+        If the request was dispatched to a specific connection, only
+        a response from that connection is accepted.
+        """
         request_id = msg.get("id")
         if not request_id:
             return
-        future = self.pending_browser_requests.pop(request_id, None)
-        if future and not future.done():
-            future.set_result(msg)
-        elif request_id:
+        entry = self.pending_browser_requests.get(request_id)
+        if entry is None:
             logger.debug(
                 "Browser response for unknown/completed request %s",
                 request_id,
             )
+            return
+        future, expected_sock = entry
+        if expected_sock is not None and sender is not expected_sock:
+            logger.warning(
+                "Browser response from wrong connection for request %s",
+                request_id,
+            )
+            return
+        self.pending_browser_requests.pop(request_id, None)
+        if not future.done():
+            future.set_result(msg)
 
 
 state = WebSocketState()
@@ -821,7 +841,7 @@ async def handle_websocket(websocket: WebSocket) -> None:
             elif cmd == "heartbeat":
                 await conn.handle_heartbeat()
             elif cmd == "browser_response":
-                state.handle_browser_response(msg)
+                state.handle_browser_response(msg, safe_ws)
             else:
                 send_error(safe_ws, f"Unknown command: {cmd}")
 
