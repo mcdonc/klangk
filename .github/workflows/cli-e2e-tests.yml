@@ -2,20 +2,42 @@ name: CLI E2E Tests
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "src/backend/**"
-      - "src/docker/**"
-      - ".github/workflows/cli-e2e-tests.yml"
-  push:
-    branches: [main]
-    paths:
-      - "src/backend/**"
-      - "src/docker/**"
-      - ".github/workflows/cli-e2e-tests.yml"
+  schedule:
+    - cron: "45 * * * *"
 
 jobs:
+  check:
+    # For scheduled triggers, skip if no commits in the last hour.
+    # Always run for workflow_dispatch.
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check for recent commits
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          LAST_COMMIT=$(git log -1 --format=%ct)
+          NOW=$(date +%s)
+          DIFF=$((NOW - LAST_COMMIT))
+          if [ "$DIFF" -le 3600 ]; then
+            echo "Commits found in the last hour"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No commits in the last hour, cancelling"
+            gh run cancel ${{ github.run_id }}
+          fi
+
   test:
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
