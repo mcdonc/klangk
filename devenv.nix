@@ -4,54 +4,6 @@
   lib,
   ...
 }:
-let
-  dart312 = pkgs.stdenv.mkDerivation {
-    pname = "dart";
-    version = "3.12.1";
-
-    src = pkgs.fetchurl {
-      url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.12.1/sdk/dartsdk-linux-x64-release.zip";
-      hash = "sha256-aiu/ZKEzychqYqUy29PgtNtKw2Wr1Fbp+dHF32H82/g=";
-    };
-
-    nativeBuildInputs = [ pkgs.unzip ];
-
-    installPhase = ''
-      runHook preInstall
-      rm LICENSE README revision
-      cp -R . $out
-    ''
-    + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-      find $out/bin -type f -executable | while read f; do
-        if patchelf --print-interpreter "$f" >/dev/null 2>&1; then
-          patchelf --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" \
-                   --set-rpath "${pkgs.lib.makeLibraryPath [ (pkgs.lib.getLib pkgs.stdenv.cc.cc) ]}" "$f"
-        fi
-      done
-    ''
-    + ''
-      runHook postInstall
-    '';
-
-    dontStrip = true;
-
-    meta = with pkgs.lib; {
-      homepage = "https://dart.dev";
-      description = "Scalable programming language for building web, server, and mobile apps";
-      mainProgram = "dart";
-      platforms = [ "x86_64-linux" ];
-      sourceProvenance = with sourceTypes; [ binaryNativeCode ];
-      license = licenses.bsd3;
-    };
-  };
-
-  # Flutter with dart 3.12.1 swapped into its internal SDK
-  flutter312 = pkgs.flutter.wrapFlutter (
-    pkgs.flutter.unwrapped.override {
-      dart = dart312;
-    }
-  );
-in
 {
   languages.javascript = {
     enable = true;
@@ -71,9 +23,8 @@ in
   };
 
   packages = with pkgs; [
-    dart312
     docker-client
-    flutter312
+    flutter
     gnutar
     nginx
     xz
