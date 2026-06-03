@@ -1265,16 +1265,12 @@ test.describe("Klangk E2E", () => {
     const page1 = await ctx1.newPage();
     const page2 = await ctx2.newPage();
 
-    // Set up terminal_started listeners before opening workspaces
-    const termReady1 = waitForTerminalReady(page1);
-    const termReady2 = waitForTerminalReady(page2);
+    // Only user 1 (owner) needs a working terminal — user 2 just needs
+    // to be connected to the WebSocket to verify no frames leak.
+    const termReady1 = waitForTerminalReady(page1, 60_000);
 
-    await openWorkspace(page1, ownerEmail, workspaceId);
-    await openWorkspace(page2, memberEmail, workspaceId);
-    await termReady1;
-    await termReady2;
-
-    // Collect ALL non-heartbeat WebSocket frames on User B
+    // Set up frame listener on page2 BEFORE openWorkspace so we capture
+    // the WebSocket connection created during workspace open.
     const memberFrames: string[] = [];
     page2.on("websocket", (ws) => {
       ws.on("framereceived", (frame: { payload: string | Buffer }) => {
@@ -1289,6 +1285,15 @@ test.describe("Klangk E2E", () => {
         }
       });
     });
+
+    await openWorkspace(page1, ownerEmail, workspaceId);
+    await openWorkspace(page2, memberEmail, workspaceId);
+    await termReady1;
+
+    // Clear any frames from the setup phase (user 2's own terminal
+    // output like the shell prompt) before we start the isolation test.
+    await page2.waitForTimeout(2000);
+    memberFrames.length = 0;
 
     // User A types a command in the terminal
     const { width, height } = vp(page1);
