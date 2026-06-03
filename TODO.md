@@ -11,6 +11,7 @@
 - **Generic escape sequence handling in `klangk shell`**: The CLI stdin loop currently special-cases ESC (`\x1b`) with a 50ms select timeout to batch arrow key sequences. This is fragile — a more robust approach would read all available bytes from stdin in a single `os.read` with a larger buffer, rather than reading 1 byte and checking for ESC. This would handle all multi-byte sequences (arrow keys, function keys, mouse events, etc.) without special-casing.
 - **Terminal focus requires precise click target**: In Firefox, the terminal only receives keyboard focus when clicking very specific areas of the terminal pane. Clicking elsewhere in the pane does nothing — the cursor doesn't appear and typing has no effect. The entire terminal pane should grant focus on click.
 - **Clipboard image paste in chat**: Investigate whether Pi supports image inputs and, if so, allow pasting images from the clipboard into the chat input field. Would need to intercept paste events, detect image MIME types, convert to a format Pi can accept (base64 or URL), and pass via the `images` parameter of `prompt()`.
+- **Workspace chat**: Add a per-workspace chat feature so users sharing a workspace can talk to each other in real time. A chat pane or sidebar in the workspace view, messages delivered over the existing WebSocket connection, with presence indicators showing who else is in the workspace. History persists per-workspace (could be stored server-side in SQLite alongside workspace metadata). Useful for pair-programming and collaborative debugging sessions.
 
 ## Backend
 
@@ -52,7 +53,6 @@
 
 ## Soliplex Integration
 
-- **Soliplex plugin should use all credentials if they exist**: The soliplex plugin currently uses a single set of credentials. It should detect and use all available credentials (e.g., multiple API keys or accounts) when present.
 - **Prevent soliplex tools from being called for non-Soliplex queries**: The LLM calls `soliplex_list_rooms` speculatively for general knowledge questions. Update the soliplex extension's tool description to make it clear it's only for querying Soliplex knowledge bases.
 
 ## Docker
