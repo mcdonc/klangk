@@ -23,17 +23,17 @@ def list_files(
         return []
 
     entries = []
+    home = workspaces.get_home_host_path(user_id, workspace_id)
     for entry in sorted(path.iterdir()):
+        st = entry.stat()
         entries.append(
             {
                 "name": entry.name,
-                "path": str(
-                    entry.relative_to(
-                        workspaces.get_home_host_path(user_id, workspace_id)
-                    )
-                ),
+                "path": str(entry.relative_to(home)),
                 "is_dir": entry.is_dir(),
-                "size": entry.stat().st_size if entry.is_file() else None,
+                "size": st.st_size if entry.is_file() else None,
+                "mtime": st.st_mtime,
+                "ctime": st.st_ctime,
             }
         )
     return entries

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../theme/colors.dart';
 import 'package:http/http.dart' as http;
 import '../ws/ws_client.dart';
@@ -11,6 +12,21 @@ import '../utils/suppress_browser_menu.dart';
 
 /// Override for testing — set to intercept all HTTP calls in file viewer.
 http.Client? testHttpClientOverride;
+
+/// Format a Unix timestamp (seconds since epoch) as a relative time string.
+String formatMtime(dynamic mtime) {
+  if (mtime == null) return '';
+  final dt =
+      DateTime.fromMillisecondsSinceEpoch((mtime * 1000).toInt(), isUtc: true)
+          .toLocal();
+  final now = DateTime.now();
+  final diff = now.difference(dt);
+  if (diff.inMinutes < 1) return 'just now';
+  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+  if (diff.inDays < 1) return '${diff.inHours}h ago';
+  if (diff.inDays < 30) return '${diff.inDays}d ago';
+  return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+}
 
 class FileViewerPanel extends StatefulWidget {
   final WsClient wsClient;
@@ -409,7 +425,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
                   title: Text(name, style: const TextStyle(fontSize: 13)),
                   subtitle: isDir
                       ? null
-                      : Text('${entry['size'] ?? 0} bytes',
+                      : Text(
+                          '${entry['size'] ?? 0} bytes  ${formatMtime(entry['mtime'])}',
                           style: const TextStyle(fontSize: 11)),
                   onTap: () {
                     if (isDir) {
@@ -464,8 +481,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
               width: double.infinity,
               child: SelectableText(
                 _fileContent ?? 'Loading...',
-                style:
-                    const TextStyle(fontFamily: 'JetBrains Mono', fontSize: 16),
+                style: TextStyle(
+                    fontFamily: GoogleFonts.robotoMono().fontFamily,
+                    fontSize: 14),
                 textAlign: TextAlign.left,
               ),
             ),

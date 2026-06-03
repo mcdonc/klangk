@@ -1433,4 +1433,46 @@ void main() {
       client.close();
     });
   });
+
+  group('formatMtime', () {
+    test('returns empty string for null', () {
+      expect(formatMtime(null), '');
+    });
+
+    test('returns just now for recent timestamp', () {
+      final now = DateTime.now().millisecondsSinceEpoch / 1000;
+      expect(formatMtime(now), 'just now');
+    });
+
+    test('returns minutes ago', () {
+      final tenMinAgo = DateTime.now()
+              .subtract(const Duration(minutes: 10))
+              .millisecondsSinceEpoch /
+          1000;
+      expect(formatMtime(tenMinAgo), '10m ago');
+    });
+
+    test('returns hours ago', () {
+      final threeHoursAgo = DateTime.now()
+              .subtract(const Duration(hours: 3))
+              .millisecondsSinceEpoch /
+          1000;
+      expect(formatMtime(threeHoursAgo), '3h ago');
+    });
+
+    test('returns days ago', () {
+      final fiveDaysAgo = DateTime.now()
+              .subtract(const Duration(days: 5))
+              .millisecondsSinceEpoch /
+          1000;
+      expect(formatMtime(fiveDaysAgo), '5d ago');
+    });
+
+    test('returns date for old timestamps', () {
+      // 2025-01-15 00:00:00 UTC
+      const oldTimestamp = 1736899200.0;
+      final result = formatMtime(oldTimestamp);
+      expect(result, matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
+    });
+  });
 }
