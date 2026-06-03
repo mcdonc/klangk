@@ -1237,6 +1237,96 @@ test.describe("Klangk E2E", () => {
     });
   });
 
+  test("websocket events do not leak between connections on shared workspace", async ({
+    browser,
+    request,
+  }) => {
+    // Register two users and share a workspace
+    const ownerEmail = `iso-owner-${Date.now()}@test.example.com`;
+    const memberEmail = `iso-member-${Date.now()}@test.example.com`;
+    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+    await registerUser(request, memberEmail);
+
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers: ownerHeaders,
+      data: { name: `e2e-isolation-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspaceId = (await wsResp.json()).id;
+
+    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+      headers: ownerHeaders,
+      data: { email: memberEmail },
+    });
+
+    // Open workspace in two separate browser contexts
+    const ctx1 = await browser.newContext();
+    const ctx2 = await browser.newContext();
+    const page1 = await ctx1.newPage();
+    const page2 = await ctx2.newPage();
+
+    // Set up terminal_started listeners before opening workspaces
+    const termReady1 = waitForTerminalReady(page1);
+    const termReady2 = waitForTerminalReady(page2);
+
+    await openWorkspace(page1, ownerEmail, workspaceId);
+    await openWorkspace(page2, memberEmail, workspaceId);
+    await termReady1;
+    await termReady2;
+
+    // Collect ALL non-heartbeat WebSocket frames on User B
+    const memberFrames: string[] = [];
+    page2.on("websocket", (ws) => {
+      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+        const text = frame.payload.toString();
+        try {
+          const msg = JSON.parse(text);
+          if (msg.type && msg.type !== "heartbeat_ack") {
+            memberFrames.push(text);
+          }
+        } catch {
+          // not JSON — ignore
+        }
+      });
+    });
+
+    // User A types a command in the terminal
+    const { width, height } = vp(page1);
+    const f = fv(page1);
+    await f.click({
+      position: { x: width / 2, y: height / 2 },
+      force: true,
+    });
+    await page1.waitForTimeout(1000);
+    await page1.keyboard.type(
+      "echo isolation-test-from-owner > /tmp/iso-test.txt",
+    );
+    await page1.keyboard.press("Enter");
+
+    // Wait for the command to execute and any events to propagate
+    await page1.waitForTimeout(5000);
+
+    // User B should NOT have received any terminal_output or other
+    // events from User A's session
+    const leakedFrames = memberFrames.filter((f) => {
+      const msg = JSON.parse(f);
+      return (
+        msg.type === "terminal_output" ||
+        msg.type === "exec_output" ||
+        msg.type === "browser_request"
+      );
+    });
+
+    expect(leakedFrames).toHaveLength(0);
+
+    // Clean up
+    await ctx1.close();
+    await ctx2.close();
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers: ownerHeaders,
+    });
+  });
+
   test("container recreated on page refresh", async ({ page, request }) => {
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
