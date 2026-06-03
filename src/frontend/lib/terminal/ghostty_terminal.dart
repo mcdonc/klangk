@@ -34,6 +34,18 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   StreamSubscription<Map<String, dynamic>>? _eventSub;
   bool _started = false;
 
+  // Raw bytes of the bundled monospace font. flterm measures cell width from
+  // this font's 'M' advance; without it, FontDataResolver's asset-path guessing
+  // misses our `assets/fonts/...` path on web, so it measures a wider fallback
+  // and leaves visible space around every glyph. Load and pass it explicitly.
+  //
+  // TODO: don't hardcode the font family/asset path. These must stay in sync
+  // with `_theme.fontFamily` and the `fonts:` entry in pubspec.yaml. Derive
+  // them from the theme/font config so the terminal font lives in one place.
+  static const _fontFamily = 'JetBrains Mono';
+  static const _fontAsset = 'assets/fonts/JetBrainsMono-Regular.ttf';
+  Uint8List? _fontData;
+
   // Cell dimensions, captured from the controller's resize callback (flterm
   // has no viewWidth/viewHeight getter the way xterm did). Seeded to 80x24
   // until the first resize fires.
@@ -59,6 +71,17 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       _terminal.write(utf8.encode(data));
     });
     _eventSub = widget.wsClient.customEvents.listen(_handleEvent);
+    _loadFont();
+  }
+
+  // flterm measures cell width by laying out 'M' in [_fontFamily]; if the font
+  // isn't loaded yet it measures a wider fallback advance and never re-measures,
+  // leaving space around every glyph. Register the family with the engine and
+  // await it before the view builds, so the one measurement uses the real font.
+  Future<void> _loadFont() async {
+    final data = await rootBundle.load(_fontAsset);
+    await (FontLoader(_fontFamily)..addFont(Future.value(data))).load();
+    if (mounted) setState(() => _fontData = data.buffer.asUint8List());
   }
 
   void _handleEvent(Map<String, dynamic> msg) {
@@ -119,6 +142,12 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       );
     }
 
+    // Build the view only once the font bytes are loaded, so flterm's first
+    // (and only unprompted) cell-metric measurement uses the real font.
+    if (_fontData == null) {
+      return const ColoredBox(color: Color(0xFF0D1117));
+    }
+
     return GestureDetector(
       // Right-click only — primary/selection gestures stay with flterm's own
       // detector inside TerminalView.
@@ -161,6 +190,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       child: TerminalView(
         controller: _terminal,
         theme: _theme,
+        fontData: _fontData,
         focusNode: _focusNode,
         scrollController: _scrollController,
         autofocus: false,
