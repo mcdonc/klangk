@@ -93,6 +93,16 @@ async def init_db() -> None:
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                user_email TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS login_attempts (
                 email TEXT PRIMARY KEY,
                 attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -767,5 +777,87 @@ async def clear_login_attempts(email: str) -> None:
             "DELETE FROM login_attempts WHERE email = ?", (email,)
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+# Chat messages
+
+
+async def add_chat_message(
+    workspace_id: str, user_id: str, user_email: str, message: str
+) -> dict:
+    """Store a chat message and return it."""
+    db = await get_db()
+    try:
+        msg_id = str(uuid.uuid4())
+        await db.execute(
+            "INSERT INTO chat_messages (id, workspace_id, user_id, user_email, message)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (msg_id, workspace_id, user_id, user_email, message),
+        )
+        await db.commit()
+        cursor = await db.execute(
+            "SELECT created_at FROM chat_messages WHERE id = ?", (msg_id,)
+        )
+        row = await cursor.fetchone()
+        return {
+            "id": msg_id,
+            "workspace_id": workspace_id,
+            "user_id": user_id,
+            "user_email": user_email,
+            "message": message,
+            "created_at": row["created_at"],
+        }
+    finally:
+        await db.close()
+
+
+async def delete_chat_message(message_id: str, user_id: str) -> bool:
+    """Soft-delete a chat message by replacing its text.
+
+    Only the author can delete their own messages.  The row is
+    preserved so the history shows a placeholder.
+    """
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "UPDATE chat_messages SET message = '<message deleted by author>'"
+            " WHERE id = ? AND user_id = ?",
+            (message_id, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
+    """Get the most recent chat messages for a workspace."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, workspace_id, user_id, user_email, message, created_at"
+            " FROM chat_messages WHERE workspace_id = ?"
+            " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (workspace_id, limit),
+        )
+        rows = await cursor.fetchall()
+        # Return in chronological order (oldest first)
+        return list(
+            reversed(
+                [
+                    {
+                        "id": row["id"],
+                        "workspace_id": row["workspace_id"],
+                        "user_id": row["user_id"],
+                        "user_email": row["user_email"],
+                        "message": row["message"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
+            )
+        )
     finally:
         await db.close()

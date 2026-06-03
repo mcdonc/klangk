@@ -1435,6 +1435,23 @@ class TestExecDispatch:
             await handle_websocket(websocket)
         mock.assert_awaited_once()
 
+    async def test_dispatch_chat_send(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "chat_send", "message": "hi"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_chat_send", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
 
 class TestHandleHeartbeat:
     async def test_records_activity(self):
@@ -2392,3 +2409,78 @@ class TestSendQueueBehavior:
         with patch.object(container.registry, "record_activity"):
             await conn.forward_exec_output(session)
         # Should not raise
+
+
+class TestChatSend:
+    async def test_chat_send_broadcasts(self, workspace, user):
+        sock1 = _mock_sock()
+        sock2 = _mock_sock()
+        conn = _base_conn(user=user, ws=sock1)
+        conn.workspace_id = workspace["id"]
+
+        session = wshandler.state.get_or_create_session(workspace["id"])
+        session.subscribers.add(sock1)
+        session.subscribers.add(sock2)
+        try:
+            await conn.handle_chat_send({"message": "hello everyone"})
+            # Both subscribers should receive the broadcast
+            assert sock1.send_json.call_count == 1
+            assert sock2.send_json.call_count == 1
+            sent = sock1.send_json.call_args[0][0]
+            assert sent["type"] == "chat_message"
+            assert sent["message"] == "hello everyone"
+            assert sent["user_email"] == user["email"]
+            assert "id" in sent
+            assert "created_at" in sent
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+
+    async def test_chat_send_no_workspace(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        await conn.handle_chat_send({"message": "hello"})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Not connected" in str(c) for c in calls)
+
+    async def test_chat_send_empty(self, workspace, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        await conn.handle_chat_send({"message": "   "})
+        sock.send_json.assert_not_called()
+
+    async def test_chat_history_on_connect(self, user):
+        from klangk_backend import model
+
+        workspace = await ws_mod.create_workspace(user["id"], "chat-ws")
+        await model.add_chat_message(
+            workspace["id"], "someone@test.com", "old message"
+        )
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+
+        async def fake_start(wid, ws_obj):
+            conn.container_id = "cid"
+
+        with (
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                side_effect=fake_start,
+            ),
+            patch.object(
+                container.registry,
+                "get_workspace_ports",
+                return_value=[],
+            ),
+        ):
+            await conn.handle_workspace_connect(
+                {"workspaceId": workspace["id"]}
+            )
+
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        history = [c for c in calls if c.get("type") == "chat_history"]
+        assert len(history) == 1
+        assert len(history[0]["messages"]) == 1
+        assert history[0]["messages"][0]["message"] == "old message"

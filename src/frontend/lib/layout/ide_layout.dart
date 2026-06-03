@@ -1,24 +1,29 @@
 import 'package:flutter/material.dart';
 import '../terminal/container_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
+import '../chat/workspace_chat.dart';
 import '../theme/colors.dart';
 
-/// IDE layout: tabs (Terminal + Files) with optional
+/// IDE layout: tabs (Terminal + Files + Chat) with optional
 /// debug pane at the bottom separated by a draggable divider.
 class IdeLayout extends StatefulWidget {
   final Widget fileViewer;
   final Widget terminal;
+  final WorkspaceChat? chat;
   final Widget? debug;
   final GlobalKey<ContainerTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
+  final GlobalKey<WorkspaceChatState>? chatKey;
 
   const IdeLayout({
     super.key,
     required this.fileViewer,
     required this.terminal,
+    this.chat,
     this.debug,
     this.terminalKey,
     this.fileViewerKey,
+    this.chatKey,
   });
 
   @override
@@ -28,6 +33,7 @@ class IdeLayout extends StatefulWidget {
 class _IdeLayoutState extends State<IdeLayout> {
   int _selectedIndex = 0;
   double _debugHeight = 0; // collapsed by default
+  int _chatUnread = 0;
 
   static const _dividerHeight = 6.0;
   static const _minDebugHeight = 0.0;
@@ -41,11 +47,18 @@ class _IdeLayoutState extends State<IdeLayout> {
     } else if (index == 1) {
       widget.fileViewerKey?.currentState?.refresh();
     }
+    // Notify chat widget of visibility change
+    widget.chatKey?.currentState?.setVisible(index == 2);
+  }
+
+  void _onChatUnreadChanged(int count) {
+    if (mounted) setState(() => _chatUnread = count);
   }
 
   @override
   Widget build(BuildContext context) {
     final hasDebug = widget.debug != null;
+    final hasChat = widget.chat != null;
 
     return Column(
       children: [
@@ -72,6 +85,16 @@ class _IdeLayoutState extends State<IdeLayout> {
                   onTap: () => _selectTab(1),
                 ),
               ),
+              if (hasChat)
+                Expanded(
+                  child: _SkeuoTab(
+                    label: 'Chat',
+                    icon: Icons.chat_outlined,
+                    isSelected: _selectedIndex == 2,
+                    badge: _chatUnread > 0 ? _chatUnread : null,
+                    onTap: () => _selectTab(2),
+                  ),
+                ),
             ],
           ),
         ),
@@ -90,6 +113,11 @@ class _IdeLayoutState extends State<IdeLayout> {
                   color: KColors.bgCanvas,
                   child: widget.fileViewer,
                 ),
+                if (hasChat)
+                  Container(
+                    color: KColors.bgCanvas,
+                    child: widget.chat!,
+                  ),
               ],
             ),
           ),
@@ -140,12 +168,14 @@ class _SkeuoTab extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool isSelected;
+  final int? badge;
   final VoidCallback onTap;
 
   const _SkeuoTab({
     required this.label,
     required this.icon,
     required this.isSelected,
+    this.badge,
     required this.onTap,
   });
 
@@ -177,6 +207,25 @@ class _SkeuoTab extends StatelessWidget {
                   color: KColors.textSecondary,
                 ),
               ),
+              if (badge != null) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: KColors.accentRed,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    badge! > 99 ? '99+' : badge.toString(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

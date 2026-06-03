@@ -6,6 +6,7 @@ void main() {
   Widget buildLayout({
     Widget? fileViewer,
     Widget? terminal,
+    Widget? chat,
     Widget? debug,
   }) {
     return MaterialApp(
@@ -16,6 +17,7 @@ void main() {
           child: IdeLayout(
             fileViewer: fileViewer ?? const Text('Files'),
             terminal: terminal ?? const Text('Terminal'),
+            chat: chat ?? const Text('Chat'),
             debug: debug ?? const Text('Debug'),
           ),
         ),
@@ -152,6 +154,45 @@ void main() {
       final resizeRow =
           mouseRegions.where((m) => m.cursor == SystemMouseCursors.resizeRow);
       expect(resizeRow.length, 0);
+    });
+
+    testWidgets('has Chat tab', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      expect(find.text('Chat'), findsWidgets);
+    });
+
+    testWidgets('chat tab content is visible after switch', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        terminal: const Text('TERMINAL_CONTENT'),
+        fileViewer: const Text('FILES_CONTENT'),
+        chat: const Text('CHAT_CONTENT'),
+      ));
+
+      await tester.tap(find.text('Chat'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('CHAT_CONTENT'), findsOneWidget);
+    });
+
+    testWidgets('no chat tab when chat is null', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1280,
+              height: 720,
+              child: IdeLayout(
+                fileViewer: const Text('Files'),
+                terminal: const Text('Terminal'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Chat tab label should NOT be present (only Terminal and Files)
+      final chatTabs = find.text('Chat');
+      expect(chatTabs, findsNothing);
     });
 
     testWidgets('selecting same tab does not rebuild', (tester) async {

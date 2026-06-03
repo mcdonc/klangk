@@ -56,12 +56,16 @@ class WsClient extends ChangeNotifier {
       StreamController<Map<String, dynamic>>.broadcast();
   final _customEventController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _chatController = StreamController<Map<String, dynamic>>.broadcast();
   final _debugLogController = StreamController<WsDebugEntry>.broadcast();
 
   Stream<String> get errors => _errorController.stream;
   Stream<String> get terminalOutput => _terminalOutputController.stream;
   Stream<Map<String, dynamic>> get browserRequests =>
       _browserRequestController.stream;
+
+  /// Chat messages (individual and history) from the backend.
+  Stream<Map<String, dynamic>> get chatMessages => _chatController.stream;
 
   /// Custom events from the backend (container_ready, container_stopped, etc.)
   Stream<Map<String, dynamic>> get customEvents =>
@@ -134,6 +138,15 @@ class WsClient extends ChangeNotifier {
             _errorController.add(json['message'] as String? ?? 'Unknown error');
           } else if (type == 'browser_request') {
             _browserRequestController.add(json);
+          } else if (type == 'chat_message') {
+            _chatController.add(json);
+          } else if (type == 'chat_history') {
+            final messages = json['messages'] as List? ?? [];
+            for (final m in messages) {
+              _chatController.add(m as Map<String, dynamic>);
+            }
+          } else if (type == 'chat_updated') {
+            _chatController.add(json);
           } else if (type == 'event') {
             _customEventController.add(json);
           }
@@ -217,6 +230,14 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'heartbeat'});
   }
 
+  void sendChatMessage(String text) {
+    _send({'cmd': 'chat_send', 'message': text});
+  }
+
+  void sendChatDelete(String messageId) {
+    _send({'cmd': 'chat_delete', 'message_id': messageId});
+  }
+
   void sendBrowserResponse(String id, Map<String, dynamic> result) {
     _send({'cmd': 'browser_response', 'id': id, ...result});
   }
@@ -240,6 +261,7 @@ class WsClient extends ChangeNotifier {
     _errorController.close();
     _terminalOutputController.close();
     _browserRequestController.close();
+    _chatController.close();
     _customEventController.close();
     _debugLogController.close();
     super.dispose();

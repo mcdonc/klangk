@@ -440,3 +440,42 @@ class TestLoginAttempts:
     async def test_clear_attempts_nonexistent(self, db):
         # Should not raise
         await model.clear_login_attempts("nobody@example.com")
+
+
+class TestChatMessages:
+    async def test_add_chat_message(self, workspace, user):
+        msg = await model.add_chat_message(
+            workspace["id"], "testuser@example.com", "hello"
+        )
+        assert msg["workspace_id"] == workspace["id"]
+        assert msg["user_email"] == "testuser@example.com"
+        assert msg["message"] == "hello"
+        assert "id" in msg
+        assert "created_at" in msg
+
+    async def test_get_chat_messages(self, workspace, user):
+        await model.add_chat_message(workspace["id"], "a@test.com", "first")
+        await model.add_chat_message(workspace["id"], "b@test.com", "second")
+        msgs = await model.get_chat_messages(workspace["id"])
+        assert len(msgs) == 2
+        # Chronological order (oldest first)
+        assert msgs[0]["message"] == "first"
+        assert msgs[1]["message"] == "second"
+
+    async def test_get_chat_messages_limit(self, workspace, user):
+        for i in range(5):
+            await model.add_chat_message(
+                workspace["id"], "u@test.com", f"msg{i}"
+            )
+        msgs = await model.get_chat_messages(workspace["id"], limit=3)
+        assert len(msgs) == 3
+        # Should be the 3 most recent, in chronological order
+        assert msgs[0]["message"] == "msg2"
+        assert msgs[1]["message"] == "msg3"
+        assert msgs[2]["message"] == "msg4"
+
+    async def test_chat_messages_cascade_delete(self, workspace, user):
+        await model.add_chat_message(workspace["id"], "u@test.com", "bye")
+        await model.delete_workspace(workspace["id"], user["id"])
+        msgs = await model.get_chat_messages(workspace["id"])
+        assert msgs == []

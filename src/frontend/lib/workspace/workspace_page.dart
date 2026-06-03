@@ -16,6 +16,7 @@ import '../file_viewer/file_viewer_panel.dart';
 import '../layout/ide_layout.dart';
 import '../terminal/container_terminal.dart';
 import '../browser/browser_delegate.dart';
+import '../chat/workspace_chat.dart';
 import '../debug/debug_panel.dart';
 
 class WorkspacePage extends StatefulWidget {
@@ -30,6 +31,7 @@ class WorkspacePage extends StatefulWidget {
 class _WorkspacePageState extends State<WorkspacePage> {
   final _terminalKey = GlobalKey<ContainerTerminalState>();
   final _fileViewerKey = GlobalKey<FileViewerPanelState>();
+  final _chatKey = GlobalKey<WorkspaceChatState>();
   bool _connecting = true;
   String? _error;
   String _workspaceName = '';
@@ -242,8 +244,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
               authToken: authToken,
             ),
             terminal: ContainerTerminal(key: _terminalKey, wsClient: wsClient),
+            chat: WorkspaceChat(key: _chatKey, wsClient: wsClient),
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
+            chatKey: _chatKey,
             debug: DebugPanel(wsClient: wsClient),
           ),
           for (final plugin in _plugins)

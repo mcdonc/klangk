@@ -482,6 +482,13 @@ class Connection:
                 "defaultCommand": workspace.get("default_command"),
             }
         )
+        # Send chat history to the connecting user
+        chat_history = await model.get_chat_messages(workspace_id)
+        if chat_history:
+            self.sock.send_json(
+                {"type": "chat_history", "messages": chat_history}
+            )
+
         # Store status for when frontend sends ui_ready
         self.pending_status_msg = status_msg
         logger.info(
@@ -662,6 +669,40 @@ class Connection:
         if self.container_id is not None:
             container.registry.record_activity(self.container_id)
 
+    async def handle_chat_send(self, msg: dict) -> None:
+        workspace_id = self.workspace_id
+        if not workspace_id:
+            send_error(self.sock, "Not connected to a workspace")
+            return
+        text = msg.get("message", "").strip()
+        if not text:
+            return
+        chat_msg = await model.add_chat_message(
+            workspace_id, self.user["id"], self.user["email"], text
+        )
+        session = state.get_session(workspace_id)
+        if session:
+            session.broadcast({"type": "chat_message", **chat_msg})
+
+    async def handle_chat_delete(self, msg: dict) -> None:
+        workspace_id = self.workspace_id
+        if not workspace_id:
+            return
+        message_id = msg.get("message_id", "")
+        if not message_id:
+            return
+        deleted = await model.delete_chat_message(message_id, self.user["id"])
+        if deleted:
+            session = state.get_session(workspace_id)
+            if session:
+                session.broadcast(
+                    {
+                        "type": "chat_updated",
+                        "message_id": message_id,
+                        "message": "<message deleted by author>",
+                    }
+                )
+
     async def handle_ui_ready(self) -> None:
         if self.workspace_id:
             sess = state.get_session(self.workspace_id)
@@ -840,6 +881,10 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_exec_stop()
             elif cmd == "heartbeat":
                 await conn.handle_heartbeat()
+            elif cmd == "chat_send":
+                await conn.handle_chat_send(msg)
+            elif cmd == "chat_delete":
+                await conn.handle_chat_delete(msg)
             elif cmd == "browser_response":
                 state.handle_browser_response(msg, safe_ws)
             else:

@@ -1327,6 +1327,92 @@ test.describe("Klangk E2E", () => {
     });
   });
 
+  test("chat message broadcasts to shared workspace users", async ({
+    browser,
+    request,
+  }) => {
+    const ownerEmail = `chat-owner-${Date.now()}@test.example.com`;
+    const memberEmail = `chat-member-${Date.now()}@test.example.com`;
+    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+    await registerUser(request, memberEmail);
+
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers: ownerHeaders,
+      data: { name: `e2e-chat-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspaceId = (await wsResp.json()).id;
+
+    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+      headers: ownerHeaders,
+      data: { email: memberEmail },
+    });
+
+    // Inject a WebSocket capture script that stores a reference to
+    // the WS so we can send chat commands from page.evaluate.
+    const wsCaptureScript = `(() => {
+      const Orig = window.WebSocket;
+      window.WebSocket = function(...args) {
+        const ws = new Orig(...args);
+        window.__klangkWs = ws;
+        return ws;
+      };
+      window.WebSocket.prototype = Orig.prototype;
+      window.WebSocket.CONNECTING = Orig.CONNECTING;
+      window.WebSocket.OPEN = Orig.OPEN;
+      window.WebSocket.CLOSING = Orig.CLOSING;
+      window.WebSocket.CLOSED = Orig.CLOSED;
+    })()`;
+
+    const ctx1 = await browser.newContext();
+    const ctx2 = await browser.newContext();
+    await ctx1.addInitScript(wsCaptureScript);
+    const page1 = await ctx1.newPage();
+    const page2 = await ctx2.newPage();
+
+    // Collect chat messages on page2
+    const memberChatMessages: string[] = [];
+    page2.on("websocket", (ws) => {
+      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+        const text = frame.payload.toString();
+        if (text.includes("chat_message")) {
+          memberChatMessages.push(text);
+        }
+      });
+    });
+
+    const termReady1 = waitForTerminalReady(page1);
+    const termReady2 = waitForTerminalReady(page2);
+    await openWorkspace(page1, ownerEmail, workspaceId);
+    await openWorkspace(page2, memberEmail, workspaceId);
+    await termReady1;
+    await termReady2;
+
+    // Send chat message from page1 via the captured WebSocket
+    await page1.evaluate(() => {
+      const ws = (window as any).__klangkWs;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({ cmd: "chat_send", message: "hello from e2e" }),
+        );
+      }
+    });
+
+    await page2.waitForTimeout(2000);
+
+    expect(memberChatMessages.length).toBeGreaterThan(0);
+    const received = JSON.parse(memberChatMessages[0]);
+    expect(received.type).toBe("chat_message");
+    expect(received.message).toBe("hello from e2e");
+    expect(received.user_email).toBe(ownerEmail);
+
+    await ctx1.close();
+    await ctx2.close();
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers: ownerHeaders,
+    });
+  });
+
   test("container recreated on page refresh", async ({ page, request }) => {
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,

@@ -435,5 +435,61 @@ void main() {
       expect(errors[0], contains('WebSocket error'));
       expect(client.connected, isFalse);
     });
+
+    test('chat_message routed to chatMessages stream', () async {
+      final messages = <Map<String, dynamic>>[];
+      client.chatMessages.listen(messages.add);
+
+      channel.serverSend({
+        'type': 'chat_message',
+        'id': 'msg-1',
+        'user_email': 'alice@test.com',
+        'message': 'hello',
+        'created_at': '2026-01-01 00:00:00',
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(messages.length, 1);
+      expect(messages[0]['message'], 'hello');
+      expect(messages[0]['user_email'], 'alice@test.com');
+    });
+
+    test('chat_history messages routed individually', () async {
+      final messages = <Map<String, dynamic>>[];
+      client.chatMessages.listen(messages.add);
+
+      channel.serverSend({
+        'type': 'chat_history',
+        'messages': [
+          {
+            'id': 'msg-1',
+            'user_email': 'a@test.com',
+            'message': 'first',
+            'created_at': '2026-01-01 00:00:00',
+          },
+          {
+            'id': 'msg-2',
+            'user_email': 'b@test.com',
+            'message': 'second',
+            'created_at': '2026-01-01 00:01:00',
+          },
+        ],
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(messages.length, 2);
+      expect(messages[0]['message'], 'first');
+      expect(messages[1]['message'], 'second');
+    });
+
+    test('sendChatMessage sends correct command', () {
+      client.sendChatMessage('hello world');
+      final msg = jsonDecode(channel.sentMessages.last as String);
+      expect(msg, {'cmd': 'chat_send', 'message': 'hello world'});
+    });
+
+    test('chatMessages stream is broadcast', () {
+      expect(client.chatMessages.isBroadcast, isTrue);
+    });
   });
 }
