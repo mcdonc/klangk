@@ -147,7 +147,7 @@ class ContainerTerminalState extends State<ContainerTerminal> {
           controller: _controller,
           theme: _theme,
           textStyle: TerminalStyle(
-            fontSize: 18,
+            fontSize: 16,
             fontFamily: GoogleFonts.robotoMono().fontFamily!,
           ),
           focusNode: _focusNode,
