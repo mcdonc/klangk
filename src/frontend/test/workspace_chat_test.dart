@@ -38,6 +38,19 @@ class _FakeSink extends Fake implements WebSocketSink {
   Future close([int? closeCode, String? closeReason]) async {}
 }
 
+/// Recursively search all TextSpans in a tree for one matching [predicate].
+bool _findSpan(InlineSpan root, bool Function(TextSpan) predicate) {
+  if (root is TextSpan) {
+    if (predicate(root)) return true;
+    if (root.children != null) {
+      for (final child in root.children!) {
+        if (_findSpan(child, predicate)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 void main() {
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
@@ -198,14 +211,11 @@ void main() {
 
       // Verify original text is rendered in a TextSpan
       bool hasOriginal = false;
-      for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
-        final span = rt.text;
-        if (span is TextSpan && span.children != null) {
-          for (final child in span.children!) {
-            if (child is TextSpan && child.text == 'original text') {
-              hasOriginal = true;
-            }
-          }
+      for (final st
+          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
+        final span = st.textSpan;
+        if (span != null && _findSpan(span, (s) => s.text == 'original text')) {
+          hasOriginal = true;
         }
       }
       expect(hasOriginal, isTrue);
@@ -224,17 +234,15 @@ void main() {
       // Original text should be gone, replaced text should appear
       bool hasDeleted = false;
       bool stillHasOriginal = false;
-      for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
-        final span = rt.text;
-        if (span is TextSpan && span.children != null) {
-          for (final child in span.children!) {
-            if (child is TextSpan && child.text == 'original text') {
-              stillHasOriginal = true;
-            }
-            if (child is TextSpan &&
-                child.text == '<message deleted by author>') {
-              hasDeleted = true;
-            }
+      for (final st
+          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
+        final span = st.textSpan;
+        if (span != null) {
+          if (_findSpan(span, (s) => s.text == 'original text')) {
+            stillHasOriginal = true;
+          }
+          if (_findSpan(span, (s) => s.text == '<message deleted by author>')) {
+            hasDeleted = true;
           }
         }
       }
@@ -338,19 +346,18 @@ void main() {
       // No delete button for already-deleted messages
       expect(find.byIcon(Icons.close), findsNothing);
 
-      // Verify italic style via RichText TextSpan
-      final richTexts = tester.widgetList<RichText>(find.byType(RichText));
+      // Verify italic style via SelectableText TextSpan
       bool foundItalic = false;
-      for (final rt in richTexts) {
-        final span = rt.text;
-        if (span is TextSpan && span.children != null) {
-          for (final child in span.children!) {
-            if (child is TextSpan &&
-                child.text == '<message deleted by author>' &&
-                child.style?.fontStyle == FontStyle.italic) {
-              foundItalic = true;
-            }
-          }
+      for (final st
+          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
+        final span = st.textSpan;
+        if (span != null &&
+            _findSpan(
+                span,
+                (s) =>
+                    s.text == '<message deleted by author>' &&
+                    s.style?.fontStyle == FontStyle.italic)) {
+          foundItalic = true;
         }
       }
       expect(foundItalic, isTrue);
@@ -388,6 +395,50 @@ void main() {
       final hasDayAbbrev =
           allText.any((t) => dayAbbrevs.any((d) => t.contains(d)));
       expect(hasDayAbbrev, isTrue);
+    });
+
+    testWidgets('URLs in messages rendered as styled links', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-url',
+          'user_email': 'alice@test.com',
+          'message': 'Check https://example.com/path for details',
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // Find the SelectableText and verify URL span is styled differently
+      bool foundUrl = false;
+      bool foundPrefix = false;
+      bool foundSuffix = false;
+      for (final st
+          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
+        final span = st.textSpan;
+        if (span != null) {
+          if (_findSpan(
+              span,
+              (s) =>
+                  s.text == 'https://example.com/path' &&
+                  s.style?.decoration == TextDecoration.underline)) {
+            foundUrl = true;
+          }
+          if (_findSpan(span, (s) => s.text == 'Check ')) {
+            foundPrefix = true;
+          }
+          if (_findSpan(span, (s) => s.text == ' for details')) {
+            foundSuffix = true;
+          }
+        }
+      }
+      expect(foundUrl, isTrue);
+      expect(foundPrefix, isTrue);
+      expect(foundSuffix, isTrue);
     });
 
     testWidgets('setVisible clears unread count', (tester) async {

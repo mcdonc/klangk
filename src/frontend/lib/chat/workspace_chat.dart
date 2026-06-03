@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../ws/ws_client.dart';
 import '../theme/colors.dart';
 import '../auth/auth_service.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.html) '../utils/web_helpers_web.dart';
 import 'package:provider/provider.dart';
 
 /// Per-workspace real-time chat panel.
@@ -118,6 +121,55 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     return HSLColor.fromAHSL(1.0, hue, 0.6, 0.7).toColor();
   }
 
+  static final _urlRegex = RegExp(r'https?://[^\s<>"{}|\\^`\[\]]+');
+
+  /// Build TextSpans for a message, turning URLs into clickable links.
+  List<TextSpan> _buildMessageSpans(String text, bool isDeleted) {
+    final style = TextStyle(
+      color: isDeleted ? KColors.textMuted : KColors.textPrimary,
+      fontSize: 13,
+      fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+    );
+
+    if (isDeleted) {
+      return [TextSpan(text: text, style: style)];
+    }
+
+    final spans = <TextSpan>[];
+    int lastEnd = 0;
+    for (final match in _urlRegex.allMatches(text)) {
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(
+          text: text.substring(lastEnd, match.start),
+          style: style,
+        ));
+      }
+      final url = match.group(0)!;
+      spans.add(TextSpan(
+        text: url,
+        style: style.copyWith(
+          color: KColors.accentBlue,
+          decoration: TextDecoration.underline,
+        ),
+        recognizer: TapGestureRecognizer()
+          ..onTap = () => openUrl(url), // coverage:ignore-line
+      ));
+      lastEnd = match.end;
+    }
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(lastEnd),
+        style: style,
+      ));
+    }
+    // coverage:ignore-start
+    if (spans.isEmpty) {
+      spans.add(TextSpan(text: text, style: style));
+    }
+    // coverage:ignore-end
+    return spans;
+  }
+
   void _sendMessage() {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
@@ -173,8 +225,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
-                              child: RichText(
-                                text: TextSpan(
+                              child: SelectableText.rich(
+                                TextSpan(
                                   children: [
                                     TextSpan(
                                       text: '$email  ',
@@ -184,18 +236,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                                         fontSize: 13,
                                       ),
                                     ),
-                                    TextSpan(
-                                      text: text,
-                                      style: TextStyle(
-                                        color: isDeleted
-                                            ? KColors.textMuted
-                                            : KColors.textPrimary,
-                                        fontSize: 13,
-                                        fontStyle: isDeleted
-                                            ? FontStyle.italic
-                                            : FontStyle.normal,
-                                      ),
-                                    ),
+                                    ..._buildMessageSpans(text, isDeleted),
                                   ],
                                 ),
                               ),
