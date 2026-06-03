@@ -12,10 +12,13 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.0
   xterm: ^4.0.0
-  # flterm 0.0.3 requires Dart 3.12 / Flutter 3.44 (uses the private-named-
-  # parameters language feature), so the frontend builds with the host's
-  # Flutter, not the nix one (3.41). See scripts/flutterbuildweb.sh.
-  flterm: ^0.0.3
+  # flterm: forked to build on Flutter 3.41 / Dart 3.11 (upstream 0.0.3 needs
+  # Dart 3.12 for private-named parameters; the fork removes that usage), so no
+  # host Flutter is required -- builds with the nix toolchain.
+  flterm:
+    git:
+      url: https://github.com/runyaga/flterm.git
+      ref: main
   libghostty: ^0.0.9
   google_fonts: ^8.1.0
   web_socket_channel: ^3.0.0
