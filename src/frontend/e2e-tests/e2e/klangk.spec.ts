@@ -1113,6 +1113,130 @@ test.describe("Klangk E2E", () => {
     });
   });
 
+  test("browser-delegate routes to the correct connection", async ({
+    browser,
+    request,
+  }) => {
+    // Check if test mode is enabled (bridge-tokens endpoint needs it)
+    const testCheck = await request.get(`${API_BASE}/api/test/idle-timeout`);
+    if (!testCheck.ok()) {
+      test.skip(true, "KLANGK_TEST_MODE not enabled");
+      return;
+    }
+
+    // Register two users and share a workspace
+    const ownerEmail = `bridge-owner-${Date.now()}@test.example.com`;
+    const memberEmail = `bridge-member-${Date.now()}@test.example.com`;
+    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+    await registerUser(request, memberEmail);
+
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers: ownerHeaders,
+      data: { name: `e2e-bridge-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspaceId = (await wsResp.json()).id;
+
+    // Share with member
+    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+      headers: ownerHeaders,
+      data: { email: memberEmail },
+    });
+
+    // Inject auto-responder into both browser contexts: when a
+    // browser_request arrives over the WebSocket, immediately send
+    // back a browser_response echoing the message as {pong: message}.
+    const autoResponder = `(() => {
+      const Orig = window.WebSocket;
+      window.WebSocket = function(...args) {
+        const ws = new Orig(...args);
+        ws.addEventListener("message", (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === "browser_request") {
+              ws.send(JSON.stringify({
+                cmd: "browser_response",
+                id: msg.id,
+                pong: msg.message || "unknown",
+              }));
+            }
+          } catch {}
+        });
+        return ws;
+      };
+      window.WebSocket.prototype = Orig.prototype;
+      window.WebSocket.CONNECTING = Orig.CONNECTING;
+      window.WebSocket.OPEN = Orig.OPEN;
+      window.WebSocket.CLOSING = Orig.CLOSING;
+      window.WebSocket.CLOSED = Orig.CLOSED;
+    })()`;
+
+    const ctx1 = await browser.newContext();
+    const ctx2 = await browser.newContext();
+    await ctx1.addInitScript(autoResponder);
+    await ctx2.addInitScript(autoResponder);
+    const page1 = await ctx1.newPage();
+    const page2 = await ctx2.newPage();
+
+    // Set up terminal_started listeners before opening workspaces
+    const termReady1 = waitForTerminalReady(page1);
+    const termReady2 = waitForTerminalReady(page2);
+
+    // Open workspace as owner in page1, member in page2
+    await openWorkspace(page1, ownerEmail, workspaceId);
+    await openWorkspace(page2, memberEmail, workspaceId);
+    await termReady1;
+    await termReady2;
+
+    // Get bridge tokens for each connection
+    const tokensResp = await request.get(
+      `${API_BASE}/api/test/bridge-tokens/${workspaceId}`,
+    );
+    expect(tokensResp.ok()).toBeTruthy();
+    const tokens = await tokensResp.json();
+    expect(tokens.length).toBeGreaterThanOrEqual(2);
+
+    const ownerToken = tokens.find(
+      (t: { email: string }) => t.email === ownerEmail,
+    );
+    const memberToken = tokens.find(
+      (t: { email: string }) => t.email === memberEmail,
+    );
+    expect(ownerToken).toBeTruthy();
+    expect(memberToken).toBeTruthy();
+
+    // Send bridge request targeting the OWNER — the auto-responder
+    // in page1 will reply with {pong: "ping owner"}.
+    const resp1 = await request.post(`${API_BASE}/api/browser-delegate`, {
+      data: {
+        action: "test_ping",
+        message: "ping owner",
+        token: ownerToken.token,
+      },
+    });
+    expect(resp1.ok()).toBeTruthy();
+    expect((await resp1.json()).pong).toBe("ping owner");
+
+    // Send bridge request targeting the MEMBER — the auto-responder
+    // in page2 will reply with {pong: "ping member"}.
+    const resp2 = await request.post(`${API_BASE}/api/browser-delegate`, {
+      data: {
+        action: "test_ping",
+        message: "ping member",
+        token: memberToken.token,
+      },
+    });
+    expect(resp2.ok()).toBeTruthy();
+    expect((await resp2.json()).pong).toBe("ping member");
+
+    // Clean up
+    await ctx1.close();
+    await ctx2.close();
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers: ownerHeaders,
+    });
+  });
+
   test("container recreated on page refresh", async ({ page, request }) => {
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,

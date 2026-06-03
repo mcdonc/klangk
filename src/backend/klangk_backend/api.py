@@ -66,6 +66,21 @@ if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
             container.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
         return {"idle_timeout_seconds": seconds}
 
+    @router.get("/api/test/bridge-tokens/{workspace_id}")
+    async def get_bridge_tokens(workspace_id: str):
+        """Return all active bridge tokens for a workspace (test only)."""
+        tokens = []
+        for token, (ws_id, sock) in container.registry._bridge_tokens.items():
+            if ws_id == workspace_id:
+                # Find the user email for this connection
+                email = None
+                if sock is not None:
+                    conn = wshandler.state.connections.get(sock)
+                    if conn:
+                        email = conn.user.get("email")
+                tokens.append({"token": token, "email": email})
+        return tokens
+
 
 # --- Config endpoint ---
 
