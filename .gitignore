@@ -22,7 +22,6 @@ src/frontend/build/
 src/frontend/.flutter-plugins
 src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec.lock
-src/frontend/pubspec_overrides.yaml
 src/frontend/coverage/
 
 # SQLite
@@ -62,3 +61,12 @@ src/frontend/e2e-tests/logs/
 .markdownlint.yaml
 .pre-commit-config.yaml
 coverage.json
+
+# Xcode SwiftPM artifacts
+**/xcshareddata/swiftpm/
+
+# native-plugins build artifacts
+native-plugins/**/.dart_tool/
+native-plugins/**/.flutter-plugins-dependencies
+native-plugins/**/pubspec.lock
+native-plugins/**/build/

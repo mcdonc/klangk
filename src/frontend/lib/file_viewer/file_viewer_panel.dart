@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme/colors.dart';
 import 'package:http/http.dart' as http;
 import '../ws/ws_client.dart';
-import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import '../utils/api_base_url.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import 'file_upload.dart';
@@ -45,7 +45,7 @@ class FileViewerPanel extends StatefulWidget {
 }
 
 class FileViewerPanelState extends State<FileViewerPanel> {
-  String get _baseUrl => baseUrl;
+  String get _baseUrl => apiBaseUrl;
   http.Client get _client => testHttpClientOverride ?? http.Client();
   List<Map<String, dynamic>> _entries = [];
   String _currentPath = 'work';

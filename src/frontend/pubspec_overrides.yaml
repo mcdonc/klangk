@@ -1,0 +1,9 @@
+# Native target plugin resolution (committed for the macos-native branch).
+# pubspec.yaml's `klangk_plugins: path: PLACEHOLDER` is set by import_plugins.py
+# for the devenv/web flow; on a native checkout there's no devenv to fill it in,
+# so this override points klangk_plugins at the native-capable aggregator
+# (native-plugins/aggregator), which ships the conditional-import soliplex port.
+# Relative path so it resolves on any machine (macOS, Linux).
+dependency_overrides:
+  klangk_plugins:
+    path: ../../native-plugins/aggregator

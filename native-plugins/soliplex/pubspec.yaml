@@ -1,0 +1,28 @@
+name: klangk_plugin_soliplex
+description: Soliplex knowledge base plugin for Klangk (native + web)
+publish_to: none
+version: 0.2.0
+
+# Native-capable port of the web-only soliplex klangk plugin. The two
+# browser-only concerns — token storage and interactive login — live behind a
+# conditional import (soliplex_platform.dart): localStorage + popup on web,
+# flutter_secure_storage + flutter_appauth on native. plugin.dart and
+# soliplex_tools.dart no longer import dart:js_interop / package:web directly.
+environment:
+  sdk: ^3.6.0
+  flutter: ^3.27.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  # Web-only token store + popup login (imported solely by *_web.dart, which
+  # the native build tree-shakes via the conditional export).
+  web: ^1.1.0
+  # Native token store (NSUserDefaults via shared_preferences — no Keychain
+  # entitlement needed in the sandbox) + system-browser PKCE login.
+  shared_preferences: ^2.3.0
+  flutter_appauth: ^12.0.0
+  klangk_plugin_api:
+    git:
+      url: https://github.com/mcdonc/klangk-plugin-api.git
