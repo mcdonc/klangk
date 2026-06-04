@@ -129,19 +129,17 @@ class TestAuthRoutes:
 
     async def test_register_email_send_failure_rolls_back(self, client, db):
         """If verification email fails, user creation is rolled back."""
-        with (
-            patch.object(
-                api.emailsvc,
-                "send_verification_email",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("sendmail not found"),
-            ),
-            pytest.raises(RuntimeError, match="sendmail not found"),
+        with patch.object(
+            api.emailsvc,
+            "send_verification_email",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("sendmail not found"),
         ):
-            await client.post(
+            resp = await client.post(
                 "/auth/register",
                 json={"email": "fail@example.com", "password": "newpass"},
             )
+        assert resp.status_code == 503
         # User should not exist — transaction was rolled back
         user = await model.get_user_by_email("fail@example.com")
         assert user is None

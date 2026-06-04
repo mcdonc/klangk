@@ -94,6 +94,18 @@ if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
         return tokens
 
 
+async def _send_email(coro, recipient: str, kind: str = "email") -> None:
+    """Await an email-sending coroutine, converting failures to 503."""
+    try:
+        await coro
+    except Exception as e:
+        logger.error("Failed to send %s to %s: %s", kind, recipient, e)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unable to send {kind}. Please try again later.",
+        ) from None
+
+
 # --- Config endpoint ---
 
 SOLIPLEX_URL = resolve_env_secret("SOLIPLEX_URL", "")
@@ -159,7 +171,11 @@ async def register(
             (user_id, req.email, password_hash),
         )
         logger.info("User inserted (uncommitted): %s", req.email)
-        await emailsvc.send_verification_email(req.email, verification_url)
+        await _send_email(
+            emailsvc.send_verification_email(req.email, verification_url),
+            req.email,
+            "verification email",
+        )
         logger.info("Verification email sent, committing user: %s", req.email)
 
     return {"status": "pending_verification", "email": req.email}
@@ -215,7 +231,11 @@ async def resend_verification(
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
     )
-    await emailsvc.send_verification_email(req.email, verification_url)
+    await _send_email(
+        emailsvc.send_verification_email(req.email, verification_url),
+        req.email,
+        "verification email",
+    )
     return {"status": "sent"}
 
 
@@ -250,7 +270,11 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
     reset_url = (
         f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
     )
-    await emailsvc.send_password_reset_email(req.email, reset_url)
+    await _send_email(
+        emailsvc.send_password_reset_email(req.email, reset_url),
+        req.email,
+        "password reset email",
+    )
     return {"status": "sent"}
 
 
@@ -348,7 +372,11 @@ async def change_email(
     hostname, proto, base_path = derive_hosting_info(request.headers)
     token = auth.create_verification_token(user["id"])
     url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
-    await emailsvc.send_verification_email(req.email, url)
+    await _send_email(
+        emailsvc.send_verification_email(req.email, url),
+        req.email,
+        "verification email",
+    )
     return {"status": "updated", "needs_verification": True}
 
 
