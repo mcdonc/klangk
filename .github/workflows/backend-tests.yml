@@ -11,14 +11,29 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'src/backend/**'
+              - '.github/workflows/backend-tests.yml'
+
       - uses: actions/setup-python@v6
+        if: steps.filter.outputs.backend == 'true'
         with:
           python-version: "3.13"
           cache: pip
 
       - name: Install dependencies
+        if: steps.filter.outputs.backend == 'true'
         run: pip install -e src/backend/
 
       - name: Run tests
+        if: steps.filter.outputs.backend == 'true'
         # -n auto: run tests in parallel across CPUs (pytest-xdist)
         run: python -m pytest src/backend/tests -v -n auto
+
+      - name: Skip notice
+        if: steps.filter.outputs.backend != 'true'
+        run: echo "No backend changes — skipping tests"
