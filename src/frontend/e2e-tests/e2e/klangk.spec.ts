@@ -261,7 +261,7 @@ test.describe("Klangk E2E", () => {
       await page.waitForTimeout(1000);
       await page.keyboard.type("echo COPYTEST123");
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
 
       // Select the output by dragging across the first line of output.
       // The "COPYTEST123" should be on the second line (first is the command).
@@ -369,7 +369,7 @@ test.describe("Klangk E2E", () => {
       await page.waitForTimeout(1000);
       await page.keyboard.type("echo SELECTME");
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
 
       // Select text by dragging across the output
       await page.mouse.move(10, 130);
@@ -441,7 +441,7 @@ test.describe("Klangk E2E", () => {
       await page.keyboard.press("ControlOrMeta+KeyV");
       await page.waitForTimeout(500);
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
 
       const readResp = await request.get(
         `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.paste-leak-canary`,
@@ -722,7 +722,7 @@ test.describe("Klangk E2E", () => {
 
     // Logout button is in the top-right corner of the workspaces page
     await flutterClick(page, width - 25, 28);
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1000);
 
     await expect(page).toHaveTitle(/Login/i, { timeout: 30_000 });
   });
@@ -853,7 +853,7 @@ test.describe("Klangk E2E", () => {
       await f.click({ position: { x: filesTabX, y: 76 }, force: true });
       await page.waitForTimeout(500);
       await f.click({ position: { x: termTabX, y: 76 }, force: true });
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
 
       // Terminal should still work — run a command
       const termX = width / 2;
@@ -1616,7 +1616,7 @@ test.describe("Klangk E2E", () => {
 
     // Wait for both terminals to fully start and settle (shell prompt
     // output etc.) before we begin the isolation check.
-    await page1.waitForTimeout(5000);
+    await page1.waitForTimeout(2000);
     memberFrames.length = 0;
 
     // User A types a command in the terminal
@@ -1626,14 +1626,14 @@ test.describe("Klangk E2E", () => {
       position: { x: width / 2, y: height / 2 },
       force: true,
     });
-    await page1.waitForTimeout(1000);
+    await page1.waitForTimeout(500);
     await page1.keyboard.type(
       "echo isolation-test-from-owner > /tmp/iso-test.txt",
     );
     await page1.keyboard.press("Enter");
 
     // Wait for the command to execute and any events to propagate
-    await page1.waitForTimeout(5000);
+    await page1.waitForTimeout(2000);
 
     // User B should NOT have received terminal_output containing
     // User A's command or its output.  User B's own terminal_output

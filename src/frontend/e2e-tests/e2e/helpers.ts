@@ -42,7 +42,7 @@ export async function loginViaUI(page: Page, email: string, password: string) {
   const accessibilityBtn = page.locator("button", {
     hasText: "Enable accessibility",
   });
-  if (await accessibilityBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+  if (await accessibilityBtn.isVisible({ timeout: 500 }).catch(() => false)) {
     await accessibilityBtn.click();
     await page.waitForTimeout(300);
   }
@@ -72,7 +72,7 @@ export async function tryLogin(page: Page, email: string, password: string) {
   const accessibilityBtn = page.locator("button", {
     hasText: "Enable accessibility",
   });
-  if (await accessibilityBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+  if (await accessibilityBtn.isVisible({ timeout: 500 }).catch(() => false)) {
     await accessibilityBtn.click();
     await page.waitForTimeout(300);
   }
@@ -98,7 +98,7 @@ export async function waitForFlutter(page: Page) {
     () => !document.body.textContent?.includes("Loading, please wait"),
     { timeout: 90_000 },
   );
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(200);
 }
 
 export function fv(page: Page) {
