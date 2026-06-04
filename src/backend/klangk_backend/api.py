@@ -23,6 +23,7 @@ from . import (
     container,
     emailsvc,
     files,
+    podman,
     wshandler,
     model,
     workspaces,
@@ -427,16 +428,15 @@ async def list_images(_user: dict = Depends(auth.get_current_user)):
 
 @router.get("/volumes")
 async def list_volumes(_user: dict = Depends(auth.get_current_user)):
-    docker = await container.registry.get_docker()
-    volumes = await docker.volumes.list(
-        filters={"label": [f"klangk.instance={container.INSTANCE_ID}"]}
+    volumes = await podman.list_volumes(
+        f"klangk.instance={container.INSTANCE_ID}"
     )
     return [
         {
             "name": v["Name"],
             "created": v.get("CreatedAt", ""),
         }
-        for v in volumes.get("Volumes") or []
+        for v in volumes
     ]
 
 
@@ -449,26 +449,17 @@ async def create_volume(
     body: CreateVolumeRequest,
     _user: dict = Depends(auth.get_current_user),
 ):
-    docker = await container.registry.get_docker()
-    try:
-        existing = await docker.volumes.get(body.name)
-        await existing.show()  # raises 404 if not found
+    if await podman.inspect_volume(body.name) is not None:
         raise HTTPException(
             status_code=409, detail=f"Volume {body.name!r} already exists"
         )
-    except container.aiodocker.exceptions.DockerError as e:
-        if e.status != 404:
-            raise
-    vol = await docker.volumes.create(
+    info = await podman.create_volume(
+        body.name,
         {
-            "Name": body.name,
-            "Labels": {
-                "klangk.managed": "true",
-                "klangk.instance": container.INSTANCE_ID,
-            },
-        }
+            "klangk.managed": "true",
+            "klangk.instance": container.INSTANCE_ID,
+        },
     )
-    info = await vol.show()
     return {"name": info["Name"], "created": info.get("CreatedAt", "")}
 
 
@@ -476,18 +467,18 @@ async def create_volume(
 async def delete_volume(
     name: str, _user: dict = Depends(auth.get_current_user)
 ):
-    docker = await container.registry.get_docker()
+    info = await podman.inspect_volume(name)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Volume not found")
+    labels = info.get("Labels") or {}
+    if labels.get("klangk.instance") != container.INSTANCE_ID:
+        raise HTTPException(
+            status_code=404,
+            detail="Volume not managed by this Klangk instance",
+        )
     try:
-        vol = await docker.volumes.get(name)
-        info = await vol.show()
-        labels = info.get("Labels") or {}
-        if labels.get("klangk.instance") != container.INSTANCE_ID:
-            raise HTTPException(
-                status_code=404,
-                detail="Volume not managed by this Klangk instance",
-            )
-        await vol.delete()
-    except container.aiodocker.exceptions.DockerError as e:
+        await podman.remove_volume(name)
+    except podman.PodmanError as e:
         if e.status == 404:
             raise HTTPException(
                 status_code=404, detail="Volume not found"

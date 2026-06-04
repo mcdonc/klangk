@@ -6,9 +6,7 @@ import os
 import time
 import uuid
 
-import aiodocker
-
-from . import util, model
+from . import model, podman, util
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +137,6 @@ class ContainerRegistry:
         # sock is None for workspace-level fallback tokens, or a specific
         # SafeWebSocket for per-connection tokens.
         self._bridge_tokens: dict[str, tuple[str, object | None]] = {}
-        self.docker: aiodocker.Docker | None = None
         self.cleanup_task: asyncio.Task | None = None
         self.port_lock: asyncio.Lock = asyncio.Lock()
         self.on_workspace_killed = None
@@ -149,11 +146,6 @@ class ContainerRegistry:
         if self._cleanup_wake is None:
             self._cleanup_wake = asyncio.Event()
         return self._cleanup_wake
-
-    async def get_docker(self) -> aiodocker.Docker:  # pragma: no cover
-        if self.docker is None:
-            self.docker = aiodocker.Docker()
-        return self.docker
 
     # --- State tracking ---
 
@@ -290,26 +282,23 @@ class ContainerRegistry:
                 f"{sorted(ALLOWED_IMAGES)}"
             )
 
-        docker = await self.get_docker()
-
         if existing_container_id:
-            try:
-                container = await docker.containers.get(existing_container_id)
-                info = await container.show()
-                if info["State"]["Running"]:
-                    self.track_activity(existing_container_id, workspace_id)
-                    return existing_container_id, "connected"
-                await container.delete(force=True)
+            info = await podman.inspect_container(existing_container_id)
+            if info is None:
+                logger.info(
+                    "Could not find container %s, creating new one",
+                    existing_container_id,
+                )
+            elif info["State"]["Running"]:
+                self.track_activity(existing_container_id, workspace_id)
+                return existing_container_id, "connected"
+            else:
+                await podman.remove_container(existing_container_id)
                 logger.info(
                     "Removed stopped container %s for workspace %s, "
                     "will recreate",
                     existing_container_id,
                     workspace_id,
-                )
-            except aiodocker.exceptions.DockerError:
-                logger.info(
-                    "Could not find container %s, creating new one",
-                    existing_container_id,
                 )
 
         # Lock the entire read+allocate sequence to prevent
@@ -375,80 +364,52 @@ class ContainerRegistry:
                 source = mount_spec.split(":")[0]
                 if "/" not in source and not source.startswith("."):
                     # Named volume — ensure it exists with klangk labels
-                    try:
-                        vol = await docker.volumes.get(source)
-                        await vol.show()
-                    except aiodocker.exceptions.DockerError as e:
-                        if e.status == 404:
-                            await docker.volumes.create(
-                                {
-                                    "Name": source,
-                                    "Labels": {
-                                        "klangk.managed": "true",
-                                        "klangk.instance": INSTANCE_ID,
-                                    },
-                                }
-                            )
-                        else:
-                            raise
+                    if await podman.inspect_volume(source) is None:
+                        await podman.create_volume(
+                            source,
+                            {
+                                "klangk.managed": "true",
+                                "klangk.instance": INSTANCE_ID,
+                            },
+                        )
 
-        port_bindings = {}
-        exposed_ports = {}
-        for i, host_port in enumerate(host_ports):
-            container_port = CONTAINER_PORT_START + i
-            port_key = f"{container_port}/tcp"
-            exposed_ports[port_key] = {}
-            port_bindings[port_key] = [{"HostPort": str(host_port)}]
+        binds = [
+            f"{home_path}:/home/klangk",
+            "/var/run/docker.sock:/var/run/docker.sock",
+        ]
+        if ssh_auth_sock and os.path.exists(ssh_auth_sock):
+            binds.append(f"{ssh_auth_sock}:/run/ssh-agent.sock:ro")
+        if config_path:
+            binds.append(f"{config_path}:/opt/klangk/config:ro")
+        binds += extra_mounts or []
 
-        config = {
-            "Image": resolved_image,
-            "Labels": {
+        publish = [
+            (host_port, CONTAINER_PORT_START + i)
+            for i, host_port in enumerate(host_ports)
+        ]
+
+        container_id = await podman.create_container(
+            f"klangk-{INSTANCE_ID}-{workspace_id[:12]}",
+            resolved_image,
+            labels={
                 "klangk.managed": "true",
                 "klangk.instance": INSTANCE_ID,
                 "klangk.workspace-id": workspace_id,
             },
-            "HostConfig": {
-                "Init": True,
-                "ReadonlyRootfs": False,
-                "Binds": [
-                    f"{home_path}:/home/klangk",
-                    "/var/run/docker.sock:/var/run/docker.sock",
-                ]
-                + (
-                    [f"{ssh_auth_sock}:/run/ssh-agent.sock:ro"]
-                    if ssh_auth_sock and os.path.exists(ssh_auth_sock)
-                    else []
-                )
-                + (
-                    [f"{config_path}:/opt/klangk/config:ro"]
-                    if config_path
-                    else []
-                )
-                + (extra_mounts or []),
-                "Tmpfs": {
-                    "/tmp": "rw,exec,nosuid,size=2g",
-                    "/run": "rw,noexec,nosuid,size=256m",
-                    "/var/log": "rw,noexec,nosuid,size=256m",
-                },
-                "PortBindings": port_bindings,
-                "ExtraHosts": ["host.docker.internal:host-gateway"],
-                **_container_dns_config(),
+            binds=binds,
+            tmpfs={
+                "/tmp": "rw,exec,nosuid,size=2g",
+                "/run": "rw,noexec,nosuid,size=256m",
+                "/var/log": "rw,noexec,nosuid,size=256m",
             },
-            "ExposedPorts": exposed_ports,
-            "Env": env_vars,
-            "OpenStdin": True,
-            "AttachStdin": True,
-            "AttachStdout": True,
-            "AttachStderr": True,
-            "Tty": False,
-        }
-
-        created = await docker.containers.create_or_replace(
-            name=f"klangk-{INSTANCE_ID}-{workspace_id[:12]}",
-            config=config,
+            publish=publish,
+            add_hosts=["host.docker.internal:host-gateway"],
+            dns=_container_dns_config().get("Dns"),
+            env=env_vars,
+            init=True,
+            interactive=True,
         )
-        await created.start()
-        container_id = created.id
+        await podman.start_container(container_id)
 
         await model.update_workspace_container(workspace_id, container_id)
         self.track_activity(container_id, workspace_id)
@@ -463,12 +424,10 @@ class ContainerRegistry:
 
     async def stop_and_remove_container(self, container_id: str) -> None:
         """Stop and remove a container."""
-        docker = await self.get_docker()
         try:
-            container = await docker.containers.get(container_id)
-            await container.delete(force=True)
+            await podman.remove_container(container_id)
             logger.info("Stopped container %s", container_id)
-        except aiodocker.exceptions.DockerError as e:
+        except podman.PodmanError as e:
             logger.warning(
                 "Failed to stop container %s: %s",
                 container_id,
@@ -564,22 +523,22 @@ class ContainerRegistry:
 
     async def adopt_orphaned_containers(self) -> None:
         try:
-            docker = await self.get_docker()
-            containers = await docker.containers.list(
-                filters={"label": [f"klangk.instance={INSTANCE_ID}"]},
+            containers = await podman.list_containers(
+                f"klangk.instance={INSTANCE_ID}"
             )
             for c in containers:
-                if c.id not in self._cid_to_wsid:
-                    labels = (await c.show())["Config"]["Labels"]
+                cid = c["Id"]
+                if cid not in self._cid_to_wsid:
+                    labels = c.get("Labels") or {}
                     workspace_id = labels.get("klangk.workspace-id", "unknown")
-                    self.track_activity(c.id, workspace_id)
+                    self.track_activity(cid, workspace_id)
                     logger.info(
                         "Adopted orphaned container %s (workspace %s)",
-                        c.id[:12],
+                        cid[:12],
                         workspace_id,
                     )
         except (
-            aiodocker.exceptions.DockerError,
+            podman.PodmanError,
             OSError,
         ) as e:
             logger.warning("Error scanning for orphaned containers: %s", e)
@@ -602,27 +561,24 @@ class ContainerRegistry:
         tracked_ids = set(self._cid_to_wsid.keys())
         tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
         try:
-            docker = await self.get_docker()
-            containers = await docker.containers.list(
-                filters={"label": [f"klangk.instance={INSTANCE_ID}"]},
+            containers = await podman.list_containers(
+                f"klangk.instance={INSTANCE_ID}"
             )
             for c in containers:
-                if c.id not in tracked_ids:
+                cid = c["Id"]
+                if cid not in tracked_ids:
                     logger.info(
                         "Removing orphaned klangk container %s",
-                        c.id,
+                        cid,
                     )
-                    tasks.append(c.delete(force=True))
+                    tasks.append(self.stop_and_remove_container(cid))
         except (
-            aiodocker.exceptions.DockerError,
+            podman.PodmanError,
             OSError,
         ) as e:
             logger.warning("Error listing orphaned containers: %s", e)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        if self.docker:
-            await self.docker.close()
-            self.docker = None
 
 
 # Module-level singleton

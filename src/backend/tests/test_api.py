@@ -17,6 +17,7 @@ from klangk_backend import (
     auth,
     container,
     model,
+    podman,
     workspaces as ws_mod,
     wshandler,
 )
@@ -1116,28 +1117,30 @@ class TestBrowserBridge:
 # --- Volume routes ---
 
 
+def _managed_volume():
+    """An inspect_volume result owned by this klangk instance."""
+    return {
+        "Labels": {
+            "klangk.managed": "true",
+            "klangk.instance": container.INSTANCE_ID,
+        }
+    }
+
+
 class TestVolumeRoutes:
     async def test_list_volumes(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            container.registry,
-            "get_docker",
-            return_value=MagicMock(
-                volumes=MagicMock(
-                    list=AsyncMock(
-                        return_value={
-                            "Volumes": [
-                                {
-                                    "Name": "test-vol",
-                                    "CreatedAt": "2026-01-01T00:00:00Z",
-                                    "Labels": {
-                                        "klangk.instance": container.INSTANCE_ID
-                                    },
-                                }
-                            ]
-                        }
-                    )
-                )
+            podman,
+            "list_volumes",
+            AsyncMock(
+                return_value=[
+                    {
+                        "Name": "test-vol",
+                        "CreatedAt": "2026-01-01T00:00:00Z",
+                        "Labels": {"klangk.instance": container.INSTANCE_ID},
+                    }
+                ]
             ),
         ):
             resp = await client.get("/volumes", headers=headers)
@@ -1148,20 +1151,20 @@ class TestVolumeRoutes:
 
     async def test_create_volume(self, client, user):
         headers = await _auth_headers(client)
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(
-            return_value={"Name": "new-vol", "CreatedAt": "2026-01-01"}
-        )
-        mock_docker = MagicMock()
-        mock_docker.volumes = MagicMock()
-        mock_docker.volumes.get = AsyncMock(
-            side_effect=container.aiodocker.exceptions.DockerError(
-                404, {"message": "not found"}
-            )
-        )
-        mock_docker.volumes.create = AsyncMock(return_value=mock_vol)
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
+        with (
+            patch.object(
+                podman, "inspect_volume", AsyncMock(return_value=None)
+            ),
+            patch.object(
+                podman,
+                "create_volume",
+                AsyncMock(
+                    return_value={
+                        "Name": "new-vol",
+                        "CreatedAt": "2026-01-01",
+                    }
+                ),
+            ),
         ):
             resp = await client.post(
                 "/volumes",
@@ -1173,13 +1176,10 @@ class TestVolumeRoutes:
 
     async def test_create_duplicate_volume(self, client, user):
         headers = await _auth_headers(client)
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(return_value={"Name": "dup-vol"})
-        mock_docker = MagicMock()
-        mock_docker.volumes = MagicMock()
-        mock_docker.volumes.get = AsyncMock(return_value=mock_vol)
         with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
+            podman,
+            "inspect_volume",
+            AsyncMock(return_value={"Name": "dup-vol"}),
         ):
             resp = await client.post(
                 "/volumes",
@@ -1188,71 +1188,18 @@ class TestVolumeRoutes:
             )
         assert resp.status_code == 409
 
-    async def test_delete_volume(self, client, user):
+    async def test_create_volume_error_propagates(self, client, user):
         headers = await _auth_headers(client)
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(
-            return_value={
-                "Labels": {
-                    "klangk.managed": "true",
-                    "klangk.instance": container.INSTANCE_ID,
-                }
-            }
-        )
-        mock_vol.delete = AsyncMock()
-        mock_docker = MagicMock()
-        mock_docker.volumes = MagicMock()
-        mock_docker.volumes.get = AsyncMock(return_value=mock_vol)
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
-            resp = await client.delete("/volumes/test-vol", headers=headers)
-        assert resp.status_code == 200
-
-    async def test_delete_volume_not_found(self, client, user):
-        headers = await _auth_headers(client)
-        mock_docker = MagicMock()
-        mock_docker.volumes = MagicMock()
-        mock_docker.volumes.get = AsyncMock(
-            side_effect=container.aiodocker.exceptions.DockerError(
-                404, {"message": "not found"}
-            )
-        )
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
-            resp = await client.delete("/volumes/nope", headers=headers)
-        assert resp.status_code == 404
-
-    async def test_delete_volume_wrong_instance(self, client, user):
-        headers = await _auth_headers(client)
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(
-            return_value={"Labels": {"klangk.instance": "other-instance"}}
-        )
-        mock_docker = MagicMock()
-        mock_docker.volumes = MagicMock()
-        mock_docker.volumes.get = AsyncMock(return_value=mock_vol)
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
-            resp = await client.delete("/volumes/foreign", headers=headers)
-        assert resp.status_code == 404
-
-    async def test_create_volume_docker_error(self, client, user):
-        headers = await _auth_headers(client)
-        mock_docker = MagicMock()
-        mock_docker.volumes = MagicMock()
-        mock_docker.volumes.get = AsyncMock(
-            side_effect=container.aiodocker.exceptions.DockerError(
-                500, {"message": "internal error"}
-            )
-        )
         with (
             patch.object(
-                container.registry, "get_docker", return_value=mock_docker
+                podman, "inspect_volume", AsyncMock(return_value=None)
             ),
-            pytest.raises(container.aiodocker.exceptions.DockerError),
+            patch.object(
+                podman,
+                "create_volume",
+                AsyncMock(side_effect=podman.PodmanError(500, "boom")),
+            ),
+            pytest.raises(podman.PodmanError),
         ):
             await client.post(
                 "/volumes",
@@ -1260,54 +1207,85 @@ class TestVolumeRoutes:
                 headers=headers,
             )
 
-    async def test_delete_volume_docker_error(self, client, user):
+    async def test_delete_volume(self, client, user):
         headers = await _auth_headers(client)
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(
-            return_value={
-                "Labels": {
-                    "klangk.managed": "true",
-                    "klangk.instance": container.INSTANCE_ID,
-                }
-            }
-        )
-        mock_vol.delete = AsyncMock(
-            side_effect=container.aiodocker.exceptions.DockerError(
-                500, {"message": "internal error"}
-            )
-        )
-        mock_docker = MagicMock()
-        mock_docker.volumes = MagicMock()
-        mock_docker.volumes.get = AsyncMock(return_value=mock_vol)
         with (
             patch.object(
-                container.registry, "get_docker", return_value=mock_docker
+                podman,
+                "inspect_volume",
+                AsyncMock(return_value=_managed_volume()),
             ),
-            pytest.raises(container.aiodocker.exceptions.DockerError),
+            patch.object(podman, "remove_volume", AsyncMock()),
+        ):
+            resp = await client.delete("/volumes/test-vol", headers=headers)
+        assert resp.status_code == 200
+
+    async def test_delete_volume_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        with patch.object(
+            podman, "inspect_volume", AsyncMock(return_value=None)
+        ):
+            resp = await client.delete("/volumes/nope", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_delete_volume_wrong_instance(self, client, user):
+        headers = await _auth_headers(client)
+        with patch.object(
+            podman,
+            "inspect_volume",
+            AsyncMock(return_value={"Labels": {"klangk.instance": "other"}}),
+        ):
+            resp = await client.delete("/volumes/foreign", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_delete_volume_remove_not_found(self, client, user):
+        """Volume vanishes between inspect and remove → 404."""
+        headers = await _auth_headers(client)
+        with (
+            patch.object(
+                podman,
+                "inspect_volume",
+                AsyncMock(return_value=_managed_volume()),
+            ),
+            patch.object(
+                podman,
+                "remove_volume",
+                AsyncMock(side_effect=podman.PodmanError(404, "gone")),
+            ),
+        ):
+            resp = await client.delete("/volumes/gone", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_delete_volume_other_error(self, client, user):
+        headers = await _auth_headers(client)
+        with (
+            patch.object(
+                podman,
+                "inspect_volume",
+                AsyncMock(return_value=_managed_volume()),
+            ),
+            patch.object(
+                podman,
+                "remove_volume",
+                AsyncMock(side_effect=podman.PodmanError(500, "internal")),
+            ),
+            pytest.raises(podman.PodmanError),
         ):
             await client.delete("/volumes/err-vol", headers=headers)
 
     async def test_delete_volume_in_use(self, client, user):
         headers = await _auth_headers(client)
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(
-            return_value={
-                "Labels": {
-                    "klangk.managed": "true",
-                    "klangk.instance": container.INSTANCE_ID,
-                }
-            }
-        )
-        mock_vol.delete = AsyncMock(
-            side_effect=container.aiodocker.exceptions.DockerError(
-                409, {"message": "in use"}
-            )
-        )
-        mock_docker = MagicMock()
-        mock_docker.volumes = MagicMock()
-        mock_docker.volumes.get = AsyncMock(return_value=mock_vol)
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
+        with (
+            patch.object(
+                podman,
+                "inspect_volume",
+                AsyncMock(return_value=_managed_volume()),
+            ),
+            patch.object(
+                podman,
+                "remove_volume",
+                AsyncMock(side_effect=podman.PodmanError(409, "in use")),
+            ),
         ):
             resp = await client.delete("/volumes/busy", headers=headers)
         assert resp.status_code == 409

@@ -2,12 +2,13 @@
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from contextlib import ExitStack, contextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
-import aiodocker.exceptions
 import pytest
 
-from klangk_backend import container, model
+from klangk_backend import container, model, podman
 
 
 class TestParseIdleTimeout:
@@ -232,24 +233,34 @@ class TestConstants:
 # --- Docker-dependent tests (mocked) ---
 
 
-def _mock_docker():
-    """Create a mock Docker client with containers namespace."""
-    docker = AsyncMock()
-    docker.containers = AsyncMock()
-    docker.close = AsyncMock()
-    return docker
+@contextmanager
+def patch_podman(**overrides):
+    """Patch the podman.* calls container.py makes.
+
+    Yields a namespace of the AsyncMocks so tests can assert on them.
+    Override any default by passing ``name=AsyncMock(...)``.
+    """
+    defaults = {
+        "inspect_container": AsyncMock(return_value=None),
+        "create_container": AsyncMock(return_value="new-cid"),
+        "start_container": AsyncMock(),
+        "remove_container": AsyncMock(),
+        "list_containers": AsyncMock(return_value=[]),
+        "inspect_volume": AsyncMock(return_value=None),
+        "create_volume": AsyncMock(
+            return_value={"Name": "v", "CreatedAt": ""}
+        ),
+    }
+    mocks = {**defaults, **overrides}
+    with ExitStack() as stack:
+        for name, mock in mocks.items():
+            stack.enter_context(patch.object(podman, name, mock))
+        yield SimpleNamespace(**mocks)
 
 
-def _mock_container(container_id="fake-cid", running=True):
-    """Create a mock container object."""
-    c = AsyncMock()
-    c.id = container_id
-    c.show = AsyncMock(return_value={"State": {"Running": running}})
-    c.start = AsyncMock()
-    c.stop = AsyncMock()
-    c.delete = AsyncMock()
-    c.attach = MagicMock(return_value=AsyncMock())
-    return c
+def _running(value=True):
+    """An inspect_container mock returning a container in the given state."""
+    return AsyncMock(return_value={"State": {"Running": value}})
 
 
 class TestStartContainer:
@@ -260,15 +271,7 @@ class TestStartContainer:
         container.registry.states.clear()
 
     async def test_create_new_container(self, workspace):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             cid, status = await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -276,7 +279,7 @@ class TestStartContainer:
             )
         assert cid == "new-cid"
         assert status == "created"
-        mock_c.start.assert_awaited_once()
+        p.start_container.assert_awaited_once_with("new-cid")
         assert workspace["id"] in container.registry.states
 
     async def test_ssh_agent_forwarded_when_socket_exists(
@@ -285,54 +288,30 @@ class TestStartContainer:
         sock = tmp_path / "agent.sock"
         sock.touch()
         monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        call_kwargs = mock_docker.containers.create_or_replace.call_args
-        env_list = call_kwargs[1]["config"]["Env"]
-        binds = call_kwargs[1]["config"]["HostConfig"]["Binds"]
-        assert "SSH_AUTH_SOCK=/run/ssh-agent.sock" in env_list
-        assert f"{sock}:/run/ssh-agent.sock:ro" in binds
+        kwargs = p.create_container.call_args.kwargs
+        assert "SSH_AUTH_SOCK=/run/ssh-agent.sock" in kwargs["env"]
+        assert f"{sock}:/run/ssh-agent.sock:ro" in kwargs["binds"]
 
     async def test_ssh_agent_not_forwarded_when_unset(
         self, workspace, monkeypatch
     ):
         monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        call_kwargs = mock_docker.containers.create_or_replace.call_args
-        env_list = call_kwargs[1]["config"]["Env"]
-        binds = call_kwargs[1]["config"]["HostConfig"]["Binds"]
-        assert "SSH_AUTH_SOCK=/run/ssh-agent.sock" not in env_list
-        assert not any("ssh-agent" in b for b in binds)
+        kwargs = p.create_container.call_args.kwargs
+        assert "SSH_AUTH_SOCK=/run/ssh-agent.sock" not in kwargs["env"]
+        assert not any("ssh-agent" in b for b in kwargs["binds"])
 
     async def test_reuse_running_container(self, workspace):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("existing-cid", running=True)
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman(inspect_container=_running(True)) as p:
             cid, status = await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -341,20 +320,11 @@ class TestStartContainer:
             )
         assert cid == "existing-cid"
         assert status == "connected"
-        mock_c.start.assert_not_awaited()
+        p.start_container.assert_not_awaited()
+        p.create_container.assert_not_awaited()
 
     async def test_recreate_stopped_container(self, workspace):
-        mock_docker = _mock_docker()
-        stopped_c = _mock_container("old-cid", running=False)
-        mock_docker.containers.get = AsyncMock(return_value=stopped_c)
-        new_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=new_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman(inspect_container=_running(False)) as p:
             cid, status = await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -363,21 +333,11 @@ class TestStartContainer:
             )
         assert cid == "new-cid"
         assert status == "created"
-        stopped_c.delete.assert_awaited_once_with(force=True)
+        p.remove_container.assert_awaited_once_with("old-cid")
 
     async def test_missing_container_creates_new(self, workspace):
-        mock_docker = _mock_docker()
-        mock_docker.containers.get = AsyncMock(
-            side_effect=aiodocker.exceptions.DockerError(404, "not found")
-        )
-        new_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=new_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        # inspect_container returns None (default) → treated as gone.
+        with patch_podman() as p:
             cid, status = await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -386,6 +346,7 @@ class TestStartContainer:
             )
         assert cid == "new-cid"
         assert status == "created"
+        p.remove_container.assert_not_awaited()
 
     async def test_disallowed_image_raises(self, workspace):
         with pytest.raises(ValueError, match="not in the allowed list"):
@@ -397,22 +358,15 @@ class TestStartContainer:
         """Container gets proxy URL, not real API keys."""
         monkeypatch.setenv("KLANGK_LLM_MODEL", "gemma4:31b")
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
             )
-        call_kwargs = mock_docker.containers.create_or_replace.call_args
-        env = call_kwargs[1]["config"]["Env"]
+        kwargs = p.create_container.call_args.kwargs
+        env = kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env)
         assert env_dict["KLANGK_LLM_PROXY_URL"] == (
             "http://host.docker.internal:8995/llm-proxy"
@@ -422,60 +376,33 @@ class TestStartContainer:
         assert not any(e.startswith("KLANGK_LLM_API_KEY=") for e in env)
         assert not any(e.startswith("ANTHROPIC_API_KEY=") for e in env)
         # host.docker.internal must be resolvable
-        host_config = call_kwargs[1]["config"]["HostConfig"]
-        assert "host.docker.internal:host-gateway" in host_config["ExtraHosts"]
+        assert "host.docker.internal:host-gateway" in kwargs["add_hosts"]
 
     async def test_config_mount_added(self, workspace):
         """Container gets read-only config mount when config_path is set."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 config_path="/tmp/config",
             )
-        call_kwargs = mock_docker.containers.create_or_replace.call_args
-        binds = call_kwargs[1]["config"]["HostConfig"]["Binds"]
+        binds = p.create_container.call_args.kwargs["binds"]
         assert "/tmp/config:/opt/klangk/config:ro" in binds
 
     async def test_no_config_mount_without_config_path(self, workspace):
         """Container has no config mount when config_path is not set."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
             )
-        call_kwargs = mock_docker.containers.create_or_replace.call_args
-        binds = call_kwargs[1]["config"]["HostConfig"]["Binds"]
+        binds = p.create_container.call_args.kwargs["binds"]
         assert not any("config" in b for b in binds)
 
     async def test_hosting_env_vars(self, workspace):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -484,22 +411,13 @@ class TestStartContainer:
                 hosting_proto="https",
                 hosting_base_path="/klangk",
             )
-        call_kwargs = mock_docker.containers.create_or_replace.call_args
-        env = call_kwargs[1]["config"]["Env"]
+        env = p.create_container.call_args.kwargs["env"]
         assert "KLANGK_HOSTING_HOSTNAME=example.com" in env
         assert "KLANGK_HOSTING_PROTO=https" in env
         assert "KLANGK_HOSTING_BASE_PATH=/klangk" in env
 
     async def test_port_allocation_on_create(self, workspace):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman():
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -515,15 +433,7 @@ class TestStartContainer:
         await model.find_and_allocate_ports(
             workspace["id"], 5, container.PORT_RANGE_START
         )
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman():
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -534,47 +444,28 @@ class TestStartContainer:
         assert len(ports) == 2
 
     async def test_container_config_structure(self, workspace):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
             )
-        call_kwargs = mock_docker.containers.create_or_replace.call_args
-        config = call_kwargs[1]["config"]
-        assert config["Image"] == container.IMAGE_NAME
-        assert config["Labels"]["klangk.managed"] == "true"
-        assert config["Labels"]["klangk.workspace-id"] == workspace["id"]
-        assert config["HostConfig"]["ReadonlyRootfs"] is False
-        assert config["HostConfig"]["Init"] is True
-        assert config["OpenStdin"] is True
+        args, kwargs = p.create_container.call_args
+        assert args[1] == container.IMAGE_NAME
+        assert kwargs["labels"]["klangk.managed"] == "true"
+        assert kwargs["labels"]["klangk.workspace-id"] == workspace["id"]
+        assert kwargs["init"] is True
+        assert kwargs["interactive"] is True
 
     async def test_create_container_with_extra_env(self, workspace):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("new-cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 extra_env={"KLANGK_SKILLS": "stats,rdkit", "FOO": "bar"},
             )
-        call_kwargs = mock_docker.containers.create_or_replace.call_args
-        env_list = call_kwargs[1]["config"]["Env"]
+        env_list = p.create_container.call_args.kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env_list)
         assert env_dict["KLANGK_SKILLS"] == "stats,rdkit"
         assert env_dict["FOO"] == "bar"
@@ -630,166 +521,87 @@ class TestValidateMountSpec:
 class TestExtraMountsVolumeCreation:
     async def test_auto_creates_named_volume(self, workspace):
         """Named volumes (no leading /) are auto-created with klangk labels."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(return_value={"Name": "nix-store"})
-        mock_docker.volumes.get = AsyncMock(
-            side_effect=container.aiodocker.exceptions.DockerError(
-                404, {"message": "not found"}
-            )
-        )
-        mock_docker.volumes.create = AsyncMock(return_value=mock_vol)
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        # inspect_volume returns None (default) → volume is created.
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["nix-store:/nix"],
             )
-        mock_docker.volumes.create.assert_awaited_once()
-        create_args = mock_docker.volumes.create.call_args[0][0]
-        assert create_args["Name"] == "nix-store"
-        assert create_args["Labels"]["klangk.managed"] == "true"
-        assert (
-            create_args["Labels"]["klangk.instance"] == container.INSTANCE_ID
-        )
+        p.create_volume.assert_awaited_once()
+        name, labels = p.create_volume.call_args.args
+        assert name == "nix-store"
+        assert labels["klangk.managed"] == "true"
+        assert labels["klangk.instance"] == container.INSTANCE_ID
 
     async def test_existing_volume_not_recreated(self, workspace):
         """Existing volumes are used as-is, not recreated."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(return_value={"Name": "existing"})
-        mock_docker.volumes.get = AsyncMock(return_value=mock_vol)
-        mock_docker.volumes.create = AsyncMock()
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman(
+            inspect_volume=AsyncMock(return_value={"Name": "existing"})
+        ) as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["existing:/data"],
             )
-        mock_docker.volumes.create.assert_not_awaited()
+        p.create_volume.assert_not_awaited()
 
     async def test_bind_mount_not_treated_as_volume(self, workspace):
         """Bind mounts (starting with /) are not treated as volumes."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-        mock_docker.volumes.get = AsyncMock()
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["/home/me/src:/work/src"],
             )
-        mock_docker.volumes.get.assert_not_awaited()
+        p.inspect_volume.assert_not_awaited()
 
     async def test_mount_with_multiple_colons(self, workspace):
         """Mount spec with options (host:container:ro) — source starts with /."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-        mock_docker.volumes.get = AsyncMock()
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["/data/shared:/mnt/data:ro"],
             )
-        # Bind mount, not a volume — volumes.get should not be called
-        mock_docker.volumes.get.assert_not_awaited()
+        # Bind mount, not a volume — inspect_volume should not be called
+        p.inspect_volume.assert_not_awaited()
 
     async def test_volume_mount_with_options(self, workspace):
         """Named volume with options (vol:container:ro) — auto-creates."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-        mock_vol = MagicMock()
-        mock_vol.show = AsyncMock(return_value={"Name": "my-vol"})
-        mock_docker.volumes.get = AsyncMock(
-            side_effect=container.aiodocker.exceptions.DockerError(
-                404, {"message": "not found"}
-            )
-        )
-        mock_docker.volumes.create = AsyncMock(return_value=mock_vol)
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["my-vol:/data:ro"],
             )
-        mock_docker.volumes.create.assert_awaited_once()
+        p.create_volume.assert_awaited_once()
 
     async def test_mount_source_with_slash_is_bind(self, workspace):
         """A mount source containing slashes is a bind mount, not a volume."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-        mock_docker.volumes.get = AsyncMock()
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["./relative/path:/work/rel"],
             )
-        mock_docker.volumes.get.assert_not_awaited()
+        p.inspect_volume.assert_not_awaited()
 
-    async def test_volume_auto_create_docker_error(self, workspace):
-        """Non-404 Docker error during volume check is re-raised."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-        mock_docker.volumes.get = AsyncMock(
-            side_effect=container.aiodocker.exceptions.DockerError(
-                500, {"message": "internal error"}
-            )
-        )
-
+    async def test_volume_create_error_propagates(self, workspace):
+        """An error creating a named volume propagates to the caller."""
         with (
-            patch.object(
-                container.registry, "get_docker", return_value=mock_docker
+            patch_podman(
+                create_volume=AsyncMock(
+                    side_effect=podman.PodmanError(500, "internal error")
+                )
             ),
-            pytest.raises(container.aiodocker.exceptions.DockerError),
+            pytest.raises(podman.PodmanError),
         ):
             await container.registry.start_container(
                 workspace["id"],
@@ -800,16 +612,7 @@ class TestExtraMountsVolumeCreation:
 
     async def test_mount_source_with_special_characters(self, workspace):
         """Mount source with special/binary-like chars is a bind mount."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.create_or_replace = AsyncMock(
-            return_value=mock_c
-        )
-        mock_docker.volumes.get = AsyncMock()
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -817,20 +620,17 @@ class TestExtraMountsVolumeCreation:
                 extra_mounts=["/path/with spaces\x00and\x01binary:/work/bad"],
             )
         # Has leading /, so treated as bind mount
-        mock_docker.volumes.get.assert_not_awaited()
+        p.inspect_volume.assert_not_awaited()
 
     async def test_bridge_token_revoked_on_creation_failure(self, workspace):
-        """If container creation fails, the bridge token is revoked."""
-        mock_docker = _mock_docker()
-        mock_docker.containers.create_or_replace = AsyncMock(
-            side_effect=RuntimeError("docker broke")
-        )
-
+        """If container creation fails, the error propagates cleanly."""
         with (
-            patch.object(
-                container.registry, "get_docker", return_value=mock_docker
+            patch_podman(
+                create_container=AsyncMock(
+                    side_effect=RuntimeError("podman broke")
+                )
             ),
-            pytest.raises(RuntimeError, match="docker broke"),
+            pytest.raises(RuntimeError, match="podman broke"),
         ):
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -849,27 +649,20 @@ class TestStopContainer:
         container.registry.states.clear()
 
     async def test_stop_running(self):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
         container.registry.track_activity("cid", "ws")
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.stop_and_remove_container("cid")
-        mock_c.delete.assert_awaited()
+        p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
 
     async def test_stop_docker_error(self):
-        mock_docker = _mock_docker()
-        mock_docker.containers.get = AsyncMock(
-            side_effect=aiodocker.exceptions.DockerError(404, "gone")
-        )
         container.registry.track_activity("cid", "ws")
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
+        with patch_podman(
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(404, "gone")
+            )
         ):
             await container.registry.stop_and_remove_container("cid")
         # Should still remove from tracking
@@ -884,28 +677,20 @@ class TestRemoveContainer:
         container.registry.states.clear()
 
     async def test_remove(self):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
         container.registry.track_activity("cid", "ws")
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.stop_and_remove_container("cid")
-        mock_c.delete.assert_awaited()
-        mock_c.delete.assert_awaited_once_with(force=True)
+        p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
 
     async def test_remove_docker_error(self):
-        mock_docker = _mock_docker()
-        mock_docker.containers.get = AsyncMock(
-            side_effect=aiodocker.exceptions.DockerError(404, "gone")
-        )
         container.registry.track_activity("cid", "ws")
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
+        with patch_podman(
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(404, "gone")
+            )
         ):
             await container.registry.stop_and_remove_container("cid")
         assert "ws" not in container.registry.states
@@ -919,26 +704,16 @@ class TestStopUserContainers:
         container.registry.states.clear()
 
     async def test_stop_user_containers(self, user, workspace):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         # Set container_id on the workspace
         await model.update_workspace_container(workspace["id"], "cid")
         container.registry.track_activity("cid", workspace["id"])
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.stop_user_containers(user["id"])
-        mock_c.delete.assert_awaited()
+        p.remove_container.assert_awaited_once_with("cid")
         assert workspace["id"] not in container.registry.states
 
     async def test_stop_user_calls_workspace_killed(self, user, workspace):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         await model.update_workspace_container(workspace["id"], "cid")
         container.registry.track_activity("cid", workspace["id"])
 
@@ -946,33 +721,28 @@ class TestStopUserContainers:
         old_cb = container.registry.on_workspace_killed
         container.registry.on_workspace_killed = killed_cb
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman():
             await container.registry.stop_user_containers(user["id"])
 
         killed_cb.assert_awaited_once_with(workspace["id"])
         container.registry.on_workspace_killed = old_cb
 
     async def test_stop_user_no_containers(self, user):
-        mock_docker = _mock_docker()
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             await container.registry.stop_user_containers(user["id"])
-        mock_docker.containers.get.assert_not_awaited()
+        p.remove_container.assert_not_awaited()
 
 
 class TestShutdown:
     def setup_method(self):
         container.registry.states.clear()
+        container.registry._cid_to_wsid.clear()
         container.registry.cleanup_task = None
-        container.registry.docker = None
 
     def teardown_method(self):
         container.registry.states.clear()
+        container.registry._cid_to_wsid.clear()
         container.registry.cleanup_task = None
-        container.registry.docker = None
 
     async def test_shutdown_skips_in_docker(self):
         """When running inside a container, shutdown skips cleanup."""
@@ -983,40 +753,25 @@ class TestShutdown:
         assert "ws" in container.registry.states
 
     async def test_shutdown_stops_tracked(self):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-        mock_docker.containers.list = AsyncMock(return_value=[])
+        # list_containers returns the tracked cid; it should be skipped in
+        # the orphan loop (already tracked) but still removed via tracking.
         container.registry.track_activity("cid", "ws")
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
-            container.registry.docker = mock_docker
+        with patch_podman(
+            list_containers=AsyncMock(return_value=[{"Id": "cid"}])
+        ) as p:
             await container.registry.shutdown()
-        mock_c.delete.assert_awaited()
+        p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
-        mock_docker.close.assert_awaited_once()
 
     async def test_shutdown_stops_orphans(self):
-        mock_docker = _mock_docker()
-        orphan = _mock_container("orphan-cid")
-        mock_docker.containers.list = AsyncMock(return_value=[orphan])
-        mock_docker.containers.get = AsyncMock(
-            return_value=_mock_container("x")
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
-            container.registry.docker = mock_docker
+        with patch_podman(
+            list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}])
+        ) as p:
             await container.registry.shutdown()
-        orphan.delete.assert_awaited_once()
+        p.remove_container.assert_awaited_once_with("orphan-cid")
 
     async def test_shutdown_cancels_cleanup_task(self):
-        mock_docker = _mock_docker()
-        mock_docker.containers.list = AsyncMock(return_value=[])
-
         # Create a real cancellable task so shutdown can await it.
         async def fake_cleanup():
             await asyncio.sleep(999)
@@ -1024,55 +779,36 @@ class TestShutdown:
         task = asyncio.create_task(fake_cleanup())
         container.registry.cleanup_task = task
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
-            container.registry.docker = mock_docker
+        with patch_podman():
             await container.registry.shutdown()
         assert task.cancelled()
         assert container.registry.cleanup_task is None
 
     async def test_shutdown_handles_docker_error(self):
-        mock_docker = _mock_docker()
-        mock_docker.containers.list = AsyncMock(
-            side_effect=OSError("Docker connection refused")
-        )
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
+        with patch_podman(
+            list_containers=AsyncMock(
+                side_effect=OSError("Docker connection refused")
+            )
         ):
-            container.registry.docker = mock_docker
             await container.registry.shutdown()
         # Should not raise
-        mock_docker.close.assert_awaited_once()
 
     async def test_shutdown_no_docker(self):
-        container.registry.docker = None
-        mock_docker = _mock_docker()
-        mock_docker.containers.list = AsyncMock(return_value=[])
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman():
             await container.registry.shutdown()
         assert container.registry.cleanup_task is None
 
-    async def test_shutdown_orphan_delete_error(self):
-        """Orphan container that raises on delete is handled gracefully."""
-        mock_docker = _mock_docker()
-        orphan = _mock_container("orphan-cid")
-        orphan.delete = AsyncMock(
-            side_effect=aiodocker.exceptions.DockerError(500, "delete failed")
-        )
-        mock_docker.containers.list = AsyncMock(return_value=[orphan])
-
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
-            container.registry.docker = mock_docker
+    async def test_shutdown_orphan_remove_error(self):
+        """Orphan container that errors on removal is handled gracefully."""
+        with patch_podman(
+            list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}]),
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "remove failed")
+            ),
+        ) as p:
             await container.registry.shutdown()
-        # Should have attempted to delete and not raised
-        orphan.delete.assert_awaited_once()
-        mock_docker.close.assert_awaited_once()
+        # Attempted removal and did not raise
+        p.remove_container.assert_awaited_once_with("orphan-cid")
 
 
 class TestCleanupIdleContainers:
@@ -1085,19 +821,13 @@ class TestCleanupIdleContainers:
         container.registry._cleanup_wake = None
 
     async def test_idle_container_stopped(self):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         # Set activity far in the past
         container.registry.track_activity("cid", "ws-1")
         container.registry.states["ws-1"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
         )
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             task = asyncio.create_task(
                 container.registry.cleanup_idle_containers()
             )
@@ -1110,14 +840,10 @@ class TestCleanupIdleContainers:
                 await task
             except asyncio.CancelledError:
                 pass
-        mock_c.delete.assert_awaited()
+        p.remove_container.assert_awaited()
         assert "ws-1" not in container.registry.states
 
     async def test_idle_calls_workspace_killed_callback(self):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         container.registry.track_activity("cid", "ws-killed")
         container.registry.states["ws-killed"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
@@ -1127,9 +853,7 @@ class TestCleanupIdleContainers:
         old_cb = container.registry.on_workspace_killed
         container.registry.on_workspace_killed = killed_cb
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman():
             task = asyncio.create_task(
                 container.registry.cleanup_idle_containers()
             )
@@ -1146,10 +870,6 @@ class TestCleanupIdleContainers:
         container.registry.on_workspace_killed = old_cb
 
     async def test_idle_workspace_killed_callback_error(self):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         container.registry.track_activity("cid", "ws-err")
         container.registry.states["ws-err"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
@@ -1159,9 +879,7 @@ class TestCleanupIdleContainers:
         old_cb = container.registry.on_workspace_killed
         container.registry.on_workspace_killed = killed_cb
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman():
             task = asyncio.create_task(
                 container.registry.cleanup_idle_containers()
             )
@@ -1179,13 +897,9 @@ class TestCleanupIdleContainers:
         container.registry.on_workspace_killed = old_cb
 
     async def test_active_container_not_stopped(self):
-        mock_docker = _mock_docker()
-
         container.registry.track_activity("cid", "ws-1")
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman():
             task = asyncio.create_task(
                 container.registry.cleanup_idle_containers()
             )
@@ -1201,10 +915,6 @@ class TestCleanupIdleContainers:
         assert "ws-1" in container.registry.states
 
     async def test_idle_callback_invoked(self):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         container.registry.track_activity("cid", "ws-1")
         container.registry.states["ws-1"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
@@ -1217,9 +927,7 @@ class TestCleanupIdleContainers:
 
         container.registry.on_idle_stop("ws-1", on_idle)
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman():
             task = asyncio.create_task(
                 container.registry.cleanup_idle_containers()
             )
@@ -1234,10 +942,6 @@ class TestCleanupIdleContainers:
         assert callback_called == ["ws-1"]
 
     async def test_idle_callback_error_handled(self):
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         container.registry.track_activity("cid", "ws-1")
         container.registry.states["ws-1"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
@@ -1248,9 +952,7 @@ class TestCleanupIdleContainers:
 
         container.registry.on_idle_stop("ws-1", bad_callback)
 
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
-        ):
+        with patch_podman() as p:
             task = asyncio.create_task(
                 container.registry.cleanup_idle_containers()
             )
@@ -1263,24 +965,16 @@ class TestCleanupIdleContainers:
             except asyncio.CancelledError:
                 pass
         # Container should still be stopped despite callback error
-        mock_c.delete.assert_awaited()
+        p.remove_container.assert_awaited()
 
     async def test_per_workspace_timeout_uses_event_wait(self):
         """When per-workspace timeouts exist, cleanup uses Event-based wait."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         container.registry.track_activity("cid", "ws-fast")
         container.registry.states["ws-fast"].last_activity = time.time() - 100
         container.registry.states["ws-fast"].idle_timeout = 5
 
         try:
-            with patch.object(
-                container.registry,
-                "get_docker",
-                return_value=mock_docker,
-            ):
+            with patch_podman() as p:
                 # The Event-based wait will timeout after max(2, 5//2)=2s,
                 # then check containers. We cancel after one iteration.
                 task = asyncio.create_task(
@@ -1295,26 +989,18 @@ class TestCleanupIdleContainers:
                     await task
                 except asyncio.CancelledError:
                     pass
-            mock_c.delete.assert_awaited()
+            p.remove_container.assert_awaited()
         finally:
             container.registry.states.clear()
 
     async def test_per_workspace_timeout_event_timeout(self):
         """Event-based wait times out when no wake signal is sent."""
-        mock_docker = _mock_docker()
-        mock_c = _mock_container("cid")
-        mock_docker.containers.get = AsyncMock(return_value=mock_c)
-
         container.registry.track_activity("cid", "ws-fast")
         container.registry.states["ws-fast"].last_activity = time.time() - 100
         container.registry.states["ws-fast"].idle_timeout = 4
 
         try:
-            with patch.object(
-                container.registry,
-                "get_docker",
-                return_value=mock_docker,
-            ):
+            with patch_podman() as p:
                 # Patch wait_for to immediately raise TimeoutError (simulates
                 # the event not being set within the interval)
                 async def fast_timeout(coro, timeout):
@@ -1340,7 +1026,7 @@ class TestCleanupIdleContainers:
                         await container.registry.cleanup_idle_containers()
                     except asyncio.CancelledError:
                         pass
-            mock_c.delete.assert_awaited()
+            p.remove_container.assert_awaited()
         finally:
             container.registry.states.clear()
 
@@ -1375,17 +1061,15 @@ class TestAdoptOrphanedContainers:
         container.registry.states.clear()
 
     async def test_adopts_running_containers(self):
-        mock_container = MagicMock()
-        mock_container.id = "orphan-123"
-        mock_container.show = AsyncMock(
-            return_value={
-                "Config": {"Labels": {"klangk.workspace-id": "ws-orphan"}}
-            }
-        )
-        mock_docker = AsyncMock()
-        mock_docker.containers.list = AsyncMock(return_value=[mock_container])
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
+        with patch_podman(
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "orphan-123",
+                        "Labels": {"klangk.workspace-id": "ws-orphan"},
+                    }
+                ]
+            )
         ):
             await container.registry.adopt_orphaned_containers()
         assert "ws-orphan" in container.registry.states
@@ -1393,28 +1077,34 @@ class TestAdoptOrphanedContainers:
             container.registry.states["ws-orphan"].container_id == "orphan-123"
         )
 
-    async def test_skips_already_tracked(self):
-        container.registry.track_activity("tracked-456", "ws-tracked")
-        mock_container = MagicMock()
-        mock_container.id = "tracked-456"
-        mock_docker = AsyncMock()
-        mock_docker.containers.list = AsyncMock(return_value=[mock_container])
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
+    async def test_adopts_orphan_without_labels(self):
+        # A container with no labels gets the "unknown" workspace id.
+        with patch_podman(
+            list_containers=AsyncMock(
+                return_value=[{"Id": "orphan-x", "Labels": None}]
+            )
         ):
             await container.registry.adopt_orphaned_containers()
-        # Should not have called show() since it's already tracked
-        mock_container.show.assert_not_called()
+        assert container.registry.states["unknown"].container_id == "orphan-x"
+
+    async def test_skips_already_tracked(self):
+        container.registry.track_activity("tracked-456", "ws-tracked")
+        with patch_podman(
+            list_containers=AsyncMock(return_value=[{"Id": "tracked-456"}])
+        ):
+            await container.registry.adopt_orphaned_containers()
+        # Already tracked → not re-adopted, no "unknown" entry created.
+        assert (
+            container.registry.states["ws-tracked"].container_id
+            == "tracked-456"
+        )
+        assert "unknown" not in container.registry.states
 
     async def test_docker_error_handled(self):
-        mock_docker = AsyncMock()
-        mock_docker.containers.list = AsyncMock(
-            side_effect=aiodocker.exceptions.DockerError(
-                "err", {"message": "fail"}
+        with patch_podman(
+            list_containers=AsyncMock(
+                side_effect=podman.PodmanError(500, "fail")
             )
-        )
-        with patch.object(
-            container.registry, "get_docker", return_value=mock_docker
         ):
             await container.registry.adopt_orphaned_containers()
         # Should not raise
