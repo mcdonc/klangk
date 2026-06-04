@@ -106,6 +106,7 @@ async def create_container(
     env: list[str] | None = None,
     init: bool = False,
     interactive: bool = False,
+    pull: str = "never",
     replace: bool = True,
 ) -> str:
     """Create a container (``podman create``) and return its id.
@@ -114,12 +115,13 @@ async def create_container(
     ``replace=True`` uses ``--replace`` so an existing container with the
     same name is removed first (the ``create_or_replace`` equivalent).
 
-    ``--pull=never`` is always passed: the deployment is network-restricted,
-    so the image must already be in the local store (or a configured
-    additional image store). This fails fast with a clear error instead of
-    attempting a registry pull.
+    ``pull`` maps to podman's ``--pull`` policy (default ``never``). With
+    ``never`` the image must already be in the local store (or a configured
+    additional image store) — the airgapped default, which fails fast instead
+    of attempting a registry pull. Set it to ``missing`` to pull from a
+    registry when the image isn't present locally.
     """
-    args = ["create", "--pull=never", "--name", name]
+    args = ["create", f"--pull={pull}", "--name", name]
     if replace:
         args.append("--replace")
     if init:

@@ -34,6 +34,29 @@ ALLOWED_IMAGES: set[str] = {
 }
 ALLOWED_IMAGES.add(IMAGE_NAME)  # default image is always allowed
 
+# podman --pull policies; controls where workspace images come from.
+_VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
+
+
+def image_pull_policy() -> str:
+    """Resolve the workspace-image pull policy from the environment.
+
+    Default ``never`` keeps the airgapped behavior (use only the local +
+    additional image stores). Set ``KLANGK_IMAGE_PULL_POLICY=missing`` to pull
+    from a registry when the image isn't present locally; ``always``/``newer``
+    are also accepted. An unrecognized value falls back to ``never``.
+    """
+    policy = util.resolve_env_secret("KLANGK_IMAGE_PULL_POLICY", "never")
+    if policy not in _VALID_PULL_POLICIES:
+        logger.warning(
+            "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
+            policy,
+            ", ".join(sorted(_VALID_PULL_POLICIES)),
+        )
+        return "never"
+    return policy
+
+
 _VALID_MOUNT_OPTIONS = {
     "ro",
     "rw",
@@ -319,7 +342,17 @@ class ContainerRegistry:
 
         env_vars = []
         nginx_port = util.resolve_env_secret("KLANGK_NGINX_PORT", "8995")
-        proxy_url = f"http://host.docker.internal:{nginx_port}/llm-proxy"
+        # Hostname a workspace container uses to reach the nginx front
+        # (LLM-proxy + bridge).  Default `host.docker.internal` preserves
+        # the host-process / devenv behavior; under the Podman-in-Docker
+        # stack with isolated networks this is set to podman's native
+        # `host.containers.internal` (or another alias resolvable to the
+        # host gateway).  The same name is registered via `--add-host
+        # <gateway>:host-gateway` below so it resolves inside the container.
+        host_gateway = util.resolve_env_secret(
+            "KLANGK_HOST_GATEWAY", "host.docker.internal"
+        )
+        proxy_url = f"http://{host_gateway}:{nginx_port}/llm-proxy"
         llm_model = util.resolve_env_secret("KLANGK_LLM_MODEL", "")
         env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")
         if llm_model:
@@ -341,7 +374,7 @@ class ContainerRegistry:
         # know the backend URL.  KLANGK_BRIDGE_TOKEN is set per-exec
         # session (in terminal.py) so each connection has its own token.
         env_vars.append(
-            f"KLANGK_BRIDGE_URL=http://host.docker.internal:{nginx_port}"
+            f"KLANGK_BRIDGE_URL=http://{host_gateway}:{nginx_port}"
         )
         env_vars.append(f"KLANGK_HOSTING_HOSTNAME={hosting_hostname}")
         env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
@@ -402,11 +435,12 @@ class ContainerRegistry:
                 "/var/log": "rw,noexec,nosuid,size=256m",
             },
             publish=publish,
-            add_hosts=["host.docker.internal:host-gateway"],
+            add_hosts=[f"{host_gateway}:host-gateway"],
             dns=_container_dns_config().get("Dns"),
             env=env_vars,
             init=True,
             interactive=True,
+            pull=image_pull_policy(),
         )
         await podman.start_container(container_id)
 

@@ -8,9 +8,20 @@ lifecycle/queue logic against an injected fake shell.
 import asyncio
 from unittest.mock import patch
 
-from klangk_backend.terminal import TerminalSession
+from klangk_backend.terminal import TerminalSession, _make_shell_process
 
 SHELL_FACTORY = "klangk_backend.terminal._make_shell_process"
+
+
+class TestShellProcessFactory:
+    """The factory + ctor are pure Python (no PTY); the OS methods that
+    need a real PTY/podman are ``# pragma: no cover`` and validated
+    interactively."""
+
+    def test_factory_returns_unstarted_shell(self):
+        shell = _make_shell_process()
+        assert shell._master_fd is None
+        assert shell._proc is None
 
 
 class FakeShell:

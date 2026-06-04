@@ -167,6 +167,15 @@ class TestCreateContainer:
         assert ["-e", "K=V"] == args[args.index("-e") : args.index("-e") + 2]
         assert args[-1] == "img"
 
+    async def test_pull_policy_override(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await podman.create_container(
+                "n", "img", pull="missing", replace=False
+            )
+        args = _args(m)
+        assert "--pull=missing" in args
+        assert "--pull=never" not in args
+
 
 class TestStartContainer:
     async def test_start(self):

@@ -39,6 +39,21 @@ devenv processes up --no-tui
 
 Open [http://localhost:8995](http://localhost:8995) and log in with `admin@example.com` (or whatever you set `KLANGK_DEFAULT_USER` to). If you set `KLANGK_DEFAULT_PASSWORD` in `.env`, use that password. Otherwise, check the server log output for the generated password. The default user has the admin role and can manage other users at `/admin/users`.
 
+### Alternative: Docker Compose (no Nix)
+
+If you'd rather not install Nix, the daemon ships as a self-contained Docker
+Compose stack (nginx + a backend that runs rootless Podman):
+
+```bash
+cp -n .env.example .env && $EDITOR .env   # set KLANGK_LLM_API_KEY, KLANGK_JWT_SECRET, ...
+docker compose up --build                 # log in at http://localhost:8995
+```
+
+Workspaces need the `klangk` image seeded into the stack first
+(`scripts/dockerbuild.sh` then `scripts/seed-workspace-image.sh`). See the
+[Docker Compose section in HACKING.md](HACKING.md#running-with-docker-compose-without-nix)
+for host prerequisites and details.
+
 ### What You Can Do
 
 1. **Create a workspace** — each workspace is an isolated coding environment
