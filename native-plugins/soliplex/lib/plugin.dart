@@ -63,6 +63,15 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     }
   }
 
+  /// Clear stored tokens and drop back to the logged-out state, which
+  /// re-shows the "Connect to Soliplex" badge.
+  Future<void> logout() async {
+    await clearStoredTokens();
+    _authenticated = false;
+    _loginError = null;
+    notifyListeners();
+  }
+
   Future<String> _listRooms(Map<String, dynamic> request) async {
     try {
       final rooms = await SoliplexClient().listRooms();
@@ -150,7 +159,55 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
   @override
   Widget build(BuildContext context) {
     if (widget.plugin.authenticated) {
-      return const SizedBox.shrink();
+      // Connected: show a status badge with a logout action.
+      final primaryContainer =
+          Theme.of(context).colorScheme.primaryContainer;
+      final onPrimaryContainer =
+          Theme.of(context).colorScheme.onPrimaryContainer;
+      return Positioned(
+        top: 8,
+        right: 8,
+        child: Material(
+          elevation: 4,
+          borderRadius: BorderRadius.circular(8),
+          color: primaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle, size: 16, color: onPrimaryContainer),
+                const SizedBox(width: 6),
+                Text('Soliplex',
+                    style:
+                        TextStyle(fontSize: 12, color: onPrimaryContainer)),
+                const SizedBox(width: 10),
+                InkWell(
+                  borderRadius: BorderRadius.circular(4),
+                  onTap: () => widget.plugin.logout(),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.logout,
+                            size: 14, color: onPrimaryContainer),
+                        const SizedBox(width: 4),
+                        Text('Logout',
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: onPrimaryContainer)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
     }
 
     final errorContainer = Theme.of(context).colorScheme.errorContainer;
