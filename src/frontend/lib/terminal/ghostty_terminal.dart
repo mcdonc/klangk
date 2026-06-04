@@ -181,73 +181,91 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       actions: <Type, Action<Intent>>{
         DoNothingIntent: DoNothingAction(consumesKey: false),
       },
-      child: GestureDetector(
-        // Right-click only — primary/selection gestures stay with flterm's own
-        // detector inside TerminalView.
-        onSecondaryTapDown: (details) {
+      child: Listener(
+        // Copy-on-select: when the user finishes a mouse selection
+        // (pointerUp after drag), copy the selected text to the
+        // clipboard immediately — the pointerUp provides a valid
+        // user activation that Firefox accepts for writeText().
+        onPointerUp: (_) {
           // coverage:ignore-start
-          final hasSelection = _terminal.selection != null;
-          if (!hasSelection) {
-            // No selection — let the browser's native context menu
-            // handle paste. This avoids the Firefox system paste
-            // confirmation dialog that appears when we try to read
-            // the clipboard via navigator.clipboard.readText().
-            return;
-          }
-          // Selection active — show custom menu with Copy + Paste.
-          suppressContextMenuBriefly();
-          final pos = details.globalPosition;
-          showMenu<String>(
-            context: context,
-            position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-            items: const [
-              PopupMenuItem(
-                  value: 'copy',
-                  child: ListTile(
-                      dense: true,
-                      leading: Icon(Icons.copy, size: 18),
-                      title: Text('Copy'))),
-              PopupMenuItem(
-                  value: 'paste',
-                  child: ListTile(
-                      dense: true,
-                      leading: Icon(Icons.paste, size: 18),
-                      title: Text('Paste'))),
-            ],
-          ).then((action) {
-            if (action == 'copy') {
-              _copySelection();
-            } else if (action == 'paste') {
-              _paste();
+          final text = _terminal.selectedText();
+          if (text.isNotEmpty) {
+            Clipboard.setData(ClipboardData(text: text));
+            if (mounted) {
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(const SnackBar(
+                  content: Text('Copied'),
+                  duration: Duration(seconds: 1),
+                  behavior: SnackBarBehavior.floating,
+                  width: 100,
+                ));
             }
-          });
+          }
           // coverage:ignore-end
         },
-        child: TerminalView(
-          controller: _terminal,
-          theme: _theme,
-          fontData: _fontData,
-          focusNode: _focusNode,
-          scrollController: _scrollController,
-          autofocus: false,
-          padding: EdgeInsets.zero,
-          // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
-          // Clipboard.getData, which fails on Firefox). These override flterm's
-          // platform defaults, so paste flows solely through the native
-          // `paste` event in [installPasteListener] — one path, no double-paste.
-          shortcuts: _disableFltermPaste,
-          // Keep mouse selection (drag/word/line/long-press) but drop the
-          // keyboard select-all gesture, so Ctrl+A falls through to the shell
-          // (readline beginning-of-line / tmux prefix) instead of selecting the
-          // buffer. Ctrl+C already passes through (flterm's copy is selection-
-          // conditional); copy stays on Ctrl+Shift+C and the right-click menu.
-          gestureSettings: const TerminalGestureSettings(
-            enabledSelections: {
-              SelectionGesture.drag,
-              SelectionGesture.word,
-              SelectionGesture.line,
-              SelectionGesture.longPress,
-            },
+        child: GestureDetector(
+          // Right-click: no selection → native context menu (for paste);
+          // with selection → custom menu (Copy already happened on select,
+          // but the menu provides an explicit Copy + Paste).
+          onSecondaryTapDown: (details) {
+            // coverage:ignore-start
+            if (_terminal.selection == null) return;
+            final selectedText = _terminal.selectedText();
+            suppressContextMenuBriefly();
+            final pos = details.globalPosition;
+            showMenu<String>(
+              context: context,
+              position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
+              items: const [
+                PopupMenuItem(
+                    value: 'copy',
+                    child: ListTile(
+                        dense: true,
+                        leading: Icon(Icons.copy, size: 18),
+                        title: Text('Copy'))),
+                PopupMenuItem(
+                    value: 'paste',
+                    child: ListTile(
+                        dense: true,
+                        leading: Icon(Icons.paste, size: 18),
+                        title: Text('Paste'))),
+              ],
+            ).then((action) {
+              if (action == 'copy' && selectedText.isNotEmpty) {
+                Clipboard.setData(ClipboardData(text: selectedText));
+              } else if (action == 'paste') {
+                _paste();
+              }
+            });
+            // coverage:ignore-end
+          },
+          child: TerminalView(
+            controller: _terminal,
+            theme: _theme,
+            fontData: _fontData,
+            focusNode: _focusNode,
+            scrollController: _scrollController,
+            autofocus: false,
+            padding: EdgeInsets.zero,
+            // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
+            // Clipboard.getData, which fails on Firefox). These override flterm's
+            // platform defaults, so paste flows solely through the native
+            // `paste` event in [installPasteListener] — one path, no double-paste.
+            shortcuts: _disableFltermPaste,
+            // Keep mouse selection (drag/word/line/long-press) but drop the
+            // keyboard select-all gesture, so Ctrl+A falls through to the shell
+            // (readline beginning-of-line / tmux prefix) instead of selecting the
+            // buffer. Ctrl+C already passes through (flterm's copy is selection-
+            // conditional); copy stays on Ctrl+Shift+C and the right-click menu.
+            gestureSettings: const TerminalGestureSettings(
+              enabledSelections: {
+                SelectionGesture.drag,
+                SelectionGesture.word,
+                SelectionGesture.line,
+                SelectionGesture.longPress,
+              },
+            ),
           ),
         ),
       ),

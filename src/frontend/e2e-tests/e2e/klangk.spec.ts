@@ -226,6 +226,65 @@ test.describe("Klangk E2E", () => {
     }
   });
 
+  test("selecting text in terminal copies to clipboard automatically", async ({
+    page,
+    request,
+  }) => {
+    // Selecting text in the terminal should auto-copy it to the clipboard
+    // on mouse-up, like a standard terminal. This avoids the need for
+    // right-click → Copy which requires navigator.clipboard.writeText()
+    // from a menu callback (broken on Firefox).
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-copy-select",
+      { waitForTerminal: true },
+    );
+
+    try {
+      try {
+        await page
+          .context()
+          .grantPermissions(["clipboard-read", "clipboard-write"]);
+      } catch {
+        /* unsupported on firefox/webkit — fine */
+      }
+
+      const { width, height } = vp(page);
+      const f = fv(page);
+
+      // Type a known string so we have something to select
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(1000);
+      await page.keyboard.type("echo COPYTEST123");
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(2000);
+
+      // Select the output by dragging across the first line of output.
+      // The "COPYTEST123" should be on the second line (first is the command).
+      // Drag from left to right across the output area.
+      const startX = 10;
+      const endX = 200;
+      const lineY = 130; // approximate Y of the output line
+      await page.mouse.move(startX, lineY);
+      await page.mouse.down();
+      await page.mouse.move(endX, lineY, { steps: 10 });
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+
+      // Read clipboard — should contain the selected text
+      const clipText = await page.evaluate(() =>
+        navigator.clipboard.readText(),
+      );
+      expect(clipText).toContain("COPYTEST123");
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("right-click without selection defers to native context menu", async ({
     page,
     request,
