@@ -37,9 +37,11 @@ Canonical sources: `plugins/<name>/klangk/lib/`. `soliplex` is external
 | celebrate  | none (pure Flutter `confetti.dart`)           | compiles      | none   |
 | beep       | `beep.dart`: `dart:js_interop` (Web Audio)    | broken        | small  |
 | itstime    | `plugin.dart`: `dart:js_interop` (DOM video)  | broken        | medium |
-| soliplex   | `plugin.dart` + `soliplex_tools.dart`: `dart:js_interop`, `dart:js_interop_unsafe`, `package:web` (localStorage OAuth + JS window globals) | broken | large |
+| soliplex   | `plugin.dart` + `soliplex_tools.dart`: `dart:js_interop`, `dart:js_interop_unsafe`, `package:web` (localStorage OAuth + JS window globals) | broken | adopt upstream pkgs |
 
-So only **3 of 5** need work, and 2 of those are self-contained effects.
+So only **3 of 5** need work; beep/itstime are self-contained effects, and
+soliplex is best solved by *adopting* `soliplex_client` rather than porting
+the hand-rolled code (see its section).
 
 ## The pattern (klangk already uses it)
 
@@ -84,25 +86,85 @@ The effect *is* a DOM `<video>` overlay injected via `eval`. Two options:
 - Recommend native-degraded first (unblocks the build); upgrade to
   `video_player` later if desktop video is wanted.
 
-### soliplex (large)
-Two distinct web couplings:
-1. **OAuth token storage** in `localStorage` (`soliplex_tools.dart`). Replace
-   with a platform-neutral store: `shared_preferences` works on web *and*
-   desktop and is already a frontend dep. Define a small `TokenStore`
-   interface; one `shared_preferences` impl serves all platforms (preferred —
-   removes the split entirely), or keep `localStorage` on web behind a
-   conditional if exact web-storage parity matters.
-2. **JS window globals** (`plugin.dart` registers `soliplexClearTokens`,
-   `soliplexShowTokens`, `soliplexVersion` on `window` via
-   `js_interop_unsafe`). These exist so external/host JS can call into the
-   plugin — meaningless on desktop. Move registration into
-   `soliplex_bridge_stub.dart` (native no-op) / `_web.dart` (current
-   behavior). `plugin.dart` calls `registerSoliplexBridge()` and drops the
-   js_interop imports.
-- Since soliplex is fetched (not in `plugins/`), this change lands in the
-  **upstream soliplex plugin repo**, then a `plugins.lock` bump. Coordinate
-  with whoever owns it; until then soliplex stays excluded from native via
-  the aggregator (see Phase 3).
+### soliplex — adopt upstream packages, don't hand-roll (was "large")
+
+**Decision (2026-06-04):** klangk and soliplex are the same team, and the
+driving goal is the native *dev loop*, not a merged product. So: **keep
+klangk as the host app and consume soliplex's published packages** — do NOT
+fork `soliplex/frontend` to embed klangk, and do NOT keep hand-rolling the
+soliplex client inside the plugin. (Fork-and-embed was considered and
+rejected: it inherits soliplex's native infra but pays a re-skin + perpetual
+-fork tax and inverts product ownership; a monorepo merge is overkill for a
+dev-loop goal.)
+
+`soliplex/frontend` is itself a multi-platform Flutter app (macos/linux/
+windows/ios/android) and already ships the pieces klangk's plugin reinvents:
+
+- **`packages/soliplex_client`** — pure-Dart, transport-injectable client:
+  `auth/` (OIDC discovery + `token_refresh_service`), `http/`
+  (`authenticated_http_client`, `refreshing_http_client`, `token_refresher`,
+  `agui_stream_client` for SSE, `http_transport` abstraction), `api/`
+  (`fetch_auth_providers`, `soliplex_api`, AG-UI mappers).
+- **`packages/soliplex_client_native`** — `cupertino_http` (URLSession)
+  transport for macOS/iOS, xhr for web, behind `create_platform_client_io`
+  / `_stub` (the same conditional-import pattern). Native HTTP for free.
+- Their app's `pubspec.yaml` shows native auth is already done the right way:
+  `flutter_appauth` (RFC 8252: system browser + PKCE + native redirect
+  capture) + `flutter_secure_storage` (Keychain). The token-in-query
+  popup-poll dance is only soliplex's *web* path.
+
+Because their native app authenticates against the same backend with
+`flutter_appauth`, **the server already supports the standard
+authorization-code redirect for native clients** — so no loopback-server
+workaround and no server-side `return_to` allowlist change is needed.
+
+What the klangk plugin keeps vs. delegates:
+
+| klangk plugin today (web-only, hand-rolled)            | replace with                                   |
+|--------------------------------------------------------|------------------------------------------------|
+| `SoliplexClient` (listRooms/queryRoom + SSE parsing)   | `soliplex_client` `soliplex_api` + `agui_stream_client` |
+| `_getAccessToken` / `_tryRefreshToken` / discovery     | `soliplex_client` `token_refresh_service` + `oidc_discovery` |
+| `getAuthSystems` (`/api/login`)                        | `soliplex_client` `fetch_auth_providers`       |
+| `localStorage` token store                             | `flutter_secure_storage` (Keychain)            |
+| `popupLogin` popup + `popup.location.href` polling     | `flutter_appauth` (system browser, PKCE)       |
+| raw `package:http`                                     | injected transport: `cupertino_http` desktop / xhr web |
+
+After this, the plugin shrinks to two klangk-specific things:
+1. the **tool-handler wrapper** (`soliplex_list_rooms`/`soliplex_query`
+   handlers → `soliplex_api`), and
+2. the **auth overlay widget** (the "Connect to Soliplex" UI), now driving
+   `flutter_appauth` instead of the popup.
+
+Both lose their `dart:js_interop` / `package:web` imports — the platform code
+now lives inside `soliplex_client_native`'s conditional transport — so the
+plugin compiles natively with **no klangk-side stub**.
+
+Dependency wiring (same-team git deps, mirroring how soliplex_client pulls
+`ag_ui`):
+
+```yaml
+dependencies:
+  soliplex_client:
+    git: { url: https://github.com/soliplex/frontend.git, path: packages/soliplex_client }
+  soliplex_client_native:
+    git: { url: https://github.com/soliplex/frontend.git, path: packages/soliplex_client_native }
+  flutter_appauth: ^12.0.0
+  flutter_secure_storage: ^10.3.0
+```
+
+soliplex's plugin source is fetched (not in `plugins/`), so this lands in the
+**soliplex-side plugin package** + a `plugins.lock` bump. Since it's the same
+team, any small gaps in `soliplex_client`'s public surface can be fixed
+upstream rather than worked around.
+
+### shared baseUrl fix (applies to all plugins, not just soliplex)
+The plugins call `'$baseUrl/api/config'` using `klangk_plugin_api`'s
+path-only `baseUrl`, which is hostless on native (the same bug fixed for the
+app in commit 9ea4b74, but the fix only covered the frontend, not the
+package). **Make `baseUrl` in `klangk_plugin_api` itself env-aware on
+native** (consult `KLANGK_BACKEND_URL` when `!kIsWeb`); then the frontend's
+`lib/utils/api_base_url.dart` becomes a thin re-export (or is dropped) and
+plugins resolve the backend correctly with no per-plugin change.
 
 ## Phased plan
 
@@ -123,11 +185,15 @@ Two distinct web couplings:
 - `scripts/stub_dart_plugins.sh` stays as the first-checkout/CI fallback;
   no change needed.
 
-### Phase 3 — soliplex (external)
-- Port soliplex upstream per the "large" section, then bump `plugins.lock`.
-- Interim: if soliplex must ship on web before the port, have the generator
-  exclude it from the native aggregator (Phase 2 hint) rather than stubbing
-  all plugins.
+### Phase 3 — soliplex (adopt upstream packages)
+- Rebuild the soliplex plugin on `soliplex_client` + `soliplex_client_native`
+  + `flutter_appauth` + `flutter_secure_storage` per the soliplex section;
+  bump `plugins.lock`.
+- Land the `klangk_plugin_api` env-aware `baseUrl` fix first (it unblocks
+  `_getSoliplexUrl` and any other plugin hitting the backend on native).
+- Interim: if soliplex must ship on web before the rebuild, have the
+  generator exclude it from the native aggregator (Phase 2 hint) rather than
+  stubbing all plugins.
 
 ### Phase 4 — guardrail
 - CI check (runs in the existing Ubuntu frontend job):
@@ -141,12 +207,17 @@ Two distinct web couplings:
 
 ## Open questions
 
-1. **shared_preferences vs. keep localStorage on web for soliplex?** Default:
-   single `shared_preferences` store everywhere — simpler, and tokens already
-   aren't expected to be shared with host JS on desktop. Confirm no external
-   web consumer depends on the exact `localStorage` keys.
-2. **itstime native: real video or degraded overlay?** Default: degraded
+1. **Does `soliplex_client`'s public surface cover the two klangk tool
+   handlers** (list rooms, query-a-room-via-AG-UI) without reaching into
+   `src/`? If not, expose the needed entry points upstream (same team).
+2. **`flutter_appauth` config**: issuer / clientId / scopes / redirect
+   (custom scheme vs. loopback) — read these from soliplex's own app `lib/`
+   once the GitHub API rate limit resets, and reuse verbatim.
+3. **itstime native: real video or degraded overlay?** Default: degraded
    first; revisit once a desktop video dep is chosen.
-3. **Does the host page actually call soliplex's window globals?** If nothing
-   external calls `soliplexShowTokens`/etc., they can be dropped entirely
-   rather than web-gated.
+4. **Does anything external call soliplex's web window globals**
+   (`soliplexShowTokens`/etc.)? If not, drop them on native entirely rather
+   than web-gating (they're debug helpers).
+5. **flutter_secure_storage vs. shared_preferences for soliplex tokens?**
+   Prefer `flutter_secure_storage` to match soliplex's app (Keychain); note
+   klangk's own JWT still uses `shared_preferences` (see `native-plan.md` Q2).
