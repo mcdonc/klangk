@@ -29,7 +29,7 @@ $KLANGK_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 ### Components
 
 - **Backend** (`src/backend/`): Python/FastAPI — single-port server for API, WebSocket, and frontend static files
-- **CLI** (`src/backend/klangk_backend/cli/`): `klangk` command — typer-based thin client that talks to the backend over HTTP + WebSocket for terminal access to containers. See [CLI.md](CLI.md).
+- **CLI** (`src/backend/klangk_backend/cli/`): `klangk` command — typer-based thin client that talks to the backend over HTTP + WebSocket for terminal access to containers
 - **Frontend** (`src/frontend/`): Flutter Web — chat with markdown rendering, syntax-highlighted code blocks, file viewer, debug panel
 - **Docker** (`src/docker/`): Custom Dockerfile for Pi agent containers with Python3, Node.js, build-essential, SQLite, vim, emacs, network tools, Pi extensions
 
