@@ -254,23 +254,38 @@ export async function openWorkspace(
   page: Page,
   email: string,
   workspaceId: string,
+  { waitForTerminal = false }: { waitForTerminal?: boolean } = {},
 ) {
-  // Set up WebSocket listener before login so we catch all WebSocket connections
-  const readyPromise = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
+  // Set up WebSocket listener before login so we catch all WebSocket
+  // connections.  A single framereceived handler watches for both
+  // container_ready and (optionally) terminal_started, avoiding the
+  // race where a separate waitForTerminalReady listener misses the frame.
+  let resolveContainer: () => void;
+  let resolveTerminal: (() => void) | null = null;
+  const containerPromise = new Promise<void>((resolve, reject) => {
+    resolveContainer = resolve;
+    setTimeout(
       () => reject(new Error("Container did not become ready within 120s")),
       120_000,
     );
-    const listenForReady = (ws: { on: Function }) => {
-      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
-        if (frame.payload.toString().includes("container_ready")) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
-    };
-    // Listen on any new WebSocket connections
-    page.on("websocket", listenForReady);
+  });
+  const terminalPromise = waitForTerminal
+    ? new Promise<void>((resolve, reject) => {
+        resolveTerminal = resolve;
+        setTimeout(
+          () => reject(new Error("Terminal did not become ready within 120s")),
+          120_000,
+        );
+      })
+    : Promise.resolve();
+
+  page.on("websocket", (ws: { on: Function }) => {
+    ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+      const text = frame.payload.toString();
+      if (text.includes("container_ready")) resolveContainer!();
+      if (resolveTerminal && text.includes("terminal_started"))
+        resolveTerminal();
+    });
   });
 
   await loginViaUI(page, email, TEST_PASSWORD);
@@ -278,12 +293,8 @@ export async function openWorkspace(
   // WebSocket — a hash-only change is handled internally by Flutter's router
   // without opening a new WebSocket, so our listener would never fire.
   await page.goto(`/#/workspace/${workspaceId}`);
-  await readyPromise;
-
-  // Extra settle time for the UI to render after container ready.
-  // WebKit on CI needs more time for Flutter to fully process the
-  // container_ready event and establish bidirectional chat.
-  // await page.waitForTimeout(4000);
+  await containerPromise;
+  await terminalPromise;
 }
 
 /** Convenience: register user, create workspace, open it. */
@@ -291,6 +302,7 @@ export async function createAndOpenWorkspace(
   page: Page,
   request: APIRequestContext,
   namePrefix: string,
+  { waitForTerminal = false }: { waitForTerminal?: boolean } = {},
 ): Promise<{
   workspaceId: string;
   email: string;
@@ -305,35 +317,8 @@ export async function createAndOpenWorkspace(
     headers,
     namePrefix,
   );
-  await openWorkspace(page, email, workspaceId);
+  await openWorkspace(page, email, workspaceId, { waitForTerminal });
   return { workspaceId, email, token, headers, cleanup };
-}
-
-/** Set up a WebSocket listener that resolves when a `terminal_started`
- *  frame is received. Call this BEFORE the action that triggers terminal
- *  start (e.g. openWorkspace), then await the returned promise. */
-export function waitForTerminalReady(
-  page: Page,
-  timeout = 30_000,
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(
-      () =>
-        reject(
-          new Error("Terminal did not become ready within " + timeout + "ms"),
-        ),
-      timeout,
-    );
-    const handler = (ws: { on: Function }) => {
-      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
-        if (frame.payload.toString().includes("terminal_started")) {
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-    };
-    page.on("websocket", handler);
-  });
 }
 
 export function dockerContainersForWorkspace(workspaceId: string): string[] {

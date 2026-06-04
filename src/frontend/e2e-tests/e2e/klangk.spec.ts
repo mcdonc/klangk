@@ -17,7 +17,6 @@ import {
   createAndOpenWorkspace,
   dockerContainersForWorkspace,
   tryLogin,
-  waitForTerminalReady,
 } from "./helpers";
 
 test.describe("Klangk E2E", () => {
@@ -85,13 +84,12 @@ test.describe("Klangk E2E", () => {
   });
 
   test("terminal accepts keyboard input", async ({ page, request }) => {
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-input",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       const { width, height } = vp(page);
@@ -127,13 +125,12 @@ test.describe("Klangk E2E", () => {
     // copied text, so Ctrl/Cmd+V silently failed. The fix reads the browser's
     // native `paste` event instead. This exercises the real keypress path so
     // it catches a regression on any browser.
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-paste",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       // chromium needs explicit clipboard permission; firefox/webkit don't
@@ -183,13 +180,12 @@ test.describe("Klangk E2E", () => {
     // string with no escaping done by Flutter's text-input — this regression-
     // tests that the byte boundary stays clean for typical messy content
     // (single quotes, double quotes, whitespace, multi-byte UTF-8).
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-paste-utf8",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       try {
@@ -239,13 +235,12 @@ test.describe("Klangk E2E", () => {
     // the Files tab active (or any other widget focused), pasting must NOT
     // route the clipboard into the PTY — otherwise a paste meant for
     // another input would silently fire shell commands.
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-paste-isolation",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       try {
@@ -352,13 +347,12 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-file",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       const { width, height } = vp(page);
@@ -619,13 +613,12 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "term-seq",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       const { width, height } = vp(page);
@@ -660,13 +653,12 @@ test.describe("Klangk E2E", () => {
   });
 
   test("terminal works after tab switching", async ({ page, request }) => {
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "tab-switch",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       const { width, height } = vp(page);
@@ -824,13 +816,12 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "subdir-nav",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       // Create nested directory structure via terminal
@@ -910,13 +901,12 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
-    const termReady = waitForTerminalReady(page);
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "home-persist",
+      { waitForTerminal: true },
     );
-    await termReady;
 
     try {
       // File API roots at home, so create a file in ~ and read it directly
@@ -1347,15 +1337,13 @@ test.describe("Klangk E2E", () => {
     const page1 = await ctx1.newPage();
     const page2 = await ctx2.newPage();
 
-    // Set up terminal_started listeners before opening workspaces
-    const termReady1 = waitForTerminalReady(page1);
-    const termReady2 = waitForTerminalReady(page2);
-
     // Open workspace as owner in page1, member in page2
-    await openWorkspace(page1, ownerEmail, workspaceId);
-    await openWorkspace(page2, memberEmail, workspaceId);
-    await termReady1;
-    await termReady2;
+    await openWorkspace(page1, ownerEmail, workspaceId, {
+      waitForTerminal: true,
+    });
+    await openWorkspace(page2, memberEmail, workspaceId, {
+      waitForTerminal: true,
+    });
 
     // Get bridge tokens for each connection
     const tokensResp = await request.get(
@@ -1554,12 +1542,12 @@ test.describe("Klangk E2E", () => {
       });
     });
 
-    const termReady1 = waitForTerminalReady(page1);
-    const termReady2 = waitForTerminalReady(page2);
-    await openWorkspace(page1, ownerEmail, workspaceId);
-    await openWorkspace(page2, memberEmail, workspaceId);
-    await termReady1;
-    await termReady2;
+    await openWorkspace(page1, ownerEmail, workspaceId, {
+      waitForTerminal: true,
+    });
+    await openWorkspace(page2, memberEmail, workspaceId, {
+      waitForTerminal: true,
+    });
 
     // Send chat message from page1 via the captured WebSocket
     await page1.evaluate(() => {
