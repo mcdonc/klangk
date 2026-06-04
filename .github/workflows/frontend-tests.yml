@@ -11,22 +11,41 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'src/frontend/lib/**'
+              - 'src/frontend/test/**'
+              - 'src/frontend/pubspec.yaml'
+              - '.github/workflows/frontend-tests.yml'
+
       - uses: subosito/flutter-action@v2
+        if: steps.filter.outputs.frontend == 'true'
         with:
           channel: stable
           cache: true
 
       - name: Create stub klangk_plugins package
+        if: steps.filter.outputs.frontend == 'true'
         run: bash scripts/stub_dart_plugins.sh
 
       - name: Install dependencies
+        if: steps.filter.outputs.frontend == 'true'
         working-directory: src/frontend
         run: flutter pub get
 
       - name: Run tests with coverage
+        if: steps.filter.outputs.frontend == 'true'
         working-directory: src/frontend
         run: flutter test --coverage
 
       - name: Coverage report
+        if: steps.filter.outputs.frontend == 'true'
         working-directory: src/frontend
         run: python3 ../../scripts/lcov-report.py coverage/lcov.info
+
+      - name: Skip notice
+        if: steps.filter.outputs.frontend != 'true'
+        run: echo "No frontend changes — skipping tests"

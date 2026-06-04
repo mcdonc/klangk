@@ -1,4 +1,4 @@
-name: Flutter E2E Tests
+name: Frontend E2E Tests
 
 on:
   workflow_dispatch:
@@ -29,11 +29,26 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            e2e:
+              - 'src/backend/**'
+              - 'src/frontend/**'
+              - 'src/docker/**'
+              - 'plugins/**'
+              - 'devenv.nix'
+              - 'devenv.yaml'
+              - '.github/workflows/frontend-e2e-tests.yml'
+
       - uses: ./.github/actions/devenv-setup
+        if: steps.filter.outputs.e2e == 'true'
         with:
           build-tasks: klangk:docker-build klangk:flutter-build
 
       - name: Run E2E tests
+        if: steps.filter.outputs.e2e == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           ARGS=()
@@ -42,7 +57,7 @@ jobs:
           devenv shell -- test-frontend-e2e "${ARGS[@]}"
 
       - name: Upload test results
-        if: always()
+        if: always() && steps.filter.outputs.e2e == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: playwright-results
@@ -50,3 +65,7 @@ jobs:
           path: |
             src/frontend/e2e-tests/test-results/
             src/frontend/e2e-tests/logs/
+
+      - name: Skip notice
+        if: steps.filter.outputs.e2e != 'true'
+        run: echo "No code changes — skipping Flutter E2E tests"

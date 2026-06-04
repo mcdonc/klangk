@@ -16,16 +16,34 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            e2e:
+              - 'src/backend/**'
+              - 'src/docker/**'
+              - 'devenv.nix'
+              - 'devenv.yaml'
+              - '.github/workflows/cli-e2e-tests.yml'
+
       - uses: ./.github/actions/devenv-setup
+        if: steps.filter.outputs.e2e == 'true'
         with:
           build-tasks: klangk:docker-build
 
       - name: Stop devenv services
+        if: steps.filter.outputs.e2e == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           devenv processes down --no-tui 2>/dev/null || true
 
       - name: Run CLI E2E tests
+        if: steps.filter.outputs.e2e == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           devenv shell -- test-cli-e2e
+
+      - name: Skip notice
+        if: steps.filter.outputs.e2e != 'true'
+        run: echo "No backend/docker/plugin changes — skipping CLI E2E tests"
