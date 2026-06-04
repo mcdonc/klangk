@@ -652,17 +652,28 @@ async def export_workspace(
 
     chunk_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=32)
 
+    _WRITE_BUF_SIZE = 256 * 1024  # 256 KB chunks
+
     class _QueueWriter:
-        """File-like object that puts writes into a queue."""
+        """File-like object that buffers writes and flushes to a queue."""
+
+        def __init__(self):
+            self._buf = bytearray()
 
         def write(self, data):
-            chunk_queue.put(data)
+            self._buf.extend(data)
+            while len(self._buf) >= _WRITE_BUF_SIZE:
+                chunk_queue.put(bytes(self._buf[:_WRITE_BUF_SIZE]))
+                del self._buf[:_WRITE_BUF_SIZE]
             return len(data)
 
-        def flush(self):  # pragma: no cover — called by gzip internals
-            pass
+        def flush(self):
+            if self._buf:
+                chunk_queue.put(bytes(self._buf))
+                self._buf.clear()
 
         def close(self):
+            self.flush()
             chunk_queue.put(None)  # sentinel
 
     def _build_tar():
@@ -705,8 +716,9 @@ async def export_workspace(
             thread.join(timeout=5)
 
     safe_name = ws_name.replace("/", "_").replace("\\", "_")
-    # Rough estimate: gzip typically compresses to ~40% of original.
-    estimated_compressed = max(int(estimated_size * 0.4), 1)
+    # Rough estimate: gzip typically compresses to ~20% of original
+    # for text-heavy home dirs (source code, dotfiles, configs).
+    estimated_compressed = max(int(estimated_size * 0.2), 1)
     return StreamingResponse(
         _stream(),
         media_type="application/gzip",

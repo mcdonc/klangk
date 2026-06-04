@@ -2438,6 +2438,40 @@ class TestWorkspaceExportImport:
             assert "workspace.json" in names
             assert any("file.txt" in n for n in names)
 
+    async def test_export_large_file_chunks(self, client, admin_user, user):
+        """Export with large files triggers the write buffer flush path."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "large-export"}
+        )
+        ws = resp.json()
+
+        import klangk_backend.workspaces as ws_mod
+
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "work").mkdir(exist_ok=True)
+        # Write a large file with random data (incompressible, so gzip
+        # passes it through in large writes that trigger buffer flushes)
+        import random
+
+        rng = random.Random(42)
+        (home / "work" / "big.bin").write_bytes(
+            bytes(rng.getrandbits(8) for _ in range(512 * 1024))
+        )
+
+        admin_headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 200
+
+        import tarfile
+
+        buf = io.BytesIO(resp.content)
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+            assert any("big.bin" in n for n in tar.getnames())
+
     async def test_export_du_failure_falls_back(
         self, client, admin_user, user, monkeypatch
     ):
