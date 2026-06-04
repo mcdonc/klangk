@@ -3,6 +3,7 @@ import '../terminal/ghostty_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../chat/workspace_chat.dart';
 import '../theme/colors.dart';
+import '../widgets/xeyes_overlay.dart';
 
 /// IDE layout: tabs (Terminal + Files + Chat) with optional
 /// debug pane at the bottom separated by a draggable divider.
@@ -109,7 +110,7 @@ class _IdeLayoutState extends State<IdeLayout> {
                 Container(
                   color: KColors.bgCanvas,
                   padding: const EdgeInsets.only(left: 6, top: 4),
-                  child: widget.terminal,
+                  child: XeyesOverlay(child: widget.terminal),
                 ),
                 Container(
                   color: KColors.bgCanvas,
