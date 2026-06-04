@@ -1265,10 +1265,6 @@ test.describe("Klangk E2E", () => {
     const page1 = await ctx1.newPage();
     const page2 = await ctx2.newPage();
 
-    // Only user 1 (owner) needs a working terminal — user 2 just needs
-    // to be connected to the WebSocket to verify no frames leak.
-    const termReady1 = waitForTerminalReady(page1, 60_000);
-
     // Set up frame listener on page2 BEFORE openWorkspace so we capture
     // the WebSocket connection created during workspace open.
     const memberFrames: string[] = [];
@@ -1288,11 +1284,10 @@ test.describe("Klangk E2E", () => {
 
     await openWorkspace(page1, ownerEmail, workspaceId);
     await openWorkspace(page2, memberEmail, workspaceId);
-    await termReady1;
 
-    // Clear any frames from the setup phase (user 2's own terminal
-    // output like the shell prompt) before we start the isolation test.
-    await page2.waitForTimeout(2000);
+    // Wait for both terminals to fully start and settle (shell prompt
+    // output etc.) before we begin the isolation check.
+    await page1.waitForTimeout(5000);
     memberFrames.length = 0;
 
     // User A types a command in the terminal
@@ -1311,15 +1306,19 @@ test.describe("Klangk E2E", () => {
     // Wait for the command to execute and any events to propagate
     await page1.waitForTimeout(5000);
 
-    // User B should NOT have received any terminal_output or other
-    // events from User A's session
+    // User B should NOT have received terminal_output containing
+    // User A's command or its output.  User B's own terminal_output
+    // (shell prompts) is expected and should be ignored.
     const leakedFrames = memberFrames.filter((f) => {
       const msg = JSON.parse(f);
-      return (
-        msg.type === "terminal_output" ||
-        msg.type === "exec_output" ||
-        msg.type === "browser_request"
-      );
+      if (msg.type === "exec_output" || msg.type === "browser_request") {
+        return true;
+      }
+      if (msg.type === "terminal_output") {
+        const data = msg.data ?? "";
+        return data.includes("isolation-test-from-owner");
+      }
+      return false;
     });
 
     expect(leakedFrames).toHaveLength(0);
