@@ -195,7 +195,7 @@ in
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
   env.KLANGK_VERSION_FILE =
     if config.container.isBuilding then "${klangkApp}/version.json" else lib.mkOverride 1500 "";
-  dotenv.enable = true;
+  dotenv.enable = !config.container.isBuilding;
 
   scripts.flutterbuildweb.exec = ''exec devenv tasks run klangk:flutter-build --refresh-task-cache "$@"'';
   scripts.dockerbuild.exec = ''exec devenv tasks run klangk:docker-build --refresh-task-cache "$@"'';
