@@ -779,6 +779,62 @@ class TestExportImportClient:
         mock_stream.assert_called_once()
         assert progress_calls == [(6, 12), (12, 12)]
 
+    def test_export_workspace_uses_estimated_size(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.server.url = "http://localhost:8995"
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+
+        output = tmp_path / "est.tar.gz"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.is_success = True
+        mock_resp.headers = {"x-estimated-size": "5000"}
+        mock_resp.iter_bytes.return_value = [b"data"]
+
+        progress_calls = []
+
+        with patch("httpx.stream") as mock_stream:
+            mock_stream.return_value.__enter__ = MagicMock(
+                return_value=mock_resp
+            )
+            mock_stream.return_value.__exit__ = MagicMock(return_value=False)
+            client.export_workspace(
+                "ws-id",
+                output,
+                on_progress=lambda d, t: progress_calls.append((d, t)),
+            )
+
+        assert progress_calls == [(4, 5000)]
+
+    def test_export_workspace_no_size_headers(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.server.url = "http://localhost:8995"
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+
+        output = tmp_path / "nosize.tar.gz"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.is_success = True
+        mock_resp.headers = {}
+        mock_resp.iter_bytes.return_value = [b"chunk"]
+
+        progress_calls = []
+
+        with patch("httpx.stream") as mock_stream:
+            mock_stream.return_value.__enter__ = MagicMock(
+                return_value=mock_resp
+            )
+            mock_stream.return_value.__exit__ = MagicMock(return_value=False)
+            client.export_workspace(
+                "ws-id",
+                output,
+                on_progress=lambda d, t: progress_calls.append((d, t)),
+            )
+
+        assert progress_calls == [(5, None)]
+
     def test_export_workspace_http_error(self, tmp_path):
         cfg = CLIConfig()
         cfg.server.url = "http://localhost:8995"

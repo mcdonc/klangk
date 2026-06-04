@@ -242,6 +242,8 @@ def export_workspace(
         raise typer.Exit(code=1) from None
     out_path = output or Path(f"{name}.tar.gz")
     try:
+        from rich.live import Live
+        from rich.spinner import Spinner
         from rich.progress import (
             Progress,
             BarColumn,
@@ -249,22 +251,28 @@ def export_workspace(
             TransferSpeedColumn,
         )
 
-        with Progress(
+        progress = Progress(
             "[progress.description]{task.description}",
             BarColumn(),
             DownloadColumn(),
             TransferSpeedColumn(),
-        ) as progress:
-            task_id = progress.add_task("Exporting...", total=0)
+        )
+        task_id = progress.add_task("Downloading...", total=0)
+        started = [False]
 
-            def _update(downloaded, total):
-                if total is not None:
-                    progress.update(task_id, total=total, completed=downloaded)
-                else:
-                    progress.update(
-                        task_id, total=downloaded, completed=downloaded
-                    )
+        def _update(downloaded, total):
+            if not started[0]:
+                started[0] = True
+                live.update(progress)
+            if total is not None:
+                progress.update(task_id, total=total, completed=downloaded)
+            else:
+                progress.update(
+                    task_id, total=downloaded, completed=downloaded
+                )
 
+        spinner = Spinner("dots", text="Building archive on server...")
+        with Live(spinner, refresh_per_second=10) as live:
             client.export_workspace(ws.id, out_path, on_progress=_update)
     except httpx.HTTPStatusError as e:
         _err.print(f"[red]Export failed:[/red] {e.response.text}")

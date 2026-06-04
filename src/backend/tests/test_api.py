@@ -2403,58 +2403,82 @@ class TestWorkspaceExportImport:
         home = ws_mod.home_path(user["id"], ws["id"])
         assert (home / "test.txt").exists()
 
-    async def test_export_error_cleans_tempfile(
-        self, client, admin_user, user, monkeypatch
+    async def test_export_streams_valid_tarball(
+        self, client, admin_user, user
     ):
-        """If tarball creation fails, the temp file is cleaned up."""
+        """Export streams a valid .tar.gz with size estimate header."""
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "err-export"}
+            "/workspaces", headers=headers, json={"name": "stream-test"}
         )
         ws = resp.json()
 
-        import klangk_backend.api as api_mod
-        import tarfile as tarfile_mod
+        import klangk_backend.workspaces as ws_mod
 
-        original_open = tarfile_mod.open
-        created_tmp = []
-
-        original_ntf = tempfile.NamedTemporaryFile
-
-        def _tracking_ntf(*args, **kwargs):
-            tmp = original_ntf(*args, **kwargs)
-            created_tmp.append(tmp.name)
-            return tmp
-
-        def _failing_open(*args, **kwargs):
-            tf = original_open(*args, **kwargs)
-
-            def _bad_add(*a, **kw):
-                raise OSError("disk error")
-
-            tf.add = _bad_add
-            return tf
-
-        monkeypatch.setattr(api_mod.tarfile, "open", _failing_open)
-        monkeypatch.setattr(
-            api_mod.tempfile, "NamedTemporaryFile", _tracking_ntf
-        )
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "work").mkdir(exist_ok=True)
+        (home / "work" / "file.txt").write_text("streamed content")
 
         admin_headers = await self._admin_headers(client)
-        with pytest.raises(OSError, match="disk error"):
-            await client.get(
-                f"/workspaces/{ws['id']}/export", headers=admin_headers
-            )
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/gzip"
+        assert "x-estimated-size" in resp.headers
+        assert int(resp.headers["x-estimated-size"]) > 0
 
-        # Verify the temp file was cleaned up
-        assert len(created_tmp) == 1
-        assert not os.path.exists(created_tmp[0])
+        # Verify the streamed response is a valid tarball
+        import tarfile
 
-    async def test_export_cleanup_tempfile(self, client, admin_user, user):
-        """The export endpoint's background task cleans up the temp file."""
+        buf = io.BytesIO(resp.content)
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+            names = tar.getnames()
+            assert "workspace.json" in names
+            assert any("file.txt" in n for n in names)
+
+    async def test_export_du_failure_falls_back(
+        self, client, admin_user, user, monkeypatch
+    ):
+        """If du fails, estimated size defaults to minimum."""
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "cleanup-test"}
+            "/workspaces", headers=headers, json={"name": "du-fail"}
+        )
+        ws = resp.json()
+
+        import klangk_backend.workspaces as ws_mod
+
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "work").mkdir(exist_ok=True)
+        (home / "work" / "f.txt").write_text("data")
+
+        import subprocess as subprocess_mod
+
+        original_run = subprocess_mod.run
+
+        def _failing_run(*args, **kwargs):
+            if args and args[0] and args[0][0] == "du":
+                raise OSError("du not found")
+            return original_run(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess_mod, "run", _failing_run)
+
+        admin_headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 200
+        # Falls back to 0 * 0.4 = 0, clamped to 1
+        assert resp.headers["x-estimated-size"] == "1"
+
+    async def test_export_empty_workspace(self, client, admin_user, user):
+        """Export of workspace with no home dir still works."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "empty-export"}
         )
         ws = resp.json()
 
@@ -2463,29 +2487,8 @@ class TestWorkspaceExportImport:
             f"/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert resp.status_code == 200
-
-        # Verify _cleanup_tempfile returns a valid BackgroundTask
-        from klangk_backend.api import _cleanup_tempfile
-        import tempfile
-
-        tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
-        tmp.close()
-        task = _cleanup_tempfile(tmp.name)
-        assert task is not None
-
-        # Run the background task
-
-        await task()
-        import os
-
-        assert not os.path.exists(tmp.name)
-
-    async def test_export_cleanup_tempfile_missing_file(self):
-        """_cleanup_tempfile handles missing files gracefully."""
-        from klangk_backend.api import _cleanup_tempfile
-
-        task = _cleanup_tempfile("/nonexistent/path/file.tar.gz")
-        await task()  # Should not raise
+        # Estimated size is 0 * 0.4 = 0, clamped to 1
+        assert resp.headers["x-estimated-size"] == "1"
 
     async def test_import_upload_error_cleans_tempfile(
         self, client, user, monkeypatch
