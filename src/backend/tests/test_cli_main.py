@@ -1378,3 +1378,110 @@ class TestVolumes:
         runner = CliRunner()
         result = runner.invoke(main.app, ["volumes", "rm", "busy"])
         assert result.exit_code == 1
+
+
+class TestExportImportCLI:
+    def test_export_success(self, logged_in_cfg, monkeypatch, tmp_path):
+        from klangk_backend.cli import main
+
+        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
+        ws = Workspace(
+            id="ws-export-id", name="my-ws", created_at="2025-01-01"
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        out = tmp_path / "out.tar.gz"
+        main.export_workspace(name="my-ws", output=out)
+        client.export_workspace.assert_called_once_with("ws-export-id", out)
+
+    def test_export_default_filename(self, logged_in_cfg, monkeypatch):
+        from pathlib import Path
+        from klangk_backend.cli import main
+
+        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
+        ws = Workspace(id="ws-exp-id", name="test-ws", created_at="2025-01-01")
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        main.export_workspace(name="test-ws", output=None)
+        client.export_workspace.assert_called_once_with(
+            "ws-exp-id", Path("test-ws.tar.gz")
+        )
+
+    def test_export_workspace_not_found(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.export_workspace(name="nope", output=None)
+
+    def test_export_http_error(self, logged_in_cfg, monkeypatch, tmp_path):
+        from klangk_backend.cli import main
+
+        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
+        ws = Workspace(id="ws-err-id", name="err-ws", created_at="2025-01-01")
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        resp = MagicMock()
+        resp.text = "forbidden"
+        resp.status_code = 403
+        client.export_workspace.side_effect = httpx.HTTPStatusError(
+            "err", request=MagicMock(), response=resp
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.export_workspace(name="err-ws", output=tmp_path / "o.tar.gz")
+
+    def test_import_success(self, logged_in_cfg, monkeypatch, tmp_path):
+        from klangk_backend.cli import main
+
+        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
+        ws = Workspace(
+            id="ws-imp-id", name="imported", created_at="2025-01-01"
+        )
+        client = MagicMock()
+        client.import_workspace.return_value = ws
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        archive = tmp_path / "test.tar.gz"
+        archive.write_bytes(b"fake")
+        main.import_workspace(archive=archive, name="imported")
+        client.import_workspace.assert_called_once_with(
+            archive, name="imported"
+        )
+
+    def test_import_file_not_found(self, logged_in_cfg, monkeypatch, tmp_path):
+        from klangk_backend.cli import main
+
+        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
+
+        with pytest.raises(typer.Exit):
+            main.import_workspace(
+                archive=tmp_path / "nonexistent.tar.gz", name=None
+            )
+
+    def test_import_http_error(self, logged_in_cfg, monkeypatch, tmp_path):
+        from klangk_backend.cli import main
+
+        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
+        resp = MagicMock()
+        resp.text = "conflict"
+        resp.status_code = 409
+        client = MagicMock()
+        client.import_workspace.side_effect = httpx.HTTPStatusError(
+            "err", request=MagicMock(), response=resp
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        archive = tmp_path / "test.tar.gz"
+        archive.write_bytes(b"fake")
+        with pytest.raises(typer.Exit):
+            main.import_workspace(archive=archive, name="dup")
