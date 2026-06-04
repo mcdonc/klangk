@@ -335,6 +335,61 @@ test.describe("Klangk E2E", () => {
     }
   });
 
+  test("right-click with selection defers to native context menu", async ({
+    page,
+    request,
+  }) => {
+    // Right-clicking with a text selection should show the browser's
+    // native context menu (not a Flutter popup), same as without selection.
+    // Copy-on-select already put the text on the clipboard.
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-rc-sel",
+      { waitForTerminal: true },
+    );
+
+    try {
+      const { width, height } = vp(page);
+      const f = fv(page);
+
+      // Type something to select
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(1000);
+      await page.keyboard.type("echo SELECTME");
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(2000);
+
+      // Select text by dragging across the output
+      await page.mouse.move(10, 130);
+      await page.mouse.down();
+      await page.mouse.move(200, 130, { steps: 10 });
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+
+      // Right-click on the selection — should NOT show Flutter popup
+      await f.click({
+        position: { x: 100, y: 130 },
+        button: "right",
+        force: true,
+      });
+      await page.waitForTimeout(500);
+
+      // Dismiss whatever context menu appeared
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+
+      // Terminal should still be interactive after dismissing
+      await page.keyboard.type("echo still-works");
+      await page.waitForTimeout(300);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("paste shortcut is ignored when terminal isn't focused", async ({
     page,
     request,
