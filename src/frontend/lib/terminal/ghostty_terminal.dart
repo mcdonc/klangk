@@ -224,6 +224,10 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           } else if (action == 'paste') {
             if (clipText != null && clipText.isNotEmpty) {
               _terminal.paste(clipText);
+            } else {
+              // Pre-read failed (e.g. webkit doesn't support readText) —
+              // fall back to reading at click time (may prompt on Firefox).
+              _paste();
             }
           }
           // coverage:ignore-end
