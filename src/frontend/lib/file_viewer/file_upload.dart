@@ -2,7 +2,7 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import '../theme/colors.dart';
 import 'package:http/http.dart' as http;
-import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import '../utils/api_base_url.dart';
 
 /// Override for testing — intercepts multipart upload requests.
 /// Return a status code. If null, uses real HTTP.
@@ -32,7 +32,7 @@ class FileDropZone extends StatefulWidget {
 }
 
 class FileDropZoneState extends State<FileDropZone> {
-  String get _baseUrl => baseUrl;
+  String get _baseUrl => apiBaseUrl;
   bool _dragging = false;
   bool _uploading = false;
   bool _cancelled = false;
