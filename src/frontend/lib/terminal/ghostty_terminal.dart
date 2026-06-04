@@ -121,6 +121,22 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   @visibleForTesting
   TerminalScrollController get scrollController => _scrollController;
 
+  // Scrollback is only meaningful on the primary screen. On the alt screen
+  // (vim, less) we want PgUp/PgDn to pass through to the PTY untouched.
+  bool _canScrollScrollback() =>
+      _scrollController.hasClients &&
+      _scrollController.activeScreen == TerminalScreen.primary;
+
+  // Jump one viewport — same step xterm.dart's keytab used for scrollPageUp/
+  // scrollPageDown. Direction: -1 = up (toward older scrollback, lower pixels
+  // per flterm's terminal_renderer.dart); +1 = down toward the live row.
+  void _scrollByPage(int direction) {
+    final pos = _scrollController.position;
+    final target = (pos.pixels + pos.viewportDimension * direction)
+        .clamp(0.0, pos.maxScrollExtent);
+    _scrollController.jumpTo(target);
+  }
+
   // flterm measures cell width by laying out 'M' in [_fontFamily]; if the font
   // isn't loaded yet it measures a wider fallback advance and never re-measures,
   // leaving space around every glyph. Register the family with the engine and
@@ -196,6 +212,14 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       // key propagates to the textarea and the browser pastes natively.
       actions: <Type, Action<Intent>>{
         DoNothingIntent: DoNothingAction(consumesKey: false),
+        _ScrollPageUpIntent: _ConditionalAction<_ScrollPageUpIntent>(
+          isEnabledFn: _canScrollScrollback,
+          onInvokeFn: () => _scrollByPage(-1),
+        ),
+        _ScrollPageDownIntent: _ConditionalAction<_ScrollPageDownIntent>(
+          isEnabledFn: _canScrollScrollback,
+          onInvokeFn: () => _scrollByPage(1),
+        ),
       },
       child: Listener(
         // Copy-on-select: when the user finishes a mouse selection
@@ -232,7 +256,10 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           // Clipboard.getData, which fails on Firefox). These override flterm's
           // platform defaults, so paste flows solely through the native
           // `paste` event in [installPasteListener] — one path, no double-paste.
-          shortcuts: _disableFltermPaste,
+          //
+          // Adds Shift+PgUp/PgDn scrollback shortcuts that xterm.dart used to
+          // provide for free — see [_scrollShortcuts].
+          shortcuts: const {..._disableFltermPaste, ..._scrollShortcuts},
           // Keep mouse selection (drag/word/line/long-press) but drop the
           // keyboard select-all gesture, so Ctrl+A falls through to the shell
           // (readline beginning-of-line / tmux prefix) instead of selecting the
@@ -262,6 +289,45 @@ const Map<ShortcutActivator, Intent> _disableFltermPaste = {
   SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true):
       DoNothingIntent(),
 };
+
+/// Shift+PgUp / Shift+PgDn scroll the terminal view through the primary
+/// scrollback. xterm.dart bound these natively (`keytab_default.dart`); flterm
+/// does not, so we wire them at the app layer. On the alt screen the actions
+/// disable themselves and the keys fall through to the PTY — matches
+/// xterm.dart's `-AppScreen` semantics so vim/less still see PgUp/PgDn.
+class _ScrollPageUpIntent extends Intent {
+  const _ScrollPageUpIntent();
+}
+
+class _ScrollPageDownIntent extends Intent {
+  const _ScrollPageDownIntent();
+}
+
+const Map<ShortcutActivator, Intent> _scrollShortcuts = {
+  SingleActivator(LogicalKeyboardKey.pageUp, shift: true):
+      _ScrollPageUpIntent(),
+  SingleActivator(LogicalKeyboardKey.pageDown, shift: true):
+      _ScrollPageDownIntent(),
+};
+
+/// Action that runs [onInvokeFn] only when [isEnabledFn] returns true; when
+/// disabled the activator falls through to the next handler — flterm's normal
+/// key dispatch — which is how we let PgUp reach vim/less on the alt screen.
+class _ConditionalAction<T extends Intent> extends Action<T> {
+  _ConditionalAction({required this.isEnabledFn, required this.onInvokeFn});
+
+  final ValueGetter<bool> isEnabledFn;
+  final VoidCallback onInvokeFn;
+
+  @override
+  Object? invoke(T intent) {
+    onInvokeFn();
+    return null;
+  }
+
+  @override
+  bool isEnabled(T intent) => isEnabledFn();
+}
 
 /// klangk's terminal palette (matches the xterm `ContainerTerminal` theme).
 final TerminalTheme _theme = TerminalTheme(
