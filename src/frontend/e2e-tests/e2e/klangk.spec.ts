@@ -118,6 +118,175 @@ test.describe("Klangk E2E", () => {
     }
   });
 
+  test("terminal pastes via keyboard shortcut (native paste event)", async ({
+    page,
+    request,
+  }) => {
+    // Regression: on Firefox, paste went through Flutter's Clipboard.getData
+    // (navigator.clipboard.readText), which returns nothing for externally
+    // copied text, so Ctrl/Cmd+V silently failed. The fix reads the browser's
+    // native `paste` event instead. This exercises the real keypress path so
+    // it catches a regression on any browser.
+    const termReady = waitForTerminalReady(page);
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-paste",
+    );
+    await termReady;
+
+    try {
+      // chromium needs explicit clipboard permission; firefox/webkit don't
+      // support granting it and don't need it for the paste-event read.
+      try {
+        await page
+          .context()
+          .grantPermissions(["clipboard-read", "clipboard-write"]);
+      } catch {
+        /* unsupported on firefox/webkit — fine */
+      }
+
+      const cmd = "echo playwright-paste-test > /home/klangk/work/.paste-test";
+      await page.evaluate((t) => navigator.clipboard.writeText(t), cmd);
+
+      const { width, height } = vp(page);
+      const f = fv(page);
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(1000);
+      // ControlOrMeta → Cmd on macOS, Ctrl elsewhere (CI is Linux).
+      await page.keyboard.press("ControlOrMeta+KeyV");
+      await page.waitForTimeout(500);
+      await page.keyboard.press("Enter");
+
+      await waitForFile(request, workspaceId, "work/.paste-test", headers);
+      const readResp = await request.get(
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.paste-test`,
+        { headers },
+      );
+      expect(readResp.ok()).toBeTruthy();
+      const data = await readResp.json();
+      expect(data.content).toContain("playwright-paste-test");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("terminal paste preserves quotes, spaces, and unicode", async ({
+    page,
+    request,
+  }) => {
+    // Pasted text must reach the PTY byte-for-byte. The native `paste` path
+    // pulls from event.clipboardData.getData('text/plain'), which is a raw
+    // string with no escaping done by Flutter's text-input — this regression-
+    // tests that the byte boundary stays clean for typical messy content
+    // (single quotes, double quotes, whitespace, multi-byte UTF-8).
+    const termReady = waitForTerminalReady(page);
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-paste-utf8",
+    );
+    await termReady;
+
+    try {
+      try {
+        await page
+          .context()
+          .grantPermissions(["clipboard-read", "clipboard-write"]);
+      } catch {
+        /* unsupported on firefox/webkit — fine */
+      }
+
+      // Quotes, spaces, an emoji, and a non-Latin character. Wrap in a
+      // heredoc so the shell preserves the payload exactly.
+      const payload = `Hello "world" 'with' spaces — 🦋 中文`;
+      const cmd = `cat > /home/klangk/work/.paste-utf8 <<'EOF'\n${payload}\nEOF`;
+      await page.evaluate((t) => navigator.clipboard.writeText(t), cmd);
+
+      const { width, height } = vp(page);
+      const f = fv(page);
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(1000);
+      await page.keyboard.press("ControlOrMeta+KeyV");
+      await page.waitForTimeout(500);
+      await page.keyboard.press("Enter");
+
+      await waitForFile(request, workspaceId, "work/.paste-utf8", headers);
+      const readResp = await request.get(
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.paste-utf8`,
+        { headers },
+      );
+      expect(readResp.ok()).toBeTruthy();
+      const data = await readResp.json();
+      expect(data.content.trimEnd()).toBe(payload);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("paste shortcut is ignored when terminal isn't focused", async ({
+    page,
+    request,
+  }) => {
+    // installPasteListener is wired at the document level and only consumes
+    // the event when the terminal's focus node has focus. If the user has
+    // the Files tab active (or any other widget focused), pasting must NOT
+    // route the clipboard into the PTY — otherwise a paste meant for
+    // another input would silently fire shell commands.
+    const termReady = waitForTerminalReady(page);
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-paste-isolation",
+    );
+    await termReady;
+
+    try {
+      try {
+        await page
+          .context()
+          .grantPermissions(["clipboard-read", "clipboard-write"]);
+      } catch {
+        /* unsupported on firefox/webkit — fine */
+      }
+
+      const cmd =
+        "echo paste-leak-canary > /home/klangk/work/.paste-leak-canary";
+      await page.evaluate((t) => navigator.clipboard.writeText(t), cmd);
+
+      const { width } = vp(page);
+      const f = fv(page);
+      // Switch to the Files tab so the terminal isn't focused. Tabs span
+      // full width: Terminal on the left half, Files on the right.
+      const filesTabX = (width * 3) / 4;
+      await f.click({ position: { x: filesTabX, y: 76 }, force: true });
+      await page.waitForTimeout(500);
+
+      // Fire the paste shortcut and Enter. If the terminal listener
+      // mistakenly consumed the event, the canary file would appear; if it
+      // correctly returned false, nothing reaches the PTY.
+      await page.keyboard.press("ControlOrMeta+KeyV");
+      await page.waitForTimeout(500);
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(2000);
+
+      const readResp = await request.get(
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.paste-leak-canary`,
+        { headers },
+      );
+      // 404 (or any non-2xx) is the expected outcome: file shouldn't exist.
+      expect(readResp.ok()).toBeFalsy();
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("navigate back to workspaces", async ({ page, request }) => {
     const { cleanup } = await createAndOpenWorkspace(page, request, "nav-back");
 

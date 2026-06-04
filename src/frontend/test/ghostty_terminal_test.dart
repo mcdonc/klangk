@@ -217,5 +217,49 @@ void main() {
       expect(find.text('Paste'), findsOneWidget);
       client.close();
     });
+
+    testWidgets('routeNativePaste drops the payload when not focused',
+        (tester) async {
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await tester.pumpWidget(_build(client, key: key));
+      await tester.pumpAndSettle();
+      client.sentCommands.clear();
+
+      final consumed = key.currentState!.routeNativePaste('hello\n');
+      await tester.pump();
+
+      expect(consumed, isFalse);
+      expect(
+        client.sentCommands.where((c) => c.startsWith('terminal_input')),
+        isEmpty,
+      );
+      client.close();
+    });
+
+    testWidgets('routeNativePaste forwards the payload when focused',
+        (tester) async {
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await tester.pumpWidget(_build(client, key: key));
+      await tester.pumpAndSettle();
+      key.currentState!.requestFocus();
+      await tester.pump();
+      client.sentCommands.clear();
+
+      final consumed = key.currentState!.routeNativePaste('clipboard-payload');
+      await tester.pump();
+
+      expect(consumed, isTrue);
+      // flterm wraps in bracketed-paste markers (\e[200~ ... \e[201~) when
+      // the terminal program has requested them, but always emits the
+      // payload bytes — assert on a substring rather than equality so the
+      // test isn't coupled to bracketed-paste mode.
+      final pasted =
+          client.sentCommands.where((c) => c.startsWith('terminal_input:'));
+      expect(pasted, isNotEmpty);
+      expect(pasted.join(), contains('clipboard-payload'));
+      client.close();
+    });
   });
 }

@@ -14,3 +14,10 @@ Widget buildSuppressor(Widget child) => child;
 
 /// Stub — return empty hash in VM tests.
 String getLocationHash() => '';
+
+/// Stub — no DOM paste events outside the browser; returns a no-op disposer.
+void Function() installPasteListener(bool Function(String text) onPaste) =>
+    () {};
+
+/// Stub — no system clipboard outside the browser.
+Future<String?> readClipboardText() async => null;

@@ -18,7 +18,18 @@ const chromiumUse = {
 const firefoxUse = {
   browserName: "firefox" as const,
   launchOptions: {
-    executablePath: `${BROWSERS}/firefox-1511/firefox/firefox`,
+    // CI (Linux) uses the default path; FIREFOX_PATH overrides it for local
+    // runs (e.g. macOS, where the binary is firefox/Nightly.app/...), mirroring
+    // CHROME_PATH above.
+    executablePath:
+      process.env.FIREFOX_PATH || `${BROWSERS}/firefox-1511/firefox/firefox`,
+    // Allow navigator.clipboard read/write in automation without a prompt, so
+    // the paste e2e can seed the clipboard. (The fix's own read path uses the
+    // native `paste` event and needs no permission.)
+    firefoxUserPrefs: {
+      "dom.events.asyncClipboard.readText": true,
+      "dom.events.testing.asyncClipboard": true,
+    },
   },
 };
 

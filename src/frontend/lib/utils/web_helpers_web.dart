@@ -35,6 +35,47 @@ void suppressContextMenuBriefly() {
 /// Get the browser's location hash fragment.
 String getLocationHash() => web.window.location.hash;
 
+/// Routes the browser's native `paste` ClipboardEvent text to [onPaste].
+///
+/// Why this exists: Flutter's `Clipboard.getData` — and flterm's built-in
+/// Ctrl/Cmd+V handler that calls it — read the clipboard via
+/// `navigator.clipboard.readText()`. On Firefox that path yields nothing for
+/// externally-copied text, so paste silently fails (Chrome/WebKit are fine).
+/// The native `paste` event carries the payload in `clipboardData` with no
+/// permission prompt on any browser, so we read it there instead.
+///
+/// [onPaste] returns whether it consumed the text. When it does, the event's
+/// default is prevented so the text isn't also inserted into Flutter's hidden
+/// text-input (which would double-paste); when it doesn't (e.g. the terminal
+/// isn't focused), the event is left alone so other inputs paste normally.
+/// Runs in the capture phase. Returns a disposer that removes the listener.
+void Function() installPasteListener(bool Function(String text) onPaste) {
+  final handler = ((web.Event event) {
+    final data = (event as web.ClipboardEvent).clipboardData;
+    final text = data?.getData('text/plain') ?? '';
+    if (text.isEmpty) return;
+    if (onPaste(text)) event.preventDefault();
+  }).toJS;
+  web.document.addEventListener('paste', handler, true.toJS);
+  return () => web.document.removeEventListener('paste', handler, true.toJS);
+}
+
+/// Reads the system clipboard as plain text via the async Clipboard API.
+///
+/// Used only by the right-click "Paste" menu item: a synthetic button click is
+/// not a native paste gesture, so no `paste` event fires and [installPasteListener]
+/// can't cover it. On Firefox this may surface the browser's paste-confirmation
+/// UI; the keyboard path stays prompt-free via the native event. Returns null
+/// if the clipboard is empty or the read is denied.
+Future<String?> readClipboardText() async {
+  try {
+    final text = await web.window.navigator.clipboard.readText().toDart;
+    return text.toDart;
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Web implementation — suppresses native browser context menu on right-click.
 Widget buildSuppressor(Widget child) {
   return Listener(
