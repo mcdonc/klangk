@@ -60,6 +60,34 @@ void Function() installPasteListener(bool Function(String text) onPaste) {
   return () => web.document.removeEventListener('paste', handler, true.toJS);
 }
 
+/// Prevents the browser from acting on the terminal's keyboard shortcuts
+/// (issue #7) while the terminal is focused, so they reach Flutter/flterm
+/// instead of zooming or scrolling the *page*:
+///   - Cmd/Ctrl with `=` `+` `-` `0` (and numpad +/-): browser page zoom.
+///   - Shift + PageUp/PageDown: browser page scroll.
+///
+/// Only `preventDefault` is called (never `stopPropagation`), so Flutter still
+/// receives the keydown and flterm's Shortcuts handle it. [shouldHandle] gates
+/// on terminal focus so global browser zoom is untouched elsewhere. Runs in the
+/// capture phase. Returns a disposer that removes the listener.
+void Function() installShortcutGuard(bool Function() shouldHandle) {
+  final handler = ((web.Event event) {
+    if (!shouldHandle()) return;
+    final ke = event as web.KeyboardEvent;
+    final code = ke.code;
+    final zoom = (ke.metaKey || ke.ctrlKey) &&
+        (code == 'Equal' ||
+            code == 'Minus' ||
+            code == 'Digit0' ||
+            code == 'NumpadAdd' ||
+            code == 'NumpadSubtract');
+    final scroll = ke.shiftKey && (code == 'PageUp' || code == 'PageDown');
+    if (zoom || scroll) event.preventDefault();
+  }).toJS;
+  web.document.addEventListener('keydown', handler, true.toJS);
+  return () => web.document.removeEventListener('keydown', handler, true.toJS);
+}
+
 /// Reads the system clipboard as plain text via the async Clipboard API.
 ///
 /// Used only by the right-click "Paste" menu item: a synthetic button click is

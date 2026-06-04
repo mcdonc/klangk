@@ -35,6 +35,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   StreamSubscription<String>? _outputSub;
   StreamSubscription<Map<String, dynamic>>? _eventSub;
   void Function()? _removePasteListener;
+  void Function()? _removeShortcutGuard;
   bool _started = false;
 
   // Raw bytes of the bundled monospace font. flterm measures cell width from
@@ -78,6 +79,10 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     // too, unlike Clipboard.getData). Only consume it when the terminal is
     // focused, so pastes into other inputs (e.g. chat) are left untouched.
     _removePasteListener = installPasteListener(routeNativePaste);
+    // On web, stop the browser from zooming/scrolling the page when the
+    // terminal has focus, so the issue #7 shortcuts reach flterm. No-op on
+    // desktop (no browser to intercept).
+    _removeShortcutGuard = installShortcutGuard(() => _focusNode.hasFocus);
     _loadFont();
   }
 
@@ -225,6 +230,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     _outputSub?.cancel();
     _eventSub?.cancel();
     _removePasteListener?.call();
+    _removeShortcutGuard?.call();
     if (_started) {
       widget.wsClient.sendTerminalStop();
     }

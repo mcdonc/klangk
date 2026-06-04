@@ -49,6 +49,9 @@ String getLocationHash() => '';
 void Function() installPasteListener(bool Function(String text) onPaste) =>
     () {};
 
+/// No browser to intercept; native shortcuts reach flterm directly. No-op.
+void Function() installShortcutGuard(bool Function() shouldHandle) => () {};
+
 /// Read the system clipboard (used by the right-click "Paste" menu item).
 Future<String?> readClipboardText() async {
   final data = await Clipboard.getData(Clipboard.kTextPlain);
