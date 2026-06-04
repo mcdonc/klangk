@@ -1490,16 +1490,24 @@ class TestExportImportCLI:
         ws = Workspace(
             id="ws-imp-id", name="imported", created_at="2025-01-01"
         )
+
+        def _fake_import(a, name=None, on_progress=None):
+            if on_progress:
+                on_progress(2, 4)
+                on_progress(4, 4)
+            return ws
+
         client = MagicMock()
-        client.import_workspace.return_value = ws
+        client.import_workspace.side_effect = _fake_import
         monkeypatch.setattr(main, "_client", lambda: client)
 
         archive = tmp_path / "test.tar.gz"
         archive.write_bytes(b"fake")
         main.import_workspace(archive=archive, name="imported")
-        client.import_workspace.assert_called_once_with(
-            archive, name="imported"
-        )
+        client.import_workspace.assert_called_once()
+        args = client.import_workspace.call_args
+        assert args[0][0] == archive
+        assert args[1]["name"] == "imported"
 
     def test_import_file_not_found(self, logged_in_cfg, monkeypatch, tmp_path):
         from klangk_backend.cli import main

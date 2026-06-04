@@ -897,6 +897,47 @@ class TestExportImportClient:
         assert ws.name == "imported-ws"
         assert ws.id == "new-id"
 
+    def test_import_workspace_with_progress(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.server.url = "http://localhost:8995"
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+
+        archive = tmp_path / "test.tar.gz"
+        archive.write_bytes(b"fake archive data")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "prog-id",
+            "name": "prog-ws",
+            "created_at": "2025-01-01",
+        }
+
+        progress_calls = []
+
+        def _mock_post(*args, **kwargs):
+            # Simulate httpx reading the file (which triggers progress)
+            files = kwargs.get("files", {})
+            if files:
+                _, file_tuple = next(iter(files.items()))
+                _, fobj, _ = file_tuple
+                while fobj.read(8192):
+                    pass
+            return mock_resp
+
+        with patch("httpx.post", side_effect=_mock_post):
+            ws = client.import_workspace(
+                archive,
+                name="prog-ws",
+                on_progress=lambda d, t: progress_calls.append((d, t)),
+            )
+
+        assert ws.name == "prog-ws"
+        assert len(progress_calls) > 0
+        assert all(t == 17 for _, t in progress_calls)
+        assert progress_calls[-1][0] == 17
+
     def test_import_workspace_auth_error(self, tmp_path):
         cfg = CLIConfig()
         cfg.auth.token = "bad"
