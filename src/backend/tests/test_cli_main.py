@@ -1388,13 +1388,23 @@ class TestExportImportCLI:
         ws = Workspace(
             id="ws-export-id", name="my-ws", created_at="2025-01-01"
         )
+
+        def _fake_export(ws_id, out, on_progress=None):
+            if on_progress:
+                on_progress(100, 200)
+                on_progress(200, 200)
+
         client = MagicMock()
         client.resolve_workspace.return_value = ws
+        client.export_workspace.side_effect = _fake_export
         monkeypatch.setattr(main, "_client", lambda: client)
 
         out = tmp_path / "out.tar.gz"
         main.export_workspace(name="my-ws", output=out)
-        client.export_workspace.assert_called_once_with("ws-export-id", out)
+        client.export_workspace.assert_called_once()
+        args = client.export_workspace.call_args
+        assert args[0][0] == "ws-export-id"
+        assert args[0][1] == out
 
     def test_export_default_filename(self, logged_in_cfg, monkeypatch):
         from pathlib import Path
@@ -1402,14 +1412,21 @@ class TestExportImportCLI:
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(id="ws-exp-id", name="test-ws", created_at="2025-01-01")
+
+        def _fake_export(ws_id, out, on_progress=None):
+            if on_progress:
+                on_progress(50, None)
+
         client = MagicMock()
         client.resolve_workspace.return_value = ws
+        client.export_workspace.side_effect = _fake_export
         monkeypatch.setattr(main, "_client", lambda: client)
 
         main.export_workspace(name="test-ws", output=None)
-        client.export_workspace.assert_called_once_with(
-            "ws-exp-id", Path("test-ws.tar.gz")
-        )
+        client.export_workspace.assert_called_once()
+        args = client.export_workspace.call_args
+        assert args[0][0] == "ws-exp-id"
+        assert args[0][1] == Path("test-ws.tar.gz")
 
     def test_export_workspace_not_found(self, logged_in_cfg, monkeypatch):
         from klangk_backend.cli import main
