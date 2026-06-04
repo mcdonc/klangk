@@ -668,11 +668,19 @@ class TestRunShell:
                 pass
 
         fake_buf = BytesIO(b"")
-        fake_buf.fileno = lambda: 0
+        fake_buf.fileno = lambda: 99
         fake_stdout = CaptureWriter()
-        with patch(
-            "klangk_backend.cli.client.select.select",
-            return_value=([0], [], []),
+        # Patch os.read alongside select so stdin_loop sees EOF and exits
+        # instead of blocking on the real stdin fd (which hangs serial runs
+        # where stdin is an interactive tty).
+        with (
+            patch(
+                "klangk_backend.cli.client.select.select",
+                return_value=([99], [], []),
+            ),
+            patch(
+                "klangk_backend.cli.client.os.read", return_value=b""
+            ),
         ):
             task = asyncio.create_task(
                 _run_shell(ws, 80, 24, stdin=fake_buf, stdout=fake_stdout)

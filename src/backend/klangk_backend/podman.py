@@ -113,8 +113,13 @@ async def create_container(
     ``publish`` is a list of ``(host_port, container_port)`` pairs.
     ``replace=True`` uses ``--replace`` so an existing container with the
     same name is removed first (the ``create_or_replace`` equivalent).
+
+    ``--pull=never`` is always passed: the deployment is network-restricted,
+    so the image must already be in the local store (or a configured
+    additional image store). This fails fast with a clear error instead of
+    attempting a registry pull.
     """
-    args = ["create", "--name", name]
+    args = ["create", "--pull=never", "--name", name]
     if replace:
         args.append("--replace")
     if init:

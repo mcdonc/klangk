@@ -375,7 +375,6 @@ class ContainerRegistry:
 
         binds = [
             f"{home_path}:/home/klangk",
-            "/var/run/docker.sock:/var/run/docker.sock",
         ]
         if ssh_auth_sock and os.path.exists(ssh_auth_sock):
             binds.append(f"{ssh_auth_sock}:/run/ssh-agent.sock:ro")

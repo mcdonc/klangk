@@ -120,7 +120,13 @@ class TestCreateContainer:
         with patch(EXEC, _exec(("abc123\n", "", 0))) as m:
             cid = await podman.create_container("n", "img", replace=False)
         assert cid == "abc123"
-        assert _args(m) == ["create", "--name", "n", "img"]
+        assert _args(m) == [
+            "create",
+            "--pull=never",
+            "--name",
+            "n",
+            "img",
+        ]
 
     async def test_all_flags(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
