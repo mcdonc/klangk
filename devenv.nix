@@ -23,6 +23,7 @@
   };
 
   packages = with pkgs; [
+    bash # explicit bash for shell scripts (CI /bin/sh may be dash)
     docker-client
     flutter
     coreutils # GNU du (macOS BSD du lacks -b)

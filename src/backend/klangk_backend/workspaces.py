@@ -85,7 +85,9 @@ async def _find_external_symlinks(home_dir: Path) -> list[str]:
         f'case "$target" in "{home_resolved}/"*) ;; *) '
         f'echo "$link" ;; esac; done'
     )
-    proc = await asyncio.create_subprocess_shell(
+    proc = await asyncio.create_subprocess_exec(
+        "bash",
+        "-c",
         script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

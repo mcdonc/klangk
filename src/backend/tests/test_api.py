@@ -2073,7 +2073,7 @@ class TestFindExternalSymlinks:
         )
         mock_proc.returncode = 0
 
-        with patch("asyncio.create_subprocess_shell", return_value=mock_proc):
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             result = await ws_mod._find_external_symlinks(home_dir)
         assert result == []
 
