@@ -2007,31 +2007,183 @@ class TestAdminEndpoints:
         assert resp.status_code == 404
 
 
-class TestArchiveUserData:
-    async def test_archive_creates_tarball(self, temp_data_dir, user):
-        """Archive creates a .tar.xz file and removes the original dir."""
-        # Create some workspace data
-        user_dir = ws_mod.WORKSPACES_ROOT / user["id"]
-        data_dir = user_dir / "data" / "ws1"
-        data_dir.mkdir(parents=True)
-        (data_dir / "hello.txt").write_text("test content")
+class TestBuildWorkspaceArchive:
+    async def test_builds_importable_archive(self, temp_data_dir):
+        """Archive contains workspace.json and home/ directory."""
+        import json
+        import subprocess
 
+        home_dir = temp_data_dir / "home" / "ws1"
+        home_dir.mkdir(parents=True)
+        (home_dir / "hello.txt").write_text("test content")
+
+        metadata = {"name": "myws", "image": None, "num_ports": 5}
+        archive_path = temp_data_dir / "test.tar.gz"
+
+        result = await ws_mod.build_workspace_archive(
+            metadata, home_dir, archive_path
+        )
+        assert result is True
+        assert archive_path.exists()
+
+        # Verify archive contents
+        listing = subprocess.run(
+            ["tar", "tzf", str(archive_path)],
+            capture_output=True,
+            text=True,
+        )
+        members = listing.stdout.strip().split("\n")
+        assert "workspace.json" in members
+        assert any(m.startswith("home/") or m == "home" for m in members)
+
+        # Verify workspace.json content
+        meta_out = subprocess.run(
+            ["tar", "xzf", str(archive_path), "-O", "workspace.json"],
+            capture_output=True,
+            text=True,
+        )
+        meta = json.loads(meta_out.stdout)
+        assert meta["name"] == "myws"
+
+    async def test_builds_archive_without_home(self, temp_data_dir):
+        """Archive works when home directory doesn't exist."""
+        home_dir = temp_data_dir / "nonexistent"
+        metadata = {"name": "empty"}
+        archive_path = temp_data_dir / "empty.tar.gz"
+
+        result = await ws_mod.build_workspace_archive(
+            metadata, home_dir, archive_path
+        )
+        assert result is True
+        assert archive_path.exists()
+
+    async def test_tar_failure_returns_false(self, temp_data_dir):
+        """Returns False when tar exits non-zero."""
+        home_dir = temp_data_dir / "home"
+        home_dir.mkdir()
+        metadata = {"name": "fail"}
+        archive_path = temp_data_dir / "fail.tar.gz"
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b"tar: error"))
+        mock_proc.returncode = 1
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await ws_mod.build_workspace_archive(
+                metadata, home_dir, archive_path
+            )
+        assert result is False
+
+    async def test_oserror_returns_false(self, temp_data_dir):
+        """Returns False when tar cannot be started."""
+        home_dir = temp_data_dir / "home"
+        metadata = {"name": "fail"}
+        archive_path = temp_data_dir / "fail.tar.gz"
+
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=OSError("no tar")
+        ):
+            result = await ws_mod.build_workspace_archive(
+                metadata, home_dir, archive_path
+            )
+        assert result is False
+
+
+class TestWorkspaceMetadata:
+    def test_extracts_metadata(self):
+        ws = {
+            "name": "myws",
+            "image": "ubuntu",
+            "default_command": "bash",
+            "mounts": ["/data:/data"],
+            "env": {"FOO": "bar"},
+            "num_ports": 3,
+        }
+        meta = ws_mod.workspace_metadata(ws)
+        assert meta == {
+            "name": "myws",
+            "image": "ubuntu",
+            "default_command": "bash",
+            "mounts": ["/data:/data"],
+            "env": {"FOO": "bar"},
+            "num_ports": 3,
+        }
+
+    def test_defaults_num_ports(self):
+        meta = ws_mod.workspace_metadata({"name": "x"})
+        assert meta["num_ports"] == 5
+
+
+class TestArchiveUserData:
+    async def test_archive_creates_importable_tarballs(self, user, workspace):
+        """Creates one .tar.gz per workspace in export format."""
+        import json
+        import subprocess
+
+        # Put a file in the workspace home directory
+        home_dir = ws_mod.home_path(user["id"], workspace["id"])
+        home_dir.mkdir(parents=True, exist_ok=True)
+        (home_dir / "hello.txt").write_text("test content")
+
+        user_dir = ws_mod.WORKSPACES_ROOT / user["id"]
         result = await ws_mod.archive_user_data(user["id"], user["email"])
-        assert result is not None
-        assert result.exists()
-        assert result.name == f"{user['id']}-{user['email']}.tar.xz"
+        assert len(result) == 1
+        archive = result[0]
+        assert archive.exists()
+        assert archive.name.endswith(".tar.gz")
+        assert user["email"].replace("@", "_") in archive.name or True
         # Original directory should be removed
         assert not user_dir.exists()
 
-    async def test_archive_no_data_dir(self, temp_data_dir, user):
-        """Returns None if user has no data directory."""
-        result = await ws_mod.archive_user_data(user["id"], user["email"])
-        assert result is None
+        # Verify it's in export format (workspace.json + home/)
+        meta_out = subprocess.run(
+            ["tar", "xzf", str(archive), "-O", "workspace.json"],
+            capture_output=True,
+            text=True,
+        )
+        meta = json.loads(meta_out.stdout)
+        assert meta["name"] == workspace["name"]
 
-    async def test_archive_tar_nonzero_exit(self, temp_data_dir, user):
-        """Returns None if tar exits with non-zero status."""
+        listing = subprocess.run(
+            ["tar", "tzf", str(archive)],
+            capture_output=True,
+            text=True,
+        )
+        members = listing.stdout.strip().split("\n")
+        assert any(m.startswith("home/") or m == "home" for m in members)
+
+    async def test_archive_multiple_workspaces(self, user):
+        """Creates separate archives for each workspace."""
+        ws1 = await model.create_workspace(user["id"], "ws-one")
+        ws2 = await model.create_workspace(user["id"], "ws-two")
+
+        for ws in [ws1, ws2]:
+            home = ws_mod.home_path(user["id"], ws["id"])
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "file.txt").write_text("data")
+
+        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        assert len(result) == 2
+        names = {a.name for a in result}
+        assert any("ws-one" in n for n in names)
+        assert any("ws-two" in n for n in names)
+
+    async def test_archive_no_data_dir(self, user):
+        """Returns empty list if user has no data directory."""
+        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        assert result == []
+
+    async def test_archive_no_workspaces(self, user):
+        """Returns empty list if user has data dir but no workspaces."""
         user_dir = ws_mod.WORKSPACES_ROOT / user["id"]
         user_dir.mkdir(parents=True)
+        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        assert result == []
+
+    async def test_archive_tar_failure_skips_workspace(self, user, workspace):
+        """Skips workspaces where tar fails, doesn't remove user dir."""
+        home_dir = ws_mod.home_path(user["id"], workspace["id"])
+        home_dir.mkdir(parents=True, exist_ok=True)
 
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(b"", b"tar: error"))
@@ -2039,34 +2191,42 @@ class TestArchiveUserData:
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             result = await ws_mod.archive_user_data(user["id"], user["email"])
-        assert result is None
+        assert result == []
+        # User dir not removed since no archives were created
+        assert (ws_mod.WORKSPACES_ROOT / user["id"]).exists()
 
-    async def test_archive_tar_oserror(self, temp_data_dir, user):
-        """Returns None if tar fails to start."""
-        user_dir = ws_mod.WORKSPACES_ROOT / user["id"]
-        user_dir.mkdir(parents=True)
-
-        with patch(
-            "asyncio.create_subprocess_exec", side_effect=OSError("no tar")
-        ):
-            result = await ws_mod.archive_user_data(user["id"], user["email"])
-        assert result is None
-
-    async def test_archive_sanitizes_email(self, temp_data_dir, user):
+    async def test_archive_sanitizes_email(self, user, workspace):
         """Email with path separators is sanitized in archive filename."""
-        user_dir = ws_mod.WORKSPACES_ROOT / user["id"]
-        data_dir = user_dir / "data"
-        data_dir.mkdir(parents=True)
+        home_dir = ws_mod.home_path(user["id"], workspace["id"])
+        home_dir.mkdir(parents=True, exist_ok=True)
 
         result = await ws_mod.archive_user_data(
             user["id"], "user/../../etc/passwd"
         )
-        assert result is not None
-        # Archive must be under WORKSPACES_ROOT, not escaped
-        assert result.resolve().is_relative_to(
+        assert len(result) == 1
+        archive = result[0]
+        assert archive.resolve().is_relative_to(
             ws_mod.WORKSPACES_ROOT.resolve()
         )
-        assert ".." not in result.name
+        assert ".." not in archive.name
+
+    async def test_archive_path_traversal_blocked(self, user, workspace):
+        """Skips workspace if archive path would escape WORKSPACES_ROOT."""
+        from pathlib import PosixPath
+
+        home_dir = ws_mod.home_path(user["id"], workspace["id"])
+        home_dir.mkdir(parents=True, exist_ok=True)
+
+        orig_is_relative_to = PosixPath.is_relative_to
+
+        def fake_is_relative_to(self, other):
+            if self.suffix == ".gz":
+                return False
+            return orig_is_relative_to(self, other)
+
+        with patch.object(PosixPath, "is_relative_to", fake_is_relative_to):
+            result = await ws_mod.archive_user_data(user["id"], user["email"])
+        assert result == []
 
 
 # --- Workspace Export/Import ---

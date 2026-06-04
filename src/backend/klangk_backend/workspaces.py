@@ -1,6 +1,8 @@
 import asyncio
+import json
 import logging
 import shutil
+import tempfile
 from pathlib import Path
 
 from . import container, model
@@ -16,52 +18,115 @@ _data_dir = Path(
 WORKSPACES_ROOT = _data_dir / "workspaces"
 
 
-async def archive_user_data(user_id: str, email: str) -> Path | None:
-    """Archive a user's workspace data to a tar.xz file before deletion.
+def workspace_metadata(ws: dict) -> dict:
+    """Extract export metadata from a workspace dict."""
+    return {
+        "name": ws["name"],
+        "image": ws.get("image"),
+        "default_command": ws.get("default_command"),
+        "mounts": ws.get("mounts"),
+        "env": ws.get("env"),
+        "num_ports": ws.get("num_ports", 5),
+    }
 
-    Returns the archive path, or None if the user had no data directory.
-    The archive is saved to $KLANGK_DATA_DIR/workspaces/{user_id}-{email}.tar.xz
+
+async def build_workspace_archive(
+    metadata: dict, home_dir: Path, archive_path: Path
+) -> bool:
+    """Build a .tar.gz archive in the export/import format.
+
+    The archive contains workspace.json (metadata) and home/ (the home
+    directory tree).  Returns True on success, False on failure.
     """
-    user_dir = WORKSPACES_ROOT / user_id
-    if not user_dir.exists():
-        return None
-    # Sanitize email for use in filename — replace path separators
-    # and other unsafe characters to prevent path traversal.
-    safe_email = email.replace("/", "_").replace("\\", "_").replace("..", "_")
-    archive_name = f"{user_id}-{safe_email}.tar.xz"
-    archive_path = WORKSPACES_ROOT / archive_name
-    # Verify the resolved path is still under WORKSPACES_ROOT
-    if not archive_path.resolve().is_relative_to(  # pragma: no cover
-        WORKSPACES_ROOT.resolve()
-    ):
-        logger.error("Archive path traversal blocked for email %s", email)
-        return None
+    tmpdir = tempfile.mkdtemp()
     try:
-        proc = await asyncio.create_subprocess_exec(
+        meta_file = Path(tmpdir) / "workspace.json"
+        meta_file.write_text(json.dumps(metadata, indent=2))
+
+        tar_args = [
             "tar",
-            "-cJf",
+            "-czf",
             str(archive_path),
             "-C",
-            str(WORKSPACES_ROOT),
-            user_id,
+            tmpdir,
+            "workspace.json",
+        ]
+        if home_dir.exists():
+            ws_dir_name = home_dir.name
+            tar_args.extend(
+                [
+                    f"--transform=s/^{ws_dir_name}/home/",
+                    "-C",
+                    str(home_dir.parent),
+                    ws_dir_name,
+                ]
+            )
+
+        proc = await asyncio.create_subprocess_exec(
+            *tar_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+
         if proc.returncode != 0:
             logger.error(
-                "tar failed for user %s: %s",
-                email,
+                "tar failed for %s: %s",
+                archive_path.name,
                 stderr.decode("utf-8", errors="replace"),
             )
-            return None
-        logger.info("Archived user %s data to %s", email, archive_path)
-        # Remove the original directory after successful archive
-        await asyncio.to_thread(shutil.rmtree, user_dir)
-        return archive_path
+            return False
+        return True
     except (asyncio.TimeoutError, OSError) as e:
-        logger.error("Failed to archive user %s data: %s", email, e)
-        return None
+        logger.error("Failed to build archive %s: %s", archive_path.name, e)
+        return False
+    finally:
+        await asyncio.to_thread(shutil.rmtree, tmpdir, True)
+
+
+async def archive_user_data(user_id: str, email: str) -> list[Path]:
+    """Archive each workspace to a .tar.gz in the export/import format.
+
+    Creates one archive per workspace containing workspace.json (metadata)
+    and home/ (the workspace home directory).  These archives can be
+    re-imported via ``POST /workspaces/import``.
+
+    Returns the list of created archive paths (may be empty).
+    After successful archival the user's data directory is removed.
+    """
+    user_workspaces = await model.list_workspaces(user_id)
+    user_dir = WORKSPACES_ROOT / user_id
+    if not user_dir.exists():
+        return []
+
+    safe_email = email.replace("/", "_").replace("\\", "_").replace("..", "_")
+    archives: list[Path] = []
+
+    for ws in user_workspaces:
+        ws_name = ws["name"].replace("/", "_").replace("\\", "_")
+        archive_name = f"{user_id}-{safe_email}-{ws_name}.tar.gz"
+        archive_path = WORKSPACES_ROOT / archive_name
+        if not archive_path.resolve().is_relative_to(
+            WORKSPACES_ROOT.resolve()
+        ):
+            logger.error(
+                "Archive path traversal blocked for workspace %s", ws["name"]
+            )
+            continue
+
+        home_dir = home_path(user_id, ws["id"])
+        metadata = workspace_metadata(ws)
+
+        if await build_workspace_archive(metadata, home_dir, archive_path):
+            logger.info(
+                "Archived workspace %s to %s", ws["name"], archive_path
+            )
+            archives.append(archive_path)
+
+    # Remove the user's data directory after all archives are created.
+    if archives:
+        await asyncio.to_thread(shutil.rmtree, user_dir, True)
+    return archives
 
 
 def workspace_path(user_id: str, workspace_id: str) -> Path:
