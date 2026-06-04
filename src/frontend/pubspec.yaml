@@ -45,6 +45,11 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Runs widget tests inside a real Flutter engine on a device (macOS/Linux),
+  # so terminal behaviors that need a real desktop process (libghostty FFI,
+  # rendering, scrollback) are assertable. See integration_test/.
+  integration_test:
+    sdk: flutter
   flutter_lints: ^6.0.0
 
 flutter:

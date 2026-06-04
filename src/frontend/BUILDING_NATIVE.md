@@ -66,6 +66,34 @@ uv run uvicorn klangk_backend.main:app --host 127.0.0.1 --port 8997
 
 It auto-creates an admin user on first start (printed to the log).
 
+## Integration tests (the dev-loop payoff)
+
+`integration_test/` runs widget tests inside a real Flutter engine on the
+device, so terminal behaviors that need a real desktop process (libghostty
+FFI VT, genuine rendering/layout, font loading, paste) are assertable —
+unlike the headless `flutter test` VM.
+
+```sh
+flutter test -d macos integration_test/ghostty_terminal_test.dart
+# or the whole dir:
+flutter test -d macos integration_test/
+```
+
+On Linux/CI, wrap in a virtual display:
+
+```sh
+xvfb-run -a -s '-screen 0 1280x1024x24 +extension GLX' \
+  flutter test -d linux integration_test/
+```
+
+Gotcha (already handled in the test): `GhosttyTerminal._loadFont` calls
+`FontLoader.load()` at runtime, which fires a "system fonts changed" platform
+message. On a real engine that can land mid-frame and trip a framework
+assertion (`RenderParagraph._scheduleSystemFontsUpdate` requires the idle
+phase). It's benign and never fires in the VM suite; the integration test
+installs a narrow `FlutterError.onError` filter (`_ignoreSystemFontsAssert`)
+that swallows exactly that one and forwards everything else.
+
 ## What was verified
 
 - `flutter pub get`, `flutter analyze` (no errors), `flutter test` (335 pass)
@@ -75,6 +103,9 @@ It auto-creates an admin user on first start (printed to the log).
   links cleanly.
 - The launched native app reaches the backend: `GET /api/config` → `200`,
   confirming the env-aware URL + sandbox network entitlement work end to end.
+- `flutter test -d macos integration_test/ghostty_terminal_test.dart` — all 7
+  GhosttyTerminal tests pass in a real macOS engine (render, output, resize,
+  right-click paste menu, focused paste routing).
 
 ## Known gaps (must fix before this is real)
 
