@@ -139,7 +139,7 @@ def merge_models_json():
         "baseUrl": proxy_url,
         "api": "openai-completions",
         "apiKey": "proxy",
-        "models": [{"id": model}],
+        "models": [{"id": model, "input": ["text", "image"]}],
     }
 
     models_path.write_text(json.dumps(models, indent=2))
