@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -17,6 +18,43 @@ _data_dir = Path(
 )
 WORKSPACES_ROOT = _data_dir / "workspaces"
 
+# Characters allowed in sanitized filenames (alphanumeric, dash,
+# underscore, dot, @).  Everything else is replaced with underscore.
+_SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._@-]")
+
+
+def _sanitize_filename(name: str) -> str:
+    """Replace unsafe characters in a filename component."""
+    return _SAFE_FILENAME_RE.sub("_", name)
+
+
+def _safe_path(*segments: str) -> Path:
+    """Build a path under WORKSPACES_ROOT, raising ValueError on traversal."""
+    path = WORKSPACES_ROOT.joinpath(*segments)
+    if not path.resolve().is_relative_to(WORKSPACES_ROOT.resolve()):
+        raise ValueError(f"Path traversal blocked: {'/'.join(segments)}")
+    return path
+
+
+def _rmtree(path: Path | str, label: str = "") -> None:
+    """Remove a directory tree, logging individual errors."""
+
+    def _on_error(fn, fpath, exc):
+        logger.warning(
+            "rmtree %s: %s(%s) failed: %s",
+            label or path,
+            fn.__name__,
+            fpath,
+            exc,
+        )
+
+    shutil.rmtree(path, onexc=_on_error)
+
+
+async def _async_rmtree(path: Path | str, label: str = "") -> None:
+    """Remove a directory tree in a thread, logging errors."""
+    await asyncio.to_thread(_rmtree, path, label)
+
 
 def workspace_metadata(ws: dict) -> dict:
     """Extract export metadata from a workspace dict."""
@@ -30,14 +68,60 @@ def workspace_metadata(ws: dict) -> dict:
     }
 
 
+async def _find_external_symlinks(home_dir: Path) -> list[str]:
+    """Use find to list symlinks under home_dir that point outside it.
+
+    Returns relative paths (from home_dir's parent) suitable for
+    tar --exclude arguments.
+    """
+    home_resolved = home_dir.resolve()
+    # find -type l prints all symlinks; we filter in the shell using
+    # realpath to check whether each target is under home_dir.
+    # This avoids a Python walk over potentially huge directory trees.
+    script = (
+        f'find "{home_dir}" -type l -print0 | '
+        f'while IFS= read -r -d "" link; do '
+        f'target=$(realpath "$link" 2>/dev/null || echo "///broken"); '
+        f'case "$target" in "{home_resolved}/"*) ;; *) '
+        f'echo "$link" ;; esac; done'
+    )
+    proc = await asyncio.create_subprocess_shell(
+        script,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+    if not stdout.strip():
+        return []
+    # Convert absolute paths to relative (from home_dir's parent)
+    parent = home_dir.parent
+    result = []
+    for line in stdout.decode("utf-8", errors="replace").strip().split("\n"):
+        try:
+            result.append(str(Path(line).relative_to(parent)))
+        except ValueError:
+            pass
+    return result
+
+
 async def build_workspace_archive(
     metadata: dict, home_dir: Path, archive_path: Path
 ) -> bool:
     """Build a .tar.gz archive in the export/import format.
 
     The archive contains workspace.json (metadata) and home/ (the home
-    directory tree).  Returns True on success, False on failure.
+    directory tree).  Symlinks pointing outside home_dir are excluded.
+    Both home_dir and archive_path must resolve under WORKSPACES_ROOT.
+    Returns True on success, False on failure.
     """
+    # Validate that paths stay within the data directory.
+    for label, p in [("home_dir", home_dir), ("archive_path", archive_path)]:
+        if p.exists() or p.parent.exists():
+            resolved = (p if p.exists() else p.parent).resolve()
+            if not resolved.is_relative_to(WORKSPACES_ROOT.resolve()):
+                logger.error("Path validation failed for %s: %s", label, p)
+                return False
+
     tmpdir = tempfile.mkdtemp()
     try:
         meta_file = Path(tmpdir) / "workspace.json"
@@ -51,11 +135,18 @@ async def build_workspace_archive(
             tmpdir,
             "workspace.json",
         ]
+
         if home_dir.exists():
+            # Exclude symlinks that point outside the home directory.
+            bad_links = await _find_external_symlinks(home_dir)
+            for link in bad_links:
+                tar_args.extend(["--exclude", link])
+
             ws_dir_name = home_dir.name
+            escaped = re.escape(ws_dir_name)
             tar_args.extend(
                 [
-                    f"--transform=s/^{ws_dir_name}/home/",
+                    f"--transform=s/^{escaped}/home/",
                     "-C",
                     str(home_dir.parent),
                     ws_dir_name,
@@ -81,7 +172,7 @@ async def build_workspace_archive(
         logger.error("Failed to build archive %s: %s", archive_path.name, e)
         return False
     finally:
-        await asyncio.to_thread(shutil.rmtree, tmpdir, True)
+        await _async_rmtree(tmpdir, "build_workspace_archive tmpdir")
 
 
 async def archive_user_data(user_id: str, email: str) -> list[Path]:
@@ -99,11 +190,11 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
     if not user_dir.exists():
         return []
 
-    safe_email = email.replace("/", "_").replace("\\", "_").replace("..", "_")
+    safe_email = _sanitize_filename(email)
     archives: list[Path] = []
 
     for ws in user_workspaces:
-        ws_name = ws["name"].replace("/", "_").replace("\\", "_")
+        ws_name = _sanitize_filename(ws["name"])
         archive_name = f"{user_id}-{safe_email}-{ws_name}.tar.gz"
         archive_path = WORKSPACES_ROOT / archive_name
         if not archive_path.resolve().is_relative_to(
@@ -125,7 +216,7 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
 
     # Remove the user's data directory after all archives are created.
     if archives:
-        await asyncio.to_thread(shutil.rmtree, user_dir, True)
+        await _async_rmtree(user_dir, f"user data {user_id}")
     return archives
 
 
@@ -134,11 +225,11 @@ def workspace_path(user_id: str, workspace_id: str) -> Path:
 
 
 def home_path(user_id: str, workspace_id: str) -> Path:
-    return WORKSPACES_ROOT / user_id / "home" / workspace_id
+    return _safe_path(user_id, "home", workspace_id)
 
 
 def config_path(user_id: str, workspace_id: str) -> Path:
-    return WORKSPACES_ROOT / user_id / "config" / workspace_id
+    return _safe_path(user_id, "config", workspace_id)
 
 
 def get_config_host_path(user_id: str, workspace_id: str) -> Path:
@@ -190,7 +281,7 @@ async def create_workspace(
     except Exception:
         # Clean up the DB record and directories on port allocation failure
         await model.delete_workspace(workspace["id"], user_id)
-        await asyncio.to_thread(shutil.rmtree, home, True)
+        await _async_rmtree(home, f"workspace {workspace['id']} rollback")
         raise
     return workspace
 
@@ -211,7 +302,7 @@ async def delete_workspace(workspace_id: str, user_id: str) -> bool:
     deleted = await model.delete_workspace(workspace_id, user_id)
     if deleted:
         p = home_path(user_id, workspace_id)
-        await asyncio.to_thread(shutil.rmtree, p, True)
+        await _async_rmtree(p, f"workspace {workspace_id}")
     return deleted
 
 
