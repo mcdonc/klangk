@@ -595,21 +595,6 @@ async def delete_workspace(
     return {"status": "deleted"}
 
 
-def _cleanup_tempfile(path: str):
-    """Return a Starlette BackgroundTask that deletes a temp file."""
-    from starlette.background import BackgroundTask
-
-    async def _delete():
-        import os
-
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-
-    return BackgroundTask(_delete)
-
-
 # --- Workspace export/import endpoints ---
 
 
@@ -641,44 +626,95 @@ async def export_workspace(
         "num_ports": workspace.get("num_ports", 5),
     }
 
-    # Build tarball to a temp file to avoid holding it all in memory.
-    tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
-    try:
-        with tarfile.open(fileobj=tmp, mode="w:gz") as tar:
-            # Add workspace.json
-            meta_bytes = json.dumps(metadata, indent=2).encode()
-            info = tarfile.TarInfo(name="workspace.json")
-            info.size = len(meta_bytes)
-            tar.addfile(info, io.BytesIO(meta_bytes))
+    # Estimate uncompressed size for client progress display.
+    import subprocess
 
-            # Add home directory. Symlinks that resolve outside the
-            # home dir are stripped to prevent leaking host files.
-            home_resolved = home_dir.resolve()
+    estimated_size = 0
+    if home_dir.exists():
+        try:
+            result = subprocess.run(
+                ["du", "-sb", str(home_dir)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                estimated_size = int(result.stdout.split()[0])
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass  # fall back to 0
 
-            def _safe_filter(ti):
-                if ti.issym():
-                    # Resolve the symlink target relative to the home dir
-                    target = (home_dir / ti.linkname).resolve()
-                    if not target.is_relative_to(home_resolved):
-                        return None
-                return ti
+    # Stream the tarball as it's built — no temp file needed.
+    # tarfile writes to a queue in a background thread; the async
+    # generator reads from the queue and yields chunks to the client.
+    import asyncio
+    import queue
+    import threading
 
-            if home_dir.exists():
-                tar.add(str(home_dir), arcname="home", filter=_safe_filter)
-        tmp.close()
+    chunk_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=32)
 
-        safe_name = ws_name.replace("/", "_").replace("\\", "_")
-        return FileResponse(
-            tmp.name,
-            media_type="application/gzip",
-            filename=f"{safe_name}.tar.gz",
-            background=_cleanup_tempfile(tmp.name),
-        )
-    except Exception:
-        import os
+    class _QueueWriter:
+        """File-like object that puts writes into a queue."""
 
-        os.unlink(tmp.name)
-        raise
+        def write(self, data):
+            chunk_queue.put(data)
+            return len(data)
+
+        def flush(self):  # pragma: no cover — called by gzip internals
+            pass
+
+        def close(self):
+            chunk_queue.put(None)  # sentinel
+
+    def _build_tar():
+        writer = _QueueWriter()
+        try:
+            with tarfile.open(fileobj=writer, mode="w|gz") as tar:
+                # Add workspace.json
+                meta_bytes = json.dumps(metadata, indent=2).encode()
+                info = tarfile.TarInfo(name="workspace.json")
+                info.size = len(meta_bytes)
+                tar.addfile(info, io.BytesIO(meta_bytes))
+
+                # Add home directory. Symlinks that resolve outside the
+                # home dir are stripped to prevent leaking host files.
+                home_resolved = home_dir.resolve()
+
+                def _safe_filter(ti):
+                    if ti.issym():
+                        target = (home_dir / ti.linkname).resolve()
+                        if not target.is_relative_to(home_resolved):
+                            return None
+                    return ti
+
+                if home_dir.exists():
+                    tar.add(str(home_dir), arcname="home", filter=_safe_filter)
+        finally:
+            writer.close()
+
+    async def _stream():
+        loop = asyncio.get_event_loop()
+        thread = threading.Thread(target=_build_tar, daemon=True)
+        thread.start()
+        try:
+            while True:
+                chunk = await loop.run_in_executor(None, chunk_queue.get)
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            thread.join(timeout=5)
+
+    safe_name = ws_name.replace("/", "_").replace("\\", "_")
+    # Rough estimate: gzip typically compresses to ~40% of original.
+    estimated_compressed = max(int(estimated_size * 0.4), 1)
+    return StreamingResponse(
+        _stream(),
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}.tar.gz"',
+            "X-Estimated-Size": str(estimated_compressed),
+        },
+    )
 
 
 @router.post("/workspaces/import")

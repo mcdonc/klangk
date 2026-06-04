@@ -25,6 +25,7 @@
   packages = with pkgs; [
     docker-client
     flutter
+    coreutils # GNU du (macOS BSD du lacks -b)
     gnutar
     nginx
     xz

@@ -174,11 +174,14 @@ class KlangkClient:
             if not resp.is_success:
                 resp.read()  # consume body so .text is available
                 resp.raise_for_status()
-            total = (
-                int(resp.headers["content-length"])
-                if "content-length" in resp.headers
-                else None
-            )
+            # Use Content-Length if available, otherwise fall back to
+            # the server's compressed size estimate.
+            if "content-length" in resp.headers:
+                total = int(resp.headers["content-length"])
+            elif "x-estimated-size" in resp.headers:
+                total = int(resp.headers["x-estimated-size"])
+            else:
+                total = None
             downloaded = 0
             with open(output, "wb") as f:
                 for chunk in resp.iter_bytes():
