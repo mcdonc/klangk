@@ -251,10 +251,17 @@ def export_workspace(
             TransferSpeedColumn,
         )
 
+        from rich.text import Text
+
+        class _EstDownloadColumn(DownloadColumn):
+            def render(self, task):
+                result = super().render(task)
+                return Text.assemble(result, " (est)")
+
         progress = Progress(
             "[progress.description]{task.description}",
             BarColumn(),
-            DownloadColumn(),
+            _EstDownloadColumn(),
             TransferSpeedColumn(),
         )
         task_id = progress.add_task("Downloading...", total=0)
