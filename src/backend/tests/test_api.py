@@ -7,7 +7,7 @@ import tempfile
 import zipfile
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from fastapi import FastAPI, HTTPException
 from httpx import AsyncClient, ASGITransport
@@ -54,6 +54,38 @@ class TestHealth:
         resp = await client.get("/health")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+
+class TestVersion:
+    async def test_version_from_file(self, client, tmp_path, monkeypatch):
+        version_file = tmp_path / "version.json"
+        version_file.write_text(
+            '{"commit": "abc1234", "built_at": "2026-01-01T00:00:00Z"}'
+        )
+        monkeypatch.setenv("KLANGK_VERSION_FILE", str(version_file))
+        resp = await client.get("/version")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["commit"] == "abc1234"
+        assert data["built_at"] == "2026-01-01T00:00:00Z"
+
+    async def test_version_git_fallback(self, client, monkeypatch):
+        monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
+        resp = await client.get("/version")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "commit" in data
+        assert "built_at" in data
+
+    async def test_version_git_not_available(self, client, monkeypatch):
+        monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
+        monkeypatch.setattr(
+            "klangk_backend.api.subprocess.check_output",
+            Mock(side_effect=FileNotFoundError),
+        )
+        resp = await client.get("/version")
+        assert resp.status_code == 200
+        assert resp.json() == {"commit": "unknown", "built_at": None}
 
 
 # --- Config ---

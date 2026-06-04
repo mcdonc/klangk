@@ -18,6 +18,20 @@ let
     else
       null;
 
+  # Version info baked into the container image at build time.
+  # Uses builtins.getEnv (impure) so the build command can pass values:
+  #   KLANGK_BUILD_COMMIT=$(git rev-parse --short HEAD) \
+  #   KLANGK_BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  #   NIX_CONFIG="pure-eval = false" devenv container build processes
+  buildCommit = builtins.getEnv "KLANGK_BUILD_COMMIT";
+  buildTimestamp = builtins.getEnv "KLANGK_BUILD_TIMESTAMP";
+  versionJson = pkgs.writeText "version.json" (
+    builtins.toJSON {
+      commit = if buildCommit != "" then buildCommit else "unknown";
+      built_at = if buildTimestamp != "" then buildTimestamp else "unknown";
+    }
+  );
+
   klangkApp = pkgs.runCommand "klangk-app" { } ''
     mkdir -p $out/src/backend $out/src/frontend/build $out/scripts
 
@@ -33,6 +47,10 @@ let
     # nginx startup script
     cp ${./scripts/nginx.sh} $out/scripts/nginx.sh
     chmod +x $out/scripts/nginx.sh
+
+    # Version info
+    cp ${versionJson} $out/version.json
+
   '';
 in
 {
@@ -69,9 +87,6 @@ in
     ++ lib.optionals (!config.container.isBuilding) [
       flutter
       git # HM for "error: Failed to find git" during devenv:git-hooks:install
-    ]
-    ++ lib.optionals (config.container.isBuilding) [
-      pkgs.devenv
     ];
 
   env.PLAYWRIGHT_BROWSERS_PATH =
@@ -178,6 +193,8 @@ in
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
+  env.KLANGK_VERSION_FILE =
+    if config.container.isBuilding then "${klangkApp}/version.json" else lib.mkOverride 1500 "";
   dotenv.enable = true;
 
   scripts.flutterbuildweb.exec = ''exec devenv tasks run klangk:flutter-build --refresh-task-cache "$@"'';
@@ -185,6 +202,7 @@ in
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
   scripts.dockerbuild-base.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-base.sh" "$@"'';
+  scripts.dockerbuild-host.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-host.sh" "$@"'';
 
   scripts.kill-containers.exec = ''
     docker ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q | xargs -r docker rm -f
