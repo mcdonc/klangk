@@ -226,6 +226,77 @@ test.describe("Klangk E2E", () => {
     }
   });
 
+  test("terminal pastes via right-click context menu", async ({
+    page,
+    request,
+  }) => {
+    // Right-clicking the terminal shows a custom popup menu with a "Paste"
+    // option. Clicking it must actually paste clipboard contents into the
+    // terminal without triggering the Firefox system paste-confirmation dialog.
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-rc-paste",
+      { waitForTerminal: true },
+    );
+
+    try {
+      try {
+        await page
+          .context()
+          .grantPermissions(["clipboard-read", "clipboard-write"]);
+      } catch {
+        /* unsupported on firefox/webkit — fine */
+      }
+
+      const cmd =
+        "echo right-click-paste-test > /home/klangk/work/.rc-paste-test";
+      await page.evaluate((t) => navigator.clipboard.writeText(t), cmd);
+
+      const { width, height } = vp(page);
+      const f = fv(page);
+
+      // Click the terminal to focus it
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(500);
+
+      // Right-click to open the custom context menu
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        button: "right",
+        force: true,
+      });
+      await page.waitForTimeout(1000);
+
+      // Click the "Paste" item in the popup menu. Flutter renders on
+      // canvas so text locators don't work — click the menu item by
+      // position. showMenu places the popup at the right-click point;
+      // the single "Paste" item center is ~30px right and ~30px below.
+      await f.click({
+        position: { x: width / 2 + 30, y: height / 2 + 30 },
+        force: true,
+      });
+      await page.waitForTimeout(500);
+
+      // Press Enter to execute the pasted command
+      await page.keyboard.press("Enter");
+
+      await waitForFile(request, workspaceId, "work/.rc-paste-test", headers);
+      const readResp = await request.get(
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.rc-paste-test`,
+        { headers },
+      );
+      expect(readResp.ok()).toBeTruthy();
+      const data = await readResp.json();
+      expect(data.content).toContain("right-click-paste-test");
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("paste shortcut is ignored when terminal isn't focused", async ({
     page,
     request,
