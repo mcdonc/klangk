@@ -25,6 +25,13 @@ runs:
           /usr/local/powershell /usr/local/.ghcup \
           /usr/local/julia* &
 
+    - name: Cache Nix store
+      uses: nix-community/cache-nix-action@v7
+      with:
+        primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'devenv.nix', 'devenv.yaml') }}
+        restore-prefixes-first-match: nix-${{ runner.os }}-
+        gc-max-store-size-linux: 8000000000
+
     - name: Bootstrap
       shell: bash
       run: ./bootstrap --unattended --cachix-version v1.11.1
