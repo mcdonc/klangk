@@ -1,0 +1,169 @@
+import 'dart:async';
+
+import 'package:flterm/flterm.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:klangk_frontend/terminal/ghostty_terminal.dart';
+import 'package:klangk_frontend/ws/ws_client.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+
+class _MockWsClient extends WsClient {
+  final StreamController<Map<String, dynamic>> _events =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<String> _output = StreamController<String>.broadcast();
+  final List<String> sentCommands = [];
+
+  @override
+  Stream<Map<String, dynamic>> get customEvents => _events.stream;
+
+  @override
+  Stream<String> get terminalOutput => _output.stream;
+
+  @override
+  String? get currentWorkspaceId => 'ws-1';
+
+  void emitTerminal(String data) => _output.add(data);
+
+  @override
+  void sendTerminalStart({int cols = 80, int rows = 24}) {}
+
+  @override
+  void sendTerminalStop() {}
+
+  @override
+  void sendTerminalInput(String data) =>
+      sentCommands.add('terminal_input:$data');
+
+  @override
+  void sendTerminalResize(int cols, int rows) {}
+
+  void close() {
+    _events.close();
+    _output.close();
+  }
+}
+
+Widget _build(_MockWsClient client, GlobalKey<GhosttyTerminalState> key) {
+  // Pin a viewport so flterm has enough rows for a meaningful scrollback.
+  return MaterialApp(
+    home: Scaffold(
+      body: SizedBox(
+        width: 800,
+        height: 600,
+        child: GhosttyTerminal(key: key, wsClient: client),
+      ),
+    ),
+  );
+}
+
+Future<void> _pumpReady(
+  WidgetTester tester,
+  _MockWsClient client,
+  GlobalKey<GhosttyTerminalState> key,
+) async {
+  await tester.pumpWidget(_build(client, key));
+  await tester.pumpAndSettle();
+  key.currentState!.requestFocus();
+  await tester.pump();
+}
+
+Future<void> _sendShiftPageKey(
+  WidgetTester tester,
+  LogicalKeyboardKey key,
+) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.sendKeyEvent(key);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.pump();
+}
+
+void main() {
+  setUp(() => testBaseUrlOverride = 'http://localhost:8997');
+  tearDown(() => testBaseUrlOverride = null);
+
+  group('GhosttyTerminal scrollback shortcuts', () {
+    testWidgets('Shift+PgUp scrolls up in primary scrollback', (tester) async {
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+
+      // Fill the buffer well beyond a screen so scrollback exists.
+      final lines = List.generate(200, (i) => 'line $i').join('\r\n');
+      client.emitTerminal('$lines\r\n');
+      await tester.pumpAndSettle();
+
+      final scroll = key.currentState!.scrollController;
+      expect(
+        scroll.position.maxScrollExtent,
+        greaterThan(0),
+        reason: 'scrollback must exist for PgUp to have anywhere to go',
+      );
+      final before = scroll.position.pixels;
+
+      await _sendShiftPageKey(tester, LogicalKeyboardKey.pageUp);
+
+      expect(
+        scroll.position.pixels,
+        lessThan(before),
+        reason:
+            'Shift+PgUp should scroll toward older scrollback (lower pixels)',
+      );
+      client.close();
+    });
+
+    testWidgets('Shift+PgDn scrolls down in primary scrollback',
+        (tester) async {
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+
+      final lines = List.generate(200, (i) => 'line $i').join('\r\n');
+      client.emitTerminal('$lines\r\n');
+      await tester.pumpAndSettle();
+
+      final scroll = key.currentState!.scrollController;
+      // Jump to the top of scrollback so PgDn has somewhere to go.
+      scroll.jumpTo(0);
+      await tester.pump();
+      final before = scroll.position.pixels;
+
+      await _sendShiftPageKey(tester, LogicalKeyboardKey.pageDown);
+
+      expect(
+        scroll.position.pixels,
+        greaterThan(before),
+        reason: 'Shift+PgDn should scroll toward newer rows (higher pixels)',
+      );
+      client.close();
+    });
+
+    testWidgets('Shift+PgUp does not scroll on alternate screen',
+        (tester) async {
+      // Matches xterm.dart's "-AppScreen" keytab: scrollback shortcuts only
+      // act on the primary screen so vim/less still see PgUp themselves.
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+
+      // Fill primary, then switch to alt screen via CSI ?1049h.
+      final lines = List.generate(200, (i) => 'line $i').join('\r\n');
+      client.emitTerminal('$lines\r\n\x1b[?1049h');
+      await tester.pumpAndSettle();
+
+      final scroll = key.currentState!.scrollController;
+      expect(scroll.activeScreen, TerminalScreen.alternate);
+      final before = scroll.position.pixels;
+
+      await _sendShiftPageKey(tester, LogicalKeyboardKey.pageUp);
+
+      expect(
+        scroll.position.pixels,
+        before,
+        reason:
+            'scroll position must not change while the alt screen is active',
+      );
+      client.close();
+    });
+  });
+}

@@ -118,6 +118,9 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   static Future<ByteData> Function(String asset) loadFontAsset =
       rootBundle.load;
 
+  @visibleForTesting
+  TerminalScrollController get scrollController => _scrollController;
+
   // flterm measures cell width by laying out 'M' in [_fontFamily]; if the font
   // isn't loaded yet it measures a wider fallback advance and never re-measures,
   // leaving space around every glyph. Register the family with the engine and
