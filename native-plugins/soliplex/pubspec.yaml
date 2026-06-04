@@ -23,6 +23,13 @@ dependencies:
   # entitlement needed in the sandbox) + system-browser PKCE login.
   shared_preferences: ^2.3.0
   flutter_appauth: ^12.0.0
+  # Streaming AG-UI client (replaces hand-rolled SSE buffering in queryRoom).
+  # Git dep so the branch resolves anywhere (Linux/CI), not just this machine.
+  soliplex_client:
+    git:
+      url: https://github.com/soliplex/frontend.git
+      ref: main
+      path: packages/soliplex_client
   klangk_plugin_api:
     git:
       url: https://github.com/mcdonc/klangk-plugin-api.git

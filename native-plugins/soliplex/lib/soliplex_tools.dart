@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:soliplex_client/soliplex_client.dart' as sox;
 
 import 'soliplex_auth_result.dart';
 import 'soliplex_platform.dart';
@@ -217,75 +218,43 @@ class SoliplexClient {
     }
     final runId = runs.keys.first;
 
-    final sseUrl =
-        '$soliplexUrl/api/v1/rooms/$roomId/agui/$threadId/$runId';
-
-    final runInput = jsonEncode({
-      'thread_id': threadId,
-      'run_id': runId,
-      'state': null,
-      'messages': [
-        {
-          'id': 'msg-${DateTime.now().millisecondsSinceEpoch}',
-          'role': 'user',
-          'content': question,
-        }
-      ],
-      'tools': [],
-      'context': [],
-      'forwarded_props': null,
-    });
-
-    final client = http.Client();
+    // 2. Stream the run via soliplex_client's AgUiStreamClient instead of
+    // hand-rolling the SSE. The transport's AuthenticatedHttpClient injects
+    // the bearer; getToken is synchronous, so pre-fetch (and refresh) once.
+    final token = await _getAccessToken();
+    final agui = sox.AgUiStreamClient(
+      httpTransport: sox.HttpTransport(
+        client: sox.AuthenticatedHttpClient(sox.DartHttpClient(), () => token),
+      ),
+      urlBuilder: sox.UrlBuilder('$soliplexUrl/api/v1'),
+    );
     try {
-      final request = http.Request('POST', Uri.parse(sseUrl));
-      request.headers['Content-Type'] = 'application/json';
-      request.headers['Accept'] = 'text/event-stream';
-      try {
-        final token = await _getAccessToken();
-        request.headers['Authorization'] = 'Bearer $token';
-      } catch (_) {}
-      request.body = runInput;
-
-      final streamedResp = await client.send(request);
-
-      if (streamedResp.statusCode == 401) {
-        await clearStoredTokens();
-        throw Exception(
-            'Not authenticated. Click "Connect to Soliplex" to log in.');
-      }
-      if (streamedResp.statusCode != 200) {
-        final body = await streamedResp.stream.bytesToString();
-        throw Exception(
-            'Failed to run query: ${streamedResp.statusCode} $body');
-      }
-
-      final body = await streamedResp.stream.bytesToString();
-      final responseText = _extractTextFromSseResponse(body);
-      return responseText.isNotEmpty
-          ? responseText
-          : '(No response from Soliplex)';
-    } finally {
-      client.close();
-    }
-  }
-
-  /// Parse SSE event stream and extract TEXT_MESSAGE_CONTENT deltas.
-  String _extractTextFromSseResponse(String sseBody) {
-    final buffer = StringBuffer();
-    for (final line in sseBody.split('\n')) {
-      if (!line.startsWith('data: ')) continue;
-      final data = line.substring(6).trim();
-      if (data.isEmpty || data == '[DONE]') continue;
-      try {
-        final event = jsonDecode(data) as Map<String, dynamic>;
-        if (event['type'] == 'TEXT_MESSAGE_CONTENT') {
-          buffer.write(event['delta'] ?? '');
+      final input = sox.SimpleRunAgentInput(
+        threadId: threadId,
+        runId: runId,
+        messages: [
+          sox.UserMessage(
+            id: 'msg-${DateTime.now().millisecondsSinceEpoch}',
+            content: question,
+          ),
+        ],
+      );
+      final buffer = StringBuffer();
+      await for (final outcome
+          in agui.runAgent('rooms/$roomId/agui/$threadId/$runId', input)) {
+        // runAgent yields DecodeOutcomes; unwrap decoded events and collect
+        // text deltas. DecodeFailed outcomes are skipped.
+        if (outcome is sox.DecodedEvent) {
+          final event = outcome.event;
+          if (event is sox.TextMessageContentEvent) {
+            buffer.write(event.delta);
+          }
         }
-      } catch (_) {
-        // Skip non-JSON lines
       }
+      final text = buffer.toString();
+      return text.isNotEmpty ? text : '(No response from Soliplex)';
+    } finally {
+      agui.close();
     }
-    return buffer.toString();
   }
 }
