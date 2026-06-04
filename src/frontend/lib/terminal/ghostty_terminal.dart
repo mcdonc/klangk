@@ -186,6 +186,11 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         // detector inside TerminalView.
         onSecondaryTapDown: (details) {
           suppressContextMenuBriefly();
+          // Read clipboard NOW while the user-activation from the right-click
+          // is still valid.  Firefox denies navigator.clipboard.readText()
+          // once the activation expires (after the popup menu closes), which
+          // surfaces a system paste-confirmation dialog.
+          final clipFuture = readClipboardText();
           final hasSelection =
               _terminal.selection != null; // coverage:ignore-line
           final items = <PopupMenuEntry<String>>[
@@ -210,12 +215,13 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
             context: context,
             position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
             items: items,
-          ).then((action) {
+          ).then((action) async {
             // coverage:ignore-start
             if (action == 'copy') {
               _copySelection();
             } else if (action == 'paste') {
-              _paste();
+              final text = await clipFuture;
+              if (text != null && text.isNotEmpty) _terminal.paste(text);
             }
             // coverage:ignore-end
           });
