@@ -255,12 +255,15 @@ def export_workspace(
             DownloadColumn(),
             TransferSpeedColumn(),
         ) as progress:
-            task = progress.add_task("Exporting...", total=None)
+            task_id = progress.add_task("Exporting...", total=0)
 
             def _update(downloaded, total):
-                if total and progress.tasks[task].total is None:
-                    progress.update(task, total=total)
-                progress.update(task, completed=downloaded)
+                if total is not None:
+                    progress.update(task_id, total=total, completed=downloaded)
+                else:
+                    progress.update(
+                        task_id, total=downloaded, completed=downloaded
+                    )
 
             client.export_workspace(ws.id, out_path, on_progress=_update)
     except httpx.HTTPStatusError as e:
