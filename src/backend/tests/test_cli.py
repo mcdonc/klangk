@@ -758,17 +758,26 @@ class TestExportImportClient:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.is_success = True
+        mock_resp.headers = {"content-length": "12"}
         mock_resp.iter_bytes.return_value = [b"chunk1", b"chunk2"]
+
+        progress_calls = []
+
+        def _on_progress(downloaded, total):
+            progress_calls.append((downloaded, total))
 
         with patch("httpx.stream") as mock_stream:
             mock_stream.return_value.__enter__ = MagicMock(
                 return_value=mock_resp
             )
             mock_stream.return_value.__exit__ = MagicMock(return_value=False)
-            client.export_workspace("ws-id-123", output)
+            client.export_workspace(
+                "ws-id-123", output, on_progress=_on_progress
+            )
 
         assert output.read_bytes() == b"chunk1chunk2"
         mock_stream.assert_called_once()
+        assert progress_calls == [(6, 12), (12, 12)]
 
     def test_export_workspace_http_error(self, tmp_path):
         cfg = CLIConfig()

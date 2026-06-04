@@ -153,8 +153,17 @@ class KlangkClient:
             logging.error("Failed to delete workspace: %s", resp.text)
             sys.exit(1)
 
-    def export_workspace(self, workspace_id: str, output: Path) -> None:
-        """Download a workspace archive to a file."""
+    def export_workspace(
+        self,
+        workspace_id: str,
+        output: Path,
+        on_progress=None,
+    ) -> None:
+        """Download a workspace archive to a file.
+
+        on_progress(bytes_so_far, total_bytes) is called for each chunk.
+        total_bytes is None if the server didn't send Content-Length.
+        """
         with httpx.stream(
             "GET",
             f"{self.cfg.server.url}/workspaces/{workspace_id}/export",
@@ -165,9 +174,18 @@ class KlangkClient:
             if not resp.is_success:
                 resp.read()  # consume body so .text is available
                 resp.raise_for_status()
+            total = (
+                int(resp.headers["content-length"])
+                if "content-length" in resp.headers
+                else None
+            )
+            downloaded = 0
             with open(output, "wb") as f:
                 for chunk in resp.iter_bytes():
                     f.write(chunk)
+                    downloaded += len(chunk)
+                    if on_progress:
+                        on_progress(downloaded, total)
 
     def import_workspace(
         self, archive: Path, name: str | None = None

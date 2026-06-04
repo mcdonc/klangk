@@ -242,7 +242,27 @@ def export_workspace(
         raise typer.Exit(code=1) from None
     out_path = output or Path(f"{name}.tar.gz")
     try:
-        client.export_workspace(ws.id, out_path)
+        from rich.progress import (
+            Progress,
+            BarColumn,
+            DownloadColumn,
+            TransferSpeedColumn,
+        )
+
+        with Progress(
+            "[progress.description]{task.description}",
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+        ) as progress:
+            task = progress.add_task("Exporting...", total=None)
+
+            def _update(downloaded, total):
+                if total and progress.tasks[task].total is None:
+                    progress.update(task, total=total)
+                progress.update(task, completed=downloaded)
+
+            client.export_workspace(ws.id, out_path, on_progress=_update)
     except httpx.HTTPStatusError as e:
         _err.print(f"[red]Export failed:[/red] {e.response.text}")
         raise typer.Exit(code=1) from None
