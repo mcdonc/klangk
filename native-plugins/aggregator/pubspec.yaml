@@ -17,3 +17,5 @@ dependencies:
       url: https://github.com/mcdonc/klangk-plugin-api.git
   klangk_plugin_soliplex:
     path: ../soliplex
+  klangk_plugin_xeyes:
+    path: ../xeyes

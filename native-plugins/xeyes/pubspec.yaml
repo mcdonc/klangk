@@ -1,0 +1,20 @@
+name: klangk_plugin_xeyes
+description: Toggleable xeyes (googly eyes) overlay plugin for Klangk
+publish_to: none
+version: 0.1.0
+
+# A self-contained klangk plugin: the `xeyes` browser action (driven by the Pi
+# `/xeyes` command or the `xeyes` tool in extension.ts) toggles a draggable,
+# semi-transparent eye-pair overlay whose pupils track the mouse. Pure
+# Flutter + klangk_plugin_api — no js_interop / web imports, so it builds for
+# native and web alike.
+environment:
+  sdk: ^3.6.0
+  flutter: ^3.27.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  klangk_plugin_api:
+    git:
+      url: https://github.com/mcdonc/klangk-plugin-api.git
