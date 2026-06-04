@@ -137,24 +137,6 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     super.dispose();
   }
 
-  // coverage:ignore-start
-  void _copySelection() {
-    if (_terminal.selection == null) return;
-    final text = _terminal.selectedText();
-    if (text.isNotEmpty) {
-      Clipboard.setData(ClipboardData(text: text));
-    }
-  }
-
-  void _paste() {
-    // A menu click isn't a native paste gesture, so the `paste` listener can't
-    // fire here — read the clipboard directly. (May prompt on Firefox.)
-    readClipboardText().then((text) {
-      if (text != null && text.isNotEmpty) _terminal.paste(text);
-    });
-  }
-  // coverage:ignore-end
-
   @override
   Widget build(BuildContext context) {
     if (widget.wsClient.currentWorkspaceId == null) {
@@ -181,44 +163,28 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       actions: <Type, Action<Intent>>{
         DoNothingIntent: DoNothingAction(consumesKey: false),
       },
-      child: GestureDetector(
-        // Right-click only — primary/selection gestures stay with flterm's own
-        // detector inside TerminalView.
-        onSecondaryTapDown: (details) {
-          suppressContextMenuBriefly();
-          final hasSelection =
-              _terminal.selection != null; // coverage:ignore-line
-          final items = <PopupMenuEntry<String>>[
-            // coverage:ignore-start
-            if (hasSelection)
-              const PopupMenuItem(
-                  value: 'copy',
-                  child: ListTile(
-                      dense: true,
-                      leading: Icon(Icons.copy, size: 18),
-                      title: Text('Copy'))),
-            // coverage:ignore-end
-            const PopupMenuItem(
-                value: 'paste',
-                child: ListTile(
-                    dense: true,
-                    leading: Icon(Icons.paste, size: 18),
-                    title: Text('Paste'))),
-          ];
-          final pos = details.globalPosition;
-          showMenu<String>(
-            context: context,
-            position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-            items: items,
-          ).then((action) {
-            // coverage:ignore-start
-            if (action == 'copy') {
-              _copySelection();
-            } else if (action == 'paste') {
-              _paste();
+      child: Listener(
+        // Copy-on-select: when the user finishes a mouse selection
+        // (pointerUp after drag), copy the selected text to the
+        // clipboard immediately — the pointerUp provides a valid
+        // user activation that Firefox accepts for writeText().
+        onPointerUp: (_) {
+          // coverage:ignore-start
+          final text = _terminal.selectedText();
+          if (text.isNotEmpty) {
+            Clipboard.setData(ClipboardData(text: text));
+            if (mounted) {
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(const SnackBar(
+                  content: Text('Copied'),
+                  duration: Duration(seconds: 1),
+                  behavior: SnackBarBehavior.floating,
+                  width: 100,
+                ));
             }
-            // coverage:ignore-end
-          });
+          }
+          // coverage:ignore-end
         },
         child: TerminalView(
           controller: _terminal,

@@ -204,8 +204,7 @@ void main() {
       client.close();
     });
 
-    testWidgets('right-click opens the context menu with Paste',
-        (tester) async {
+    testWidgets('right-click defers to native context menu', (tester) async {
       final client = _MockWsClient();
       await tester.pumpWidget(_build(client));
       await tester.pumpAndSettle();
@@ -214,7 +213,9 @@ void main() {
       await tester.tapAt(center, buttons: kSecondaryMouseButton);
       await tester.pumpAndSettle();
 
-      expect(find.text('Paste'), findsOneWidget);
+      // No custom Flutter menu — native context menu handles copy/paste
+      expect(find.text('Paste'), findsNothing);
+      expect(find.text('Copy'), findsNothing);
       client.close();
     });
 

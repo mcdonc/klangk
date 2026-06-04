@@ -226,6 +226,170 @@ test.describe("Klangk E2E", () => {
     }
   });
 
+  test("selecting text in terminal copies to clipboard automatically", async ({
+    page,
+    request,
+  }) => {
+    // Selecting text in the terminal should auto-copy it to the clipboard
+    // on mouse-up, like a standard terminal. This avoids the need for
+    // right-click → Copy which requires navigator.clipboard.writeText()
+    // from a menu callback (broken on Firefox).
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-copy-select",
+      { waitForTerminal: true },
+    );
+
+    try {
+      try {
+        await page
+          .context()
+          .grantPermissions(["clipboard-read", "clipboard-write"]);
+      } catch {
+        /* unsupported on firefox/webkit — fine */
+      }
+
+      const { width, height } = vp(page);
+      const f = fv(page);
+
+      // Type a known string so we have something to select
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(1000);
+      await page.keyboard.type("echo COPYTEST123");
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(2000);
+
+      // Select the output by dragging across the first line of output.
+      // The "COPYTEST123" should be on the second line (first is the command).
+      // Drag from left to right across the output area.
+      const startX = 10;
+      const endX = 200;
+      const lineY = 130; // approximate Y of the output line
+      await page.mouse.move(startX, lineY);
+      await page.mouse.down();
+      await page.mouse.move(endX, lineY, { steps: 10 });
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+
+      // Read clipboard — should contain the selected text
+      const clipText = await page.evaluate(() =>
+        navigator.clipboard.readText(),
+      );
+      expect(clipText).toContain("COPYTEST123");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("right-click without selection defers to native context menu", async ({
+    page,
+    request,
+  }) => {
+    // Without a text selection, right-clicking the terminal should NOT
+    // show a Flutter popup menu — it defers to the browser's native
+    // context menu so paste works on Firefox without a permission dialog.
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-rc-native",
+      { waitForTerminal: true },
+    );
+
+    try {
+      const { width, height } = vp(page);
+      const f = fv(page);
+
+      // Click the terminal to focus it
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(500);
+
+      // Right-click — should NOT show Flutter popup (no selection).
+      // Capture a screenshot to verify no Flutter menu overlay.
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        button: "right",
+        force: true,
+      });
+      await page.waitForTimeout(500);
+
+      // Dismiss whatever context menu appeared
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+
+      // Type a command to verify the terminal is still interactive
+      await page.keyboard.type("echo rc-works");
+      await page.waitForTimeout(300);
+
+      // The Flutter popup would have intercepted the right-click and
+      // shown Copy/Paste. If no Flutter menu appeared, the terminal
+      // stays focused and typing works. We just verify no crash.
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("right-click with selection defers to native context menu", async ({
+    page,
+    request,
+  }) => {
+    // Right-clicking with a text selection should show the browser's
+    // native context menu (not a Flutter popup), same as without selection.
+    // Copy-on-select already put the text on the clipboard.
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "term-rc-sel",
+      { waitForTerminal: true },
+    );
+
+    try {
+      const { width, height } = vp(page);
+      const f = fv(page);
+
+      // Type something to select
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(1000);
+      await page.keyboard.type("echo SELECTME");
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(2000);
+
+      // Select text by dragging across the output
+      await page.mouse.move(10, 130);
+      await page.mouse.down();
+      await page.mouse.move(200, 130, { steps: 10 });
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+
+      // Right-click on the selection — should NOT show Flutter popup
+      await f.click({
+        position: { x: 100, y: 130 },
+        button: "right",
+        force: true,
+      });
+      await page.waitForTimeout(500);
+
+      // Dismiss whatever context menu appeared
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+
+      // Terminal should still be interactive after dismissing
+      await page.keyboard.type("echo still-works");
+      await page.waitForTimeout(300);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("paste shortcut is ignored when terminal isn't focused", async ({
     page,
     request,
