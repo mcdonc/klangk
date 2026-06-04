@@ -37,6 +37,13 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   void Function()? _removePasteListener;
   void Function()? _removeShortcutGuard;
   bool _started = false;
+  // The PTY must be started with the real grid size, not the 80x24 seed —
+  // otherwise the shell wraps at 80 cols until a window resize forces a fresh
+  // onResize. `_measured` flips on flterm's first resize callback; if
+  // container_ready arrives before that, `_pendingStart` holds the start until
+  // we have a real measurement.
+  bool _measured = false;
+  bool _pendingStart = false;
 
   // Raw bytes of the bundled monospace font. flterm measures cell width from
   // this font's 'M' advance; without it, FontDataResolver's asset-path guessing
@@ -69,7 +76,15 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       ..onResize = (cols, rows) {
         _cols = cols;
         _rows = rows;
-        widget.wsClient.sendTerminalResize(cols, rows);
+        _measured = true;
+        if (_started) {
+          widget.wsClient.sendTerminalResize(cols, rows);
+        } else if (_pendingStart) {
+          // container_ready beat the first measurement; start now that we
+          // know the real grid size.
+          _pendingStart = false;
+          _startTerminal();
+        }
       };
     _outputSub = widget.wsClient.terminalOutput.listen((data) {
       _terminal.write(utf8.encode(data));
@@ -108,7 +123,20 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   Future<void> _loadFont() async {
     final data = await rootBundle.load(_fontAsset);
     await (FontLoader(_fontFamily)..addFont(Future.value(data))).load();
-    if (mounted) setState(() => _fontData = data.buffer.asUint8List());
+    if (!mounted) return;
+    setState(() => _fontData = data.buffer.asUint8List());
+    // After the TerminalView's first layout, onResize has run and set the
+    // real _cols/_rows. Safety net: if it somehow didn't fire, mark measured
+    // anyway so a pending start (container_ready that arrived first) isn't
+    // stranded waiting forever.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _measured) return;
+      _measured = true;
+      if (_pendingStart) {
+        _pendingStart = false;
+        _startTerminal();
+      }
+    });
   }
 
   void _handleEvent(Map<String, dynamic> msg) {
@@ -122,6 +150,12 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
 
   void _startTerminal() {
     if (_started) return;
+    if (!_measured) {
+      // Defer until flterm reports the real grid size, so the PTY isn't
+      // created at the 80x24 seed. onResize will call back here.
+      _pendingStart = true;
+      return;
+    }
     _started = true;
     widget.wsClient.sendTerminalStart(cols: _cols, rows: _rows);
   }
