@@ -55,6 +55,23 @@ NOTE the port: the backend listens on **8997** (`devenv.nix:111`,
 `apiBaseUrl` default in `lib/utils/api_base_url.dart` should be revisited to
 match (or always be passed via `--dart-define`).
 
+### Linux
+
+`linux/` is scaffolded (GTK/CMake). Build/run on a Linux host (Flutter
+desktop does not cross-compile, so it can't be built from macOS):
+
+```sh
+flutter run -d linux \
+  --dart-define=KLANGK_BACKEND_URL=http://localhost:8997
+```
+
+Toolchain: GTK3 dev libs, `clang`, `cmake`, `ninja`, `pkg-config`. The
+libghostty native lib is **fetched prebuilt** for x86_64/aarch64 glibc (and
+musl) from the libghostty GitHub releases — no Zig compile needed (verified
+via `asset_hashes.dart`: `libghostty-x86_64-linux-gnu.so` etc.). If a target
+has no prebuilt, install Zig and pass `--define=libghostty.download=compile`.
+Not yet built/verified on a Linux host.
+
 ## Backend for local dev
 
 The backend stays in devenv. On a clean shell it can also be run via uv:
