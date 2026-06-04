@@ -1428,6 +1428,32 @@ class TestExportImportCLI:
         assert args[0][0] == "ws-exp-id"
         assert args[0][1] == Path("test-ws.tar.gz")
 
+    def test_export_avoids_overwrite(
+        self, logged_in_cfg, monkeypatch, tmp_path, monkeypatch_cwd=None
+    ):
+        from pathlib import Path
+        from klangk_backend.cli import main
+
+        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
+        ws = Workspace(id="ws-ow-id", name="ow-ws", created_at="2025-01-01")
+
+        def _fake_export(ws_id, out, on_progress=None):
+            pass
+
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.export_workspace.side_effect = _fake_export
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        # Create existing files in cwd
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "ow-ws.tar.gz").write_bytes(b"existing")
+        (tmp_path / "ow-ws-1.tar.gz").write_bytes(b"existing2")
+
+        main.export_workspace(name="ow-ws", output=None)
+        args = client.export_workspace.call_args
+        assert args[0][1] == Path("ow-ws-2.tar.gz")
+
     def test_export_workspace_not_found(self, logged_in_cfg, monkeypatch):
         from klangk_backend.cli import main
 

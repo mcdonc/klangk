@@ -241,6 +241,13 @@ def export_workspace(
         _err.print(f"[red]No workspace named[/red] '{name}'")
         raise typer.Exit(code=1) from None
     out_path = output or Path(f"{name}.tar.gz")
+    if out_path.exists() and output is None:
+        # Don't overwrite — find a unique name
+        stem = name
+        n = 1
+        while out_path.exists():
+            out_path = Path(f"{stem}-{n}.tar.gz")
+            n += 1
     try:
         from rich.live import Live
         from rich.spinner import Spinner
