@@ -184,52 +184,43 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       child: GestureDetector(
         // Right-click only — primary/selection gestures stay with flterm's own
         // detector inside TerminalView.
-        onSecondaryTapDown: (details) async {
+        onSecondaryTapDown: (details) {
+          // coverage:ignore-start
+          final hasSelection = _terminal.selection != null;
+          if (!hasSelection) {
+            // No selection — let the browser's native context menu
+            // handle paste. This avoids the Firefox system paste
+            // confirmation dialog that appears when we try to read
+            // the clipboard via navigator.clipboard.readText().
+            return;
+          }
+          // Selection active — show custom menu with Copy + Paste.
           suppressContextMenuBriefly();
-          // Pre-read clipboard while the right-click user-activation is
-          // still valid. On Firefox, navigator.clipboard.readText() is
-          // denied once the activation expires (after the popup menu
-          // closes), which surfaces a system paste-confirmation dialog.
-          // Awaiting here ensures the read completes before showMenu.
-          final clipText = await readClipboardText(); // coverage:ignore-line
-          if (!context.mounted) return; // coverage:ignore-line
-          final hasSelection =
-              _terminal.selection != null; // coverage:ignore-line
-          final items = <PopupMenuEntry<String>>[
-            // coverage:ignore-start
-            if (hasSelection)
-              const PopupMenuItem(
+          final pos = details.globalPosition;
+          showMenu<String>(
+            context: context,
+            position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
+            items: const [
+              PopupMenuItem(
                   value: 'copy',
                   child: ListTile(
                       dense: true,
                       leading: Icon(Icons.copy, size: 18),
                       title: Text('Copy'))),
-            // coverage:ignore-end
-            const PopupMenuItem(
-                value: 'paste',
-                child: ListTile(
-                    dense: true,
-                    leading: Icon(Icons.paste, size: 18),
-                    title: Text('Paste'))),
-          ];
-          final pos = details.globalPosition;
-          final action = await showMenu<String>(
-            context: context,
-            position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-            items: items,
-          );
-          // coverage:ignore-start
-          if (action == 'copy') {
-            _copySelection();
-          } else if (action == 'paste') {
-            if (clipText != null && clipText.isNotEmpty) {
-              _terminal.paste(clipText);
-            } else {
-              // Pre-read failed (e.g. webkit doesn't support readText) —
-              // fall back to reading at click time (may prompt on Firefox).
+              PopupMenuItem(
+                  value: 'paste',
+                  child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.paste, size: 18),
+                      title: Text('Paste'))),
+            ],
+          ).then((action) {
+            if (action == 'copy') {
+              _copySelection();
+            } else if (action == 'paste') {
               _paste();
             }
-          }
+          });
           // coverage:ignore-end
         },
         child: TerminalView(
