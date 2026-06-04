@@ -26,6 +26,11 @@ dependencies:
   provider: ^6.1.0
   shared_preferences: ^2.3.0
   desktop_drop: ^0.7.1
+  # Native (desktop) implementations of the web-only helpers: open external
+  # links and save downloaded files. No-ops on web (the web_helpers_web.dart
+  # path is used there instead).
+  url_launcher: ^6.3.0
+  file_picker: ^8.1.0
   go_router: ^17.2.3
   flutter_markdown_plus: ^1.0.7
   flutter_highlight: ^0.7.0

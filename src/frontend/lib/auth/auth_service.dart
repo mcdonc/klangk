@@ -2,14 +2,14 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import '../utils/api_base_url.dart';
 
 /// Override for testing — set to intercept all HTTP calls in AuthService.
 http.Client? testAuthHttpClientOverride;
 
 class AuthService extends ChangeNotifier {
   static const _tokenKey = 'klangk_jwt';
-  String get _baseUrl => baseUrl;
+  String get _baseUrl => apiBaseUrl;
 
   http.Client get _client => testAuthHttpClientOverride ?? http.Client();
 

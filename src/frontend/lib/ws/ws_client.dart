@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../auth/auth_service.dart';
-import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import '../utils/api_base_url.dart';
 
 /// A single WebSocket debug log entry.
 class WsDebugEntry {
@@ -23,11 +23,7 @@ class WsDebugEntry {
 /// and streaming terminal output and browser bridge requests.
 class WsClient extends ChangeNotifier {
   // coverage:ignore-start
-  static String get _wsBaseUrl {
-    final loc = Uri.base;
-    final wsScheme = loc.scheme == 'https' ? 'wss' : 'ws';
-    return '$wsScheme://${loc.host}:${loc.port}$baseUrl/ws';
-  }
+  static String get _wsBaseUrl => wsBaseUrl;
   // coverage:ignore-end
 
   WebSocketChannel? _channel;

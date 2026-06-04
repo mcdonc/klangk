@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flterm/flterm.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -194,11 +195,13 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           scrollController: _scrollController,
           autofocus: false,
           padding: EdgeInsets.zero,
-          // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
-          // Clipboard.getData, which fails on Firefox). These override flterm's
-          // platform defaults, so paste flows solely through the native
-          // `paste` event in [installPasteListener] — one path, no double-paste.
-          shortcuts: _disableFltermPaste,
+          // On web, disable flterm's built-in Ctrl/Cmd+V paste (it reads via
+          // Clipboard.getData, which fails on Firefox), so paste flows solely
+          // through the native `paste` event in [installPasteListener] — one
+          // path, no double-paste. On desktop there's no DOM paste event, so
+          // pass null and let flterm's own Clipboard.getData paste handle
+          // Cmd/Ctrl+V.
+          shortcuts: kIsWeb ? _disableFltermPaste : null,
           // Keep mouse selection (drag/word/line/long-press) but drop the
           // keyboard select-all gesture, so Ctrl+A falls through to the shell
           // (readline beginning-of-line / tmux prefix) instead of selecting the

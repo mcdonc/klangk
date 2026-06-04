@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import '../utils/api_base_url.dart';
 import '../theme/colors.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -40,7 +40,7 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _loadConfig() async {
     try {
       final client = testConfigHttpClientOverride ?? http.Client();
-      final response = await client.get(Uri.parse('${baseUrl}/api/config'));
+      final response = await client.get(Uri.parse('$apiBaseUrl/api/config'));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (mounted) {
