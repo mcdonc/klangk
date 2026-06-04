@@ -17,7 +17,7 @@ python3 scripts/import_dart_plugins.py
 # can still override the binary; defaults to `flutter` on PATH (nix toolchain).
 FLUTTER="${KLANGK_WEB_FLUTTER:-flutter}"
 
-cd src/frontend && "$FLUTTER" --disable-analytics && "$FLUTTER" pub get && "$FLUTTER" build web --wasm --release --base-href=/ --no-web-resources-cdn
+cd src/frontend && "$FLUTTER" --disable-analytics && "$FLUTTER" pub get && "$FLUTTER" build web --wasm --release --base-href=/ --no-web-resources-cdn --source-maps --no-strip-wasm
 rm -f build/web/flutter_service_worker.js
 
 # Cache-busting: append a content hash to flutter_bootstrap.js reference
