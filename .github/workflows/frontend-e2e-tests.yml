@@ -1,4 +1,4 @@
-name: Flutter E2E Tests
+name: Frontend E2E Tests
 
 on:
   workflow_dispatch:
