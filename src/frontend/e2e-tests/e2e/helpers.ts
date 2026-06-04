@@ -98,7 +98,9 @@ export async function waitForFlutter(page: Page) {
     () => !document.body.textContent?.includes("Loading, please wait"),
     { timeout: 90_000 },
   );
-  await page.waitForTimeout(200);
+  // Wait for flutter-view to be present and rendered
+  await page.waitForSelector("flutter-view", { timeout: 10_000 });
+  await page.waitForTimeout(500);
 }
 
 export function fv(page: Page) {
