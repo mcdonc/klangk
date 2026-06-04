@@ -2528,6 +2528,205 @@ class TestWorkspaceExportImport:
         assert len(created_tmp) == 1
         assert not os.path.exists(created_tmp[0])
 
+    async def test_export_strips_external_symlinks(
+        self, client, admin_user, user
+    ):
+        """Symlinks pointing outside the home dir are excluded from export."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "symlink-export"}
+        )
+        ws = resp.json()
+
+        import klangk_backend.workspaces as ws_mod
+
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "work").mkdir(exist_ok=True)
+        (home / "work" / "real.txt").write_text("real file")
+        # Internal symlink (should be kept)
+        (home / "work" / "internal_link").symlink_to("real.txt")
+        # External symlink (should be stripped)
+        (home / "work" / "external_link").symlink_to("/etc/passwd")
+
+        admin_headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 200
+
+        import tarfile
+
+        buf = io.BytesIO(resp.content)
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+            names = tar.getnames()
+            assert any("real.txt" in n for n in names)
+            assert any("internal_link" in n for n in names)
+            assert not any("external_link" in n for n in names)
+
+    async def test_import_size_limit(self, client, user, monkeypatch):
+        """Upload exceeding size limit is rejected."""
+        import klangk_backend.api as api_mod
+
+        monkeypatch.setattr(api_mod, "IMPORT_MAX_SIZE", 100)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={"file": ("big.tar.gz", b"x" * 200, "application/gzip")},
+        )
+        assert resp.status_code == 413
+
+    async def test_import_sanitizes_env(self, client, user):
+        """Dangerous env vars from archive are stripped."""
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                {
+                    "name": "env-sanitize",
+                    "env": {
+                        "MY_VAR": "safe",
+                        "KLANGK_BRIDGE_TOKEN": "stolen",
+                        "LD_PRELOAD": "/evil.so",
+                        "PATH": "/bad",
+                        "NORMAL_VAR": "ok",
+                    },
+                }
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        ws = resp.json()
+
+        # Fetch the workspace to check env
+        resp = await client.get("/workspaces", headers=headers)
+        workspaces_list = resp.json()
+        imported = next(w for w in workspaces_list if w["id"] == ws["id"])
+        env = imported.get("env", {})
+        assert "MY_VAR" in env
+        assert "NORMAL_VAR" in env
+        assert "KLANGK_BRIDGE_TOKEN" not in env
+        assert "LD_PRELOAD" not in env
+        assert "PATH" not in env
+
+    async def test_import_cleanup_on_extraction_failure(
+        self, client, user, monkeypatch
+    ):
+        """If extraction fails after workspace creation, the workspace is cleaned up."""
+        import json
+        import tarfile
+
+        # Build an archive with valid metadata but a home member that
+        # will fail extraction due to filter='data' rejecting it.
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "fail-extract"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+
+            # Add a home file that will pass initial validation
+            data = b"content"
+            file_info = tarfile.TarInfo(name="home/test.txt")
+            file_info.size = len(data)
+            tar.addfile(file_info, io.BytesIO(data))
+        buf.seek(0)
+
+        # Monkeypatch extractall to raise after workspace is created
+        import klangk_backend.api as api_mod
+
+        original_open = tarfile.open
+
+        def _patched_open(*args, **kwargs):
+            tf = original_open(*args, **kwargs)
+
+            def _failing_extractall(*a, **kw):
+                raise tarfile.TarError("corrupt data")
+
+            tf.extractall = _failing_extractall
+            return tf
+
+        monkeypatch.setattr(api_mod.tarfile, "open", _patched_open)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+
+        # Workspace should have been cleaned up
+        resp = await client.get("/workspaces", headers=headers)
+        names = [w["name"] for w in resp.json()]
+        assert "fail-extract" not in names
+
+    async def test_import_cleanup_on_http_exception_after_creation(
+        self, client, user, monkeypatch
+    ):
+        """If an HTTPException occurs after workspace creation, workspace is cleaned up."""
+        import json
+        import tarfile
+        import klangk_backend.api as api_mod
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "fail-http"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+
+            data = b"content"
+            file_info = tarfile.TarInfo(name="home/test.txt")
+            file_info.size = len(data)
+            tar.addfile(file_info, io.BytesIO(data))
+        buf.seek(0)
+
+        original_open = tarfile.open
+
+        def _patched_open(*args, **kwargs):
+            tf = original_open(*args, **kwargs)
+
+            def _failing_extractall(*a, **kw):
+                raise HTTPException(status_code=400, detail="bad data")
+
+            tf.extractall = _failing_extractall
+            return tf
+
+        monkeypatch.setattr(api_mod.tarfile, "open", _patched_open)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+
+        # Workspace should have been cleaned up
+        resp = await client.get("/workspaces", headers=headers)
+        names = [w["name"] for w in resp.json()]
+        assert "fail-http" not in names
+
     async def test_import_path_traversal_rejected(self, client, user):
         import io
         import json

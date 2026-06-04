@@ -28,6 +28,12 @@ from .util import derive_hosting_info, resolve_env_secret
 
 logger = logging.getLogger(__name__)
 
+# Maximum upload size for workspace import (bytes).
+# Default 500 MB; override via KLANGK_IMPORT_MAX_SIZE (in bytes).
+IMPORT_MAX_SIZE = int(
+    resolve_env_secret("KLANGK_IMPORT_MAX_SIZE", str(500 * 1024 * 1024))
+)
+
 router = APIRouter()
 
 
@@ -645,9 +651,20 @@ async def export_workspace(
             info.size = len(meta_bytes)
             tar.addfile(info, io.BytesIO(meta_bytes))
 
-            # Add home directory
+            # Add home directory. Symlinks that resolve outside the
+            # home dir are stripped to prevent leaking host files.
+            home_resolved = home_dir.resolve()
+
+            def _safe_filter(ti):
+                if ti.issym():
+                    # Resolve the symlink target relative to the home dir
+                    target = (home_dir / ti.linkname).resolve()
+                    if not target.is_relative_to(home_resolved):
+                        return None
+                return ti
+
             if home_dir.exists():
-                tar.add(str(home_dir), arcname="home")
+                tar.add(str(home_dir), arcname="home", filter=_safe_filter)
         tmp.close()
 
         safe_name = ws_name.replace("/", "_").replace("\\", "_")
@@ -675,17 +692,31 @@ async def import_workspace(
     Creates a new workspace with metadata from workspace.json and
     extracts the home directory from the archive.
     """
-    # Stream upload to a temp file to avoid holding it all in memory.
+    # Stream upload to a temp file — abort if over the configured limit.
+    max_upload = IMPORT_MAX_SIZE
     tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
+    total = 0
     try:
         while chunk := await file.read(1024 * 1024):
+            total += len(chunk)
+            if total > max_upload:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Archive exceeds {max_upload // (1024 * 1024)} MB limit",
+                )
             tmp.write(chunk)
         tmp.close()
+    except HTTPException:
+        import os
+
+        os.unlink(tmp.name)
+        raise
     except Exception:
         import os
 
         os.unlink(tmp.name)
         raise
+    ws = None
     try:
         with tarfile.open(tmp.name, mode="r:gz") as tar:
             # Validate: no path traversal
@@ -726,6 +757,19 @@ async def import_workspace(
             if mounts and container.validate_mounts(mounts):
                 mounts = None  # invalid mounts, drop them
 
+            # Sanitize env: drop keys that could interfere with
+            # container startup (KLANGK_*, LD_*, PATH, etc.)
+            raw_env = metadata.get("env")
+            if isinstance(raw_env, dict):
+                blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
+                env = {
+                    k: v
+                    for k, v in raw_env.items()
+                    if not k.startswith("KLANGK_") and k not in blocked
+                }
+            else:
+                env = None
+
             try:
                 ws = await workspaces.create_workspace(
                     user["id"],
@@ -733,7 +777,7 @@ async def import_workspace(
                     image=image,
                     default_command=metadata.get("default_command"),
                     mounts=mounts,
-                    env=metadata.get("env"),
+                    env=env,
                 )
             except sqlite3.IntegrityError:
                 raise HTTPException(
@@ -741,7 +785,8 @@ async def import_workspace(
                     detail=f"A workspace named {ws_name!r} already exists",
                 )
 
-            # Extract home directory into the new workspace
+            # Extract home directory using filter='data' for safety
+            # (strips permissions, blocks devices/special files).
             home_dir = workspaces.home_path(user["id"], ws["id"])
             home_dir.mkdir(parents=True, exist_ok=True)
             home_members = [
@@ -751,12 +796,22 @@ async def import_workspace(
                 # Strip the "home/" prefix
                 member.name = member.name[5:]  # len("home/") == 5
             home_members = [m for m in home_members if m.name]
-            tar.extractall(path=str(home_dir), members=home_members)
+            tar.extractall(
+                path=str(home_dir), members=home_members, filter="data"
+            )
 
     except tarfile.TarError:
+        # Clean up the workspace if extraction failed after creation
+        if ws:
+            await workspaces.delete_workspace(ws["id"], user["id"])
         raise HTTPException(
             status_code=400, detail="Invalid or corrupt archive"
         )
+    except HTTPException:
+        # Clean up the workspace if validation failed after creation
+        if ws:
+            await workspaces.delete_workspace(ws["id"], user["id"])
+        raise
     finally:
         import os
 
