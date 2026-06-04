@@ -5,18 +5,23 @@
   ...
 }:
 let
+  isContainer = config.container.isBuilding;
+  isDev = !isContainer;
+
   # The local venv, pre-built by `uv sync` during devenv shell.
   # Contains bin/ (uvicorn, klangk, etc.) and lib/python3.13/site-packages/.
   # Requires `--impure` for container builds since the venv is outside the nix store.
   # Must run `devenv shell` at least once before building the container.
   venvCopy =
-    if config.container.isBuilding && builtins.pathExists ./.devenv/state/venv then
+    if isContainer && builtins.pathExists ./.devenv/state/venv then
       builtins.path {
         path = ./.devenv/state/venv;
         name = "venv";
       }
     else
       null;
+
+  uvicornCmd = "python3 -m uvicorn klangk_backend.main:app --host 0.0.0.0 --port $KLANGK_PORT --ws-max-size 65536 --ws-ping-interval 20 --ws-ping-timeout 20";
 
   # Version info baked into the container image at build time.
   # Uses builtins.getEnv (impure) so the build command can pass values:
@@ -55,9 +60,9 @@ let
 in
 {
   languages.javascript = {
-    enable = !config.container.isBuilding;
-    npm.enable = !config.container.isBuilding;
-    npm.install.enable = !config.container.isBuilding;
+    enable = isDev;
+    npm.enable = isDev;
+    npm.install.enable = isDev;
     directory = "./src/frontend/e2e-tests";
     corepack.enable = false; # disinclude dev version of node, squash warnings
   };
@@ -84,16 +89,15 @@ in
       sqlite
       rsync
     ]
-    ++ lib.optionals (!config.container.isBuilding) [
+    ++ lib.optionals isDev [
       flutter
       git # HM for "error: Failed to find git" during devenv:git-hooks:install
     ];
 
-  env.PLAYWRIGHT_BROWSERS_PATH =
-    if config.container.isBuilding then "" else pkgs.playwright-driver.browsers;
-  env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = if config.container.isBuilding then "" else "true";
+  env.PLAYWRIGHT_BROWSERS_PATH = if isContainer then "" else pkgs.playwright-driver.browsers;
+  env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = if isContainer then "" else "true";
 
-  tasks = lib.mkIf (!config.container.isBuilding) {
+  tasks = lib.mkIf isDev {
     "klangk:flutter-build" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh"'';
       showOutput = true;
@@ -137,7 +141,7 @@ in
   };
 
   processes =
-    if config.container.isBuilding then
+    if isContainer then
       {
         # Processes aren't used directly in the container (startupCommand handles it)
         # but nix still evaluates them, so provide no-ops.
@@ -148,7 +152,7 @@ in
       {
         backend = {
           exec = ''
-            cd $DEVENV_ROOT/src/backend && exec uvicorn klangk_backend.main:app --host 0.0.0.0 --port $KLANGK_PORT --ws-max-size 65536 --ws-ping-interval 20 --ws-ping-timeout 20
+            cd $DEVENV_ROOT/src/backend && exec ${uvicornCmd}
           '';
           after = [
             "klangk:flutter-build"
@@ -169,7 +173,7 @@ in
 
   env.SOURCE_DATE_EPOCH = "";
   env.PYTHONPATH =
-    if config.container.isBuilding then
+    if isContainer then
       lib.mkForce "${klangkApp}/src/backend:${
         if venvCopy != null then toString venvCopy else ""
       }/lib/python3.13/site-packages"
@@ -183,19 +187,16 @@ in
   env.KLANGK_PORT = lib.mkOverride 1500 "8997";
   env.KLANGK_NGINX_PORT = lib.mkOverride 1500 "8995";
   env.KLANGK_DATA_DIR = lib.mkOverride 1500 (
-    if config.container.isBuilding then "/data" else config.devenv.root + "/.devenv/state/klangk/data"
+    if isContainer then "/data" else config.devenv.root + "/.devenv/state/klangk/data"
   );
   env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (
-    if config.container.isBuilding then
-      "/env/app/plugins"
-    else
-      config.devenv.root + "/.devenv/state/klangk/plugins"
+    if isContainer then "/env/app/plugins" else config.devenv.root + "/.devenv/state/klangk/plugins"
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
   env.KLANGK_VERSION_FILE =
-    if config.container.isBuilding then "${klangkApp}/version.json" else lib.mkOverride 1500 "";
-  dotenv.enable = !config.container.isBuilding;
+    if isContainer then "${klangkApp}/version.json" else lib.mkOverride 1500 "";
+  dotenv.enable = isDev;
 
   scripts.flutterbuildweb.exec = ''exec devenv tasks run klangk:flutter-build --refresh-task-cache "$@"'';
   scripts.dockerbuild.exec = ''exec devenv tasks run klangk:docker-build --refresh-task-cache "$@"'';
@@ -270,7 +271,7 @@ in
   '';
 
   # --- Pre-commit hooks (dev only) ---
-  git-hooks.hooks = lib.mkIf (!config.container.isBuilding) {
+  git-hooks.hooks = lib.mkIf isDev {
     # Python: ruff lint + format
     ruff-lint = {
       enable = true;
@@ -331,7 +332,7 @@ in
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
   ''
-  + lib.optionalString (!config.container.isBuilding) ''
+  + lib.optionalString isDev ''
     # Ensure klangk_plugins stub exists so flutter pub get works
     # before plugins are fetched (first-time checkout / CI)
     bash "$DEVENV_ROOT/scripts/stub_dart_plugins.sh"
@@ -362,7 +363,7 @@ in
   containers.processes = {
     name = "klangk-host";
     copyToRoot = klangkApp;
-    startupCommand = "bash ${klangkApp}/scripts/nginx.sh & exec python3 -m uvicorn klangk_backend.main:app --host 0.0.0.0 --port $KLANGK_PORT --ws-max-size 65536 --ws-ping-interval 20 --ws-ping-timeout 20";
+    startupCommand = "bash ${klangkApp}/scripts/nginx.sh & exec ${uvicornCmd}";
   };
 
   claude.code.mcpServers = { };
