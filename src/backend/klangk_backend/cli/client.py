@@ -191,17 +191,47 @@ class KlangkClient:
                         on_progress(downloaded, total)
 
     def import_workspace(
-        self, archive: Path, name: str | None = None
+        self, archive: Path, name: str | None = None, on_progress=None
     ) -> Workspace:
-        """Upload a workspace archive and create a new workspace."""
+        """Upload a workspace archive and create a new workspace.
+
+        on_progress(bytes_so_far, total_bytes) is called as bytes are read.
+        """
         params = {}
         if name:
             params["name"] = name
+        total = archive.stat().st_size
+
+        class _ProgressFile:
+            """Wraps a file to track read progress."""
+
+            def __init__(self, f):
+                self._f = f
+                self._read = 0
+
+            def read(self, size=-1):
+                data = self._f.read(size)
+                if data:
+                    self._read += len(data)
+                    if on_progress:
+                        on_progress(self._read, total)
+                return data
+
+            def seek(
+                self, *args
+            ):  # pragma: no cover — called by httpx multipart
+                self._read = 0
+                return self._f.seek(*args)
+
+            def tell(self):  # pragma: no cover — called by httpx multipart
+                return self._f.tell()
+
         with open(archive, "rb") as f:
+            pf = _ProgressFile(f) if on_progress else f
             resp = httpx.post(
                 f"{self.cfg.server.url}/workspaces/import",
                 headers=self._headers(),
-                files={"file": (archive.name, f, "application/gzip")},
+                files={"file": (archive.name, pf, "application/gzip")},
                 params=params,
                 timeout=300.0,
             )

@@ -2664,12 +2664,10 @@ class TestWorkspaceExportImport:
     async def test_import_cleanup_on_extraction_failure(
         self, client, user, monkeypatch
     ):
-        """If extraction fails after workspace creation, the workspace is cleaned up."""
+        """If tar extraction fails, the workspace is cleaned up."""
         import json
         import tarfile
 
-        # Build an archive with valid metadata but a home member that
-        # will fail extraction due to filter='data' rejecting it.
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             meta = json.dumps({"name": "fail-extract"}).encode()
@@ -2677,28 +2675,28 @@ class TestWorkspaceExportImport:
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
 
-            # Add a home file that will pass initial validation
             data = b"content"
             file_info = tarfile.TarInfo(name="home/test.txt")
             file_info.size = len(data)
             tar.addfile(file_info, io.BytesIO(data))
         buf.seek(0)
 
-        # Monkeypatch extractall to raise after workspace is created
-        import klangk_backend.api as api_mod
+        import subprocess as subprocess_mod
 
-        original_open = tarfile.open
+        original_run = subprocess_mod.run
+        call_count = [0]
 
-        def _patched_open(*args, **kwargs):
-            tf = original_open(*args, **kwargs)
+        def _failing_run(args, **kwargs):
+            call_count[0] += 1
+            # Let the first calls (tar xzf -O workspace.json, tar tzf home/)
+            # succeed, but fail on the extraction call (tar xzf ... -C ...)
+            if "-C" in args:
+                return subprocess_mod.CompletedProcess(
+                    args=args, returncode=1, stdout=b"", stderr=b"failed"
+                )
+            return original_run(args, **kwargs)
 
-            def _failing_extractall(*a, **kw):
-                raise tarfile.TarError("corrupt data")
-
-            tf.extractall = _failing_extractall
-            return tf
-
-        monkeypatch.setattr(api_mod.tarfile, "open", _patched_open)
+        monkeypatch.setattr(subprocess_mod, "run", _failing_run)
 
         headers = await self._user_headers(client)
         resp = await client.post(
@@ -2715,17 +2713,40 @@ class TestWorkspaceExportImport:
         names = [w["name"] for w in resp.json()]
         assert "fail-extract" not in names
 
-    async def test_import_cleanup_on_http_exception_after_creation(
-        self, client, user, monkeypatch
-    ):
-        """If an HTTPException occurs after workspace creation, workspace is cleaned up."""
-        import json
+    async def test_import_invalid_json_in_metadata(self, client, user):
+        """If workspace.json contains invalid JSON, import fails cleanly."""
         import tarfile
-        import klangk_backend.api as api_mod
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "fail-http"}).encode()
+            bad_json = b"not valid json {"
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(bad_json)
+            tar.addfile(info, io.BytesIO(bad_json))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+        assert "corrupt" in resp.json()["detail"].lower()
+
+    async def test_import_timeout_cleans_up_workspace(
+        self, client, user, monkeypatch
+    ):
+        """If tar extraction times out after workspace creation, cleanup occurs."""
+        import json
+        import tarfile
+        import subprocess as subprocess_mod
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "timeout-test"}).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -2736,18 +2757,14 @@ class TestWorkspaceExportImport:
             tar.addfile(file_info, io.BytesIO(data))
         buf.seek(0)
 
-        original_open = tarfile.open
+        original_run = subprocess_mod.run
 
-        def _patched_open(*args, **kwargs):
-            tf = original_open(*args, **kwargs)
+        def _timeout_run(args, **kwargs):
+            if "-C" in args:
+                raise subprocess_mod.TimeoutExpired(args, 300)
+            return original_run(args, **kwargs)
 
-            def _failing_extractall(*a, **kw):
-                raise HTTPException(status_code=400, detail="bad data")
-
-            tf.extractall = _failing_extractall
-            return tf
-
-        monkeypatch.setattr(api_mod.tarfile, "open", _patched_open)
+        monkeypatch.setattr(subprocess_mod, "run", _timeout_run)
 
         headers = await self._user_headers(client)
         resp = await client.post(
@@ -2759,13 +2776,12 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 400
 
-        # Workspace should have been cleaned up
         resp = await client.get("/workspaces", headers=headers)
         names = [w["name"] for w in resp.json()]
-        assert "fail-http" not in names
+        assert "timeout-test" not in names
 
     async def test_import_path_traversal_rejected(self, client, user):
-        import io
+        """GNU tar rejects members with '..' in their path."""
         import json
         import tarfile
 
@@ -2777,7 +2793,7 @@ class TestWorkspaceExportImport:
             tar.addfile(info, io.BytesIO(meta))
 
             evil = b"pwned"
-            info = tarfile.TarInfo(name="../../../etc/passwd")
+            info = tarfile.TarInfo(name="home/../../../etc/passwd")
             info.size = len(evil)
             tar.addfile(info, io.BytesIO(evil))
         buf.seek(0)
@@ -2790,5 +2806,10 @@ class TestWorkspaceExportImport:
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
             },
         )
+        # GNU tar refuses to extract members with '..' — returns non-zero
         assert resp.status_code == 400
-        assert "Invalid path" in resp.json()["detail"]
+
+        # Workspace should have been cleaned up
+        resp = await client.get("/workspaces", headers=headers)
+        names = [w["name"] for w in resp.json()]
+        assert "traversal-test" not in names

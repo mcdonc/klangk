@@ -26,6 +26,7 @@
     docker-client
     flutter
     coreutils # GNU du (macOS BSD du lacks -b)
+    gzip
     gnutar
     nginx
     xz

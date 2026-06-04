@@ -1,10 +1,13 @@
 """API route handlers for Klangk backend."""
 
+import asyncio
 import io
 import json
 import logging
+import os
 import posixpath
 import sqlite3
+import subprocess
 import tarfile
 import tempfile
 import time
@@ -627,8 +630,6 @@ async def export_workspace(
     }
 
     # Estimate uncompressed size for client progress display.
-    import subprocess
-
     estimated_size = 0
     if home_dir.exists():
         try:
@@ -646,7 +647,6 @@ async def export_workspace(
     # Stream the tarball as it's built — no temp file needed.
     # tarfile writes to a queue in a background thread; the async
     # generator reads from the queue and yields chunks to the client.
-    import asyncio
     import queue
     import threading
 
@@ -755,114 +755,113 @@ async def import_workspace(
             tmp.write(chunk)
         tmp.close()
     except HTTPException:
-        import os
-
         os.unlink(tmp.name)
         raise
     except Exception:
-        import os
-
         os.unlink(tmp.name)
         raise
+
+    # Extract workspace.json from the archive using tar (fast, no Python parsing).
     ws = None
     try:
-        with tarfile.open(tmp.name, mode="r:gz") as tar:
-            # Validate: no path traversal
-            for member in tar.getmembers():
-                if member.name.startswith("/") or ".." in member.name:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid path in archive: {member.name}",
-                    )
+        result = subprocess.run(
+            ["tar", "xzf", tmp.name, "-O", "workspace.json"],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Archive missing workspace.json or is corrupt",
+            )
+        metadata = json.loads(result.stdout)
 
-            # Extract workspace.json
-            try:
-                meta_file = tar.extractfile("workspace.json")
-            except KeyError:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Archive missing workspace.json",
-                )
-            if meta_file is None:  # pragma: no cover — defensive
-                raise HTTPException(
-                    status_code=400,
-                    detail="Archive missing workspace.json",
-                )
-            metadata = json.loads(meta_file.read())
-
-            ws_name = name or metadata.get("name")
-            if not ws_name:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No workspace name in archive or request",
-                )
-
-            image = metadata.get("image")
-            if image and image not in container.ALLOWED_IMAGES:
-                image = None  # fall back to default
-
-            mounts = metadata.get("mounts")
-            if mounts and container.validate_mounts(mounts):
-                mounts = None  # invalid mounts, drop them
-
-            # Sanitize env: drop keys that could interfere with
-            # container startup (KLANGK_*, LD_*, PATH, etc.)
-            raw_env = metadata.get("env")
-            if isinstance(raw_env, dict):
-                blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
-                env = {
-                    k: v
-                    for k, v in raw_env.items()
-                    if not k.startswith("KLANGK_") and k not in blocked
-                }
-            else:
-                env = None
-
-            try:
-                ws = await workspaces.create_workspace(
-                    user["id"],
-                    ws_name,
-                    image=image,
-                    default_command=metadata.get("default_command"),
-                    mounts=mounts,
-                    env=env,
-                )
-            except sqlite3.IntegrityError:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"A workspace named {ws_name!r} already exists",
-                )
-
-            # Extract home directory using filter='data' for safety
-            # (strips permissions, blocks devices/special files).
-            home_dir = workspaces.home_path(user["id"], ws["id"])
-            home_dir.mkdir(parents=True, exist_ok=True)
-            home_members = [
-                m for m in tar.getmembers() if m.name.startswith("home/")
-            ]
-            for member in home_members:
-                # Strip the "home/" prefix
-                member.name = member.name[5:]  # len("home/") == 5
-            home_members = [m for m in home_members if m.name]
-            tar.extractall(
-                path=str(home_dir), members=home_members, filter="data"
+        ws_name = name or metadata.get("name")
+        if not ws_name:
+            raise HTTPException(
+                status_code=400,
+                detail="No workspace name in archive or request",
             )
 
-    except tarfile.TarError:
-        # Clean up the workspace if extraction failed after creation
+        image = metadata.get("image")
+        if image and image not in container.ALLOWED_IMAGES:
+            image = None  # fall back to default
+
+        mounts = metadata.get("mounts")
+        if mounts and container.validate_mounts(mounts):
+            mounts = None  # invalid mounts, drop them
+
+        # Sanitize env: drop keys that could interfere with
+        # container startup (KLANGK_*, LD_*, PATH, etc.)
+        raw_env = metadata.get("env")
+        if isinstance(raw_env, dict):
+            blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
+            env = {
+                k: v
+                for k, v in raw_env.items()
+                if not k.startswith("KLANGK_") and k not in blocked
+            }
+        else:
+            env = None
+
+        try:
+            ws = await workspaces.create_workspace(
+                user["id"],
+                ws_name,
+                image=image,
+                default_command=metadata.get("default_command"),
+                mounts=mounts,
+                env=env,
+            )
+        except sqlite3.IntegrityError:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A workspace named {ws_name!r} already exists",
+            )
+
+        # Extract home directory using tar (much faster than Python tarfile
+        # for archives with many members). --strip-components=1 removes
+        # the "home/" prefix. Only extract if home/ exists in the archive.
+        home_dir = workspaces.home_path(user["id"], ws["id"])
+        home_dir.mkdir(parents=True, exist_ok=True)
+        check = subprocess.run(
+            ["tar", "tzf", tmp.name, "home/"],
+            capture_output=True,
+            timeout=30,
+        )
+        if check.returncode == 0:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                [
+                    "tar",
+                    "xzf",
+                    tmp.name,
+                    "--strip-components=1",
+                    "--no-same-owner",
+                    "--no-same-permissions",
+                    "-C",
+                    str(home_dir),
+                    "home/",
+                ],
+                capture_output=True,
+                timeout=300,
+            )
+            if result.returncode != 0:
+                await workspaces.delete_workspace(ws["id"], user["id"])
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to extract home directory from archive",
+                )
+
+    except HTTPException:
+        raise
+    except (json.JSONDecodeError, subprocess.TimeoutExpired):
         if ws:
             await workspaces.delete_workspace(ws["id"], user["id"])
         raise HTTPException(
             status_code=400, detail="Invalid or corrupt archive"
         )
-    except HTTPException:
-        # Clean up the workspace if validation failed after creation
-        if ws:
-            await workspaces.delete_workspace(ws["id"], user["id"])
-        raise
     finally:
-        import os
-
         os.unlink(tmp.name)
 
     return ws

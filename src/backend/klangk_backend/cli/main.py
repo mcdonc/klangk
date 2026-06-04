@@ -321,7 +321,30 @@ def import_workspace(
         raise typer.Exit(code=1)
     client = _client()
     try:
-        ws = client.import_workspace(archive, name=name)
+        from rich.progress import (
+            Progress,
+            BarColumn,
+            DownloadColumn,
+            TransferSpeedColumn,
+        )
+
+        progress = Progress(
+            "[progress.description]{task.description}",
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+        )
+        task_id = progress.add_task(
+            "Uploading...", total=archive.stat().st_size
+        )
+
+        def _update(uploaded, total):
+            progress.update(task_id, completed=uploaded)
+
+        with progress:
+            ws = client.import_workspace(
+                archive, name=name, on_progress=_update
+            )
     except httpx.HTTPStatusError as e:
         _err.print(f"[red]Import failed:[/red] {e.response.text}")
         raise typer.Exit(code=1) from None
