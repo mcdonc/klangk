@@ -678,9 +678,7 @@ class TestRunShell:
                 "klangk_backend.cli.client.select.select",
                 return_value=([99], [], []),
             ),
-            patch(
-                "klangk_backend.cli.client.os.read", return_value=b""
-            ),
+            patch("klangk_backend.cli.client.os.read", return_value=b""),
         ):
             task = asyncio.create_task(
                 _run_shell(ws, 80, 24, stdin=fake_buf, stdout=fake_stdout)
