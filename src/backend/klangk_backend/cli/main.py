@@ -265,11 +265,19 @@ def export_workspace(
                 result = super().render(task)
                 return Text.assemble(result, " (est)")
 
+        class _SafeSpeedColumn(TransferSpeedColumn):
+            def render(
+                self, task
+            ):  # pragma: no cover — only called during live terminal render
+                if task.finished:
+                    return Text("")
+                return super().render(task)
+
         progress = Progress(
             "[progress.description]{task.description}",
             BarColumn(),
             _EstDownloadColumn(),
-            TransferSpeedColumn(),
+            _SafeSpeedColumn(),
         )
         task_id = progress.add_task("Downloading...", total=0)
         started = [False]
