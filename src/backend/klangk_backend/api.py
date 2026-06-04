@@ -620,14 +620,7 @@ async def export_workspace(
     home_dir = workspaces.home_path(workspace["user_id"], workspace_id)
     ws_name = workspace["name"]
 
-    metadata = {
-        "name": ws_name,
-        "image": workspace.get("image"),
-        "default_command": workspace.get("default_command"),
-        "mounts": workspace.get("mounts"),
-        "env": workspace.get("env"),
-        "num_ports": workspace.get("num_ports", 5),
-    }
+    metadata = workspaces.workspace_metadata(workspace)
 
     # Estimate uncompressed size for client progress display.
     estimated_size = 0
