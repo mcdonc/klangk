@@ -237,11 +237,19 @@ class TestRunShell:
         )
 
         fake_stdin = MagicMock()
-        fake_stdin.fileno = MagicMock(return_value=0)
-        fake_stdin.read = MagicMock(side_effect=BrokenPipeError)
-        with patch(
-            "klangk_backend.cli.client.select.select",
-            return_value=([0], [], []),
+        fake_stdin.fileno = MagicMock(return_value=99)
+        # stdin_loop reads via os.read(fd, ...), not stdin.read(); patch it
+        # to raise BrokenPipeError so the OSError handler runs instead of
+        # blocking on the real stdin fd.
+        with (
+            patch(
+                "klangk_backend.cli.client.select.select",
+                return_value=([99], [], []),
+            ),
+            patch(
+                "klangk_backend.cli.client.os.read",
+                side_effect=BrokenPipeError,
+            ),
         ):
             task = asyncio.create_task(
                 _run_shell(ws, 80, 24, stdin=fake_stdin)
