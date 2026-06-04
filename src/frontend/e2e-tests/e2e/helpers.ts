@@ -291,10 +291,16 @@ export async function openWorkspace(
   });
 
   await loginViaUI(page, email, TEST_PASSWORD);
-  // Use full URL (not just #fragment) so the page reloads and creates a new
-  // WebSocket — a hash-only change is handled internally by Flutter's router
-  // without opening a new WebSocket, so our listener would never fire.
-  await page.goto(`/#/workspace/${workspaceId}`);
+  // Navigate to the workspace URL and force a full page reload.
+  // A hash-only change from the workspaces list is handled by Flutter's
+  // router internally without opening a new WebSocket, so our listener
+  // would never fire.  Setting the hash then reloading ensures a fresh
+  // page load that creates a new WebSocket connection.
+  await page.evaluate((id) => {
+    window.location.hash = `/workspace/${id}`;
+  }, workspaceId);
+  await page.reload({ waitUntil: "load" });
+  await waitForFlutter(page);
   await containerPromise;
   await terminalPromise;
 }
