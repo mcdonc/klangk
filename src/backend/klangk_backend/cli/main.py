@@ -274,6 +274,10 @@ def export_workspace(
         spinner = Spinner("dots", text="Building archive on server...")
         with Live(spinner, refresh_per_second=10) as live:
             client.export_workspace(ws.id, out_path, on_progress=_update)
+            # Ensure progress bar hits 100% regardless of estimate accuracy
+            if started[0]:
+                final = progress.tasks[task_id].completed
+                progress.update(task_id, total=final, completed=final)
     except httpx.HTTPStatusError as e:
         _err.print(f"[red]Export failed:[/red] {e.response.text}")
         raise typer.Exit(code=1) from None
