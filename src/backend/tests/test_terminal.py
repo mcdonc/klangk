@@ -572,7 +572,16 @@ class TestIsAlive:
 
         first_msg = MagicMock()
         first_msg.data = b"prompt"
-        stream.read_out = AsyncMock(side_effect=[first_msg, slow_read()])
+        call_count = 0
+
+        async def _read_side_effect():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return first_msg
+            return await slow_read()
+
+        stream.read_out = _read_side_effect
         exec_obj = _mock_exec(stream)
         container = _mock_container(exec_obj)
         docker = _mock_docker(container)

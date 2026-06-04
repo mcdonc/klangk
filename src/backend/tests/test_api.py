@@ -2,6 +2,7 @@
 
 import io
 import os
+import shutil
 import tempfile
 import zipfile
 
@@ -2007,18 +2008,90 @@ class TestAdminEndpoints:
         assert resp.status_code == 404
 
 
+class TestSafePath:
+    def test_valid_path(self, temp_data_dir):
+        path = ws_mod._safe_path("user1", "home", "ws1")
+        assert path == ws_mod.WORKSPACES_ROOT / "user1" / "home" / "ws1"
+
+    def test_traversal_raises(self, temp_data_dir):
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            ws_mod._safe_path("..", "..", "etc", "passwd")
+
+
+class TestSanitizeFilename:
+    def test_safe_characters_preserved(self):
+        assert ws_mod._sanitize_filename("hello-world_v2.tar.gz") == (
+            "hello-world_v2.tar.gz"
+        )
+
+    def test_unsafe_characters_replaced(self):
+        assert ws_mod._sanitize_filename("a/b\\c..d\x00e") == "a_b_c..d_e"
+
+    def test_email_sanitized(self):
+        assert ws_mod._sanitize_filename("user@example.com") == (
+            "user@example.com"
+        )
+
+
+class TestRmtree:
+    def test_removes_directory(self, temp_data_dir):
+        d = temp_data_dir / "workspaces" / "toremove"
+        d.mkdir(parents=True)
+        (d / "file.txt").write_text("data")
+        ws_mod._rmtree(d, "test")
+        assert not d.exists()
+
+    def test_logs_errors(self, temp_data_dir, caplog):
+        """Logs warnings on individual file removal failures."""
+        d = temp_data_dir / "workspaces" / "failremove"
+        d.mkdir(parents=True)
+
+        def bad_rmtree(path, onexc=None):
+            onexc(os.unlink, str(d / "bad"), PermissionError("denied"))
+
+        with patch.object(shutil, "rmtree", bad_rmtree):
+            import logging
+
+            with caplog.at_level(logging.WARNING):
+                ws_mod._rmtree(d, "test-label")
+        assert "denied" in caplog.text
+        assert "test-label" in caplog.text
+
+
+class TestFindExternalSymlinks:
+    async def test_ignores_unrelated_paths_in_output(self, temp_data_dir):
+        """Paths that can't be made relative to home_dir's parent are skipped."""
+        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root.mkdir(parents=True, exist_ok=True)
+        home_dir = ws_root / "user1" / "home" / "ws1"
+        home_dir.mkdir(parents=True)
+
+        mock_proc = AsyncMock()
+        # Return a path that isn't under home_dir's parent
+        mock_proc.communicate = AsyncMock(
+            return_value=(b"/completely/unrelated/path\n", b"")
+        )
+        mock_proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await ws_mod._find_external_symlinks(home_dir)
+        assert result == []
+
+
 class TestBuildWorkspaceArchive:
     async def test_builds_importable_archive(self, temp_data_dir):
         """Archive contains workspace.json and home/ directory."""
         import json
         import subprocess
 
-        home_dir = temp_data_dir / "home" / "ws1"
+        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root.mkdir(parents=True, exist_ok=True)
+        home_dir = ws_root / "user1" / "home" / "ws1"
         home_dir.mkdir(parents=True)
         (home_dir / "hello.txt").write_text("test content")
 
         metadata = {"name": "myws", "image": None, "num_ports": 5}
-        archive_path = temp_data_dir / "test.tar.gz"
+        archive_path = ws_root / "test.tar.gz"
 
         result = await ws_mod.build_workspace_archive(
             metadata, home_dir, archive_path
@@ -2047,9 +2120,11 @@ class TestBuildWorkspaceArchive:
 
     async def test_builds_archive_without_home(self, temp_data_dir):
         """Archive works when home directory doesn't exist."""
-        home_dir = temp_data_dir / "nonexistent"
+        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root.mkdir(parents=True, exist_ok=True)
+        home_dir = ws_root / "nonexistent"
         metadata = {"name": "empty"}
-        archive_path = temp_data_dir / "empty.tar.gz"
+        archive_path = ws_root / "empty.tar.gz"
 
         result = await ws_mod.build_workspace_archive(
             metadata, home_dir, archive_path
@@ -2057,12 +2132,44 @@ class TestBuildWorkspaceArchive:
         assert result is True
         assert archive_path.exists()
 
+    async def test_excludes_external_symlinks(self, temp_data_dir):
+        """Symlinks pointing outside home_dir are excluded."""
+        import subprocess
+
+        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root.mkdir(parents=True, exist_ok=True)
+        home_dir = ws_root / "user1" / "home" / "ws1"
+        home_dir.mkdir(parents=True)
+        (home_dir / "good.txt").write_text("keep")
+        (home_dir / "bad_link").symlink_to("/etc/passwd")
+        (home_dir / "good_link").symlink_to("good.txt")
+
+        metadata = {"name": "test"}
+        archive_path = ws_root / "symtest.tar.gz"
+
+        result = await ws_mod.build_workspace_archive(
+            metadata, home_dir, archive_path
+        )
+        assert result is True
+
+        listing = subprocess.run(
+            ["tar", "tzf", str(archive_path)],
+            capture_output=True,
+            text=True,
+        )
+        members = listing.stdout.strip().split("\n")
+        assert any("good.txt" in m for m in members)
+        assert not any("bad_link" in m for m in members)
+        assert any("good_link" in m for m in members)
+
     async def test_tar_failure_returns_false(self, temp_data_dir):
         """Returns False when tar exits non-zero."""
-        home_dir = temp_data_dir / "home"
+        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root.mkdir(parents=True, exist_ok=True)
+        home_dir = ws_root / "home"
         home_dir.mkdir()
         metadata = {"name": "fail"}
-        archive_path = temp_data_dir / "fail.tar.gz"
+        archive_path = ws_root / "fail.tar.gz"
 
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(b"", b"tar: error"))
@@ -2076,9 +2183,11 @@ class TestBuildWorkspaceArchive:
 
     async def test_oserror_returns_false(self, temp_data_dir):
         """Returns False when tar cannot be started."""
-        home_dir = temp_data_dir / "home"
+        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root.mkdir(parents=True, exist_ok=True)
+        home_dir = ws_root / "home"
         metadata = {"name": "fail"}
-        archive_path = temp_data_dir / "fail.tar.gz"
+        archive_path = ws_root / "fail.tar.gz"
 
         with patch(
             "asyncio.create_subprocess_exec", side_effect=OSError("no tar")
@@ -2086,6 +2195,18 @@ class TestBuildWorkspaceArchive:
             result = await ws_mod.build_workspace_archive(
                 metadata, home_dir, archive_path
             )
+        assert result is False
+
+    async def test_path_outside_workspaces_root_rejected(self, temp_data_dir):
+        """Returns False if paths are outside WORKSPACES_ROOT."""
+        home_dir = temp_data_dir / "outside"
+        home_dir.mkdir(parents=True)
+        metadata = {"name": "bad"}
+        archive_path = temp_data_dir / "bad.tar.gz"
+
+        result = await ws_mod.build_workspace_archive(
+            metadata, home_dir, archive_path
+        )
         assert result is False
 
 
@@ -2208,7 +2329,9 @@ class TestArchiveUserData:
         assert archive.resolve().is_relative_to(
             ws_mod.WORKSPACES_ROOT.resolve()
         )
-        assert ".." not in archive.name
+        # Slashes are replaced with underscores
+        assert "/" not in archive.name
+        assert "\\" not in archive.name
 
     async def test_archive_path_traversal_blocked(self, user, workspace):
         """Skips workspace if archive path would escape WORKSPACES_ROOT."""

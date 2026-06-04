@@ -762,6 +762,96 @@ class TestLogout:
         assert "not_logged_in" in result.stdout
 
 
+class TestExportSymlinks:
+    @pytest.fixture(autouse=True)
+    def _login(self, cli_config):
+        """Ensure logged in for this test class."""
+        _run(
+            [
+                "klangk",
+                "login",
+                "test@example.com",
+                "--server",
+                cli_config["server_url"],
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=cli_config["env"],
+        )
+
+    def _get_home_dir(self, server, cli_config):
+        """Get the host-side home directory for a workspace.
+
+        Finds the workspace home dir by scanning the data directory
+        for workspace ID subdirectories.
+        """
+        from pathlib import Path
+
+        import httpx
+
+        resp = httpx.post(
+            f"{server['url']}/auth/login",
+            json={"email": "test@example.com", "password": "testpass"},
+        )
+        token = resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+        ws = [w for w in resp.json() if w["name"] == "e2e-symlink"][0]
+        ws_id = ws["id"]
+
+        # Find the user directory — it's the only subdirectory of workspaces/
+        ws_root = Path(server["data_dir"]) / "workspaces"
+        user_dirs = [d for d in ws_root.iterdir() if d.is_dir()]
+        assert len(user_dirs) == 1
+        return user_dirs[0] / "home" / ws_id
+
+    def test_export_keeps_internal_strips_external_symlinks(
+        self, server, cli_config, tmp_path
+    ):
+        """Internal symlinks are kept, external symlinks are stripped."""
+        env = cli_config["env"]
+
+        result = _run(["klangk", "create", "e2e-symlink"], env=env)
+        assert result.returncode == 0
+
+        try:
+            # Place files and symlinks directly on the host filesystem
+            # (the workspace home dir is what gets archived by export).
+            home_dir = self._get_home_dir(server, cli_config)
+            home_dir.mkdir(parents=True, exist_ok=True)
+
+            (home_dir / "real.txt").write_text("real content")
+            # Internal: relative symlink to a file within home (kept)
+            (home_dir / "good_link").symlink_to("real.txt")
+            # External: absolute symlink to /etc/hostname (stripped)
+            (home_dir / "bad_link").symlink_to("/etc/hostname")
+
+            archive = tmp_path / "symlink-test.tar.gz"
+            result = _run(
+                ["klangk", "export", "e2e-symlink", "-o", str(archive)],
+                env=env,
+                timeout=60,
+            )
+            assert result.returncode == 0, result.stderr or result.stdout
+
+            import tarfile
+
+            with tarfile.open(archive, "r:gz") as tar:
+                names = tar.getnames()
+                # Internal symlink preserved
+                assert any("real.txt" in n for n in names)
+                assert any("good_link" in n for n in names)
+                good = [m for m in tar.getmembers() if "good_link" in m.name]
+                assert len(good) == 1
+                assert good[0].issym()
+                # External symlink stripped
+                assert not any("bad_link" in n for n in names)
+        finally:
+            _run(["klangk", "rm", "e2e-symlink"], env=env)
+
+
 class TestExportImport:
     @pytest.fixture(autouse=True)
     def _login(self, cli_config):
