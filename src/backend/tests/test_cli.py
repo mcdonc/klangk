@@ -757,6 +757,7 @@ class TestExportImportClient:
         output = tmp_path / "exported.tar.gz"
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.is_success = True
         mock_resp.iter_bytes.return_value = [b"chunk1", b"chunk2"]
 
         with patch("httpx.stream") as mock_stream:
@@ -768,6 +769,29 @@ class TestExportImportClient:
 
         assert output.read_bytes() == b"chunk1chunk2"
         mock_stream.assert_called_once()
+
+    def test_export_workspace_http_error(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.server.url = "http://localhost:8995"
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.is_success = False
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "not found", request=MagicMock(), response=mock_resp
+        )
+
+        with patch("httpx.stream") as mock_stream:
+            mock_stream.return_value.__enter__ = MagicMock(
+                return_value=mock_resp
+            )
+            mock_stream.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(httpx.HTTPStatusError):
+                client.export_workspace("bad-id", tmp_path / "out.tar.gz")
+
+        mock_resp.read.assert_called_once()
 
     def test_export_workspace_auth_error(self, tmp_path):
         cfg = CLIConfig()

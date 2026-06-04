@@ -162,7 +162,9 @@ class KlangkClient:
             timeout=300.0,
         ) as resp:
             self._check_auth(resp)
-            resp.raise_for_status()
+            if not resp.is_success:
+                resp.read()  # consume body so .text is available
+                resp.raise_for_status()
             with open(output, "wb") as f:
                 for chunk in resp.iter_bytes():
                     f.write(chunk)
