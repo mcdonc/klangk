@@ -110,7 +110,6 @@
   # Priority: devenv.local.nix (mkForce/50) > .env (mkDefault/1000) > these defaults (1500)
   env.KLANGK_PORT = lib.mkOverride 1500 "8997";
   env.KLANGK_NGINX_PORT = lib.mkOverride 1500 "8995";
-  env.KLANGK_SOLIPLEX_PORT = lib.mkOverride 1500 "8555";
   env.KLANGK_DATA_DIR = lib.mkOverride 1500 (config.devenv.root + "/.devenv/state/klangk/data");
   env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (config.devenv.root + "/.devenv/state/klangk/plugins");
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";

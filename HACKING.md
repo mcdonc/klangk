@@ -72,6 +72,8 @@ Backend tests for Python changes, frontend tests for Dart changes. Run E2E tests
 
 ## Environment Variables
 
+`$DEVENV_STATE` refers to `<project root>/.devenv/state` — this is where devenv stores runtime data.
+
 All settings can be overridden in `.env`. Defaults (where appropriate) are provided in `devenv.nix` at low priority so `.env` values take precedence.
 
 **`file:` prefix:** Any env var can be prefixed with `file:` to read the value from a file at runtime (e.g. `KLANGK_JWT_SECRET=file:/run/secrets/jwt`). The file contents are stripped of leading/trailing whitespace. This works with secret management tools like agenix/sops that write decrypted secrets to files. If the file cannot be read, an error is logged and the value is treated as unset.
@@ -80,7 +82,6 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | ------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `KLANGK_NGINX_PORT`             | `8995`                               | **Primary access point** — nginx reverse proxy port (UI, API, WebSocket, hosted apps)                                                                       |
 | `KLANGK_PORT`                   | `8997`                               | Backend (FastAPI/uvicorn) port — proxied through nginx, not accessed directly                                                                               |
-| `KLANGK_SOLIPLEX_PORT`          | `8555`                               | Soliplex backend port (unused unless Soliplex integration is configured)                                                                                    |
 | `KLANGK_DATA_DIR`               | `$DEVENV_STATE/klangk/data`          | Database, workspaces, Pi sessions                                                                                                                           |
 | `KLANGK_PLUGINS_DIR`            | `$DEVENV_STATE/klangk/plugins`       | Fetched plugins (outside repo for `execIfModified`)                                                                                                         |
 | `KLANGK_IMAGE_NAME`             | `klangk`                             | Docker image name for workspace containers                                                                                                                  |
@@ -120,14 +121,6 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 - `KLANGK_PORT` (default `8997`): Backend (FastAPI/uvicorn)
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
 
-## Build Commands
-
-```bash
-flutterbuildweb   # rebuild Flutter web assets
-dockerbuild       # rebuild the workspace Docker image
-update-plugins    # fetch plugins from git repos
-```
-
 ## Branch Protection
 
 `main` requires a PR with 4 passing checks before merge:
@@ -151,7 +144,6 @@ src/
     e2e-tests/         # Playwright E2E tests
   docker/              # Dockerfile, entrypoint, system prompt
   bridge/              # @klangk/bridge npm package
-  cli/                 # klangk CLI (Python)
 plugins/               # Built-in plugins (celebrate, beep, etc.)
 scripts/               # Build and utility scripts
 devenv.nix             # devenv configuration
