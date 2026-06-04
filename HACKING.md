@@ -262,7 +262,7 @@ klangk volumes create nix-store     # create a named volume
 klangk volumes rm nix-store         # delete a volume
 ```
 
-The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers. See [CLI.md](CLI.md) for the full CLI reference and roadmap.
+The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
 
 ## Pre-commit Hooks
 
