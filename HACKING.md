@@ -257,12 +257,29 @@ klangk shell my-project                 # drop into bash inside the container
 klangk exec my-project ls /home/klangk/work         # run a command in the container
 klangk sync ~/src my-project:/home/klangk/work      # sync files to/from the container
 klangk rm my-project                # delete a workspace
+klangk export my-project            # export workspace to my-project.tar.gz (admin only)
+klangk export my-project -o bak.tar.gz  # export to specific file
+klangk import bak.tar.gz            # import workspace from archive
+klangk import bak.tar.gz --name new-name  # import with a different name
 klangk volumes ls                   # list Docker volumes
 klangk volumes create nix-store     # create a named volume
 klangk volumes rm nix-store         # delete a volume
 ```
 
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
+
+## Workspace Export/Import
+
+Workspaces can be exported as `.tar.gz` archives and imported to create new workspaces. The archive contains:
+
+- `workspace.json` — metadata (name, image, default command, mounts, env vars, num_ports)
+- `home/` — the workspace's home directory tree (files, dotfiles, virtualenvs, Pi sessions, bash history)
+
+**Export** (admin only): `klangk export <workspace>` downloads the archive via `GET /workspaces/{id}/export`. The tarball is built on the server using a temp file to avoid memory pressure on large workspaces.
+
+**Import**: `klangk import <archive>` uploads the archive via `POST /workspaces/import`. The server streams the upload to a temp file, extracts metadata, creates the workspace, and extracts the home directory. Invalid images or mounts from the archive are silently dropped. Use `--name` to override the workspace name from the archive.
+
+System-level packages (apt installs, etc.) are not included — those belong in custom Docker images.
 
 ## Pre-commit Hooks
 

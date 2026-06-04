@@ -745,3 +745,105 @@ class TestMisc:
         cfg = CLIConfig.load()
         assert cfg.auth.email == "admin@example.com"
         assert cfg.auth.token == "jwt"
+
+
+class TestExportImportClient:
+    def test_export_workspace_streams_to_file(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.server.url = "http://localhost:8995"
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+
+        output = tmp_path / "exported.tar.gz"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.iter_bytes.return_value = [b"chunk1", b"chunk2"]
+
+        with patch("httpx.stream") as mock_stream:
+            mock_stream.return_value.__enter__ = MagicMock(
+                return_value=mock_resp
+            )
+            mock_stream.return_value.__exit__ = MagicMock(return_value=False)
+            client.export_workspace("ws-id-123", output)
+
+        assert output.read_bytes() == b"chunk1chunk2"
+        mock_stream.assert_called_once()
+
+    def test_export_workspace_auth_error(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.auth.token = "bad"
+        client = KlangkClient(cfg)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+
+        with patch("httpx.stream") as mock_stream:
+            mock_stream.return_value.__enter__ = MagicMock(
+                return_value=mock_resp
+            )
+            mock_stream.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(AuthError):
+                client.export_workspace("ws-id", tmp_path / "out.tar.gz")
+
+    def test_import_workspace_returns_workspace(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.server.url = "http://localhost:8995"
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+
+        archive = tmp_path / "test.tar.gz"
+        archive.write_bytes(b"fake archive")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "new-id",
+            "name": "imported-ws",
+            "created_at": "2025-01-01",
+        }
+
+        with patch("httpx.post", return_value=mock_resp):
+            ws = client.import_workspace(archive, name="imported-ws")
+
+        assert ws.name == "imported-ws"
+        assert ws.id == "new-id"
+
+    def test_import_workspace_auth_error(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.auth.token = "bad"
+        client = KlangkClient(cfg)
+
+        archive = tmp_path / "test.tar.gz"
+        archive.write_bytes(b"fake")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+
+        with patch("httpx.post", return_value=mock_resp):
+            with pytest.raises(AuthError):
+                client.import_workspace(archive)
+
+    def test_import_workspace_no_name(self, tmp_path):
+        cfg = CLIConfig()
+        cfg.server.url = "http://localhost:8995"
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+
+        archive = tmp_path / "test.tar.gz"
+        archive.write_bytes(b"fake")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "id2",
+            "name": "from-archive",
+            "created_at": "2025-01-01",
+        }
+
+        with patch("httpx.post", return_value=mock_resp) as mock_post:
+            ws = client.import_workspace(archive)
+
+        assert ws.name == "from-archive"
+        # Verify no name param was sent
+        call_kwargs = mock_post.call_args
+        assert call_kwargs.kwargs.get("params") == {}

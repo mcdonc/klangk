@@ -760,3 +760,91 @@ class TestLogout:
             env=cli_config["env"],
         )
         assert "not_logged_in" in result.stdout
+
+
+class TestExportImport:
+    @pytest.fixture(autouse=True)
+    def _login(self, cli_config):
+        """Ensure logged in for this test class."""
+        _run(
+            [
+                "klangk",
+                "login",
+                "test@example.com",
+                "--server",
+                cli_config["server_url"],
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=cli_config["env"],
+        )
+        yield
+        # Clean up workspaces created during tests
+        result = _run(["klangk", "list", "--plain"], env=cli_config["env"])
+        for line in result.stdout.strip().splitlines():
+            parts = line.split()
+            if parts and parts[0].startswith("export-"):
+                _run(["klangk", "rm", parts[0]], env=cli_config["env"])
+
+    def test_export_and_import_round_trip(self, cli_config, tmp_path):
+        env = cli_config["env"]
+
+        # Create a workspace with metadata
+        result = _run(
+            [
+                "klangk",
+                "create",
+                "export-test",
+                "--env",
+                "MY_VAR=hello",
+            ],
+            env=env,
+        )
+        assert result.returncode == 0
+
+        # Export (workspace has no container started yet — just metadata)
+        archive = tmp_path / "export-test.tar.gz"
+        result = _run(
+            ["klangk", "export", "export-test", "-o", str(archive)],
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
+        assert archive.exists()
+        assert archive.stat().st_size > 0
+
+        # Verify archive contents
+        import json
+        import tarfile
+
+        with tarfile.open(archive, "r:gz") as tar:
+            names = tar.getnames()
+            assert "workspace.json" in names
+            meta = json.loads(tar.extractfile("workspace.json").read())
+            assert meta["name"] == "export-test"
+            assert meta["env"] == {"MY_VAR": "hello"}
+
+        # Delete the original
+        _run(["klangk", "rm", "export-test"], env=env)
+
+        # Import with a new name
+        result = _run(
+            [
+                "klangk",
+                "import",
+                str(archive),
+                "--name",
+                "export-restored",
+            ],
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
+
+        # Verify the imported workspace exists
+        result = _run(["klangk", "list", "--plain"], env=env)
+        assert "export-restored" in result.stdout
+
+        # Clean up
+        _run(["klangk", "rm", "export-restored"], env=env)

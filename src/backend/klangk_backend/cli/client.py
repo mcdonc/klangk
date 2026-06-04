@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+from pathlib import Path
 import select
 import sys
 import termios
@@ -151,6 +152,42 @@ class KlangkClient:
         if not resp.is_success:
             logging.error("Failed to delete workspace: %s", resp.text)
             sys.exit(1)
+
+    def export_workspace(self, workspace_id: str, output: Path) -> None:
+        """Download a workspace archive to a file."""
+        with httpx.stream(
+            "GET",
+            f"{self.cfg.server.url}/workspaces/{workspace_id}/export",
+            headers=self._headers(),
+            timeout=300.0,
+        ) as resp:
+            self._check_auth(resp)
+            resp.raise_for_status()
+            with open(output, "wb") as f:
+                for chunk in resp.iter_bytes():
+                    f.write(chunk)
+
+    def import_workspace(
+        self, archive: Path, name: str | None = None
+    ) -> Workspace:
+        """Upload a workspace archive and create a new workspace."""
+        params = {}
+        if name:
+            params["name"] = name
+        with open(archive, "rb") as f:
+            resp = httpx.post(
+                f"{self.cfg.server.url}/workspaces/import",
+                headers=self._headers(),
+                files={"file": (archive.name, f, "application/gzip")},
+                params=params,
+                timeout=300.0,
+            )
+        self._check_auth(resp)
+        resp.raise_for_status()
+        w = resp.json()
+        return Workspace(
+            id=w["id"], name=w["name"], created_at=w["created_at"]
+        )
 
 
 class WorkspaceNotFoundError(Exception):

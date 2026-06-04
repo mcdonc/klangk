@@ -225,6 +225,53 @@ def rm(
     typer.echo(f"Deleted workspace {name}")
 
 
+@app.command("export")
+def export_workspace(
+    name: str = typer.Argument(..., help="Workspace name"),
+    output: Path = typer.Option(
+        None, "-o", "--output", help="Output file (default: <name>.tar.gz)"
+    ),
+) -> None:
+    """Export a workspace to a .tar.gz archive (admin only)."""
+    _require_auth()
+    client = _client()
+    try:
+        ws = client.resolve_workspace(name)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{name}'")
+        raise typer.Exit(code=1) from None
+    out_path = output or Path(f"{name}.tar.gz")
+    try:
+        client.export_workspace(ws.id, out_path)
+    except httpx.HTTPStatusError as e:
+        _err.print(f"[red]Export failed:[/red] {e.response.text}")
+        raise typer.Exit(code=1) from None
+    _out = Console()
+    _out.print(f"Exported [bold]{name}[/bold] → {out_path}")
+
+
+@app.command("import")
+def import_workspace(
+    archive: Path = typer.Argument(..., help="Path to .tar.gz archive"),
+    name: str = typer.Option(
+        None, "--name", help="Override workspace name from archive"
+    ),
+) -> None:
+    """Import a workspace from a .tar.gz archive."""
+    _require_auth()
+    if not archive.exists():
+        _err.print(f"[red]File not found:[/red] {archive}")
+        raise typer.Exit(code=1)
+    client = _client()
+    try:
+        ws = client.import_workspace(archive, name=name)
+    except httpx.HTTPStatusError as e:
+        _err.print(f"[red]Import failed:[/red] {e.response.text}")
+        raise typer.Exit(code=1) from None
+    _out = Console()
+    _out.print(f"Imported [bold]{ws.name}[/bold] ({ws.id[:12]})")
+
+
 _SENTINEL = object()
 
 

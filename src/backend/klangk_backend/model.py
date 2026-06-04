@@ -471,6 +471,34 @@ async def get_workspace(workspace_id: str, user_id: str) -> dict | None:
         await db.close()
 
 
+async def get_workspace_by_id(workspace_id: str) -> dict | None:
+    """Get a workspace by ID without access control (for admin use)."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, user_id, name, container_id, num_ports, image,"
+            " default_command, mounts, env"
+            " FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "name": row["name"],
+            "container_id": row["container_id"],
+            "num_ports": row["num_ports"],
+            "image": row["image"],
+            "default_command": row["default_command"],
+            "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
+            "env": json.loads(row["env"]) if row["env"] else None,
+        }
+    finally:
+        await db.close()
+
+
 async def share_workspace(workspace_id: str, user_id: str) -> None:
     """Grant a user access to a workspace."""
     db = await get_db()

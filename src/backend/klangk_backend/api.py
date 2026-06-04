@@ -1,9 +1,12 @@
 """API route handlers for Klangk backend."""
 
 import io
+import json
 import logging
 import posixpath
 import sqlite3
+import tarfile
+import tempfile
 import time
 import uuid
 import zipfile
@@ -584,6 +587,182 @@ async def delete_workspace(
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="Workspace not found")
     return {"status": "deleted"}
+
+
+def _cleanup_tempfile(path: str):
+    """Return a Starlette BackgroundTask that deletes a temp file."""
+    from starlette.background import BackgroundTask
+
+    async def _delete():
+        import os
+
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    return BackgroundTask(_delete)
+
+
+# --- Workspace export/import endpoints ---
+
+
+@router.get("/workspaces/{workspace_id}/export")
+async def export_workspace(
+    workspace_id: str, admin: dict = Depends(auth.require_role("admin"))
+):
+    """Export a workspace as a .tar.gz archive (admin only).
+
+    The archive contains workspace.json (metadata) and the home
+    directory tree under home/.
+    """
+    workspace = await model.get_workspace(workspace_id, admin["id"])
+    if workspace is None:
+        # Admin may not own the workspace — look it up without access check.
+        workspace = await model.get_workspace_by_id(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    home_dir = workspaces.home_path(workspace["user_id"], workspace_id)
+    ws_name = workspace["name"]
+
+    metadata = {
+        "name": ws_name,
+        "image": workspace.get("image"),
+        "default_command": workspace.get("default_command"),
+        "mounts": workspace.get("mounts"),
+        "env": workspace.get("env"),
+        "num_ports": workspace.get("num_ports", 5),
+    }
+
+    # Build tarball to a temp file to avoid holding it all in memory.
+    tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
+    try:
+        with tarfile.open(fileobj=tmp, mode="w:gz") as tar:
+            # Add workspace.json
+            meta_bytes = json.dumps(metadata, indent=2).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta_bytes)
+            tar.addfile(info, io.BytesIO(meta_bytes))
+
+            # Add home directory
+            if home_dir.exists():
+                tar.add(str(home_dir), arcname="home")
+        tmp.close()
+
+        safe_name = ws_name.replace("/", "_").replace("\\", "_")
+        return FileResponse(
+            tmp.name,
+            media_type="application/gzip",
+            filename=f"{safe_name}.tar.gz",
+            background=_cleanup_tempfile(tmp.name),
+        )
+    except Exception:
+        import os
+
+        os.unlink(tmp.name)
+        raise
+
+
+@router.post("/workspaces/import")
+async def import_workspace(
+    file: UploadFile,
+    name: str | None = None,
+    user: dict = Depends(auth.get_current_user),
+):
+    """Import a workspace from a .tar.gz archive.
+
+    Creates a new workspace with metadata from workspace.json and
+    extracts the home directory from the archive.
+    """
+    # Stream upload to a temp file to avoid holding it all in memory.
+    tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
+    try:
+        while chunk := await file.read(1024 * 1024):
+            tmp.write(chunk)
+        tmp.close()
+    except Exception:
+        import os
+
+        os.unlink(tmp.name)
+        raise
+    try:
+        with tarfile.open(tmp.name, mode="r:gz") as tar:
+            # Validate: no path traversal
+            for member in tar.getmembers():
+                if member.name.startswith("/") or ".." in member.name:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid path in archive: {member.name}",
+                    )
+
+            # Extract workspace.json
+            try:
+                meta_file = tar.extractfile("workspace.json")
+            except KeyError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Archive missing workspace.json",
+                )
+            if meta_file is None:  # pragma: no cover — defensive
+                raise HTTPException(
+                    status_code=400,
+                    detail="Archive missing workspace.json",
+                )
+            metadata = json.loads(meta_file.read())
+
+            ws_name = name or metadata.get("name")
+            if not ws_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No workspace name in archive or request",
+                )
+
+            image = metadata.get("image")
+            if image and image not in container.ALLOWED_IMAGES:
+                image = None  # fall back to default
+
+            mounts = metadata.get("mounts")
+            if mounts and container.validate_mounts(mounts):
+                mounts = None  # invalid mounts, drop them
+
+            try:
+                ws = await workspaces.create_workspace(
+                    user["id"],
+                    ws_name,
+                    image=image,
+                    default_command=metadata.get("default_command"),
+                    mounts=mounts,
+                    env=metadata.get("env"),
+                )
+            except sqlite3.IntegrityError:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A workspace named {ws_name!r} already exists",
+                )
+
+            # Extract home directory into the new workspace
+            home_dir = workspaces.home_path(user["id"], ws["id"])
+            home_dir.mkdir(parents=True, exist_ok=True)
+            home_members = [
+                m for m in tar.getmembers() if m.name.startswith("home/")
+            ]
+            for member in home_members:
+                # Strip the "home/" prefix
+                member.name = member.name[5:]  # len("home/") == 5
+            home_members = [m for m in home_members if m.name]
+            tar.extractall(path=str(home_dir), members=home_members)
+
+    except tarfile.TarError:
+        raise HTTPException(
+            status_code=400, detail="Invalid or corrupt archive"
+        )
+    finally:
+        import os
+
+        os.unlink(tmp.name)
+
+    return ws
 
 
 # --- Workspace sharing endpoints ---

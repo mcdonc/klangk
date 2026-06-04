@@ -1,6 +1,8 @@
 """Tests for api.py: HTTP route handlers via FastAPI TestClient."""
 
 import io
+import os
+import tempfile
 import zipfile
 
 import pytest
@@ -2065,3 +2067,492 @@ class TestArchiveUserData:
             ws_mod.WORKSPACES_ROOT.resolve()
         )
         assert ".." not in result.name
+
+
+# --- Workspace Export/Import ---
+
+
+class TestWorkspaceExportImport:
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testadmin@example.com", "password": "testpass"},
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def _user_headers(self, client):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_export_workspace(self, client, admin_user, user):
+        # Create a workspace as regular user
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "export-test"}
+        )
+        assert resp.status_code == 200
+        ws = resp.json()
+
+        # Write a file into the workspace home dir
+        import klangk_backend.workspaces as ws_mod
+
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "work").mkdir(exist_ok=True)
+        (home / "work" / "hello.txt").write_text("hello world")
+
+        # Export as admin
+        admin_headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/gzip"
+        assert "export-test.tar.gz" in resp.headers["content-disposition"]
+
+        # Verify the archive contents
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO(resp.content)
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+            names = tar.getnames()
+            assert "workspace.json" in names
+            assert any("home" in n for n in names)
+
+            meta_file = tar.extractfile("workspace.json")
+            metadata = json.loads(meta_file.read())
+            assert metadata["name"] == "export-test"
+
+    async def test_export_requires_admin(self, client, user):
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "no-export"}
+        )
+        ws = resp.json()
+
+        # Non-admin cannot export
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=headers
+        )
+        assert resp.status_code == 403
+
+    async def test_export_not_found(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            "/workspaces/nonexistent-id/export", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_import_workspace(self, client, admin_user, user):
+        # Create and export a workspace
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces",
+            headers=headers,
+            json={
+                "name": "import-source",
+                "default_command": "pi",
+                "env": {"FOO": "bar"},
+            },
+        )
+        ws = resp.json()
+
+        import klangk_backend.workspaces as ws_mod
+
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "work").mkdir(exist_ok=True)
+        (home / "work" / "data.txt").write_text("test data")
+
+        admin_headers = await self._admin_headers(client)
+        export_resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert export_resp.status_code == 200
+
+        # Import as regular user with a new name
+        import_resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            params={"name": "imported-ws"},
+            files={
+                "file": (
+                    "archive.tar.gz",
+                    export_resp.content,
+                    "application/gzip",
+                )
+            },
+        )
+        assert import_resp.status_code == 200
+        imported = import_resp.json()
+        assert imported["name"] == "imported-ws"
+
+        # Verify the home dir was extracted
+        new_home = ws_mod.home_path(user["id"], imported["id"])
+        assert (new_home / "work" / "data.txt").exists()
+        assert (new_home / "work" / "data.txt").read_text() == "test data"
+
+    async def test_import_uses_archive_name(self, client, admin_user, user):
+        # Build a minimal archive with workspace.json
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "from-archive"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "from-archive"
+
+    async def test_import_duplicate_name(self, client, user):
+        headers = await self._user_headers(client)
+        await client.post(
+            "/workspaces", headers=headers, json={"name": "taken"}
+        )
+
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "taken"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 409
+
+    async def test_import_missing_metadata(self, client, user):
+        import io
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            data = b"just some data"
+            info = tarfile.TarInfo(name="random.txt")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+        assert "workspace.json" in resp.json()["detail"]
+
+    async def test_import_invalid_archive(self, client, user):
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("bad.tar.gz", b"not a tarball", "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_import_no_name(self, client, user):
+        """Archive has no name and no name param → error."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+        assert "No workspace name" in resp.json()["detail"]
+
+    async def test_import_disallowed_image_falls_back(self, client, user):
+        """Archive with disallowed image falls back to default."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                {"name": "img-fallback", "image": "evil:latest"}
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "img-fallback"
+
+    async def test_import_invalid_mounts_dropped(self, client, user):
+        """Archive with invalid mounts drops them silently."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                {"name": "mount-drop", "mounts": ["bad-mount-spec"]}
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "mount-drop"
+
+    async def test_import_home_root_member_skipped(self, client, user):
+        """The bare 'home/' directory entry is skipped during extraction."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "home-root-skip"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+
+            # Add a "home/" directory entry (empty name after stripping)
+            dir_info = tarfile.TarInfo(name="home/")
+            dir_info.type = tarfile.DIRTYPE
+            tar.addfile(dir_info)
+
+            # Add a real file under home/
+            data = b"content"
+            file_info = tarfile.TarInfo(name="home/test.txt")
+            file_info.size = len(data)
+            tar.addfile(file_info, io.BytesIO(data))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+
+        import klangk_backend.workspaces as ws_mod
+
+        ws = resp.json()
+        home = ws_mod.home_path(user["id"], ws["id"])
+        assert (home / "test.txt").exists()
+
+    async def test_export_error_cleans_tempfile(
+        self, client, admin_user, user, monkeypatch
+    ):
+        """If tarball creation fails, the temp file is cleaned up."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "err-export"}
+        )
+        ws = resp.json()
+
+        import klangk_backend.api as api_mod
+        import tarfile as tarfile_mod
+
+        original_open = tarfile_mod.open
+        created_tmp = []
+
+        original_ntf = tempfile.NamedTemporaryFile
+
+        def _tracking_ntf(*args, **kwargs):
+            tmp = original_ntf(*args, **kwargs)
+            created_tmp.append(tmp.name)
+            return tmp
+
+        def _failing_open(*args, **kwargs):
+            tf = original_open(*args, **kwargs)
+
+            def _bad_add(*a, **kw):
+                raise OSError("disk error")
+
+            tf.add = _bad_add
+            return tf
+
+        monkeypatch.setattr(api_mod.tarfile, "open", _failing_open)
+        monkeypatch.setattr(
+            api_mod.tempfile, "NamedTemporaryFile", _tracking_ntf
+        )
+
+        admin_headers = await self._admin_headers(client)
+        with pytest.raises(OSError, match="disk error"):
+            await client.get(
+                f"/workspaces/{ws['id']}/export", headers=admin_headers
+            )
+
+        # Verify the temp file was cleaned up
+        assert len(created_tmp) == 1
+        assert not os.path.exists(created_tmp[0])
+
+    async def test_export_cleanup_tempfile(self, client, admin_user, user):
+        """The export endpoint's background task cleans up the temp file."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "cleanup-test"}
+        )
+        ws = resp.json()
+
+        admin_headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 200
+
+        # Verify _cleanup_tempfile returns a valid BackgroundTask
+        from klangk_backend.api import _cleanup_tempfile
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
+        tmp.close()
+        task = _cleanup_tempfile(tmp.name)
+        assert task is not None
+
+        # Run the background task
+
+        await task()
+        import os
+
+        assert not os.path.exists(tmp.name)
+
+    async def test_export_cleanup_tempfile_missing_file(self):
+        """_cleanup_tempfile handles missing files gracefully."""
+        from klangk_backend.api import _cleanup_tempfile
+
+        task = _cleanup_tempfile("/nonexistent/path/file.tar.gz")
+        await task()  # Should not raise
+
+    async def test_import_upload_error_cleans_tempfile(
+        self, client, user, monkeypatch
+    ):
+        """If the upload write fails, the temp file is cleaned up."""
+        import klangk_backend.api as api_mod
+
+        headers = await self._user_headers(client)
+
+        created_tmp = []
+        original_ntf = tempfile.NamedTemporaryFile
+
+        def _failing_ntf(*args, **kwargs):
+            tmp = original_ntf(*args, **kwargs)
+            created_tmp.append(tmp.name)
+
+            def _bad_write(data):
+                raise IOError("disk full")
+
+            tmp.write = _bad_write
+            return tmp
+
+        monkeypatch.setattr(
+            api_mod.tempfile, "NamedTemporaryFile", _failing_ntf
+        )
+
+        with pytest.raises(IOError, match="disk full"):
+            await client.post(
+                "/workspaces/import",
+                headers=headers,
+                files={
+                    "file": (
+                        "test.tar.gz",
+                        b"some data",
+                        "application/gzip",
+                    )
+                },
+            )
+
+        assert len(created_tmp) == 1
+        assert not os.path.exists(created_tmp[0])
+
+    async def test_import_path_traversal_rejected(self, client, user):
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "traversal-test"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+
+            evil = b"pwned"
+            info = tarfile.TarInfo(name="../../../etc/passwd")
+            info.size = len(evil)
+            tar.addfile(info, io.BytesIO(evil))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+        assert "Invalid path" in resp.json()["detail"]

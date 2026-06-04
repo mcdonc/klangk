@@ -88,6 +88,7 @@ In CI, `devenv processes up -d` starts nginx before E2E tests run.
 - Containers stay alive after disconnect — idle timeout handles cleanup
 - On logout, containers are only stopped if no other users are actively connected to shared workspaces
 - Container lifecycle visible in debug panel
+- **Export/import**: admins can export a workspace as a `.tar.gz` archive (home directory + metadata) via `GET /workspaces/{id}/export`. Any user can import an archive via `POST /workspaces/import` to create a new workspace. CLI commands: `klangk export` / `klangk import`. See [HACKING.md](HACKING.md#workspace-exportimport) for details.
 
 ### Pi Agent Integration
 
