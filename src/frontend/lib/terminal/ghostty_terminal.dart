@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flterm/flterm.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -124,6 +125,99 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     _focusNode.requestFocus();
   }
 
+  // --- Font zoom (issue #7) ---
+  // Cmd/Ctrl +/- changes the terminal font size; Cmd/Ctrl+0 resets it. The
+  // bindings live in [_terminalShortcuts] so flterm intercepts them before
+  // forwarding the keys to the shell (otherwise they print as input).
+  static const double _defaultFontSize = 16;
+  static const double _minFontSize = 6;
+  static const double _maxFontSize = 40;
+  static const double _fontSizeStep = 1;
+  double _fontSize = _defaultFontSize;
+
+  /// Current terminal font size. Visible for tests.
+  @visibleForTesting
+  double get fontSize => _fontSize;
+
+  void _setFontSize(double size) {
+    final clamped = size.clamp(_minFontSize, _maxFontSize).toDouble();
+    if (clamped == _fontSize) return;
+    setState(() => _fontSize = clamped);
+  }
+
+  @visibleForTesting
+  void increaseFontSize() => _setFontSize(_fontSize + _fontSizeStep);
+
+  @visibleForTesting
+  void decreaseFontSize() => _setFontSize(_fontSize - _fontSizeStep);
+
+  @visibleForTesting
+  void resetFontSize() => _setFontSize(_defaultFontSize);
+
+  // --- Scrollback (issue #7) ---
+  // Shift+PgUp / Shift+PgDown page through the scrollback buffer. Offset 0 is
+  // the top (oldest) of scrollback; maxScrollExtent is the live view, so "up"
+  // decreases the offset. Plain PgUp/PgDown are left for the shell.
+  void _scrollByPage(bool up) {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final page = position.viewportDimension;
+    final target = (position.pixels + (up ? -page : page))
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
+    if (target == position.pixels) return;
+    _scrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @visibleForTesting
+  void scrollPageUp() => _scrollByPage(true);
+
+  @visibleForTesting
+  void scrollPageDown() => _scrollByPage(false);
+
+  /// Current scrollback offset (0 = oldest). Visible for tests.
+  @visibleForTesting
+  double get scrollOffset =>
+      _scrollController.hasClients ? _scrollController.offset : 0;
+
+  /// Live-view offset (bottom of scrollback). Visible for tests.
+  @visibleForTesting
+  double get maxScrollExtent => _scrollController.hasClients
+      ? _scrollController.position.maxScrollExtent
+      : 0;
+
+  /// flterm merges these over its platform defaults. Font zoom uses Cmd on
+  /// macOS/iOS and Ctrl elsewhere (matching browser convention on web too);
+  /// scrollback paging is Shift+PgUp/PgDown. On web we also disable flterm's
+  /// built-in paste (see [_disableFltermPaste]).
+  Map<ShortcutActivator, Intent> get _terminalShortcuts {
+    final useMeta = defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    SingleActivator zoom(LogicalKeyboardKey key, {bool shift = false}) =>
+        SingleActivator(key, meta: useMeta, control: !useMeta, shift: shift);
+    return {
+      if (kIsWeb) ..._disableFltermPaste,
+      // Font zoom — accept '='/'+'/numpad-+ for increase, '-'/numpad-- for
+      // decrease, '0' to reset. The shift variant of '=' covers Cmd/Ctrl++.
+      zoom(LogicalKeyboardKey.equal): const _IncreaseFontSizeIntent(),
+      zoom(LogicalKeyboardKey.equal, shift: true):
+          const _IncreaseFontSizeIntent(),
+      zoom(LogicalKeyboardKey.add): const _IncreaseFontSizeIntent(),
+      zoom(LogicalKeyboardKey.numpadAdd): const _IncreaseFontSizeIntent(),
+      zoom(LogicalKeyboardKey.minus): const _DecreaseFontSizeIntent(),
+      zoom(LogicalKeyboardKey.numpadSubtract): const _DecreaseFontSizeIntent(),
+      zoom(LogicalKeyboardKey.digit0): const _ResetFontSizeIntent(),
+      // Scrollback paging — plain PgUp/PgDown are left for the shell.
+      const SingleActivator(LogicalKeyboardKey.pageUp, shift: true):
+          const _ScrollPageIntent(up: true),
+      const SingleActivator(LogicalKeyboardKey.pageDown, shift: true):
+          const _ScrollPageIntent(up: false),
+    };
+  }
+
   @override
   void dispose() {
     _focusNode.dispose();
@@ -161,8 +255,30 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       // paste, no native `paste` event fires, and installPasteListener never
       // runs. Override DoNothingAction here with consumesKey: false so the
       // key propagates to the textarea and the browser pastes natively.
+      // Font-zoom / scrollback intents (issue #7) are dispatched by flterm's
+      // Shortcuts scope (it merges [_terminalShortcuts] over its defaults) and
+      // bubble up to here for handling, so the keys never reach the shell.
       actions: <Type, Action<Intent>>{
         DoNothingIntent: DoNothingAction(consumesKey: false),
+        _IncreaseFontSizeIntent:
+            CallbackAction<_IncreaseFontSizeIntent>(onInvoke: (_) {
+          increaseFontSize();
+          return null;
+        }),
+        _DecreaseFontSizeIntent:
+            CallbackAction<_DecreaseFontSizeIntent>(onInvoke: (_) {
+          decreaseFontSize();
+          return null;
+        }),
+        _ResetFontSizeIntent:
+            CallbackAction<_ResetFontSizeIntent>(onInvoke: (_) {
+          resetFontSize();
+          return null;
+        }),
+        _ScrollPageIntent: CallbackAction<_ScrollPageIntent>(onInvoke: (i) {
+          _scrollByPage(i.up);
+          return null;
+        }),
       },
       child: Listener(
         // Copy-on-select: when the user finishes a mouse selection
@@ -189,19 +305,20 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         },
         child: TerminalView(
           controller: _terminal,
-          theme: _theme,
+          theme: _theme.copyWith(fontSize: _fontSize),
           fontData: _fontData,
           focusNode: _focusNode,
           scrollController: _scrollController,
           autofocus: false,
           padding: EdgeInsets.zero,
-          // On web, disable flterm's built-in Ctrl/Cmd+V paste (it reads via
-          // Clipboard.getData, which fails on Firefox), so paste flows solely
-          // through the native `paste` event in [installPasteListener] — one
-          // path, no double-paste. On desktop there's no DOM paste event, so
-          // pass null and let flterm's own Clipboard.getData paste handle
-          // Cmd/Ctrl+V.
-          shortcuts: kIsWeb ? _disableFltermPaste : null,
+          // Font-zoom + scrollback bindings (issue #7), plus — on web only —
+          // disabling flterm's built-in Ctrl/Cmd+V paste (it reads via
+          // Clipboard.getData, which fails on Firefox) so paste flows solely
+          // through the native `paste` event in [installPasteListener]. On
+          // desktop there's no DOM paste event, so flterm's own
+          // Clipboard.getData paste handles Cmd/Ctrl+V. flterm merges these
+          // over its platform defaults; unknown intents bubble to [actions].
+          shortcuts: _terminalShortcuts,
           // Keep mouse selection (drag/word/line/long-press) but drop the
           // keyboard select-all gesture, so Ctrl+A falls through to the shell
           // (readline beginning-of-line / tmux prefix) instead of selecting the
@@ -219,6 +336,25 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       ),
     );
   }
+}
+
+/// Issue #7 terminal intents — dispatched from flterm's Shortcuts scope and
+/// handled by the [Actions] wrapper in [GhosttyTerminalState.build].
+class _IncreaseFontSizeIntent extends Intent {
+  const _IncreaseFontSizeIntent();
+}
+
+class _DecreaseFontSizeIntent extends Intent {
+  const _DecreaseFontSizeIntent();
+}
+
+class _ResetFontSizeIntent extends Intent {
+  const _ResetFontSizeIntent();
+}
+
+class _ScrollPageIntent extends Intent {
+  final bool up;
+  const _ScrollPageIntent({required this.up});
 }
 
 /// Overrides flterm's default paste shortcuts with no-ops, across every

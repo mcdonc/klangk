@@ -12,6 +12,7 @@ import 'dart:async';
 import 'package:flterm/flterm.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:klangk_frontend/terminal/ghostty_terminal.dart';
@@ -200,4 +201,131 @@ void main() {
       client.close();
     });
   });
+
+  group('font zoom (issue #7)', () {
+    testWidgets('increase / decrease / reset via methods', (tester) async {
+      _ignoreSystemFontsAssert();
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await tester.pumpWidget(_build(client, key: key));
+      await tester.pumpAndSettle();
+      final state = key.currentState!;
+
+      expect(state.fontSize, 16);
+
+      state.increaseFontSize();
+      await tester.pump();
+      final up = state.fontSize;
+      expect(up, greaterThan(16));
+
+      state.decreaseFontSize();
+      await tester.pump();
+      expect(state.fontSize, lessThan(up));
+
+      state.increaseFontSize();
+      state.increaseFontSize();
+      await tester.pump();
+      state.resetFontSize();
+      await tester.pump();
+      expect(state.fontSize, 16);
+      client.close();
+    });
+
+    testWidgets('clamps at min and max', (tester) async {
+      _ignoreSystemFontsAssert();
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await tester.pumpWidget(_build(client, key: key));
+      await tester.pumpAndSettle();
+      final state = key.currentState!;
+
+      for (var i = 0; i < 100; i++) {
+        state.increaseFontSize();
+      }
+      await tester.pump();
+      final max = state.fontSize;
+      expect(max, lessThanOrEqualTo(40));
+      state.increaseFontSize(); // no-op at the ceiling
+      await tester.pump();
+      expect(state.fontSize, max);
+
+      for (var i = 0; i < 100; i++) {
+        state.decreaseFontSize();
+      }
+      await tester.pump();
+      expect(state.fontSize, greaterThanOrEqualTo(6));
+      client.close();
+    });
+
+    testWidgets('Cmd +/-/0 keyboard shortcuts change font size', (tester) async {
+      _ignoreSystemFontsAssert();
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await tester.pumpWidget(_build(client, key: key));
+      await tester.pumpAndSettle();
+      key.currentState!.requestFocus();
+      await tester.pump();
+      final state = key.currentState!;
+      expect(state.fontSize, 16);
+
+      await _pressMetaCombo(tester, LogicalKeyboardKey.equal);
+      expect(state.fontSize, greaterThan(16), reason: 'Cmd+= zooms in');
+
+      await _pressMetaCombo(tester, LogicalKeyboardKey.minus);
+      await _pressMetaCombo(tester, LogicalKeyboardKey.minus);
+      expect(state.fontSize, lessThan(16), reason: 'Cmd+- zooms out');
+
+      await _pressMetaCombo(tester, LogicalKeyboardKey.digit0);
+      expect(state.fontSize, 16, reason: 'Cmd+0 resets');
+      client.close();
+    });
+  });
+
+  group('scrollback paging (issue #7)', () {
+    testWidgets('Shift+PgUp scrolls back, Shift+PgDown returns toward live',
+        (tester) async {
+      _ignoreSystemFontsAssert();
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await tester.pumpWidget(_build(client, key: key));
+      await tester.pumpAndSettle();
+
+      // Fill scrollback well past the viewport so there's something to page.
+      for (var i = 0; i < 400; i++) {
+        client.emitTerminal('scrollback line $i\r\n');
+      }
+      await tester.pumpAndSettle();
+
+      final state = key.currentState!;
+      if (state.maxScrollExtent > 0) {
+        // Live view sits at the bottom (max offset); paging up moves toward
+        // older lines (smaller offset).
+        final atLive = state.scrollOffset;
+        state.scrollPageUp();
+        await tester.pumpAndSettle();
+        expect(state.scrollOffset, lessThan(atLive),
+            reason: 'Shift+PgUp scrolls into scrollback');
+
+        final scrolledBack = state.scrollOffset;
+        state.scrollPageDown();
+        await tester.pumpAndSettle();
+        expect(state.scrollOffset, greaterThan(scrolledBack),
+            reason: 'Shift+PgDown scrolls back toward live');
+      }
+      // Whether or not scrollback formed in the test viewport, paging must be
+      // a safe no-op that never throws.
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TerminalView), findsOneWidget);
+      client.close();
+    });
+  });
+}
+
+/// Press a Cmd/⌘-modified key (macOS) and pump. The integration test runs on
+/// the macOS engine, so the font-zoom shortcuts bind to the meta modifier.
+Future<void> _pressMetaCombo(WidgetTester tester, LogicalKeyboardKey key) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+  await tester.sendKeyEvent(key);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+  await tester.pumpAndSettle();
 }

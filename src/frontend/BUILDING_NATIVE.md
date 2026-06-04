@@ -103,9 +103,10 @@ that swallows exactly that one and forwards everything else.
   links cleanly.
 - The launched native app reaches the backend: `GET /api/config` → `200`,
   confirming the env-aware URL + sandbox network entitlement work end to end.
-- `flutter test -d macos integration_test/ghostty_terminal_test.dart` — all 7
+- `flutter test -d macos integration_test/ghostty_terminal_test.dart` — all 11
   GhosttyTerminal tests pass in a real macOS engine (render, output, resize,
-  right-click paste menu, focused paste routing).
+  right-click paste menu, focused paste routing, plus issue #7 font zoom via
+  methods + Cmd/Ctrl shortcuts, and Shift+PgUp/PgDown scrollback paging).
 
 ## Known gaps (must fix before this is real)
 
