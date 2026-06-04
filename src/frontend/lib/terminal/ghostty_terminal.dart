@@ -184,8 +184,15 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       child: GestureDetector(
         // Right-click only — primary/selection gestures stay with flterm's own
         // detector inside TerminalView.
-        onSecondaryTapDown: (details) {
+        onSecondaryTapDown: (details) async {
           suppressContextMenuBriefly();
+          // Pre-read clipboard while the right-click user-activation is
+          // still valid. On Firefox, navigator.clipboard.readText() is
+          // denied once the activation expires (after the popup menu
+          // closes), which surfaces a system paste-confirmation dialog.
+          // Awaiting here ensures the read completes before showMenu.
+          final clipText = await readClipboardText(); // coverage:ignore-line
+          if (!context.mounted) return; // coverage:ignore-line
           final hasSelection =
               _terminal.selection != null; // coverage:ignore-line
           final items = <PopupMenuEntry<String>>[
@@ -206,19 +213,20 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
                     title: Text('Paste'))),
           ];
           final pos = details.globalPosition;
-          showMenu<String>(
+          final action = await showMenu<String>(
             context: context,
             position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
             items: items,
-          ).then((action) {
-            // coverage:ignore-start
-            if (action == 'copy') {
-              _copySelection();
-            } else if (action == 'paste') {
-              _paste();
+          );
+          // coverage:ignore-start
+          if (action == 'copy') {
+            _copySelection();
+          } else if (action == 'paste') {
+            if (clipText != null && clipText.isNotEmpty) {
+              _terminal.paste(clipText);
             }
-            // coverage:ignore-end
-          });
+          }
+          // coverage:ignore-end
         },
         child: TerminalView(
           controller: _terminal,
