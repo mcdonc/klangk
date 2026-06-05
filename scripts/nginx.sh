@@ -7,9 +7,15 @@ mkdir -p "$NGINX_STATE"
 # Build LLM proxy block only if the URL is configured
 LLM_BLOCK=""
 if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
-  # nginx resolver needs space-separated IPs; env var may use commas
-  DNS_RESOLVERS="${KLANGK_DNS_SERVERS:-127.0.0.11 8.8.8.8}"
-  DNS_RESOLVERS="${DNS_RESOLVERS//,/ }"
+  # nginx resolver needs space-separated IPs; env var may use commas.
+  # Default: parse /etc/resolv.conf for nameservers (works on host and
+  # in Docker). Fall back to 8.8.8.8 if resolv.conf has no entries.
+  if [ -n "${KLANGK_DNS_SERVERS:-}" ]; then
+    DNS_RESOLVERS="${KLANGK_DNS_SERVERS//,/ }"
+  else
+    DNS_RESOLVERS=$(awk '/^nameserver/{printf "%s ", $2}' /etc/resolv.conf)
+    DNS_RESOLVERS="${DNS_RESOLVERS:-8.8.8.8}"
+  fi
   LLM_BLOCK="
     # LLM proxy: forward to the real LLM endpoint with API key injected.
     # Containers hit this instead of the real endpoint, so they never
