@@ -1,8 +1,11 @@
 # Container build configuration for the klangk-host image.
 #
 # Build: dockerbuild-host (or scripts/dockerbuild-host.sh)
-# Run:   docker run -v <data>:/env/data -v /var/run/docker.sock:/var/run/docker.sock \
-#          --group-add <docker-gid> -e KLANGK_DEFAULT_USER=... klangk-host:latest
+# Run: docker run -v <data>:/env/data \
+#                 -v /var/run/docker.sock:/var/run/docker.sock \
+#                --group-add <docker-gid> \
+#                 -e KLANGK_DEFAULT_USER=... -e KLANGK_FOO=bar \
+#                  klangk-host:latest
 {
   pkgs,
   config,
@@ -14,7 +17,8 @@ let
   isDev = !isContainer;
 
   # The local venv, pre-built by `uv sync` during devenv shell.
-  # Requires `--impure` for container builds since the venv is outside the nix store.
+  # Requires `--impure` for container builds since the venv is outside the
+  # nix store.
   venvCopy =
     if isContainer && builtins.pathExists ./.devenv/state/venv then
       builtins.path {

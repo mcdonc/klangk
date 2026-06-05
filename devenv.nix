@@ -8,7 +8,13 @@ let
   isContainer = config.container.isBuilding;
   isDev = !isContainer;
 
-  uvicornCmd = "python3 -m uvicorn klangk_backend.main:app --host 0.0.0.0 --port $KLANGK_PORT --ws-max-size 65536 --ws-ping-interval 20 --ws-ping-timeout 20";
+  uvicornCmd = ''
+    python3 -m uvicorn klangk_backend.main:app \
+       --host 0.0.0.0 \
+       --port $KLANGK_PORT \
+       --ws-max-size 65536 \
+       --ws-ping-interval 20 \
+       --ws-ping-timeout 20'';
 in
 {
   imports = [ ./container.nix ];
@@ -121,9 +127,9 @@ in
   env.SOURCE_DATE_EPOCH = "";
   env.UV_PYTHON = config.devenv.state + "/venv/bin/python";
   # Port defaults use mkOverride 1500 (lower priority than mkDefault/1000).
-  # dotenv.enable loads .env values as mkDefault, so .env entries override these.
-  # devenv.local.nix with lib.mkForce overrides everything.
-  # Priority: devenv.local.nix (mkForce/50) > .env (mkDefault/1000) > these defaults (1500)
+  # dotenv.enable loads .env values as mkDefault, so .env entries override
+  # these. devenv.local.nix with lib.mkForce overrides everything.
+  # devenv.local.nix (mkForce/50) > .env (mkDefault/1000) > these (1500)
   env.KLANGK_PORT = lib.mkOverride 1500 "8997";
   env.KLANGK_NGINX_PORT = lib.mkOverride 1500 "8995";
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
