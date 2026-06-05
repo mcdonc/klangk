@@ -348,6 +348,8 @@ class ContainerRegistry:
         ]
         env_vars.append(f"KLANGK_PORT_MAPPINGS={','.join(mappings)}")
         env_vars.append(f"KLANGK_WORKSPACE_ID={workspace_id}")
+        env_vars.append(f"KLANGK_HOST_UID={os.getuid()}")
+        env_vars.append(f"KLANGK_HOST_GID={os.getgid()}")
         # KLANGK_BRIDGE_URL is set at container level so all exec sessions
         # know the backend URL.  KLANGK_BRIDGE_TOKEN is set per-exec
         # session (in terminal.py) so each connection has its own token.
