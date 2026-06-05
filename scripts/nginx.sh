@@ -19,7 +19,12 @@ if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
   if [ -n "${KLANGK_DNS_SERVERS:-}" ]; then
     DNS_RESOLVERS="${KLANGK_DNS_SERVERS//,/ }"
   else
-    DNS_RESOLVERS=$(awk '/^nameserver/{printf "%s ", $2}' /etc/resolv.conf)
+    # Wrap IPv6 addresses in brackets for nginx resolver directive.
+    DNS_RESOLVERS=$(awk '/^nameserver/{
+      addr = $2
+      if (addr ~ /:/) addr = "[" addr "]"
+      printf "%s ", addr
+    }' /etc/resolv.conf)
     DNS_RESOLVERS="${DNS_RESOLVERS:-8.8.8.8}"
   fi
   LLM_BLOCK="
