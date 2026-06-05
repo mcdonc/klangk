@@ -37,7 +37,7 @@ COPY --chown=klangk:klangk src/frontend/build/web /home/klangk/src/frontend/buil
 
 # Startup scripts
 COPY --chown=klangk:klangk scripts/nginx.sh /home/klangk/bin/nginx
-COPY --chown=klangk:klangk src/docker/host/entrypoint-host.sh /home/klangk/bin/entrypoint
+COPY --chown=klangk:klangk src/docker/host/entrypoint.sh /home/klangk/bin/entrypoint
 COPY --chown=klangk:klangk src/docker/host/klangk.sh /home/klangk/bin/klangk
 
 # Version file (injected at build time via --build-arg)
