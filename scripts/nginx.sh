@@ -4,6 +4,39 @@ set -euo pipefail
 NGINX_STATE="${DEVENV_STATE:?DEVENV_STATE must be set}/nginx"
 mkdir -p "$NGINX_STATE"
 
+# Build LLM proxy block only if the URL is configured
+LLM_BLOCK=""
+if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
+  # nginx resolver needs space-separated IPs; env var may use commas
+  DNS_RESOLVERS="${KLANGK_DNS_SERVERS:-127.0.0.11 8.8.8.8}"
+  DNS_RESOLVERS="${DNS_RESOLVERS//,/ }"
+  LLM_BLOCK="
+    # LLM proxy: forward to the real LLM endpoint with API key injected.
+    # Containers hit this instead of the real endpoint, so they never
+    # see the API key. Restricted to Docker subnets and localhost only.
+    location /llm-proxy/ {
+      allow 172.16.0.0/12;
+      allow 192.168.0.0/16;
+      allow 10.0.0.0/8;
+      allow 127.0.0.1;
+      deny all;
+      # Use a variable so nginx resolves the upstream at request time,
+      # not at config load time (avoids crash on unresolvable hosts).
+      resolver ${DNS_RESOLVERS} valid=30s;
+      set \$llm_backend ${KLANGK_LLM_BASE_URL};
+      proxy_pass \$llm_backend/;
+      proxy_set_header Authorization \"Bearer ${KLANGK_LLM_API_KEY:-}\";
+      proxy_set_header Host \$proxy_host;
+      proxy_http_version 1.1;
+      proxy_set_header Connection \"\";
+      # SSE streaming support
+      proxy_buffering off;
+      proxy_cache off;
+      chunked_transfer_encoding on;
+    }
+"
+fi
+
 cat >"$NGINX_STATE/nginx.conf" <<NGINX
 daemon off;
 pid /tmp/nginx.pid;
@@ -36,27 +69,7 @@ http {
       proxy_set_header X-Forwarded-Proto \$scheme;
       proxy_http_version 1.1;
     }
-
-    # LLM proxy: forward to the real LLM endpoint with API key injected.
-    # Containers hit this instead of the real endpoint, so they never
-    # see the API key. Restricted to Docker subnets and localhost only.
-    location /llm-proxy/ {
-      allow 172.16.0.0/12;
-      allow 192.168.0.0/16;
-      allow 10.0.0.0/8;
-      allow 127.0.0.1;
-      deny all;
-      proxy_pass ${KLANGK_LLM_BASE_URL}/;
-      proxy_set_header Authorization "Bearer ${KLANGK_LLM_API_KEY}";
-      proxy_set_header Host \$proxy_host;
-      proxy_http_version 1.1;
-      proxy_set_header Connection "";
-      # SSE streaming support
-      proxy_buffering off;
-      proxy_cache off;
-      chunked_transfer_encoding on;
-    }
-
+${LLM_BLOCK}
     location / {
       proxy_pass http://127.0.0.1:${KLANGK_PORT}/;
       proxy_set_header Host \$http_host;
@@ -77,4 +90,6 @@ http {
 NGINX
 
 echo "nginx listening on port $KLANGK_NGINX_PORT" >&2
-exec nginx -e stderr -c "$NGINX_STATE/nginx.conf"
+# Use full path to avoid recursion when $HOME/bin/nginx shadows /usr/sbin/nginx
+NGINX_BIN=$(command -v -p nginx 2>/dev/null || echo /usr/sbin/nginx)
+exec "$NGINX_BIN" -e stderr -c "$NGINX_STATE/nginx.conf"
