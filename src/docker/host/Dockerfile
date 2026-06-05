@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       nginx \
       rsync \
       sqlite3 \
+      supervisor \
       tar \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,10 +36,10 @@ COPY --chown=klangk:klangk src/backend/pyproject.toml /home/klangk/src/backend/p
 # Flutter web build output
 COPY --chown=klangk:klangk src/frontend/build/web /home/klangk/src/frontend/build/web
 
-# Startup scripts
+# Startup scripts and config
 COPY --chown=klangk:klangk scripts/nginx.sh /home/klangk/bin/nginx
 COPY --chown=klangk:klangk src/docker/host/entrypoint.sh /home/klangk/bin/entrypoint
-COPY --chown=klangk:klangk src/docker/host/klangk.sh /home/klangk/bin/klangk
+COPY --chown=klangk:klangk src/docker/host/supervisord.conf /home/klangk/etc/supervisord.conf
 
 # Version file (injected at build time via --build-arg)
 ARG KLANGK_BUILD_VERSION=unknown
