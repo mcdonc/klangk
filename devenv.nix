@@ -146,7 +146,11 @@ in
     DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
     ENVFILE=$(mktemp)
     trap 'rm -f "$ENVFILE"' EXIT
-    env | grep '^KLANGK_' > "$ENVFILE"
+    env | grep '^KLANGK_' \
+      | grep -v '^KLANGK_DATA_DIR=' \
+      | grep -v '^KLANGK_PLUGINS_DIR=' \
+      | grep -v '^KLANGK_VERSION_FILE=' \
+      > "$ENVFILE"
     docker rm -f klangk-host-run 2>/dev/null || true
     exec docker run --name klangk-host-run \
       -p "''${KLANGK_PORT}:''${KLANGK_PORT}" \
