@@ -150,13 +150,13 @@ The version is baked into `/home/klangk/version.json` inside the image and serve
 ### Running
 
 ```bash
-run-host        # foreground (Ctrl-C to stop)
-run-host -d     # detached
+run-host-container        # foreground (Ctrl-C to stop)
+run-host-container -d     # detached
 ```
 
 Open http://localhost:8995 (nginx) or http://localhost:8997 (uvicorn direct).
 
-`run-host` collects all `KLANGK_*` environment variables from the current devenv shell (including values loaded from `.env` via `dotenv.enable`) and passes them into the container via `--env-file`. Host-local paths like `KLANGK_DATA_DIR` and `KLANGK_PLUGINS_DIR` are excluded so the container's own defaults apply. It also maps the Docker socket and exposes the configured ports.
+`run-host-container` collects all `KLANGK_*` environment variables from the current devenv shell (including values loaded from `.env` via `dotenv.enable`) and passes them into the container via `--env-file`. Host-local paths like `KLANGK_DATA_DIR` and `KLANGK_PLUGINS_DIR` are excluded so the container's own defaults apply. It also maps the Docker socket and exposes the configured ports.
 
 To run manually without devenv:
 
@@ -220,19 +220,19 @@ devenv.nix             # devenv configuration
 
 Inside `devenv shell`, these commands are available:
 
-| Command             | Description                           |
-| ------------------- | ------------------------------------- |
-| `test-backend`      | Run backend unit tests                |
-| `test-frontend`     | Run frontend unit tests with coverage |
-| `test-cli-e2e`      | Run CLI E2E tests                     |
-| `test-frontend-e2e` | Run Flutter E2E tests (all browsers)  |
-| `flutterbuildweb`   | Rebuild Flutter web only              |
-| `dockerbuild`       | Rebuild workspace Docker image        |
-| `dockerbuild-base`  | Rebuild workspace base image          |
-| `dockerbuild-host`  | Build host container image            |
-| `run-host`          | Run host container locally            |
-| `trivy-host`        | Scan host image for vulnerabilities   |
-| `update-plugins`    | Fetch plugins from plugins.yaml       |
+| Command              | Description                           |
+| -------------------- | ------------------------------------- |
+| `test-backend`       | Run backend unit tests                |
+| `test-frontend`      | Run frontend unit tests with coverage |
+| `test-cli-e2e`       | Run CLI E2E tests                     |
+| `test-frontend-e2e`  | Run Flutter E2E tests (all browsers)  |
+| `flutterbuildweb`    | Rebuild Flutter web only              |
+| `dockerbuild`        | Rebuild workspace Docker image        |
+| `dockerbuild-base`   | Rebuild workspace base image          |
+| `dockerbuild-host`   | Build host container image            |
+| `run-host-container` | Run host container locally            |
+| `trivy-host`         | Scan host image for vulnerabilities   |
+| `update-plugins`     | Fetch plugins from plugins.yaml       |
 
 ## Plugin System
 

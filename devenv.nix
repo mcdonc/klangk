@@ -142,7 +142,7 @@ in
   scripts.dockerbuild-host.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-host.sh" "$@"'';
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
 
-  scripts.run-host.exec = ''
+  scripts.run-host-container.exec = ''
     DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
     ENVFILE=$(mktemp)
     trap 'rm -f "$ENVFILE"' EXIT
