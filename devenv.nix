@@ -78,8 +78,8 @@ in
     venv.enable = true;
     lsp.enable = isDev;
     uv = {
-      enable = true;
-      sync.enable = true;
+      enable = isDev;
+      sync.enable = isDev;
     };
     directory = "./src/backend";
   };
@@ -92,8 +92,7 @@ in
       gzip
       gnutar
       nginx
-      xz
-      sqlite
+      sqlite.bin
       rsync
     ]
     ++ lib.optionals isDev [
