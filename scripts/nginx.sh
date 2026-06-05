@@ -20,7 +20,7 @@ if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
     # LLM proxy: forward to the real LLM endpoint with API key injected.
     # Containers hit this instead of the real endpoint, so they never
     # see the API key. Restricted to Docker subnets and localhost only.
-    location /llm-proxy/ {
+    location ~ ^/llm-proxy/(.*)\$ {
       allow 172.16.0.0/12;
       allow 192.168.0.0/16;
       allow 10.0.0.0/8;
@@ -28,11 +28,8 @@ if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
       deny all;
       # Use a variable so nginx resolves the upstream at request time,
       # not at config load time (avoids crash on unresolvable hosts).
-      # rewrite strips /llm-proxy/ prefix since variable-based proxy_pass
-      # does not do URI stripping automatically.
       resolver ${DNS_RESOLVERS} valid=30s;
-      set \$llm_backend ${KLANGK_LLM_BASE_URL};
-      rewrite ^/llm-proxy/(.*)\$ /\$1 break;
+      set \$llm_backend ${KLANGK_LLM_BASE_URL}/\$1;
       proxy_pass \$llm_backend;
       proxy_set_header Authorization \"Bearer ${KLANGK_LLM_API_KEY:-}\";
       proxy_set_header Host \$proxy_host;
@@ -99,6 +96,7 @@ ${LLM_BLOCK}
 NGINX
 
 echo "nginx listening on port $KLANGK_NGINX_PORT" >&2
-# Use full path to avoid recursion when $HOME/bin/nginx shadows /usr/sbin/nginx
-NGINX_BIN=$(command -v -p nginx 2>/dev/null || echo /usr/sbin/nginx)
+# Find the real nginx binary, excluding $HOME/bin (which contains this script
+# in the host container) to avoid infinite recursion.
+NGINX_BIN=$(PATH="${PATH//$HOME\/bin:/}" command -v nginx 2>/dev/null || echo /usr/sbin/nginx)
 exec "$NGINX_BIN" -e stderr -c "$NGINX_STATE/nginx.conf"
