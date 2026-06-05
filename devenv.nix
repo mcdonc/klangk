@@ -37,8 +37,10 @@ let
     }
   );
 
-  klangkApp = pkgs.runCommand "klangk-app" { } ''
-    mkdir -p $out/src/backend $out/src/frontend/build $out/scripts
+  # Home directory contents for the container image.
+  # Laid out as: bin/{nginx,klangk}, data/, src/{backend,frontend}, version.json
+  containerHome = pkgs.runCommand "klangk-home" { } ''
+    mkdir -p $out/bin $out/data $out/src/backend $out/src/frontend/build
 
     # Backend source code
     cp -r ${./src/backend/klangk_backend} $out/src/backend/klangk_backend
@@ -49,13 +51,18 @@ let
       cp -r ${./src/frontend/build/web} $out/src/frontend/build/web
     fi
 
-    # nginx startup script
-    cp ${./scripts/nginx.sh} $out/scripts/nginx.sh
-    chmod +x $out/scripts/nginx.sh
+    # Startup scripts
+    cp ${./scripts/nginx.sh} $out/bin/nginx
+    chmod +x $out/bin/nginx
+
+    cat > $out/bin/klangk <<'SCRIPT'
+    #!/usr/bin/env bash
+    exec ${uvicornCmd}
+    SCRIPT
+    chmod +x $out/bin/klangk
 
     # Version info
     cp ${versionJson} $out/version.json
-
   '';
 in
 {
@@ -174,7 +181,7 @@ in
   env.SOURCE_DATE_EPOCH = "";
   env.PYTHONPATH =
     if isContainer then
-      lib.mkForce "${klangkApp}/src/backend:${
+      lib.mkForce "/env/src/backend:${
         if venvCopy != null then toString venvCopy else ""
       }/lib/python3.13/site-packages"
     else
@@ -187,16 +194,16 @@ in
   env.KLANGK_PORT = lib.mkOverride 1500 "8997";
   env.KLANGK_NGINX_PORT = lib.mkOverride 1500 "8995";
   env.KLANGK_DATA_DIR = lib.mkOverride 1500 (
-    if isContainer then "/data" else config.devenv.root + "/.devenv/state/klangk/data"
+    if isContainer then "/env/data" else config.devenv.root + "/.devenv/state/klangk/data"
   );
   env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (
     if isContainer then "/env/app/plugins" else config.devenv.root + "/.devenv/state/klangk/plugins"
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
-  env.KLANGK_VERSION_FILE =
-    if isContainer then "${klangkApp}/version.json" else lib.mkOverride 1500 "";
+  env.KLANGK_VERSION_FILE = if isContainer then "/env/version.json" else lib.mkOverride 1500 "";
   dotenv.enable = isDev;
+  dotenv.disableHint = isContainer;
 
   scripts.flutterbuildweb.exec = ''exec devenv tasks run klangk:flutter-build --refresh-task-cache "$@"'';
   scripts.dockerbuild.exec = ''exec devenv tasks run klangk:docker-build --refresh-task-cache "$@"'';
@@ -360,11 +367,38 @@ in
     MDLINT
   '';
 
-  containers.processes = {
-    name = "klangk-host";
-    copyToRoot = klangkApp;
-    startupCommand = "bash ${klangkApp}/scripts/nginx.sh & exec ${uvicornCmd}";
-  };
+  containers.processes =
+    let
+      # Symlinks from $HOME/{bin,src,version.json} to the nix store derivation,
+      # so the home directory is clean (no hash-prefixed dirs).
+      homeSymlinks = pkgs.runCommand "klangk-symlinks" { } ''
+        mkdir -p $out/env
+        ln -s ${containerHome}/bin $out/env/bin
+        ln -s ${containerHome}/src $out/env/src
+        ln -s ${containerHome}/version.json $out/env/version.json
+      '';
+    in
+    {
+      name = "klangk-host";
+      copyToRoot = [ ];
+      startupCommand = "$HOME/bin/nginx & exec $HOME/bin/klangk";
+      layers = [
+        {
+          copyToRoot = [ homeSymlinks ];
+          perms = [
+            {
+              path = homeSymlinks;
+              regex = "/env";
+              mode = "0755";
+              uid = 1000;
+              gid = 1000;
+              uname = "user";
+              gname = "user";
+            }
+          ];
+        }
+      ];
+    };
 
   claude.code.mcpServers = { };
 }
