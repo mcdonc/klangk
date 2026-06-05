@@ -72,8 +72,8 @@ ENV KLANGK_PLUGINS_DIR=/home/klangk/plugins
 ENV KLANGK_IMAGE_NAME=klangk
 ENV KLANGK_INSTANCE_ID=default
 ENV KLANGK_VERSION_FILE=/home/klangk/version.json
-# DEVENV_STATE is used by nginx.sh to write nginx.conf
-ENV DEVENV_STATE=/tmp/klangk-state
+# Used by nginx.sh to write nginx.conf at runtime
+ENV KLANGK_STATE_DIR=/tmp/klangk-state
 
 USER klangk
 WORKDIR /home/klangk

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Ensure state/data dirs exist
-mkdir -p "$DEVENV_STATE/nginx" "$KLANGK_DATA_DIR"
+mkdir -p "${KLANGK_STATE_DIR:-${DEVENV_STATE:-/tmp/klangk-state}}/nginx" "$KLANGK_DATA_DIR"
 
 case "${1:-start}" in
 start)

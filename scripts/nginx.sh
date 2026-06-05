@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NGINX_STATE="${DEVENV_STATE:?DEVENV_STATE must be set}/nginx"
+NGINX_STATE="${KLANGK_STATE_DIR:-${DEVENV_STATE:-}}/nginx"
+if [ -z "${KLANGK_STATE_DIR:-}${DEVENV_STATE:-}" ]; then
+  echo "error: KLANGK_STATE_DIR or DEVENV_STATE must be set" >&2
+  exit 1
+fi
 mkdir -p "$NGINX_STATE"
 
 # Build LLM proxy block only if the URL is configured
