@@ -80,12 +80,19 @@ in
       lib.mkDefault "";
 
   env.KLANGK_DATA_DIR = lib.mkOverride 1500 (
-    if isContainer then "/env/data" else config.devenv.root + "/.devenv/state/klangk/data"
+    if isContainer then
+      "/env/data"
+    else
+      config.devenv.root + "/.devenv/state/klangk/data"
   );
   env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (
-    if isContainer then "/env/app/plugins" else config.devenv.root + "/.devenv/state/klangk/plugins"
+    if isContainer then
+      "/env/app/plugins"
+    else
+      config.devenv.root + "/.devenv/state/klangk/plugins"
   );
-  env.KLANGK_VERSION_FILE = if isContainer then "/env/version.json" else lib.mkOverride 1500 "";
+  env.KLANGK_VERSION_FILE =
+    if isContainer then "/env/version.json" else lib.mkOverride 1500 "";
 
   dotenv.disableHint = isContainer;
 

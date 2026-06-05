@@ -48,8 +48,10 @@ in
       git # HM for "error: Failed to find git" during devenv:git-hooks:install
     ];
 
-  env.PLAYWRIGHT_BROWSERS_PATH = if isContainer then "" else pkgs.playwright-driver.browsers;
-  env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = if isContainer then "" else "true";
+  env.PLAYWRIGHT_BROWSERS_PATH =
+    if isContainer then "" else pkgs.playwright-driver.browsers;
+  env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS =
+    if isContainer then "" else "true";
 
   tasks = lib.mkIf isDev {
     "klangk:flutter-build" = {
@@ -240,7 +242,10 @@ in
       ];
     };
     # Nix
-    nixfmt.enable = true;
+    nixfmt = {
+      enable = true;
+      settings.width = 80;
+    };
     # Secrets
     trufflehog.enable = true;
     # GitHub Actions
