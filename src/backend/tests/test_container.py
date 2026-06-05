@@ -589,6 +589,19 @@ class TestStartContainerPortConflict:
     def teardown_method(self):
         container.registry.states.clear()
 
+    def _stale_with_ports(self, cid, ports):
+        """Create a mock stale container that binds the given host ports."""
+        stale = MagicMock()
+        stale.id = cid
+        stale.delete = AsyncMock()
+        bindings = {}
+        for p in ports:
+            bindings[f"{p}/tcp"] = [{"HostPort": str(p)}]
+        stale.show = AsyncMock(
+            return_value={"HostConfig": {"PortBindings": bindings}}
+        )
+        return stale
+
     async def test_port_conflict_kills_stale_and_retries(self, workspace):
         mock_docker = _mock_docker()
         mock_c = _mock_container("new-cid")
@@ -608,10 +621,10 @@ class TestStartContainerPortConflict:
         mock_docker.containers.create_or_replace = AsyncMock(
             return_value=mock_c
         )
-        # Stale container to be cleaned up
-        stale = MagicMock()
-        stale.id = "stale-cid"
-        stale.delete = AsyncMock()
+        # Stale container that holds a port in the range we'll allocate
+        stale = self._stale_with_ports(
+            "stale-cid", [container.PORT_RANGE_START]
+        )
         mock_docker.containers.list = AsyncMock(return_value=[stale])
 
         with patch.object(
@@ -624,6 +637,36 @@ class TestStartContainerPortConflict:
         assert status == "created"
         assert mock_c.start.await_count == 2
         stale.delete.assert_awaited_once_with(force=True)
+
+    async def test_port_conflict_skips_non_overlapping_container(
+        self, workspace
+    ):
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        mock_c.start = AsyncMock(
+            side_effect=[
+                aiodocker.exceptions.DockerError(
+                    500,
+                    {"message": "port is already allocated"},
+                ),
+                None,
+            ]
+        )
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+        # Container that does NOT hold any of our ports — should not be deleted
+        other = self._stale_with_ports("other-cid", [59999])
+        mock_docker.containers.list = AsyncMock(return_value=[other])
+
+        with patch.object(
+            container.registry, "get_docker", return_value=mock_docker
+        ):
+            cid, _ = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert cid == "new-cid"
+        other.delete.assert_not_awaited()
 
     async def test_port_conflict_skips_own_container(self, workspace):
         mock_docker = _mock_docker()
@@ -641,9 +684,7 @@ class TestStartContainerPortConflict:
             return_value=mock_c
         )
         # Only "stale" container is our own — should not be deleted
-        own = MagicMock()
-        own.id = "new-cid"
-        own.delete = AsyncMock()
+        own = self._stale_with_ports("new-cid", [container.PORT_RANGE_START])
         mock_docker.containers.list = AsyncMock(return_value=[own])
 
         with patch.object(
@@ -670,8 +711,9 @@ class TestStartContainerPortConflict:
         mock_docker.containers.create_or_replace = AsyncMock(
             return_value=mock_c
         )
-        stale = MagicMock()
-        stale.id = "stale-cid"
+        stale = self._stale_with_ports(
+            "stale-cid", [container.PORT_RANGE_START]
+        )
         stale.delete = AsyncMock(
             side_effect=aiodocker.exceptions.DockerError(
                 500, {"message": "removal in progress"}
@@ -687,6 +729,47 @@ class TestStartContainerPortConflict:
             )
         assert cid == "new-cid"
         stale.delete.assert_awaited_once()
+
+    async def test_port_conflict_skips_bad_port_bindings(self, workspace):
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        mock_c.start = AsyncMock(
+            side_effect=[
+                aiodocker.exceptions.DockerError(
+                    500,
+                    {"message": "port is already allocated"},
+                ),
+                None,
+            ]
+        )
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+        # Container with malformed port bindings — should not crash
+        stale = MagicMock()
+        stale.id = "bad-cid"
+        stale.delete = AsyncMock()
+        stale.show = AsyncMock(
+            return_value={
+                "HostConfig": {
+                    "PortBindings": {
+                        "80/tcp": [{"HostPort": "not-a-number"}],
+                        "81/tcp": [{}],
+                        "82/tcp": None,
+                    }
+                }
+            }
+        )
+        mock_docker.containers.list = AsyncMock(return_value=[stale])
+
+        with patch.object(
+            container.registry, "get_docker", return_value=mock_docker
+        ):
+            cid, _ = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert cid == "new-cid"
+        stale.delete.assert_not_awaited()
 
     async def test_non_port_conflict_error_raised(self, workspace):
         mock_docker = _mock_docker()
