@@ -826,18 +826,19 @@ class Connection:
 
 async def handle_websocket(websocket: WebSocket) -> None:
     """Main WebSocket handler."""
-    # Authenticate via query param
+    # Authenticate via query param — accept before close (WebSocket protocol
+    # requires a completed handshake before a close frame can be sent).
     token = websocket.query_params.get("token")
+    user = await auth.get_user_from_token(token) if token else None
+
+    await websocket.accept()
+
     if not token:
         await websocket.close(code=4001, reason="Missing token")
         return
-
-    user = await auth.get_user_from_token(token)
     if user is None:
         await websocket.close(code=4001, reason="Invalid token")
         return
-
-    await websocket.accept()
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
     conn = Connection(safe_ws, user)

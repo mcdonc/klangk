@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import socket
 import time
 import uuid
 
@@ -23,6 +24,21 @@ def _container_dns_config() -> dict:
     if servers:
         return {"Dns": servers}
     return {}
+
+
+def _resolve_add_host_target(hostname: str) -> str:
+    """Return an IP for --add-host, or the 'host-gateway' special token.
+
+    When hostname resolves (e.g. a Docker service name like 'nginx' visible
+    via the embedded DNS 127.0.0.11), returns the IP so workspace containers
+    can route to it via slirp4netns through the backend's network stack.
+    Falls back to the podman/docker 'host-gateway' token for names that don't
+    resolve locally (e.g. 'host.docker.internal' outside Docker).
+    """
+    try:
+        return socket.gethostbyname(hostname)
+    except socket.gaierror:
+        return "host-gateway"
 
 
 IMAGE_NAME = util.resolve_env_secret("KLANGK_IMAGE_NAME", "klangk")
@@ -435,7 +451,7 @@ class ContainerRegistry:
                 "/var/log": "rw,noexec,nosuid,size=256m",
             },
             publish=publish,
-            add_hosts=[f"{host_gateway}:host-gateway"],
+            add_hosts=[f"{host_gateway}:{_resolve_add_host_target(host_gateway)}"],
             dns=_container_dns_config().get("Dns"),
             env=env_vars,
             init=True,

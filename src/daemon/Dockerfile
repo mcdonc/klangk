@@ -80,6 +80,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         catatonit \
+        curl \
         crun \
         fuse-overlayfs \
         git \
@@ -154,6 +155,7 @@ USER ${USER}
 RUN podman --version
 
 EXPOSE 8997
+COPY --chmod=755 src/daemon/start.sh /usr/local/bin/start.sh
+
 ENTRYPOINT ["/usr/bin/catatonit", "--"]
-# Shell form for ${KLANGK_PORT} expansion; flags mirror devenv.nix:89.
-CMD ["sh", "-c", "exec uvicorn klangk_backend.main:app --host 0.0.0.0 --port ${KLANGK_PORT} --ws-max-size 65536 --ws-ping-interval 20 --ws-ping-timeout 20"]
+CMD ["/usr/local/bin/start.sh"]

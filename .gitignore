@@ -1,6 +1,7 @@
 # Temp
 tmp/
 .env
+data
 
 # devenv
 .devenv/

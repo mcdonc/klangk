@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
+REPO_ROOT="${DEVENV_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+cd "$REPO_ROOT"
+
+KLANGK_PLUGINS_DIR="${KLANGK_PLUGINS_DIR:-$REPO_ROOT/.devenv/state/klangk/plugins}"
+KLANGK_IMAGE_NAME="${KLANGK_IMAGE_NAME:-klangk}"
+KLANGK_INSTANCE_ID="${KLANGK_INSTANCE_ID:-default}"
 
 # Auto-fetch plugins on first run
 if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plugins.lock" ]; then
@@ -9,7 +14,7 @@ if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plug
   python3 scripts/update_plugins.py
 fi
 
-# Stage plugin files outside the source tree
+# Stage plugin files outside the source tree (empty staging is fine — no plugins)
 STAGING="$KLANGK_PLUGINS_DIR/.docker"
 rm -rf "$STAGING"
 mkdir -p "$STAGING/extensions" "$STAGING/tools"

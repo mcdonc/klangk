@@ -75,10 +75,10 @@ services:
 
     volumes:
       # App state: SQLite DB + workspace homes (§4).
-      - klangk-data:/var/lib/klangk/data
+      - ./data/klangk-data:/var/lib/klangk/data
       # Rootless podman's image/container layers — persisted so they aren't
       # re-fused every restart.
-      - klangk-podman-storage:/home/klangk/.local/share/containers
+      - ./data/klangk-podman-storage:/home/klangk/.local/share/containers
       # §9/B — prebuilt workspace-image store, read-only.  Uncomment together
       # with `additionalimagestores` in src/daemon/storage.conf once the store
       # volume is seeded offline.
@@ -101,8 +101,10 @@ services:
       KLANGK_PORT: "${KLANGK_PORT:-8997}"
       KLANGK_NGINX_PORT: "${KLANGK_NGINX_PORT:-8995}"
       KLANGK_DATA_DIR: /var/lib/klangk/data
-      # §8 knob: how a pi container reaches the nginx front. Confirm at smoke test.
-      KLANGK_HOST_GATEWAY: "${KLANGK_HOST_GATEWAY:-host.containers.internal}"
+      # §8 knob: how a pi container reaches the nginx front. The backend
+      # resolves this name to an IP and passes it via --add-host so passt
+      # can route workspace traffic through the backend's network namespace.
+      KLANGK_HOST_GATEWAY: "${KLANGK_HOST_GATEWAY:-nginx}"
       KLANGK_INSTANCE_ID: "${KLANGK_INSTANCE_ID:-default}"
       KLANGK_IMAGE_NAME: "${KLANGK_IMAGE_NAME:-klangk}"
       # Where workspace images come from: `never` (default) = offline only
@@ -129,8 +131,3 @@ networks:
     # nginx <-> backend only; not reachable from the host.
     internal: true
 
-volumes:
-  klangk-data:
-  klangk-podman-storage:
-  # §9/B — seed offline, then uncomment the mount above + storage.conf entry.
-  # klangk-images:
