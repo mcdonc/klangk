@@ -28,9 +28,12 @@ if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
       deny all;
       # Use a variable so nginx resolves the upstream at request time,
       # not at config load time (avoids crash on unresolvable hosts).
+      # rewrite strips /llm-proxy/ prefix since variable-based proxy_pass
+      # does not do URI stripping automatically.
       resolver ${DNS_RESOLVERS} valid=30s;
       set \$llm_backend ${KLANGK_LLM_BASE_URL};
-      proxy_pass \$llm_backend/;
+      rewrite ^/llm-proxy/(.*)\$ /\$1 break;
+      proxy_pass \$llm_backend;
       proxy_set_header Authorization \"Bearer ${KLANGK_LLM_API_KEY:-}\";
       proxy_set_header Host \$proxy_host;
       proxy_http_version 1.1;
