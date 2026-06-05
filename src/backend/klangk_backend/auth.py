@@ -136,6 +136,12 @@ def registration_enabled() -> bool:
     return val.lower() not in ("1", "true", "yes")
 
 
+def invitations_enabled() -> bool:
+    """Check if admin invitations are enabled."""
+    val = resolve_env_secret("KLANGK_DISABLE_INVITES", "")
+    return val.lower() not in ("1", "true", "yes")
+
+
 async def register(
     req: RegisterRequest, verified: bool = False
 ) -> RegisterResult:
@@ -204,6 +210,9 @@ async def login(req: LoginRequest) -> TokenResponse:
 
 VERIFY_TOKEN_EXPIRE_HOURS = 72
 RESET_TOKEN_EXPIRE_HOURS = 1
+INVITE_TOKEN_EXPIRE_HOURS = int(
+    resolve_env_secret("KLANGK_INVITE_EXPIRE_HOURS", "72")
+)
 
 
 def create_verification_token(user_id: str) -> str:
@@ -242,6 +251,35 @@ def decode_password_reset_token(token: str) -> str | None:
         if payload.get("purpose") != "reset":
             return None
         return payload.get("sub")
+    except JWTError:
+        return None
+
+
+def create_invitation_token(invitation_id: str, email: str) -> str:
+    """Create a JWT token for an invitation."""
+    expire = datetime.now(timezone.utc) + timedelta(
+        hours=INVITE_TOKEN_EXPIRE_HOURS
+    )
+    payload = {
+        "sub": invitation_id,
+        "email": email,
+        "purpose": "invite",
+        "exp": expire,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_invitation_token(token: str) -> tuple[str, str] | None:
+    """Decode an invitation token. Returns (invitation_id, email) or None."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose") != "invite":
+            return None
+        inv_id = payload.get("sub")
+        email = payload.get("email")
+        if not inv_id or not email:
+            return None
+        return (inv_id, email)
     except JWTError:
         return None
 

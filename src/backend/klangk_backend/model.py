@@ -110,6 +110,16 @@ async def init_db() -> None:
                 locked_until TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS invitations (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL,
+                invited_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                accepted_at TEXT
+            )
+        """)
         await db.commit()
     finally:
         await db.close()
@@ -887,5 +897,140 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
                 ]
             )
         )
+    finally:
+        await db.close()
+
+
+# Invitations
+
+
+async def create_invitation(email: str, invited_by: str) -> dict:
+    """Create a new invitation. Returns the invitation dict."""
+    db = await get_db()
+    try:
+        invitation_id = str(uuid.uuid4())
+        await db.execute(
+            "INSERT INTO invitations (id, email, invited_by) VALUES (?, ?, ?)",
+            (invitation_id, email, invited_by),
+        )
+        await db.commit()
+        cursor = await db.execute(
+            "SELECT created_at FROM invitations WHERE id = ?",
+            (invitation_id,),
+        )
+        row = await cursor.fetchone()
+        return {
+            "id": invitation_id,
+            "email": email,
+            "invited_by": invited_by,
+            "status": "pending",
+            "created_at": row["created_at"],
+        }
+    finally:
+        await db.close()
+
+
+async def get_invitation(invitation_id: str) -> dict | None:
+    """Get an invitation by ID."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, email, invited_by, status, created_at, accepted_at"
+            " FROM invitations WHERE id = ?",
+            (invitation_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "invited_by": row["invited_by"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "accepted_at": row["accepted_at"],
+        }
+    finally:
+        await db.close()
+
+
+async def get_pending_invitation_by_email(email: str) -> dict | None:
+    """Get a pending invitation for the given email."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, email, invited_by, status, created_at, accepted_at"
+            " FROM invitations WHERE email = ? AND status = 'pending'",
+            (email,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "invited_by": row["invited_by"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "accepted_at": row["accepted_at"],
+        }
+    finally:
+        await db.close()
+
+
+async def list_invitations() -> list[dict]:
+    """List all invitations, most recent first."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT i.id, i.email, i.invited_by, i.status,"
+            " i.created_at, i.accepted_at, u.email AS invited_by_email"
+            " FROM invitations i"
+            " JOIN users u ON i.invited_by = u.id"
+            " ORDER BY i.created_at DESC"
+        )
+        return [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "invited_by": row["invited_by"],
+                "invited_by_email": row["invited_by_email"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "accepted_at": row["accepted_at"],
+            }
+            for row in await cursor.fetchall()
+        ]
+    finally:
+        await db.close()
+
+
+async def mark_invitation_accepted(invitation_id: str) -> bool:
+    """Mark an invitation as accepted. Returns True if updated."""
+    db = await get_db()
+    try:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await db.execute(
+            "UPDATE invitations SET status = 'accepted', accepted_at = ?"
+            " WHERE id = ? AND status = 'pending'",
+            (now, invitation_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def revoke_invitation(invitation_id: str) -> bool:
+    """Revoke a pending invitation. Returns True if updated."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "UPDATE invitations SET status = 'revoked'"
+            " WHERE id = ? AND status = 'pending'",
+            (invitation_id,),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
     finally:
         await db.close()

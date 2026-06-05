@@ -137,6 +137,7 @@ async def get_config():
     return {
         "soliplex_url": SOLIPLEX_URL,
         "registration_enabled": auth.registration_enabled(),
+        "invitations_enabled": auth.invitations_enabled(),
         "login_banner_title": LOGIN_BANNER_TITLE,
         "login_banner": LOGIN_BANNER,
     }
@@ -410,6 +411,155 @@ async def logout(
     if authorization.startswith("Bearer "):
         await auth.logout(authorization[7:])
     return {"status": "ok"}
+
+
+# --- Invitation endpoints ---
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+    password: str
+
+
+@router.post("/auth/accept-invite")
+async def accept_invite(req: AcceptInviteRequest):
+    """Accept an invitation and create a verified account."""
+    result = auth.decode_invitation_token(req.token)
+    if result is None:
+        raise HTTPException(
+            status_code=400, detail="Invalid or expired invitation token"
+        )
+    invitation_id, email = result
+
+    invitation = await model.get_invitation(invitation_id)
+    if invitation is None or invitation["status"] != "pending":
+        raise HTTPException(
+            status_code=400, detail="Invitation is no longer valid"
+        )
+
+    if len(req.password) < auth.MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
+        )
+
+    existing = await model.get_user_by_email(email)
+    if existing is not None:
+        raise HTTPException(
+            status_code=400, detail="An account with this email already exists"
+        )
+
+    password_hash = auth.hash_password(req.password)
+    user = await model.create_user(email, password_hash, verified=True)
+    await model.mark_invitation_accepted(invitation_id)
+
+    roles = await model.get_user_roles(user["id"])
+    access_token = auth.create_token(user["id"], user["email"], roles)
+    return {"status": "accepted", "access_token": access_token}
+
+
+class SendInviteRequest(BaseModel):
+    email: str
+
+
+@router.post("/admin/invitations")
+async def send_invitation(
+    req: SendInviteRequest,
+    request: Request,
+    admin: dict = Depends(auth.require_role("admin")),
+):
+    """Send an invitation email (admin only)."""
+    if not auth.invitations_enabled():
+        raise HTTPException(status_code=403, detail="Invitations are disabled")
+
+    auth.validate_email(req.email)
+
+    existing = await model.get_user_by_email(req.email)
+    if existing is not None:
+        raise HTTPException(
+            status_code=400, detail="A user with this email already exists"
+        )
+
+    pending = await model.get_pending_invitation_by_email(req.email)
+    if pending is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="A pending invitation already exists for this email",
+        )
+
+    invitation = await model.create_invitation(req.email, admin["id"])
+    token = auth.create_invitation_token(invitation["id"], req.email)
+
+    hostname, proto, base_path = derive_hosting_info(request.headers)
+    invite_url = (
+        f"{proto}://{hostname}{base_path}/#/accept-invite?token={token}"
+    )
+
+    await _send_email(
+        emailsvc.send_invitation_email(req.email, invite_url, admin["email"]),
+        req.email,
+        "invitation email",
+    )
+
+    return {
+        "id": invitation["id"],
+        "email": invitation["email"],
+        "status": invitation["status"],
+    }
+
+
+@router.get("/admin/invitations")
+async def list_invitations(
+    admin: dict = Depends(auth.require_role("admin")),
+):
+    """List all invitations (admin only)."""
+    return await model.list_invitations()
+
+
+@router.delete("/admin/invitations/{invitation_id}")
+async def revoke_invitation(
+    invitation_id: str,
+    admin: dict = Depends(auth.require_role("admin")),
+):
+    """Revoke a pending invitation (admin only)."""
+    revoked = await model.revoke_invitation(invitation_id)
+    if not revoked:
+        raise HTTPException(
+            status_code=404,
+            detail="Invitation not found or not pending",
+        )
+    return {"status": "revoked"}
+
+
+@router.post("/admin/invitations/{invitation_id}/resend")
+async def resend_invitation(
+    invitation_id: str,
+    request: Request,
+    admin: dict = Depends(auth.require_role("admin")),
+):
+    """Resend an invitation email (admin only)."""
+    invitation = await model.get_invitation(invitation_id)
+    if invitation is None or invitation["status"] != "pending":
+        raise HTTPException(
+            status_code=404,
+            detail="Invitation not found or not pending",
+        )
+
+    token = auth.create_invitation_token(invitation["id"], invitation["email"])
+    hostname, proto, base_path = derive_hosting_info(request.headers)
+    invite_url = (
+        f"{proto}://{hostname}{base_path}/#/accept-invite?token={token}"
+    )
+
+    await _send_email(
+        emailsvc.send_invitation_email(
+            invitation["email"], invite_url, admin["email"]
+        ),
+        invitation["email"],
+        "invitation email",
+    )
+
+    return {"status": "resent"}
 
 
 # --- Workspace endpoints ---

@@ -3134,3 +3134,371 @@ class TestWorkspaceExportImport:
         resp = await client.get("/workspaces", headers=headers)
         names = [w["name"] for w in resp.json()]
         assert "traversal-test" not in names
+
+
+# --- Invitation endpoints ---
+
+
+class TestInvitations:
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testadmin@example.com", "password": "testpass"},
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_send_invitation(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "invited@example.com"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == "invited@example.com"
+        assert data["status"] == "pending"
+        assert "id" in data
+        mock_send.assert_called_once()
+
+    async def test_send_invitation_disabled(
+        self, client, admin_user, monkeypatch
+    ):
+        headers = await self._admin_headers(client)
+        monkeypatch.setattr(auth, "invitations_enabled", lambda: False)
+        resp = await client.post(
+            "/admin/invitations",
+            headers=headers,
+            json={"email": "invited@example.com"},
+        )
+        assert resp.status_code == 403
+        assert "disabled" in resp.json()["detail"]
+
+    async def test_send_invitation_existing_user(
+        self, client, admin_user, user
+    ):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/invitations",
+            headers=headers,
+            json={"email": "testuser@example.com"},
+        )
+        assert resp.status_code == 400
+        assert "already exists" in resp.json()["detail"]
+
+    async def test_send_invitation_duplicate_pending(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "dup@example.com"},
+            )
+            resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "dup@example.com"},
+            )
+        assert resp.status_code == 400
+        assert "pending invitation" in resp.json()["detail"]
+
+    async def test_send_invitation_invalid_email(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/invitations",
+            headers=headers,
+            json={"email": "not-an-email"},
+        )
+        assert resp.status_code == 400
+
+    async def test_send_invitation_requires_admin(self, client, user):
+        login_resp = await client.post(
+            "/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        headers = {
+            "Authorization": f"Bearer {login_resp.json()['access_token']}"
+        }
+        resp = await client.post(
+            "/admin/invitations",
+            headers=headers,
+            json={"email": "invited@example.com"},
+        )
+        assert resp.status_code == 403
+
+    async def test_list_invitations(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "list1@example.com"},
+            )
+            await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "list2@example.com"},
+            )
+        resp = await client.get("/admin/invitations", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        emails = [inv["email"] for inv in data]
+        assert "list1@example.com" in emails
+        assert "list2@example.com" in emails
+        assert data[0]["invited_by_email"] == "testadmin@example.com"
+
+    async def test_revoke_invitation(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "revoke@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        resp = await client.delete(
+            f"/admin/invitations/{inv_id}", headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "revoked"
+
+        # Can't revoke again
+        resp = await client.delete(
+            f"/admin/invitations/{inv_id}", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_revoke_nonexistent(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.delete(
+            "/admin/invitations/nonexistent-id", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_resend_invitation(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "resend@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ) as mock_resend:
+            resp = await client.post(
+                f"/admin/invitations/{inv_id}/resend", headers=headers
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "resent"
+        mock_resend.assert_called_once()
+
+    async def test_resend_nonexistent(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/invitations/nonexistent/resend", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_resend_revoked(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "revoked-resend@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        await client.delete(f"/admin/invitations/{inv_id}", headers=headers)
+        resp = await client.post(
+            f"/admin/invitations/{inv_id}/resend", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_accept_invite(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "accept@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        token = auth.create_invitation_token(inv_id, "accept@example.com")
+
+        resp = await client.post(
+            "/auth/accept-invite",
+            json={"token": token, "password": "newpassword"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "accepted"
+        assert "access_token" in data
+
+        # User can log in
+        login_resp = await client.post(
+            "/auth/login",
+            json={"email": "accept@example.com", "password": "newpassword"},
+        )
+        assert login_resp.status_code == 200
+
+    async def test_accept_invite_invalid_token(self, client, db):
+        resp = await client.post(
+            "/auth/accept-invite",
+            json={"token": "invalid-token", "password": "newpassword"},
+        )
+        assert resp.status_code == 400
+        assert "Invalid or expired" in resp.json()["detail"]
+
+    async def test_accept_invite_already_accepted(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "double@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        token = auth.create_invitation_token(inv_id, "double@example.com")
+
+        # Accept once
+        await client.post(
+            "/auth/accept-invite",
+            json={"token": token, "password": "newpassword"},
+        )
+        # Try again
+        resp = await client.post(
+            "/auth/accept-invite",
+            json={"token": token, "password": "newpassword"},
+        )
+        assert resp.status_code == 400
+        assert "no longer valid" in resp.json()["detail"]
+
+    async def test_accept_invite_short_password(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "short@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        token = auth.create_invitation_token(inv_id, "short@example.com")
+
+        resp = await client.post(
+            "/auth/accept-invite",
+            json={"token": token, "password": "ab"},
+        )
+        assert resp.status_code == 400
+        assert "Password" in resp.json()["detail"]
+
+    async def test_accept_invite_works_when_registration_disabled(
+        self, client, admin_user, monkeypatch
+    ):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "noreg@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        token = auth.create_invitation_token(inv_id, "noreg@example.com")
+
+        # Disable registration
+        monkeypatch.setattr(auth, "registration_enabled", lambda: False)
+
+        # Accept-invite should still work
+        resp = await client.post(
+            "/auth/accept-invite",
+            json={"token": token, "password": "newpassword"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "accepted"
+
+    async def test_accept_invite_email_already_registered(
+        self, client, admin_user, user
+    ):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/admin/invitations",
+                headers=headers,
+                json={"email": "race@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        token = auth.create_invitation_token(inv_id, "race@example.com")
+
+        # Simulate race: create user with that email before accepting
+        await model.create_user(
+            "race@example.com", auth.hash_password("pass"), verified=True
+        )
+
+        resp = await client.post(
+            "/auth/accept-invite",
+            json={"token": token, "password": "newpassword"},
+        )
+        assert resp.status_code == 400
+        assert "already exists" in resp.json()["detail"]
+
+    async def test_accept_invite_wrong_purpose_token(self, client, db):
+        # Use a verification token (wrong purpose)
+        token = auth.create_verification_token("fake-user-id")
+        resp = await client.post(
+            "/auth/accept-invite",
+            json={"token": token, "password": "newpassword"},
+        )
+        assert resp.status_code == 400
+
+    async def test_config_includes_invitations_enabled(self, client):
+        resp = await client.get("/api/config")
+        assert resp.status_code == 200
+        assert "invitations_enabled" in resp.json()

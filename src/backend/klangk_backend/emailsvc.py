@@ -197,3 +197,53 @@ async def send_password_reset_email(to: str, reset_url: str) -> None:
         await send_via_smtp(msg)
     else:
         await send_via_sendmail(msg)
+
+
+async def send_invitation_email(
+    to: str, invite_url: str, invited_by_email: str
+) -> None:
+    """Send an invitation email with the given registration URL."""
+    logger.info(
+        "Sending invitation email to %s (invited by %s) with URL: %s",
+        to,
+        invited_by_email,
+        invite_url,
+    )
+    text_body = (
+        f"{invited_by_email} has invited you to join Klangk.\n\n"
+        "Click the link below to set your password and activate "
+        "your account:\n\n"
+        f"<{invite_url}>\n\n"
+        "This link expires in 72 hours.\n\n"
+        "If you did not expect this invitation, you can ignore this email."
+    )
+    html_body = (
+        '<div style="font-family:sans-serif;max-width:480px;margin:0 auto">'
+        '<div style="text-align:center;padding:24px 0">'
+        '<span style="display:inline-block;background:#E65100;'
+        "color:#fff;border-radius:50%;width:48px;height:48px;"
+        'line-height:48px;font-size:24px">&#128062;</span>'
+        '<h2 style="margin:8px 0 0">Klangk</h2>'
+        "</div>"
+        f"<p><strong>{invited_by_email}</strong> has invited you to "
+        "join Klangk.</p>"
+        "<p>Click the link below to set your password and activate "
+        "your account:</p>"
+        f'<p><a href="{invite_url}">Accept invitation</a></p>'
+        "<p>This link expires in 72 hours.</p>"
+        "<p><small>If you did not expect this invitation, you can "
+        "ignore this email.</small></p>"
+        "</div>"
+    )
+    cfg = smtp_config()
+    msg = EmailMessage()
+    msg["Subject"] = "You've been invited to Klangk"
+    msg["From"] = cfg["from_addr"] or cfg["user"] or "noreply@localhost"
+    msg["To"] = to
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+
+    if use_smtp():
+        await send_via_smtp(msg)
+    else:
+        await send_via_sendmail(msg)
