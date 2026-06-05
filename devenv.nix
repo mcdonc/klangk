@@ -76,6 +76,7 @@ in
   languages.python = {
     enable = true;
     venv.enable = true;
+    lsp.enable = isDev;
     uv = {
       enable = true;
       sync.enable = true;
