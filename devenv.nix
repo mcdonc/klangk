@@ -88,7 +88,6 @@ in
     with pkgs;
     [
       bash # explicit bash for shell scripts (CI /bin/sh may be dash)
-      docker-client
       coreutils # GNU du (macOS BSD du lacks -b)
       gzip
       gnutar
@@ -98,6 +97,7 @@ in
       rsync
     ]
     ++ lib.optionals isDev [
+      docker-client
       flutter
       git # HM for "error: Failed to find git" during devenv:git-hooks:install
     ];
