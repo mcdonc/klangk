@@ -557,3 +557,55 @@ class TestInvitations:
 
     async def test_revoke_nonexistent(self, db):
         assert not await model.revoke_invitation("nonexistent")
+
+
+class TestOIDCUsers:
+    async def test_create_oidc_user(self, db):
+        user = await model.create_user(
+            "oidc@example.com",
+            password_hash=None,
+            verified=True,
+            provider="keycloak",
+            external_id="sub-123",
+        )
+        assert user["id"]
+        assert user["email"] == "oidc@example.com"
+
+    async def test_get_by_external_id(self, db):
+        await model.create_user(
+            "ext@example.com",
+            password_hash=None,
+            verified=True,
+            provider="kc",
+            external_id="ext-456",
+        )
+        found = await model.get_user_by_external_id("kc", "ext-456")
+        assert found is not None
+        assert found["email"] == "ext@example.com"
+        assert found["provider"] == "kc"
+        assert found["external_id"] == "ext-456"
+
+    async def test_get_by_external_id_not_found(self, db):
+        assert await model.get_user_by_external_id("kc", "nope") is None
+
+    async def test_link_oidc_identity(self, db):
+        user = await model.create_user(
+            "link@example.com", "hash", verified=True
+        )
+        await model.link_oidc_identity(user["id"], "kc", "linked-sub")
+        found = await model.get_user_by_external_id("kc", "linked-sub")
+        assert found is not None
+        assert found["id"] == user["id"]
+
+    async def test_get_user_by_email_includes_oidc_fields(self, db):
+        await model.create_user(
+            "fields@example.com",
+            password_hash=None,
+            verified=True,
+            provider="google",
+            external_id="g-789",
+        )
+        user = await model.get_user_by_email("fields@example.com")
+        assert user["provider"] == "google"
+        assert user["external_id"] == "g-789"
+        assert user["password_hash"] is None

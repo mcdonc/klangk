@@ -1,0 +1,402 @@
+"""Tests for OIDC client module."""
+
+import json
+import time
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from klangk_backend import oidc
+
+
+@pytest.fixture(autouse=True)
+def clean_oidc_state():
+    """Reset OIDC module state between tests."""
+    oidc._providers.clear()
+    oidc.clear_caches()
+    yield
+    oidc._providers.clear()
+    oidc.clear_caches()
+
+
+def _provider(**overrides):
+    defaults = {
+        "id": "test",
+        "display_name": "Test IdP",
+        "issuer": "https://idp.example.com",
+        "client_id": "klangk",
+        "client_secret": "secret",
+        "scopes": "openid email profile",
+        "admin_claim": None,
+        "admin_group": None,
+    }
+    defaults.update(overrides)
+    return oidc.OIDCProvider(**defaults)
+
+
+class TestLoadConfig:
+    def test_no_config(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+        assert oidc.load_config() == []
+
+    def test_missing_file(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(tmp_path / "nope.json"))
+        assert oidc.load_config() == []
+
+    def test_valid_config(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.json"
+        cfg.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "test",
+                        "display_name": "Test",
+                        "issuer": "https://idp.example.com/",
+                        "client_id": "klangk",
+                        "client_secret": "s3cret",
+                        "admin_claim": "roles",
+                        "admin_group": "admin",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert len(providers) == 1
+        assert providers[0].id == "test"
+        assert providers[0].issuer == "https://idp.example.com"
+        assert providers[0].client_secret == "s3cret"
+        assert providers[0].admin_claim == "roles"
+
+    def test_file_secret(self, monkeypatch, tmp_path):
+        secret_file = tmp_path / "secret"
+        secret_file.write_text("file-secret\n")
+        cfg = tmp_path / "oidc.json"
+        cfg.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "fs",
+                        "display_name": "File Secret",
+                        "issuer": "https://idp.example.com",
+                        "client_id": "klangk",
+                        "client_secret": f"file:{secret_file}",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert providers[0].client_secret == "file-secret"
+
+    def test_multiple_providers(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.json"
+        cfg.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "a",
+                        "display_name": "A",
+                        "issuer": "https://a.example.com",
+                        "client_id": "klangk",
+                        "client_secret": "sa",
+                    },
+                    {
+                        "id": "b",
+                        "display_name": "B",
+                        "issuer": "https://b.example.com",
+                        "client_id": "klangk",
+                        "client_secret": "sb",
+                    },
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert len(providers) == 2
+        assert providers[0].id == "a"
+        assert providers[1].id == "b"
+
+
+class TestProviderRegistry:
+    def test_init_and_lookup(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.json"
+        cfg.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "test",
+                        "display_name": "Test",
+                        "issuer": "https://idp.example.com",
+                        "client_id": "klangk",
+                        "client_secret": "s",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        oidc.init_providers()
+        assert oidc.is_enabled()
+        assert oidc.get_provider("test") is not None
+        assert oidc.get_provider("nope") is None
+        providers = oidc.list_providers()
+        assert providers == [{"id": "test", "display_name": "Test"}]
+
+    def test_not_enabled_when_empty(self):
+        assert not oidc.is_enabled()
+        assert oidc.list_providers() == []
+
+
+class TestAuthModes:
+    def test_default_password_when_no_oidc(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        assert oidc.auth_modes() == "password"
+        assert oidc.password_login_allowed()
+        assert not oidc.oidc_login_allowed()
+
+    def test_default_both_when_oidc_enabled(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        oidc._providers.append(_provider())
+        assert oidc.auth_modes() == "both"
+        assert oidc.password_login_allowed()
+        assert oidc.oidc_login_allowed()
+
+    def test_oidc_only(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
+        oidc._providers.append(_provider())
+        assert oidc.auth_modes() == "oidc"
+        assert not oidc.password_login_allowed()
+        assert oidc.oidc_login_allowed()
+
+    def test_password_only(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
+        oidc._providers.append(_provider())
+        assert oidc.auth_modes() == "password"
+        assert oidc.password_login_allowed()
+        assert not oidc.oidc_login_allowed()
+
+
+class TestPKCE:
+    def test_generate_pkce(self):
+        verifier, challenge = oidc.generate_pkce()
+        assert len(verifier) > 32
+        assert len(challenge) > 32
+        assert verifier != challenge
+
+    def test_pkce_challenge_is_s256(self):
+        import base64
+        import hashlib
+
+        verifier, challenge = oidc.generate_pkce()
+        expected = (
+            base64.urlsafe_b64encode(
+                hashlib.sha256(verifier.encode("ascii")).digest()
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        assert challenge == expected
+
+
+def _mock_httpx_client(get_response=None, post_response=None):
+    """Create a mock httpx.AsyncClient that works as an async context manager."""
+    client = AsyncMock()
+    if get_response:
+        client.get.return_value = get_response
+    if post_response:
+        client.post.return_value = post_response
+    # httpx.AsyncClient.__aenter__ returns self
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
+def _mock_response(data):
+    """Create a mock httpx response with sync .json() and .raise_for_status()."""
+    from unittest.mock import MagicMock
+
+    resp = MagicMock()
+    resp.json.return_value = data
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+class TestDiscovery:
+    async def test_discover_caches(self):
+        provider = _provider()
+        disc_data = {
+            "authorization_endpoint": "https://idp.example.com/auth",
+            "token_endpoint": "https://idp.example.com/token",
+            "jwks_uri": "https://idp.example.com/jwks",
+        }
+        mock_resp = _mock_response(disc_data)
+        client_instance = _mock_httpx_client(get_response=mock_resp)
+
+        with patch("httpx.AsyncClient", return_value=client_instance):
+            result1 = await oidc.discover(provider)
+            assert result1 == disc_data
+
+            # Second call should use cache
+            result2 = await oidc.discover(provider)
+            assert result2 == disc_data
+            # Only one HTTP call
+            assert client_instance.get.call_count == 1
+
+    async def test_discover_cache_expires(self):
+        provider = _provider()
+        disc_data = {"authorization_endpoint": "https://idp.example.com/auth"}
+        mock_resp = _mock_response(disc_data)
+        client_instance = _mock_httpx_client(get_response=mock_resp)
+
+        with patch("httpx.AsyncClient", return_value=client_instance):
+            await oidc.discover(provider)
+            # Expire the cache
+            oidc._discovery_cache[provider.id].fetched_at = (
+                time.time() - oidc._DISCOVERY_TTL - 1
+            )
+            await oidc.discover(provider)
+            assert client_instance.get.call_count == 2
+
+
+class TestBuildAuthUrl:
+    async def test_build_auth_url(self):
+        provider = _provider()
+        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+            data={
+                "authorization_endpoint": "https://idp.example.com/auth",
+            },
+            fetched_at=time.time(),
+        )
+        url = await oidc.build_auth_url(
+            provider,
+            "https://klangk.example.com/callback",
+            "state123",
+            "challenge456",
+        )
+        assert url.startswith("https://idp.example.com/auth?")
+        assert "client_id=klangk" in url
+        assert "state=state123" in url
+        assert "code_challenge=challenge456" in url
+        assert "code_challenge_method=S256" in url
+
+
+class TestExchangeCode:
+    async def test_exchange_code(self):
+        provider = _provider()
+        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+            data={"token_endpoint": "https://idp.example.com/token"},
+            fetched_at=time.time(),
+        )
+        token_resp = {"access_token": "at", "id_token": "idt"}
+        mock_resp = _mock_response(token_resp)
+        client_instance = _mock_httpx_client(post_response=mock_resp)
+
+        with patch("httpx.AsyncClient", return_value=client_instance):
+            result = await oidc.exchange_code(
+                provider, "code123", "https://cb", "verifier"
+            )
+            assert result == token_resp
+            call_data = client_instance.post.call_args[1]["data"]
+            assert call_data["code"] == "code123"
+            assert call_data["code_verifier"] == "verifier"
+            assert call_data["client_secret"] == "secret"
+
+
+class TestGetJWKS:
+    async def test_get_jwks_caches(self):
+        provider = _provider()
+        # Pre-populate discovery cache
+        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+            data={"jwks_uri": "https://idp.example.com/jwks"},
+            fetched_at=time.time(),
+        )
+        jwks_data = {"keys": [{"kty": "RSA", "kid": "key1"}]}
+        mock_resp = _mock_response(jwks_data)
+        client_instance = _mock_httpx_client(get_response=mock_resp)
+
+        with patch("httpx.AsyncClient", return_value=client_instance):
+            result1 = await oidc.get_jwks(provider)
+            assert result1 == jwks_data
+            result2 = await oidc.get_jwks(provider)
+            assert result2 == jwks_data
+            assert client_instance.get.call_count == 1
+
+    async def test_get_jwks_cache_expires(self):
+        provider = _provider()
+        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+            data={"jwks_uri": "https://idp.example.com/jwks"},
+            fetched_at=time.time(),
+        )
+        jwks_data = {"keys": []}
+        mock_resp = _mock_response(jwks_data)
+        client_instance = _mock_httpx_client(get_response=mock_resp)
+
+        with patch("httpx.AsyncClient", return_value=client_instance):
+            await oidc.get_jwks(provider)
+            oidc._jwks_cache[provider.id].fetched_at = (
+                time.time() - oidc._JWKS_TTL - 1
+            )
+            await oidc.get_jwks(provider)
+            assert client_instance.get.call_count == 2
+
+
+class TestValidateIdToken:
+    async def test_validate_id_token(self):
+        from unittest.mock import MagicMock
+
+        provider = _provider()
+        claims = {"sub": "user1", "email": "user@example.com"}
+        with (
+            patch.object(
+                oidc, "get_jwks", AsyncMock(return_value={"keys": []})
+            ),
+            patch.object(
+                oidc.jose_jwt,
+                "decode",
+                MagicMock(return_value=claims),
+            ),
+        ):
+            result = await oidc.validate_id_token(provider, "fake-token")
+            assert result == claims
+
+
+class TestExtractAdminRole:
+    def test_no_mapping_configured(self):
+        provider = _provider()
+        assert oidc.extract_admin_role(provider, {}) is None
+
+    def test_admin_in_flat_list(self):
+        provider = _provider(admin_claim="roles", admin_group="klangk-admin")
+        claims = {"roles": ["user", "klangk-admin"]}
+        assert oidc.extract_admin_role(provider, claims) is True
+
+    def test_admin_not_in_list(self):
+        provider = _provider(admin_claim="roles", admin_group="klangk-admin")
+        claims = {"roles": ["user"]}
+        assert oidc.extract_admin_role(provider, claims) is False
+
+    def test_nested_claim_path(self):
+        provider = _provider(
+            admin_claim="realm_access.roles",
+            admin_group="admin",
+        )
+        claims = {"realm_access": {"roles": ["admin", "user"]}}
+        assert oidc.extract_admin_role(provider, claims) is True
+
+    def test_nested_claim_missing(self):
+        provider = _provider(
+            admin_claim="realm_access.roles",
+            admin_group="admin",
+        )
+        claims = {"other": "stuff"}
+        assert oidc.extract_admin_role(provider, claims) is False
+
+    def test_string_claim(self):
+        provider = _provider(admin_claim="role", admin_group="admin")
+        claims = {"role": "admin"}
+        assert oidc.extract_admin_role(provider, claims) is True
+
+    def test_string_claim_no_match(self):
+        provider = _provider(admin_claim="role", admin_group="admin")
+        claims = {"role": "user"}
+        assert oidc.extract_admin_role(provider, claims) is False
