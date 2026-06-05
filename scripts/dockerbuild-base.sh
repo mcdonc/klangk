@@ -5,17 +5,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
-IMAGE="ghcr.io/mcdonc/klangk/klangk-base:latest"
+COMMIT="$(git rev-parse --short HEAD)"
+CALVER="$(date -u +%Y.%m.%d)"
+VERSION="${CALVER}-${COMMIT}"
+IMAGE="ghcr.io/mcdonc/klangk/klangk-base"
 
-echo "==> Building base image"
+echo "==> Building base image $VERSION"
 docker build --platform linux/amd64 \
   --build-arg KLANGK_UID="$(id -u)" \
   --build-arg KLANGK_GID="$(id -g)" \
-  -f src/docker/Dockerfile.base \
-  -t "$IMAGE" "$@" src/docker/
+  -f src/docker/workspace/Dockerfile.base \
+  -t "$IMAGE:latest" \
+  -t "$IMAGE:$VERSION" \
+  "$@" src/docker/workspace/
 
-# Requires: docker login ghcr.io
-#echo "==> Pushing to GHCR"
-#docker push "$IMAGE"
-
-echo "==> Done: $IMAGE"
+echo "==> Done: $IMAGE:$VERSION"
+docker images "$IMAGE" --format "  {{.Tag}}\t{{.Size}}"

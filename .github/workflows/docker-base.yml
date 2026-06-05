@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/docker/Dockerfile.base"
+      - "src/docker/workspace/Dockerfile.base"
       - ".github/workflows/docker-base.yml"
 
 jobs:
@@ -20,12 +20,25 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Build and push base image
+      - name: Build base image
         run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          CALVER="$(date -u +%Y.%m.%d)"
+          VERSION="${CALVER}-${COMMIT}"
+          REPO="ghcr.io/${{ github.repository }}/klangk-base"
           docker build --platform linux/amd64 \
             --build-arg KLANGK_UID=1000 \
             --build-arg KLANGK_GID=1000 \
-            -f src/docker/Dockerfile.base \
-            -t ghcr.io/${{ github.repository }}/klangk-base:latest \
-            src/docker/
-          docker push ghcr.io/${{ github.repository }}/klangk-base:latest
+            -f src/docker/workspace/Dockerfile.base \
+            -t "$REPO:latest" \
+            -t "$REPO:$VERSION" \
+            src/docker/workspace/
+
+      - name: Push base image
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          CALVER="$(date -u +%Y.%m.%d)"
+          VERSION="${CALVER}-${COMMIT}"
+          REPO="ghcr.io/${{ github.repository }}/klangk-base"
+          docker push "$REPO:latest"
+          docker push "$REPO:$VERSION"

@@ -1,0 +1,48 @@
+name: Build Host Docker Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/docker/host/**"
+      - "src/backend/klangk_backend/**"
+      - "src/frontend/lib/**"
+      - "scripts/dockerbuild-host.sh"
+      - "scripts/nginx.sh"
+      - ".github/workflows/docker-host.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:flutter-build
+
+      - name: Build host image
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- dockerbuild-host
+
+      - name: Tag and push to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          COMMIT=$(git rev-parse --short HEAD)
+          CALVER="$(date -u +%Y.%m.%d)"
+          VERSION="${CALVER}-${COMMIT}"
+          REPO="ghcr.io/${{ github.repository }}/klangk-host"
+          docker tag klangk-host "$REPO:latest"
+          docker tag klangk-host "$REPO:$VERSION"
+          docker push "$REPO:latest"
+          docker push "$REPO:$VERSION"

@@ -45,6 +45,25 @@ async def health():
     return {"status": "ok"}
 
 
+@router.get("/version")
+async def version():
+    """Return build version info (version, commit, build timestamp)."""
+    version_file = os.environ.get("KLANGK_VERSION_FILE", "")
+    if version_file and os.path.isfile(version_file):
+        with open(version_file) as f:
+            return json.load(f)
+    # Dev mode: read from git
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        commit = "unknown"
+    return {"version": "dev", "commit": commit, "built_at": None}
+
+
 # --- Test/debug endpoints (only when KLANGK_TEST_MODE is set) ---
 
 if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover

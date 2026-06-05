@@ -40,7 +40,7 @@ jobs:
             e2e:
               - 'src/backend/**'
               - 'src/frontend/**'
-              - 'src/docker/**'
+              - 'src/docker/workspace/**'
               - 'plugins/**'
               - 'devenv.nix'
               - 'devenv.yaml'

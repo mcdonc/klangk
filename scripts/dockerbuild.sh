@@ -33,4 +33,4 @@ fi
 docker build --platform linux/amd64 \
   --build-context plugin-extensions="$STAGING/extensions" \
   --build-context plugin-tools="$STAGING/tools" \
-  -t "${KLANGK_IMAGE_NAME}" "$@" src/docker/
+  -t "${KLANGK_IMAGE_NAME}" "$@" src/docker/workspace/

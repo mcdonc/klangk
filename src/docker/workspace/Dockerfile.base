@@ -84,12 +84,3 @@ WORKDIR /home/klangk/work
 
 # Allow klangk user to sudo without a password (for installing packages, etc.)
 RUN echo "klangk ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/klangk
-
-# Determinate Nix + devenv + cachix
-# (TODO: remove after testing — large layer, not needed for most workspaces)
-RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
-    | sh -s -- install linux --no-confirm --init none --no-start-daemon \
-    && . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
-    && nix profile install --profile /nix/var/nix/profiles/default nixpkgs#devenv nixpkgs#cachix \
-    && usermod -aG nixbld klangk \
-    && chown -R klangk:klangk /nix/var

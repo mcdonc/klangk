@@ -6,5 +6,5 @@ inputs:
         follows: nixpkgs
   nixpkgs:
     url: github:cachix/devenv-nixpkgs/rolling
+allow_unfree: true
 reload: false
-allowUnfree: true
