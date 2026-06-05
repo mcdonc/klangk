@@ -454,12 +454,13 @@ class ContainerRegistry:
             if "port is already allocated" not in str(exc):
                 raise
             # A stale container is holding one of our ports.
-            # Kill all managed containers for this instance that
-            # aren't the one we just created, then retry.
+            # Find which managed containers bind the conflicting ports
+            # and remove only those, not all containers.
             logger.warning(
                 "Port conflict starting %s, cleaning stale containers",
                 container_name,
             )
+            wanted_ports = set(host_ports)
             stale = await docker.containers.list(
                 all=True,
                 filters={
@@ -470,10 +471,25 @@ class ContainerRegistry:
                 },
             )
             for c in stale:
-                if c.id != created.id:
+                if c.id == created.id:
+                    continue
+                info = await c.show()
+                bindings = info.get("HostConfig", {}).get("PortBindings") or {}
+                bound_ports = set()
+                for ports_list in bindings.values():
+                    for entry in ports_list or []:
+                        try:
+                            bound_ports.add(int(entry["HostPort"]))
+                        except (KeyError, ValueError, TypeError):
+                            pass
+                if bound_ports & wanted_ports:
                     try:
                         await c.delete(force=True)
-                        logger.info("Removed stale container %s", c.id)
+                        logger.info(
+                            "Removed stale container %s (ports %s)",
+                            c.id,
+                            bound_ports & wanted_ports,
+                        )
                     except aiodocker.exceptions.DockerError as del_exc:
                         logger.info(
                             "Could not remove stale container %s: %s",
