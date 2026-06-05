@@ -71,6 +71,7 @@ In CI, `devenv processes up -d` starts nginx before E2E tests run.
 - Role-based access control: `roles` and `user_roles` tables, `require_role()` FastAPI dependency for endpoint protection
 - Default user auto-seeded on startup with admin role (configurable via KLANGK_DEFAULT_USER/PASSWORD in .env)
 - Admin user management: list/add/edit/delete users, toggle roles, user data archived to tar.xz on deletion, self-deletion prevented. Admin create-user endpoint (`POST /admin/users`) creates verified users directly without email verification.
+- **Invitation system**: Admins can invite users by email (`POST /admin/invitations` or `klangk invite <email>`). Generates a 72-hour JWT token (configurable via `KLANGK_INVITE_EXPIRE_HOURS`), sends an email with a registration link (`/#/accept-invite?token=...`). Invited users set a password to create a verified account — bypasses `KLANGK_DISABLE_REGISTRATION`. Invitations tracked in `invitations` table (pending/accepted/revoked), listable via `GET /admin/invitations` or `klangk invitations`, revocable via `DELETE /admin/invitations/{id}`. Disabled via `KLANGK_DISABLE_INVITES=true`.
 - Open registration with email verification (test mode auto-verifies for E2E tests)
 - Login rejects unverified accounts
 - Login brute-force protection: failed attempts tracked per email in SQLite; `KLANGK_LOGIN_LOCKOUT_FAILURES=N` failures within `KLANGK_LOGIN_LOCKOUT_WINDOW=S` (default 300s) triggers a `KLANGK_LOGIN_LOCKOUT_DURATION=D` (default 900s) lockout (429 with remaining seconds). Disabled by default (N=0).

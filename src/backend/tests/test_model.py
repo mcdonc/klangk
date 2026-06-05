@@ -502,3 +502,58 @@ class TestChatMessages:
         assert not deleted
         msgs = await model.get_chat_messages(workspace["id"])
         assert msgs[0]["message"] == "mine"
+
+
+class TestInvitations:
+    async def test_create_and_get(self, db, admin_user):
+        inv = await model.create_invitation("a@b.com", admin_user["id"])
+        assert inv["email"] == "a@b.com"
+        assert inv["status"] == "pending"
+
+        fetched = await model.get_invitation(inv["id"])
+        assert fetched["email"] == "a@b.com"
+        assert fetched["status"] == "pending"
+
+    async def test_get_nonexistent(self, db):
+        assert await model.get_invitation("nonexistent") is None
+
+    async def test_get_pending_by_email(self, db, admin_user):
+        await model.create_invitation("p@b.com", admin_user["id"])
+        pending = await model.get_pending_invitation_by_email("p@b.com")
+        assert pending is not None
+        assert pending["email"] == "p@b.com"
+
+    async def test_get_pending_by_email_none(self, db):
+        assert (
+            await model.get_pending_invitation_by_email("no@one.com") is None
+        )
+
+    async def test_list(self, db, admin_user):
+        await model.create_invitation("x@b.com", admin_user["id"])
+        await model.create_invitation("y@b.com", admin_user["id"])
+        invs = await model.list_invitations()
+        assert len(invs) >= 2
+        emails = [i["email"] for i in invs]
+        assert "x@b.com" in emails
+        assert "y@b.com" in emails
+        assert invs[0]["invited_by_email"] == "testadmin@example.com"
+
+    async def test_mark_accepted(self, db, admin_user):
+        inv = await model.create_invitation("acc@b.com", admin_user["id"])
+        assert await model.mark_invitation_accepted(inv["id"])
+        fetched = await model.get_invitation(inv["id"])
+        assert fetched["status"] == "accepted"
+        assert fetched["accepted_at"] is not None
+        # Can't accept again
+        assert not await model.mark_invitation_accepted(inv["id"])
+
+    async def test_revoke(self, db, admin_user):
+        inv = await model.create_invitation("rev@b.com", admin_user["id"])
+        assert await model.revoke_invitation(inv["id"])
+        fetched = await model.get_invitation(inv["id"])
+        assert fetched["status"] == "revoked"
+        # Can't revoke again
+        assert not await model.revoke_invitation(inv["id"])
+
+    async def test_revoke_nonexistent(self, db):
+        assert not await model.revoke_invitation("nonexistent")

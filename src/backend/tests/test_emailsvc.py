@@ -236,3 +236,42 @@ class TestSendPasswordResetEmail:
                 "https://klangk.example.com/#/reset-password?token=xyz",
             )
         mock_smtp.assert_awaited_once()
+
+
+class TestSendInvitationEmail:
+    async def test_sends_invitation_email(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_SMTP_HOST", raising=False)
+        mock_sendmail = AsyncMock()
+        with patch.object(emailsvc, "send_via_sendmail", mock_sendmail):
+            await emailsvc.send_invitation_email(
+                "invited@example.com",
+                "https://klangk.example.com/#/accept-invite?token=abc123",
+                "admin@example.com",
+            )
+        mock_sendmail.assert_awaited_once()
+        msg = mock_sendmail.call_args[0][0]
+        assert msg["To"] == "invited@example.com"
+        assert "invited" in msg["Subject"].lower()
+        parts = list(msg.iter_parts())
+        assert len(parts) == 2
+        text_part = parts[0].get_content()
+        assert "admin@example.com" in text_part
+        assert "accept-invite?token=abc123" in text_part
+        assert "72 hours" in text_part
+        html_part = parts[1].get_content()
+        assert 'href="https://klangk.example.com/#/accept-invite' in html_part
+        assert "admin@example.com" in html_part
+        assert "Accept invitation" in html_part
+
+    async def test_sends_via_smtp_when_configured(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("KLANGK_SMTP_USER", "user")
+        monkeypatch.setenv("KLANGK_SMTP_PASSWORD", "pass")
+        mock_smtp = AsyncMock()
+        with patch.object(emailsvc, "send_via_smtp", mock_smtp):
+            await emailsvc.send_invitation_email(
+                "invited@example.com",
+                "https://klangk.example.com/#/accept-invite?token=abc",
+                "admin@example.com",
+            )
+        mock_smtp.assert_awaited_once()

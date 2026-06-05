@@ -1536,3 +1536,101 @@ class TestExportImportCLI:
         archive.write_bytes(b"fake")
         with pytest.raises(typer.Exit):
             main.import_workspace(archive=archive, name="dup")
+
+
+class TestInviteCLI:
+    def test_invite_success(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        client = MagicMock()
+        client.post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "id": "inv-1",
+                "email": "a@b.com",
+                "status": "pending",
+            },
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["invite", "a@b.com"])
+        assert result.exit_code == 0
+        assert "a@b.com" in result.stdout
+
+    def test_invite_error(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        client = MagicMock()
+        client.post.return_value = MagicMock(
+            status_code=400,
+            json=lambda: {"detail": "already exists"},
+            text="already exists",
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["invite", "a@b.com"])
+        assert result.exit_code == 1
+
+    def test_invite_forbidden(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        client = MagicMock()
+        client.post.return_value = MagicMock(
+            status_code=403,
+            json=lambda: {"detail": "Invitations are disabled"},
+            text="Invitations are disabled",
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["invite", "a@b.com"])
+        assert result.exit_code == 1
+
+    def test_invitations_list(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        client = MagicMock()
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: [
+                {
+                    "email": "a@b.com",
+                    "status": "pending",
+                    "invited_by_email": "admin@x.com",
+                    "created_at": "2026-01-01 00:00:00",
+                }
+            ],
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["invitations"])
+        assert result.exit_code == 0
+        assert "a@b.com" in result.stdout
+
+    def test_invitations_empty(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        client = MagicMock()
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: [],
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["invitations"])
+        assert result.exit_code == 0
+        assert "No invitations" in result.stdout

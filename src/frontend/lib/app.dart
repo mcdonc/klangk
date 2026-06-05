@@ -9,6 +9,7 @@ import 'auth/consent_page.dart';
 import 'auth/login_page.dart';
 import 'auth/verify_page.dart';
 import 'auth/forgot_password_page.dart';
+import 'auth/accept_invite_page.dart';
 import 'auth/reset_password_page.dart';
 import 'auth/settings_page.dart';
 import 'workspace/workspace_list_page.dart';
@@ -74,6 +75,7 @@ class _KlangkAppState extends State<KlangkApp> {
           '/verify',
           '/forgot-password',
           '/reset-password',
+          '/accept-invite',
           '/consent',
         };
         if (!isLoggedIn && !publicRoutes.contains(loc)) {
@@ -131,6 +133,13 @@ class _KlangkAppState extends State<KlangkApp> {
           builder: (context, state) {
             final token = state.uri.queryParameters['token'] ?? '';
             return ResetPasswordPage(token: token);
+          },
+        ),
+        GoRoute(
+          path: '/accept-invite',
+          builder: (context, state) {
+            final token = state.uri.queryParameters['token'] ?? '';
+            return AcceptInvitePage(token: token);
           },
         ),
         GoRoute(

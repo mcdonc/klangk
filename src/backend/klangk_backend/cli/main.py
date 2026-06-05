@@ -745,6 +745,51 @@ vol_app = typer.Typer(
 app.add_typer(vol_app, name="volumes")
 
 
+@app.command()
+def invite(
+    email: str = typer.Argument(..., help="Email address to invite"),
+) -> None:
+    """Send an invitation email (admin only)."""
+    _require_auth()
+    client = _client()
+    resp = client.post("/admin/invitations", json={"email": email})
+    client._check_auth(resp)
+    if resp.status_code in (400, 403):
+        detail = resp.json().get("detail", resp.text)
+        _err.print(f"[red]{detail}[/red]")
+        raise typer.Exit(code=1)
+    resp.raise_for_status()
+    Console().print(f"Invitation sent to [bold]{email}[/bold]")
+
+
+@app.command("invitations")
+def list_invitations() -> None:
+    """List all invitations (admin only)."""
+    _require_auth()
+    client = _client()
+    resp = client.get("/admin/invitations")
+    client._check_auth(resp)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data:
+        typer.echo("No invitations.")
+        return
+    console = Console()
+    table = Table(box=None, pad_edge=False)
+    table.add_column("Email", style="bold")
+    table.add_column("Status")
+    table.add_column("Invited By")
+    table.add_column("Created")
+    for inv in data:
+        table.add_row(
+            inv["email"],
+            inv["status"],
+            inv.get("invited_by_email", ""),
+            inv["created_at"][:10],
+        )
+    console.print(table)
+
+
 @vol_app.command("ls")
 def volumes_list(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),

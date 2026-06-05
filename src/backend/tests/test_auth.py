@@ -550,3 +550,42 @@ class TestLogout:
             algorithm=auth.ALGORITHM,
         )
         await auth.logout(token)
+
+
+class TestInvitationTokens:
+    def test_roundtrip(self):
+        token = auth.create_invitation_token("inv-123", "user@example.com")
+        result = auth.decode_invitation_token(token)
+        assert result == ("inv-123", "user@example.com")
+
+    def test_wrong_purpose_rejected(self):
+        token = auth.create_verification_token("uid")
+        assert auth.decode_invitation_token(token) is None
+
+    def test_invalid_token_returns_none(self):
+        assert auth.decode_invitation_token("garbage") is None
+
+    def test_missing_email_returns_none(self):
+        token = jwt.encode(
+            {"sub": "inv-1", "purpose": "invite", "exp": 9999999999},
+            auth.SECRET_KEY,
+            algorithm=auth.ALGORITHM,
+        )
+        assert auth.decode_invitation_token(token) is None
+
+    def test_missing_sub_returns_none(self):
+        token = jwt.encode(
+            {"email": "x@y.com", "purpose": "invite", "exp": 9999999999},
+            auth.SECRET_KEY,
+            algorithm=auth.ALGORITHM,
+        )
+        assert auth.decode_invitation_token(token) is None
+
+
+class TestInvitationsEnabled:
+    def test_enabled_by_default(self):
+        assert auth.invitations_enabled() is True
+
+    def test_disabled(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_DISABLE_INVITES", "true")
+        assert auth.invitations_enabled() is False
