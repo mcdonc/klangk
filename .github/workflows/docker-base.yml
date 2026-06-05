@@ -24,7 +24,7 @@ jobs:
         run: |
           COMMIT=$(git rev-parse --short HEAD)
           CALVER="$(date -u +%Y.%m.%d)"
-          VERSION="${CALVER}+${COMMIT}"
+          VERSION="${CALVER}-${COMMIT}"
           REPO="ghcr.io/${{ github.repository }}/klangk-base"
           docker build --platform linux/amd64 \
             --build-arg KLANGK_UID=1000 \
@@ -38,7 +38,7 @@ jobs:
         run: |
           COMMIT=$(git rev-parse --short HEAD)
           CALVER="$(date -u +%Y.%m.%d)"
-          VERSION="${CALVER}+${COMMIT}"
+          VERSION="${CALVER}-${COMMIT}"
           REPO="ghcr.io/${{ github.repository }}/klangk-base"
           docker push "$REPO:latest"
           docker push "$REPO:$VERSION"

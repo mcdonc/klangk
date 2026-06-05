@@ -7,7 +7,7 @@ cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
-VERSION="${CALVER}+${COMMIT}"
+VERSION="${CALVER}-${COMMIT}"
 IMAGE="ghcr.io/mcdonc/klangk/klangk-base"
 
 echo "==> Building base image $VERSION"

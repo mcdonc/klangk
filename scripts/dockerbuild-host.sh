@@ -13,7 +13,7 @@ cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
-VERSION="${CALVER}+${COMMIT}"
+VERSION="${CALVER}-${COMMIT}"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 IMAGE="${KLANGK_HOST_IMAGE:-klangk-host}"
 

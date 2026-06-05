@@ -40,7 +40,7 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           COMMIT=$(git rev-parse --short HEAD)
           CALVER="$(date -u +%Y.%m.%d)"
-          VERSION="${CALVER}+${COMMIT}"
+          VERSION="${CALVER}-${COMMIT}"
           REPO="ghcr.io/${{ github.repository }}/klangk-host"
           docker tag klangk-host "$REPO:latest"
           docker tag klangk-host "$REPO:$VERSION"
