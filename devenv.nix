@@ -142,6 +142,24 @@ in
   scripts.dockerbuild-host.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-host.sh" "$@"'';
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
 
+  scripts.run-host.exec = ''
+    DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+    ENV_ARGS=""
+    while IFS='=' read -r key value; do
+      ENV_ARGS="$ENV_ARGS -e $key=$value"
+    done < <(env | grep '^KLANGK_')
+    docker rm -f klangk-host-run 2>/dev/null || true
+    # shellcheck disable=SC2086
+    exec docker run --name klangk-host-run \
+      -p "''${KLANGK_PORT}:''${KLANGK_PORT}" \
+      -p "''${KLANGK_NGINX_PORT}:''${KLANGK_NGINX_PORT}" \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      --group-add "$DOCKER_GID" \
+      $ENV_ARGS \
+      "$@" \
+      klangk-host
+  '';
+
   scripts.kill-containers.exec = ''
     docker ps -a \
       --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" \
