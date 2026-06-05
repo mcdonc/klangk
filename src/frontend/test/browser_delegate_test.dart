@@ -56,6 +56,17 @@ class _TestPlugin extends ToolPlugin {
           return 'beeped!';
         },
       };
+
+  @override
+  Map<String, StreamingToolHandler> get streamingHandlers => {
+        'stream_action': (request, emit) async {
+          callCount++;
+          lastAction = 'stream_action';
+          emit('Hel');
+          emit('lo');
+          return 'Hello';
+        },
+      };
 }
 
 class _ThrowingPlugin extends ToolPlugin {
@@ -71,6 +82,13 @@ List<Map<String, dynamic>> _browserResponses(_FakeWebSocketChannel channel) {
   return channel.sentMessages
       .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
       .where((m) => m['cmd'] == 'browser_response')
+      .toList();
+}
+
+List<Map<String, dynamic>> _browserChunks(_FakeWebSocketChannel channel) {
+  return channel.sentMessages
+      .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
+      .where((m) => m['cmd'] == 'browser_chunk')
       .toList();
 }
 
@@ -128,6 +146,25 @@ void main() {
       expect(responses[0]['id'], 'req-1');
       expect(responses[0]['status'], 'ok');
       expect(responses[0]['result'], 'celebrated!');
+    });
+
+    test('streams chunks then final response for stream requests', () async {
+      channel.serverSend({
+        'type': 'browser_request',
+        'id': 'req-s',
+        'action': 'stream_action',
+        'stream': true,
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final chunks = _browserChunks(channel);
+      expect(chunks.map((c) => c['delta']).toList(), ['Hel', 'lo']);
+      expect(chunks.every((c) => c['id'] == 'req-s'), isTrue);
+
+      final responses = _browserResponses(channel);
+      expect(responses.length, 1);
+      expect(responses[0]['id'], 'req-s');
+      expect(responses[0]['result'], 'Hello');
     });
 
     test('dispatches beep to plugin', () async {

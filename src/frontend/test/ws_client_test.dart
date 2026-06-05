@@ -123,6 +123,7 @@ void main() {
       client.sendTerminalStop();
       client.sendHeartbeat();
       client.sendBrowserResponse('req-1', {'status': 'ok'});
+      client.sendBrowserChunk('req-1', 'delta');
 
       expect(client.connected, isFalse);
       client.dispose();

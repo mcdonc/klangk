@@ -41,7 +41,14 @@ class BrowserDelegate {
       if (action == 'fetch') {
         result = await _handleFetch(request);
       } else if (action != null) {
-        final response = await _registry.dispatch(action, request);
+        // Streaming bridge: when the backend marks the request as a stream,
+        // relay incremental deltas as browser_chunk messages; the final
+        // browser_response (below) terminates the stream.
+        final onChunk = request['stream'] == true
+            ? (String delta) => _client.sendBrowserChunk(id, delta)
+            : null;
+        final response =
+            await _registry.dispatch(action, request, onChunk: onChunk);
         if (response.startsWith('Unknown action:')) {
           result = {'error': response};
         } else {

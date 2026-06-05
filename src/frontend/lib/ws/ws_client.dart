@@ -242,6 +242,12 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'browser_response', 'id': id, ...result});
   }
 
+  /// Send an incremental streamed chunk for a browser_request (streaming
+  /// bridge). Followed by a final [sendBrowserResponse].
+  void sendBrowserChunk(String id, String delta) {
+    _send({'cmd': 'browser_chunk', 'id': id, 'delta': delta});
+  }
+
   void _startHeartbeat() {
     _stopHeartbeat();
     _heartbeatTimer = Timer.periodic(
