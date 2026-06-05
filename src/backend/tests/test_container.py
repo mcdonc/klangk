@@ -580,6 +580,139 @@ class TestStartContainer:
         assert env_dict["FOO"] == "bar"
 
 
+class TestStartContainerPortConflict:
+    """Test retry logic when a stale container holds a port."""
+
+    def setup_method(self):
+        container.registry.states.clear()
+
+    def teardown_method(self):
+        container.registry.states.clear()
+
+    async def test_port_conflict_kills_stale_and_retries(self, workspace):
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        # First start() raises port conflict, second succeeds
+        mock_c.start = AsyncMock(
+            side_effect=[
+                aiodocker.exceptions.DockerError(
+                    500,
+                    {
+                        "message": "Bind for 0.0.0.0:9000 failed: "
+                        "port is already allocated"
+                    },
+                ),
+                None,
+            ]
+        )
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+        # Stale container to be cleaned up
+        stale = MagicMock()
+        stale.id = "stale-cid"
+        stale.delete = AsyncMock()
+        mock_docker.containers.list = AsyncMock(return_value=[stale])
+
+        with patch.object(
+            container.registry, "get_docker", return_value=mock_docker
+        ):
+            cid, status = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert cid == "new-cid"
+        assert status == "created"
+        assert mock_c.start.await_count == 2
+        stale.delete.assert_awaited_once_with(force=True)
+
+    async def test_port_conflict_skips_own_container(self, workspace):
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        mock_c.start = AsyncMock(
+            side_effect=[
+                aiodocker.exceptions.DockerError(
+                    500,
+                    {"message": "port is already allocated"},
+                ),
+                None,
+            ]
+        )
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+        # Only "stale" container is our own — should not be deleted
+        own = MagicMock()
+        own.id = "new-cid"
+        own.delete = AsyncMock()
+        mock_docker.containers.list = AsyncMock(return_value=[own])
+
+        with patch.object(
+            container.registry, "get_docker", return_value=mock_docker
+        ):
+            cid, _ = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert cid == "new-cid"
+        own.delete.assert_not_awaited()
+
+    async def test_port_conflict_stale_delete_error_logged(self, workspace):
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        mock_c.start = AsyncMock(
+            side_effect=[
+                aiodocker.exceptions.DockerError(
+                    500,
+                    {"message": "port is already allocated"},
+                ),
+                None,
+            ]
+        )
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+        stale = MagicMock()
+        stale.id = "stale-cid"
+        stale.delete = AsyncMock(
+            side_effect=aiodocker.exceptions.DockerError(
+                500, {"message": "removal in progress"}
+            )
+        )
+        mock_docker.containers.list = AsyncMock(return_value=[stale])
+
+        with patch.object(
+            container.registry, "get_docker", return_value=mock_docker
+        ):
+            cid, _ = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert cid == "new-cid"
+        stale.delete.assert_awaited_once()
+
+    async def test_non_port_conflict_error_raised(self, workspace):
+        mock_docker = _mock_docker()
+        mock_c = _mock_container("new-cid")
+        mock_c.start = AsyncMock(
+            side_effect=aiodocker.exceptions.DockerError(
+                500, {"message": "some other error"}
+            )
+        )
+        mock_docker.containers.create_or_replace = AsyncMock(
+            return_value=mock_c
+        )
+
+        with (
+            patch.object(
+                container.registry,
+                "get_docker",
+                return_value=mock_docker,
+            ),
+            pytest.raises(aiodocker.exceptions.DockerError),
+        ):
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+
+
 class TestValidateMountSpec:
     def test_valid_bind_mount(self):
         assert container.validate_mount_spec("/host:/container") is None
