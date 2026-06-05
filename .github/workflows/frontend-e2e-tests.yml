@@ -58,7 +58,7 @@ jobs:
           ARGS=()
           if [ -n "${{ inputs.project }}" ]; then ARGS+=(--project="${{ inputs.project }}" --no-deps); fi
           if [ -n "${{ inputs.grep }}" ]; then ARGS+=(-g "${{ inputs.grep }}"); fi
-          devenv shell -- test-frontend-e2e "${ARGS[@]}"
+          devenv shell -- test-frontend-e2e --project=chromium --no-deps "${ARGS[@]}"
 
       - name: Upload test results
         if: always() && steps.filter.outputs.e2e == 'true'

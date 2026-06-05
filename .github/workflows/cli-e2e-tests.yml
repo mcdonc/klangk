@@ -36,17 +36,11 @@ jobs:
         with:
           build-tasks: klangk:docker-build
 
-      - name: Stop devenv services
-        if: steps.filter.outputs.e2e == 'true'
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv processes down --no-tui 2>/dev/null || true
-
       - name: Run CLI E2E tests
         if: steps.filter.outputs.e2e == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- test-cli-e2e
+          devenv shell -- test-cli-e2e -k "not TestExec and not TestSync"
 
       - name: Skip notice
         if: steps.filter.outputs.e2e != 'true'

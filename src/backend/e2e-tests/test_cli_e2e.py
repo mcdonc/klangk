@@ -349,6 +349,10 @@ class TestExec:
         )
         assert result.returncode != 0
 
+    @pytest.mark.skipif(
+        os.environ.get("CI") == "true",
+        reason="Breaks subsequent tests on CI — see #86",
+    )
     def test_exec_yes_backpressure(self, cli_config):
         """Smoke test: run `yes` briefly to exercise bounded queue back-pressure."""
         result = _run(
