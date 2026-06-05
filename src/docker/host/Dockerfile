@@ -41,10 +41,12 @@ COPY --chown=klangk:klangk src/docker/host/entrypoint.sh /home/klangk/bin/entryp
 COPY --chown=klangk:klangk src/docker/host/klangk.sh /home/klangk/bin/klangk
 
 # Version file (injected at build time via --build-arg)
+ARG KLANGK_BUILD_VERSION=unknown
 ARG KLANGK_BUILD_COMMIT=unknown
 ARG KLANGK_BUILD_TIMESTAMP=unknown
-RUN printf '{"commit":"%s","built_at":"%s"}\n' \
-      "$KLANGK_BUILD_COMMIT" "$KLANGK_BUILD_TIMESTAMP" \
+RUN printf '{"version":"%s","commit":"%s","built_at":"%s"}\n' \
+      "$KLANGK_BUILD_VERSION" "$KLANGK_BUILD_COMMIT" \
+      "$KLANGK_BUILD_TIMESTAMP" \
       > /home/klangk/version.json && \
     chown klangk:klangk /home/klangk/version.json
 

@@ -39,7 +39,10 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           COMMIT=$(git rev-parse --short HEAD)
-          docker tag klangk-host "ghcr.io/${{ github.repository }}/klangk-host:latest"
-          docker tag klangk-host "ghcr.io/${{ github.repository }}/klangk-host:$COMMIT"
-          docker push "ghcr.io/${{ github.repository }}/klangk-host:latest"
-          docker push "ghcr.io/${{ github.repository }}/klangk-host:$COMMIT"
+          CALVER="$(date -u +%Y.%m.%d)"
+          VERSION="${CALVER}+${COMMIT}"
+          REPO="ghcr.io/${{ github.repository }}/klangk-host"
+          docker tag klangk-host "$REPO:latest"
+          docker tag klangk-host "$REPO:$VERSION"
+          docker push "$REPO:latest"
+          docker push "$REPO:$VERSION"

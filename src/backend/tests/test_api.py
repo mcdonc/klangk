@@ -60,12 +60,15 @@ class TestVersion:
     async def test_version_from_file(self, client, tmp_path, monkeypatch):
         version_file = tmp_path / "version.json"
         version_file.write_text(
-            '{"commit": "abc1234", "built_at": "2026-01-01T00:00:00Z"}'
+            '{"version": "2026.01.01+abc1234",'
+            ' "commit": "abc1234",'
+            ' "built_at": "2026-01-01T00:00:00Z"}'
         )
         monkeypatch.setenv("KLANGK_VERSION_FILE", str(version_file))
         resp = await client.get("/version")
         assert resp.status_code == 200
         data = resp.json()
+        assert data["version"] == "2026.01.01+abc1234"
         assert data["commit"] == "abc1234"
         assert data["built_at"] == "2026-01-01T00:00:00Z"
 
@@ -74,6 +77,7 @@ class TestVersion:
         resp = await client.get("/version")
         assert resp.status_code == 200
         data = resp.json()
+        assert data["version"] == "dev"
         assert "commit" in data
         assert "built_at" in data
 
@@ -85,7 +89,11 @@ class TestVersion:
         )
         resp = await client.get("/version")
         assert resp.status_code == 200
-        assert resp.json() == {"commit": "unknown", "built_at": None}
+        assert resp.json() == {
+            "version": "dev",
+            "commit": "unknown",
+            "built_at": None,
+        }
 
 
 # --- Config ---
