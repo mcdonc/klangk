@@ -23,6 +23,20 @@ _MAX_INPUT_SIZE = 65536
 _SEND_QUEUE_SIZE = 256
 
 
+def bridge_idle_timeout() -> float:
+    """Max seconds between streamed browser chunks before giving up.
+
+    Bounds the gap between chunks (not the total query duration), so a
+    long-but-progressing stream never times out.  Override with
+    KLANGK_BRIDGE_TIMEOUT_SECONDS.
+    """
+    raw = resolve_env_secret("KLANGK_BRIDGE_TIMEOUT_SECONDS")
+    try:
+        return float(raw) if raw else 180.0
+    except ValueError:
+        return 180.0
+
+
 class SlowClientError(Exception):
     """Raised when the outbound queue is full (client can't keep up)."""
 
@@ -237,6 +251,60 @@ class WorkspaceSession:
             state.pending_browser_requests.pop(request_id, None)
             raise
 
+    async def dispatch_browser_request_stream_to(
+        self,
+        target_sock: "SafeWebSocket",
+        request: dict,
+        idle_timeout: float,
+    ):
+        """Stream a browser_request's response chunks to the HTTP caller.
+
+        Yields newline-delimited JSON: zero or more ``{"type":"chunk",...}``
+        as the browser streams output, then a terminal ``{"type":"done",...}``
+        or ``{"type":"error",...}``.  Unlike the single-response variant, the
+        [idle_timeout] bounds the gap *between* chunks, not the total duration,
+        so a long-but-progressing query never times out.
+        """
+        request_id = str(uuid.uuid4())
+        queue: asyncio.Queue = asyncio.Queue()
+        state.streaming_browser_requests[request_id] = (queue, target_sock)
+        message = {
+            **request,
+            "type": "browser_request",
+            "id": request_id,
+            "stream": True,
+        }
+        _log_ws_msg("SEND", message)
+        try:
+            target_sock.send_json(message)
+        except _WS_ERRORS:
+            state.streaming_browser_requests.pop(request_id, None)
+            yield json.dumps(
+                {"type": "error", "error": "Browser connection not available"}
+            ) + "\n"
+            return
+
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(
+                        queue.get(), timeout=idle_timeout
+                    )
+                except asyncio.TimeoutError:
+                    yield json.dumps(
+                        {
+                            "type": "error",
+                            "error": "Browser client did not respond "
+                            "within timeout",
+                        }
+                    ) + "\n"
+                    return
+                yield json.dumps(item) + "\n"
+                if item["type"] != "chunk":
+                    return
+        finally:
+            state.streaming_browser_requests.pop(request_id, None)
+
     async def full_reset(self) -> None:
         """Clean up all shared state for this workspace.
 
@@ -261,6 +329,12 @@ class WebSocketState:
         # connection that should send the response.  None means any connection.
         self.pending_browser_requests: dict[
             str, tuple[asyncio.Future, SafeWebSocket | None]
+        ] = {}
+        # Streaming browser-delegate requests: request_id → (queue, sock).
+        # The browser pushes browser_chunk messages onto the queue and a final
+        # browser_response terminates it.
+        self.streaming_browser_requests: dict[
+            str, tuple[asyncio.Queue, SafeWebSocket | None]
         ] = {}
 
     def get_session(self, workspace_id: str) -> WorkspaceSession | None:
@@ -340,6 +414,21 @@ class WebSocketState:
         request_id = msg.get("id")
         if not request_id:
             return
+        # Streaming request: the response is the terminal "done" item.
+        stream_entry = self.streaming_browser_requests.get(request_id)
+        if stream_entry is not None:
+            queue, expected_sock = stream_entry
+            if expected_sock is not None and sender is not expected_sock:
+                logger.warning(
+                    "Browser response from wrong connection for request %s",
+                    request_id,
+                )
+                return
+            result = {
+                k: v for k, v in msg.items() if k not in ("id", "cmd", "type")
+            }
+            queue.put_nowait({"type": "done", "result": result})
+            return
         entry = self.pending_browser_requests.get(request_id)
         if entry is None:
             logger.debug(
@@ -357,6 +446,25 @@ class WebSocketState:
         self.pending_browser_requests.pop(request_id, None)
         if not future.done():
             future.set_result(msg)
+
+    def handle_browser_chunk(
+        self, msg: dict, sender: SafeWebSocket | None = None
+    ) -> None:
+        """Push a streamed chunk onto its request's queue.
+
+        Ignored if the request is unknown or the chunk comes from a
+        connection other than the one the request was dispatched to.
+        """
+        request_id = msg.get("id")
+        if not request_id:
+            return
+        entry = self.streaming_browser_requests.get(request_id)
+        if entry is None:
+            return
+        queue, expected_sock = entry
+        if expected_sock is not None and sender is not expected_sock:
+            return
+        queue.put_nowait({"type": "chunk", "delta": msg.get("delta", "")})
 
 
 state = WebSocketState()
@@ -887,6 +995,8 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_chat_delete(msg)
             elif cmd == "browser_response":
                 state.handle_browser_response(msg, safe_ws)
+            elif cmd == "browser_chunk":
+                state.handle_browser_chunk(msg, safe_ws)
             else:
                 send_error(safe_ws, f"Unknown command: {cmd}")
 

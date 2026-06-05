@@ -1291,14 +1291,11 @@ class BrowserDelegateRequest(BaseModel):
     token: str
 
 
-@router.post("/api/browser-delegate")
-async def browser_delegate(body: BrowserDelegateRequest):
-    """Bridge endpoint for Pi extensions to delegate actions to the browser.
+def _resolve_bridge_target(body: BrowserDelegateRequest):
+    """Resolve a bridge token to (session, target_sock, payload).
 
-    Each terminal exec session gets a per-connection bridge token
-    (injected via the exec environment).  The backend resolves the
-    token to the specific browser connection that owns the terminal
-    and relays the request over WebSocket.
+    Raises HTTPException (403/502) if the token is invalid, the workspace
+    has no session, or the target browser is not subscribed.
     """
     resolved = container.registry.resolve_bridge_token(body.token)
     if resolved is None:
@@ -1312,18 +1309,47 @@ async def browser_delegate(body: BrowserDelegateRequest):
             detail="No browser client connected to this workspace",
         )
 
-    payload = body.model_dump(exclude={"token"})
-
     if target_sock not in session.browser_subscribers:
         raise HTTPException(
             status_code=502,
             detail="Browser connection not available",
         )
+    return session, target_sock, body.model_dump(exclude={"token"})
+
+
+@router.post("/api/browser-delegate")
+async def browser_delegate(body: BrowserDelegateRequest):
+    """Bridge endpoint for Pi extensions to delegate actions to the browser.
+
+    Each terminal exec session gets a per-connection bridge token
+    (injected via the exec environment).  The backend resolves the
+    token to the specific browser connection that owns the terminal
+    and relays the request over WebSocket.
+    """
+    session, target_sock, payload = _resolve_bridge_target(body)
     result = await session.dispatch_browser_request_to(target_sock, payload)
 
     if result.get("error"):
         raise HTTPException(status_code=502, detail=result["error"])
     return result
+
+
+@router.post("/api/browser-delegate/stream")
+async def browser_delegate_stream(body: BrowserDelegateRequest):
+    """Streaming bridge: relay browser output chunks back as NDJSON.
+
+    For long-running actions (RAG + LLM), the browser pushes incremental
+    browser_chunk messages and a terminal browser_response.  Each is streamed
+    to the caller immediately, so there is no single bounded round-trip — the
+    only limit is the per-chunk idle timeout.
+    """
+    session, target_sock, payload = _resolve_bridge_target(body)
+    return StreamingResponse(
+        session.dispatch_browser_request_stream_to(
+            target_sock, payload, wshandler.bridge_idle_timeout()
+        ),
+        media_type="application/x-ndjson",
+    )
 
 
 # --- Admin endpoints (require admin role) ---

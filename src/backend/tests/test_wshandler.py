@@ -2558,3 +2558,177 @@ class TestChatDelete:
         conn.workspace_id = "ws"
         await conn.handle_chat_delete({})
         sock.send_json.assert_not_called()
+
+
+class TestBridgeIdleTimeout:
+    def test_default(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", raising=False)
+        assert wshandler.bridge_idle_timeout() == 180.0
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", "45")
+        assert wshandler.bridge_idle_timeout() == 45.0
+
+    def test_invalid_env_falls_back(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", "nope")
+        assert wshandler.bridge_idle_timeout() == 180.0
+
+
+class TestHandleBrowserChunk:
+    def test_missing_id(self):
+        wshandler.state.handle_browser_chunk({})  # no raise
+
+    def test_unknown_id(self):
+        wshandler.state.handle_browser_chunk({"id": "nope", "delta": "x"})
+
+    def test_wrong_sender_ignored(self):
+        q: asyncio.Queue = asyncio.Queue()
+        expected = _mock_sock()
+        imposter = _mock_sock()
+        wshandler.state.streaming_browser_requests["c-1"] = (q, expected)
+        try:
+            wshandler.state.handle_browser_chunk(
+                {"id": "c-1", "delta": "x"}, sender=imposter
+            )
+            assert q.empty()
+        finally:
+            wshandler.state.streaming_browser_requests.pop("c-1", None)
+
+    def test_success(self):
+        q: asyncio.Queue = asyncio.Queue()
+        sock = _mock_sock()
+        wshandler.state.streaming_browser_requests["c-2"] = (q, sock)
+        try:
+            wshandler.state.handle_browser_chunk(
+                {"id": "c-2", "delta": "hello"}, sender=sock
+            )
+            assert q.get_nowait() == {"type": "chunk", "delta": "hello"}
+        finally:
+            wshandler.state.streaming_browser_requests.pop("c-2", None)
+
+
+class TestHandleBrowserResponseStreaming:
+    def test_done_enqueued(self):
+        q: asyncio.Queue = asyncio.Queue()
+        sock = _mock_sock()
+        wshandler.state.streaming_browser_requests["d-1"] = (q, sock)
+        try:
+            wshandler.state.handle_browser_response(
+                {"id": "d-1", "cmd": "browser_response", "text": "final"},
+                sender=sock,
+            )
+            assert q.get_nowait() == {
+                "type": "done",
+                "result": {"text": "final"},
+            }
+        finally:
+            wshandler.state.streaming_browser_requests.pop("d-1", None)
+
+    def test_wrong_sender_ignored(self):
+        q: asyncio.Queue = asyncio.Queue()
+        expected = _mock_sock()
+        imposter = _mock_sock()
+        wshandler.state.streaming_browser_requests["d-2"] = (q, expected)
+        try:
+            wshandler.state.handle_browser_response(
+                {"id": "d-2", "text": "x"}, sender=imposter
+            )
+            assert q.empty()
+        finally:
+            wshandler.state.streaming_browser_requests.pop("d-2", None)
+
+
+class TestDispatchBrowserRequestStreamTo:
+    async def test_streams_chunks_then_done(self):
+        session = wshandler.state.get_or_create_session("ws-stream")
+        sock = _mock_sock()
+        session.subscribers.add(sock)
+        session.browser_subscribers.add(sock)
+
+        async def feed():
+            await asyncio.sleep(0.05)
+            for rid, (_q, _s) in list(
+                wshandler.state.streaming_browser_requests.items()
+            ):
+                wshandler.state.handle_browser_chunk(
+                    {"id": rid, "delta": "hel"}, sender=sock
+                )
+                wshandler.state.handle_browser_chunk(
+                    {"id": rid, "delta": "lo"}, sender=sock
+                )
+                wshandler.state.handle_browser_response(
+                    {"id": rid, "cmd": "browser_response", "text": "hello"},
+                    sender=sock,
+                )
+
+        task = asyncio.create_task(feed())
+        try:
+            lines = [
+                json.loads(line)
+                async for line in session.dispatch_browser_request_stream_to(
+                    sock, {"action": "soliplex_query"}, 5.0
+                )
+            ]
+            assert lines[0] == {"type": "chunk", "delta": "hel"}
+            assert lines[1] == {"type": "chunk", "delta": "lo"}
+            assert lines[2]["type"] == "done"
+            assert lines[2]["result"]["text"] == "hello"
+            # cleaned up after the stream ends
+            assert not wshandler.state.streaming_browser_requests
+        finally:
+            await task
+            wshandler.state.sessions.pop("ws-stream", None)
+
+    async def test_send_failure_yields_error(self):
+        session = wshandler.state.get_or_create_session("ws-stream-dead")
+        sock = _mock_sock()
+        sock.send_json = MagicMock(side_effect=RuntimeError("dead"))
+        try:
+            lines = [
+                json.loads(line)
+                async for line in session.dispatch_browser_request_stream_to(
+                    sock, {"action": "soliplex_query"}, 5.0
+                )
+            ]
+            assert len(lines) == 1
+            assert lines[0]["type"] == "error"
+            assert "not available" in lines[0]["error"]
+            assert not wshandler.state.streaming_browser_requests
+        finally:
+            wshandler.state.sessions.pop("ws-stream-dead", None)
+
+    async def test_idle_timeout_yields_error(self):
+        session = wshandler.state.get_or_create_session("ws-stream-to")
+        sock = _mock_sock()
+        try:
+            lines = [
+                json.loads(line)
+                async for line in session.dispatch_browser_request_stream_to(
+                    sock, {"action": "soliplex_query"}, 0.05
+                )
+            ]
+            assert len(lines) == 1
+            assert lines[0]["type"] == "error"
+            assert "timeout" in lines[0]["error"].lower()
+            assert not wshandler.state.streaming_browser_requests
+        finally:
+            wshandler.state.sessions.pop("ws-stream-to", None)
+
+    async def test_loop_dispatches_browser_chunk(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "browser_chunk", "id": "x", "delta": "d"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            wshandler.state,
+            "handle_browser_chunk",
+            wraps=wshandler.state.handle_browser_chunk,
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_called_once()

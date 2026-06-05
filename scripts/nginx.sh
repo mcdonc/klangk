@@ -87,6 +87,22 @@ http {
       proxy_http_version 1.1;
     }
 ${LLM_BLOCK}
+    # Browser-delegate bridge: Pi extensions delegate long-running actions
+    # (soliplex RAG + LLM) through here. These can take minutes, so the read
+    # timeout must exceed the backend's KLANGK_BRIDGE_TIMEOUT_SECONDS (default
+    # 180s) — well above nginx's 60s default, which would otherwise cut the
+    # request before the backend's own bridge timeout fires.
+    location = /api/browser-delegate {
+      proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/browser-delegate;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_http_version 1.1;
+      proxy_read_timeout 300s;
+      proxy_send_timeout 300s;
+      proxy_buffering off;
+    }
+
     location / {
       proxy_pass http://127.0.0.1:${KLANGK_PORT}/;
       proxy_set_header Host \$http_host;

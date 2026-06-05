@@ -1152,6 +1152,39 @@ class TestBrowserBridge:
         finally:
             container.registry.revoke_bridge_token("ws-err")
 
+    async def test_stream_endpoint_relays_ndjson(self, client, user):
+        """The streaming endpoint relays the generator's NDJSON to the caller."""
+        mock_sock = MagicMock()
+        token = container.registry.create_bridge_token(
+            "ws-stream", sock=mock_sock
+        )
+
+        async def fake_stream():
+            yield '{"type": "chunk", "delta": "a"}\n'
+            yield '{"type": "done", "result": {"ok": true}}\n'.replace(
+                "true", "1"
+            )
+
+        mock_session = AsyncMock()
+        mock_session.browser_subscribers = {mock_sock}
+        mock_session.dispatch_browser_request_stream_to = MagicMock(
+            return_value=fake_stream()
+        )
+        try:
+            with patch.object(
+                wshandler.state, "get_session", return_value=mock_session
+            ):
+                resp = await client.post(
+                    "/api/browser-delegate/stream",
+                    json={"action": "soliplex_query", "token": token},
+                )
+            assert resp.status_code == 200
+            assert '"chunk"' in resp.text
+            assert '"done"' in resp.text
+            mock_session.dispatch_browser_request_stream_to.assert_called_once()
+        finally:
+            container.registry.revoke_bridge_token("ws-stream")
+
 
 # --- Volume routes ---
 
