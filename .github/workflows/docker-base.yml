@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/docker/Dockerfile.base"
+      - "src/docker/workspace/Dockerfile.base"
       - ".github/workflows/docker-base.yml"
 
 jobs:
@@ -25,7 +25,7 @@ jobs:
           docker build --platform linux/amd64 \
             --build-arg KLANGK_UID=1000 \
             --build-arg KLANGK_GID=1000 \
-            -f src/docker/Dockerfile.base \
+            -f src/docker/workspace/Dockerfile.base \
             -t ghcr.io/${{ github.repository }}/klangk-base:latest \
-            src/docker/
+            src/docker/workspace/
           docker push ghcr.io/${{ github.repository }}/klangk-base:latest

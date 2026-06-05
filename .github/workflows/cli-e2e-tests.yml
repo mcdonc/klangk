@@ -26,7 +26,7 @@ jobs:
           filters: |
             e2e:
               - 'src/backend/**'
-              - 'src/docker/**'
+              - 'src/docker/workspace/**'
               - 'devenv.nix'
               - 'devenv.yaml'
               - '.github/workflows/cli-e2e-tests.yml'

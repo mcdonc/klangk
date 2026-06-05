@@ -11,8 +11,8 @@ echo "==> Building base image"
 docker build --platform linux/amd64 \
   --build-arg KLANGK_UID="$(id -u)" \
   --build-arg KLANGK_GID="$(id -g)" \
-  -f src/docker/Dockerfile.base \
-  -t "$IMAGE" "$@" src/docker/
+  -f src/docker/workspace/Dockerfile.base \
+  -t "$IMAGE" "$@" src/docker/workspace/
 
 # Requires: docker login ghcr.io
 #echo "==> Pushing to GHCR"

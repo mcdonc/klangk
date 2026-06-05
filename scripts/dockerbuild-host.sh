@@ -19,7 +19,7 @@ echo "Building $IMAGE (commit=$COMMIT, built_at=$TIMESTAMP)..."
 
 docker build \
   --platform linux/amd64 \
-  -f src/docker/Dockerfile.host \
+  -f src/docker/host/Dockerfile \
   --build-arg "KLANGK_BUILD_COMMIT=$COMMIT" \
   --build-arg "KLANGK_BUILD_TIMESTAMP=$TIMESTAMP" \
   --build-context "hostvenv=$DEVENV_STATE/venv" \

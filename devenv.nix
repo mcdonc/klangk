@@ -67,7 +67,7 @@ in
       showOutput = true;
       execIfModified = [
         "scripts/dockerbuild.sh"
-        "src/docker/**"
+        "src/docker/workspace/**"
         "${config.env.KLANGK_PLUGINS_DIR}/**/*.ts"
         "${config.env.KLANGK_PLUGINS_DIR}/**/tools/**"
         "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
