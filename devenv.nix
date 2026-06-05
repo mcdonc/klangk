@@ -5,9 +5,6 @@
   ...
 }:
 let
-  isContainer = config.container.isBuilding;
-  isDev = !isContainer;
-
   uvicornCmd = ''
     python3 -m uvicorn klangk_backend.main:app \
        --host 0.0.0.0 \
@@ -17,49 +14,41 @@ let
        --ws-ping-timeout 20'';
 in
 {
-  imports = [ ./container.nix ];
-
   languages.javascript = {
-    enable = isDev;
-    npm.enable = isDev;
-    npm.install.enable = isDev;
+    enable = true;
+    npm.enable = true;
+    npm.install.enable = true;
     directory = "./src/frontend/e2e-tests";
-    corepack.enable = false; # disinclude dev version of node, squash warnings
+    # disinclude dev version of node, squash warnings
+    corepack.enable = false;
   };
   languages.python = {
     enable = true;
     venv.enable = true;
-    lsp.enable = isDev;
     uv = {
-      enable = isDev;
-      sync.enable = isDev;
+      enable = true;
+      sync.enable = true;
     };
     directory = "./src/backend";
   };
 
-  packages =
-    with pkgs;
-    [
-      bash # explicit bash for shell scripts (CI /bin/sh may be dash)
-      coreutils # GNU du (macOS BSD du lacks -b)
-      gzip
-      gnutar
-      nginx
-      sqlite.bin
-      rsync
-    ]
-    ++ lib.optionals isDev [
-      docker-client
-      flutter
-      git # HM for "error: Failed to find git" during devenv:git-hooks:install
-    ];
+  packages = with pkgs; [
+    bash # explicit bash for shell scripts (CI /bin/sh may be dash)
+    coreutils # GNU du (macOS BSD du lacks -b)
+    docker-client
+    flutter
+    git # "error: Failed to find git" during devenv:git-hooks:install
+    gzip
+    gnutar
+    nginx
+    sqlite.bin
+    rsync
+  ];
 
-  env.PLAYWRIGHT_BROWSERS_PATH =
-    if isContainer then "" else pkgs.playwright-driver.browsers;
-  env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS =
-    if isContainer then "" else "true";
+  env.PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
+  env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
 
-  tasks = lib.mkIf isDev {
+  tasks = {
     "klangk:flutter-build" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh"'';
       showOutput = true;
@@ -102,7 +91,7 @@ in
     };
   };
 
-  processes = lib.mkIf isDev {
+  processes = {
     backend = {
       exec = ''
         cd $DEVENV_ROOT/src/backend && exec ${uvicornCmd}
@@ -126,18 +115,27 @@ in
 
   env.SOURCE_DATE_EPOCH = "";
   env.UV_PYTHON = config.devenv.state + "/venv/bin/python";
-  # Port defaults use mkOverride 1500 (lower priority than mkDefault/1000).
-  # dotenv.enable loads .env values as mkDefault, so .env entries override
-  # these. devenv.local.nix with lib.mkForce overrides everything.
-  # devenv.local.nix (mkForce/50) > .env (mkDefault/1000) > these (1500)
+  # Port defaults: mkOverride 1500 (lower priority than mkDefault).
+  # dotenv.enable loads .env values as mkDefault, so .env overrides.
+  # devenv.local.nix (mkForce/50) > .env (1000) > these (1500)
   env.KLANGK_PORT = lib.mkOverride 1500 "8997";
   env.KLANGK_NGINX_PORT = lib.mkOverride 1500 "8995";
+  env.KLANGK_DATA_DIR = lib.mkOverride 1500 (
+    config.devenv.root + "/.devenv/state/klangk/data"
+  );
+  env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (
+    config.devenv.root + "/.devenv/state/klangk/plugins"
+  );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
-  dotenv.enable = isDev;
+  dotenv.enable = true;
 
-  scripts.flutterbuildweb.exec = ''exec devenv tasks run klangk:flutter-build --refresh-task-cache "$@"'';
-  scripts.dockerbuild.exec = ''exec devenv tasks run klangk:docker-build --refresh-task-cache "$@"'';
+  scripts.flutterbuildweb.exec = ''
+    exec devenv tasks run klangk:flutter-build \
+      --refresh-task-cache "$@"'';
+  scripts.dockerbuild.exec = ''
+    exec devenv tasks run klangk:docker-build \
+      --refresh-task-cache "$@"'';
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
   scripts.dockerbuild-base.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-base.sh" "$@"'';
@@ -145,7 +143,9 @@ in
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
 
   scripts.kill-containers.exec = ''
-    docker ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q | xargs -r docker rm -f
+    docker ps -a \
+      --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" \
+      -q | xargs -r docker rm -f
   '';
 
   scripts.restart.exec = ''
@@ -175,10 +175,11 @@ in
     exec python -m pytest src/backend/tests -v -n auto "$@"
   '';
 
-  # CLI E2E tests: start real server, run klangk commands, need Docker
+  # CLI E2E tests: start real server, run klangk commands
   scripts.test-cli-e2e.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/backend/e2e-tests -v -p no:xdist --no-cov "$@"
+    exec python -m pytest src/backend/e2e-tests \
+      -v -p no:xdist --no-cov "$@"
   '';
 
   scripts.test-frontend-e2e.exec = ''
@@ -209,8 +210,8 @@ in
     fi
   '';
 
-  # --- Pre-commit hooks (dev only) ---
-  git-hooks.hooks = lib.mkIf isDev {
+  # --- Pre-commit hooks ---
+  git-hooks.hooks = {
     # Python: ruff lint + format
     ruff-lint = {
       enable = true;
@@ -273,8 +274,7 @@ in
 
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
-  ''
-  + lib.optionalString isDev ''
+
     # Ensure klangk_plugins stub exists so flutter pub get works
     # before plugins are fetched (first-time checkout / CI)
     bash "$DEVENV_ROOT/scripts/stub_dart_plugins.sh"

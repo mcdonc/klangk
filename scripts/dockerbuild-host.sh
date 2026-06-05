@@ -1,36 +1,31 @@
 #!/usr/bin/env bash
-# Build the klangk-host container image via devenv/nix2container.
+# Build the klangk-host container image via Dockerfile.
 #
-# Embeds git commit and build timestamp into /version.json inside the image.
-# Requires: devenv shell (for venv), NIX_CONFIG="pure-eval = false" (for venv copy).
+# Embeds git commit and build timestamp into /home/klangk/version.json.
+# Requires: devenv shell (for venv), flutter build web (for frontend).
 #
 # Usage:
-#   bash scripts/dockerbuild-host.sh          # build + load into docker
-#   bash scripts/dockerbuild-host.sh --no-load  # build only (print nix store path)
+#   bash scripts/dockerbuild-host.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
-no_load=false
-for arg in "$@"; do
-  case "$arg" in
-  --no-load) no_load=true ;;
-  esac
-done
+COMMIT="$(git rev-parse --short HEAD)"
+TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+IMAGE="${KLANGK_HOST_IMAGE:-klangk-host}"
 
-export KLANGK_BUILD_COMMIT
-KLANGK_BUILD_COMMIT="$(git rev-parse --short HEAD)"
-export KLANGK_BUILD_TIMESTAMP
-KLANGK_BUILD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-export NIX_CONFIG="pure-eval = false"
+echo "Building $IMAGE (commit=$COMMIT, built_at=$TIMESTAMP)..."
 
-echo "Building klangk-host image (commit=$KLANGK_BUILD_COMMIT, built_at=$KLANGK_BUILD_TIMESTAMP)..."
-devenv container build processes
+docker build \
+  --platform linux/amd64 \
+  -f src/docker/Dockerfile.host \
+  --build-arg "KLANGK_BUILD_COMMIT=$COMMIT" \
+  --build-arg "KLANGK_BUILD_TIMESTAMP=$TIMESTAMP" \
+  --build-context "hostvenv=$DEVENV_STATE/venv" \
+  -t "$IMAGE" \
+  "$@" \
+  .
 
-if [ "$no_load" = false ]; then
-  echo "Loading image into Docker..."
-  devenv container copy processes --registry docker-daemon:
-  echo "Done. Image: klangk-host:latest"
-  docker images klangk-host --format "  Size: {{.Size}}"
-fi
+echo "Done. Image: $IMAGE"
+docker images "$IMAGE" --format "  Size: {{.Size}}"
