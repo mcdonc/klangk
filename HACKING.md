@@ -154,6 +154,8 @@ run-host        # foreground (Ctrl-C to stop)
 run-host -d     # detached
 ```
 
+Open http://localhost:8995 (nginx) or http://localhost:8997 (uvicorn direct).
+
 `run-host` collects all `KLANGK_*` environment variables from the current devenv shell (including values loaded from `.env` via `dotenv.enable`) and passes them into the container via `--env-file`. Host-local paths like `KLANGK_DATA_DIR` and `KLANGK_PLUGINS_DIR` are excluded so the container's own defaults apply. It also maps the Docker socket and exposes the configured ports.
 
 To run manually without devenv:
