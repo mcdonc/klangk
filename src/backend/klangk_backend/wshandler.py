@@ -32,9 +32,9 @@ def bridge_idle_timeout() -> float:
     """
     raw = resolve_env_secret("KLANGK_BRIDGE_TIMEOUT_SECONDS")
     try:
-        return float(raw) if raw else 180.0
+        return float(raw) if raw else 30.0
     except ValueError:
-        return 180.0
+        return 30.0
 
 
 class SlowClientError(Exception):

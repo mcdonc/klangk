@@ -10,35 +10,43 @@ if [ -z "${KLANGK_STATE_DIR:-}${DEVENV_STATE:-}" ]; then
 fi
 mkdir -p "$NGINX_STATE"
 
-# Build LLM proxy block only if the URL is configured
-LLM_BLOCK=""
-if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
-  # nginx resolver needs space-separated IPs; env var may use commas.
-  # Default: parse /etc/resolv.conf for nameservers (works on host and
-  # in Docker). Fall back to 8.8.8.8 if resolv.conf has no entries.
-  if [ -n "${KLANGK_DNS_SERVERS:-}" ]; then
-    DNS_RESOLVERS="${KLANGK_DNS_SERVERS//,/ }"
-  else
-    # Wrap IPv6 addresses in brackets for nginx resolver directive.
-    DNS_RESOLVERS=$(awk '/^nameserver/{
-      addr = $2
-      if (addr ~ /:/) addr = "[" addr "]"
-      printf "%s ", addr
-    }' /etc/resolv.conf)
-    DNS_RESOLVERS="${DNS_RESOLVERS:-8.8.8.8}"
-  fi
-  LLM_BLOCK="
-    # LLM proxy: forward to the real LLM endpoint with API key injected.
-    # Containers hit this instead of the real endpoint, so they never
-    # see the API key. Restricted to Docker subnets and localhost only.
-    location ~ ^/llm-proxy/(.*)\$ {
+# nginx resolver needs space-separated IPs; env var may use commas.
+# Default: parse /etc/resolv.conf for nameservers (works on host and
+# in Docker). Fall back to 8.8.8.8 if resolv.conf has no entries.
+if [ -n "${KLANGK_DNS_SERVERS:-}" ]; then
+  DNS_RESOLVERS="${KLANGK_DNS_SERVERS//,/ }"
+else
+  # Wrap IPv6 addresses in brackets for nginx resolver directive.
+  DNS_RESOLVERS=$(awk '/^nameserver/{
+    addr = $2
+    if (addr ~ /:/) addr = "[" addr "]"
+    printf "%s ", addr
+  }' /etc/resolv.conf)
+  DNS_RESOLVERS="${DNS_RESOLVERS:-8.8.8.8}"
+fi
+
+# Shared allow/deny rules for container-only endpoints (LLM proxy,
+# browser-delegate bridge). Restricts access to Docker subnets and
+# localhost — the backend also validates tokens, but rejecting at the
+# network level avoids unnecessary round-trips.
+CONTAINER_ACL="
       allow 172.16.0.0/12;
       allow 192.168.0.0/16;
       allow 10.0.0.0/8;
       allow 127.0.0.1;
-      deny all;
-      # Use a variable so nginx resolves the upstream at request time,
-      # not at config load time (avoids crash on unresolvable hosts).
+      deny all;"
+
+# LLM proxy block: only included if KLANGK_LLM_BASE_URL is configured.
+# Containers hit this instead of the real endpoint, so they never see the
+# API key. Uses a variable so nginx resolves the upstream at request time,
+# not at config load time (avoids crash on unresolvable hosts).
+# NOTE: nginx resolver doesn't support search domains, so KLANGK_LLM_BASE_URL
+# must use a FQDN or IP address — bare hostnames won't resolve.
+LLM_BLOCK=""
+if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
+  LLM_BLOCK="
+    location ~ ^/llm-proxy/(.*)\$ {
+${CONTAINER_ACL}
       resolver ${DNS_RESOLVERS} valid=30s;
       set \$llm_backend ${KLANGK_LLM_BASE_URL}/\$1;
       proxy_pass \$llm_backend;
@@ -46,7 +54,6 @@ if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
       proxy_set_header Host \$proxy_host;
       proxy_http_version 1.1;
       proxy_set_header Connection \"\";
-      # SSE streaming support
       proxy_buffering off;
       proxy_cache off;
       chunked_transfer_encoding on;
@@ -88,11 +95,12 @@ http {
     }
 ${LLM_BLOCK}
     # Browser-delegate bridge: Pi extensions delegate long-running actions
-    # (soliplex RAG + LLM) through here. These can take minutes, so the read
-    # timeout must exceed the backend's KLANGK_BRIDGE_TIMEOUT_SECONDS (default
-    # 180s) — well above nginx's 60s default, which would otherwise cut the
-    # request before the backend's own bridge timeout fires.
+    # (soliplex RAG + LLM) through here. The read timeout must comfortably
+    # exceed the backend's per-chunk KLANGK_BRIDGE_TIMEOUT_SECONDS (default
+    # 30s) — well above nginx's 60s default — so nginx never cuts the request
+    # before the backend's own idle timeout fires.
     location = /api/browser-delegate {
+${CONTAINER_ACL}
       proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/browser-delegate;
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
@@ -108,13 +116,13 @@ ${LLM_BLOCK}
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_http_version 1.1;
       # Pass through X-Forwarded-* from outer proxy, or set defaults for direct access
       set \$fwd_proto \$http_x_forwarded_proto;
       if (\$fwd_proto = "") { set \$fwd_proto \$scheme; }
       proxy_set_header X-Forwarded-Proto \$fwd_proto;
       proxy_set_header X-Forwarded-Host \$http_x_forwarded_host;
       proxy_set_header X-Forwarded-Prefix \$http_x_forwarded_prefix;
-      proxy_http_version 1.1;
       proxy_set_header Upgrade \$http_upgrade;
       proxy_set_header Connection \$connection_upgrade;
     }

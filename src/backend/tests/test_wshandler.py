@@ -2563,7 +2563,7 @@ class TestChatDelete:
 class TestBridgeIdleTimeout:
     def test_default(self, monkeypatch):
         monkeypatch.delenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", raising=False)
-        assert wshandler.bridge_idle_timeout() == 180.0
+        assert wshandler.bridge_idle_timeout() == 30.0
 
     def test_env_override(self, monkeypatch):
         monkeypatch.setenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", "45")
@@ -2571,7 +2571,7 @@ class TestBridgeIdleTimeout:
 
     def test_invalid_env_falls_back(self, monkeypatch):
         monkeypatch.setenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", "nope")
-        assert wshandler.bridge_idle_timeout() == 180.0
+        assert wshandler.bridge_idle_timeout() == 30.0
 
 
 class TestHandleBrowserChunk:
