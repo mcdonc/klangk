@@ -443,11 +443,44 @@ class ContainerRegistry:
             "Tty": False,
         }
 
+        container_name = f"klangk-{INSTANCE_ID}-{workspace_id[:12]}"
         created = await docker.containers.create_or_replace(
-            name=f"klangk-{INSTANCE_ID}-{workspace_id[:12]}",
+            name=container_name,
             config=config,
         )
-        await created.start()
+        try:
+            await created.start()
+        except aiodocker.exceptions.DockerError as exc:
+            if "port is already allocated" not in str(exc):
+                raise
+            # A stale container is holding one of our ports.
+            # Kill all managed containers for this instance that
+            # aren't the one we just created, then retry.
+            logger.warning(
+                "Port conflict starting %s, cleaning stale containers",
+                container_name,
+            )
+            stale = await docker.containers.list(
+                all=True,
+                filters={
+                    "label": [
+                        "klangk.managed=true",
+                        f"klangk.instance={INSTANCE_ID}",
+                    ],
+                },
+            )
+            for c in stale:
+                if c.id != created.id:
+                    try:
+                        await c.delete(force=True)
+                        logger.info("Removed stale container %s", c.id)
+                    except aiodocker.exceptions.DockerError as del_exc:
+                        logger.info(
+                            "Could not remove stale container %s: %s",
+                            c.id,
+                            del_exc,
+                        )
+            await created.start()
         container_id = created.id
 
         await model.update_workspace_container(workspace_id, container_id)
