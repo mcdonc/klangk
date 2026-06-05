@@ -185,6 +185,10 @@ trivy-host                        # full vulnerability scan
 trivy-host --severity CRITICAL    # critical only
 ```
 
+### CI
+
+The `docker-host.yml` workflow builds and pushes the host image to GHCR on push to `main` when relevant files change (host Dockerfile, backend source, frontend source, build scripts). It tags the image with both `:latest` and the CalVer version (e.g., `:2026.06.05-abc1234`). It can also be triggered manually via `workflow_dispatch`.
+
 ### Notes
 
 - The `--group-add` flag grants the container user access to the Docker socket. The GID must match the host's docker socket group.
