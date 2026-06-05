@@ -39,6 +39,11 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
         'soliplex_query': _query,
       };
 
+  @override
+  Map<String, StreamingToolHandler> get streamingHandlers => {
+        'soliplex_query': _queryStream,
+      };
+
   late final _overlay = _SoliplexAuthOverlay(
     key: const ValueKey('soliplex_auth_overlay'),
     plugin: this,
@@ -87,12 +92,21 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     }
   }
 
-  Future<String> _query(Map<String, dynamic> request) async {
+  Future<String> _query(Map<String, dynamic> request) =>
+      _runQuery(request, null);
+
+  Future<String> _queryStream(
+          Map<String, dynamic> request, ToolChunkSink emit) =>
+      _runQuery(request, emit);
+
+  Future<String> _runQuery(
+      Map<String, dynamic> request, ToolChunkSink? onChunk) async {
     final roomId = request['room_id'] as String? ?? 'search';
     final question = request['question'] as String? ?? '';
     if (question.isEmpty) return 'Error: question is required';
     try {
-      final result = await SoliplexClient().queryRoom(roomId, question);
+      final result = await SoliplexClient()
+          .queryRoom(roomId, question, onChunk: onChunk);
       await _refreshAuthState();
       return result;
     } catch (e) {

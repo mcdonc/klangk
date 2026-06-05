@@ -191,7 +191,11 @@ class SoliplexClient {
 
   /// Query a room by creating a thread, posting a question, and
   /// collecting the streamed response.
-  Future<String> queryRoom(String roomId, String question) async {
+  Future<String> queryRoom(
+    String roomId,
+    String question, {
+    void Function(String delta)? onChunk,
+  }) async {
     final soliplexUrl = await _getSoliplexUrl();
     final headers = await _getHeaders();
 
@@ -248,6 +252,7 @@ class SoliplexClient {
           final event = outcome.event;
           if (event is sox.TextMessageContentEvent) {
             buffer.write(event.delta);
+            onChunk?.call(event.delta);
           }
         }
       }
