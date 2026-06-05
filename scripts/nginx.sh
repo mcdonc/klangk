@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# KLANGK_STATE_DIR is set in the host container; DEVENV_STATE is set by devenv
+# in the dev environment. One of them must be set.
 NGINX_STATE="${KLANGK_STATE_DIR:-${DEVENV_STATE:-}}/nginx"
 if [ -z "${KLANGK_STATE_DIR:-}${DEVENV_STATE:-}" ]; then
   echo "error: KLANGK_STATE_DIR or DEVENV_STATE must be set" >&2
