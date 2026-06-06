@@ -18,6 +18,7 @@ class _AdminUsersPageState extends State<AdminUsersPage>
     with SingleTickerProviderStateMixin {
   List<Map<String, dynamic>> _users = [];
   List<Map<String, dynamic>> _invitations = [];
+  List<Map<String, dynamic>> _groups = [];
   bool _loading = true;
   String? _error;
   late final TabController _tabController;
@@ -25,7 +26,7 @@ class _AdminUsersPageState extends State<AdminUsersPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _loadData();
   }
 
@@ -36,7 +37,7 @@ class _AdminUsersPageState extends State<AdminUsersPage>
   }
 
   Future<void> _loadData() async {
-    await Future.wait([_loadUsers(), _loadInvitations()]);
+    await Future.wait([_loadUsers(), _loadInvitations(), _loadGroups()]);
   }
 
   Future<void> _loadUsers() async {
@@ -82,6 +83,278 @@ class _AdminUsersPageState extends State<AdminUsersPage>
     } catch (_) {
       // Invitations tab is best-effort
     }
+  }
+
+  Future<void> _loadGroups() async {
+    try {
+      final auth = context.read<AuthService>();
+      final resp = await auth.authGet('/admin/groups');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as List;
+        if (mounted) {
+          setState(() {
+            _groups = data.cast<Map<String, dynamic>>();
+          });
+        }
+      }
+    } catch (_) {
+      // Groups tab is best-effort
+    }
+  }
+
+  Future<void> _createGroup() async {
+    final nameCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Create Group'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Group name'),
+              autofocus: true,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: descCtrl,
+              decoration:
+                  const InputDecoration(labelText: 'Description (optional)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Create')),
+        ],
+      ),
+    );
+    if (result != true || nameCtrl.text.trim().isEmpty) return;
+    final auth = context.read<AuthService>();
+    final resp = await auth.authPost(
+      '/admin/groups',
+      body: jsonEncode({
+        'name': nameCtrl.text.trim(),
+        if (descCtrl.text.trim().isNotEmpty)
+          'description': descCtrl.text.trim(),
+      }),
+    );
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      _loadGroups();
+    } else {
+      _showSnack(resp);
+    }
+  }
+
+  Future<void> _deleteGroup(String groupId, String groupName) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Group'),
+        content:
+            Text('Delete group "$groupName"? All ACL entries for this group '
+                'will be removed.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: KColors.accentRed),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final auth = context.read<AuthService>();
+    final resp = await auth.authDelete('/admin/groups/$groupId');
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      _loadGroups();
+    } else {
+      _showSnack(resp);
+    }
+  }
+
+  Future<void> _manageMembers(Map<String, dynamic> group) async {
+    final auth = context.read<AuthService>();
+    final groupId = group['id'] as String;
+    final groupName = group['name'] as String;
+
+    final membersResp = await auth.authGet('/admin/groups/$groupId/members');
+    final usersResp = await auth.authGet('/admin/users');
+    if (!mounted) return;
+    if (membersResp.statusCode != 200 || usersResp.statusCode != 200) return;
+
+    var members = List<Map<String, dynamic>>.from(
+      jsonDecode(membersResp.body),
+    );
+    final allUsers = List<Map<String, dynamic>>.from(
+      jsonDecode(usersResp.body),
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final memberIds = members.map((m) => m['id']).toSet();
+          final nonMembers =
+              allUsers.where((u) => !memberIds.contains(u['id'])).toList();
+
+          return AlertDialog(
+            title: Text('Members of "$groupName"'),
+            content: SizedBox(
+              width: 400,
+              height: 400,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (nonMembers.isNotEmpty)
+                    DropdownButton<String>(
+                      isExpanded: true,
+                      hint: const Text('Add member...'),
+                      items: nonMembers.map((u) {
+                        return DropdownMenuItem(
+                          value: u['id'] as String,
+                          child: Text(u['email'] as String),
+                        );
+                      }).toList(),
+                      onChanged: (userId) async {
+                        if (userId == null) return;
+                        final resp = await auth.authPost(
+                          '/admin/groups/$groupId/members',
+                          body: jsonEncode({'user_id': userId}),
+                        );
+                        if (resp.statusCode == 200) {
+                          final r = await auth
+                              .authGet('/admin/groups/$groupId/members');
+                          if (r.statusCode == 200) {
+                            setDialogState(() {
+                              members = List<Map<String, dynamic>>.from(
+                                jsonDecode(r.body),
+                              );
+                            });
+                          }
+                        }
+                      },
+                    ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: members.isEmpty
+                        ? const Center(
+                            child: Text('No members',
+                                style: TextStyle(color: KColors.textSecondary)))
+                        : ListView.builder(
+                            itemCount: members.length,
+                            itemBuilder: (ctx, i) {
+                              final member = members[i];
+                              return ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: KColors.accentBlue,
+                                  child: Text(
+                                    (member['email'] as String)[0]
+                                        .toUpperCase(),
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                                title: Text(member['email'] as String),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.remove_circle_outline,
+                                      color: KColors.accentRed),
+                                  tooltip: 'Remove from group',
+                                  onPressed: () async {
+                                    final resp = await auth.authDelete(
+                                      '/admin/groups/$groupId/members/${member['id']}',
+                                    );
+                                    if (resp.statusCode == 200) {
+                                      setDialogState(() {
+                                        members.removeAt(i);
+                                      });
+                                    }
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    _loadGroups();
+  }
+
+  void _showSnack(dynamic resp) {
+    String msg;
+    try {
+      msg = jsonDecode(resp.body)['detail'] ?? 'Error';
+    } catch (_) {
+      msg = 'Error: ${resp.statusCode}';
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Widget _buildGroupsTab() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_groups.isEmpty) return const Center(child: Text('No groups'));
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _groups.length,
+      itemBuilder: (ctx, i) {
+        final group = _groups[i];
+        final name = group['name'] as String;
+        final desc = group['description'] as String? ?? '';
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor:
+                  name == 'admin' ? KColors.accentAmber : KColors.accentBlue,
+              child: const Icon(Icons.group, color: Colors.white),
+            ),
+            title: Text(name),
+            subtitle: desc.isNotEmpty
+                ? Text(desc,
+                    style: const TextStyle(color: KColors.textSecondary))
+                : null,
+            onTap: () => _manageMembers(group),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.people, color: KColors.accentBlue),
+                  tooltip: 'Manage members',
+                  onPressed: () => _manageMembers(group),
+                ),
+                if (name != 'admin')
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline,
+                        color: KColors.accentRed),
+                    tooltip: 'Delete group',
+                    onPressed: () => _deleteGroup(group['id'], name),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _inviteUser() async {
@@ -385,6 +658,7 @@ class _AdminUsersPageState extends State<AdminUsersPage>
           controller: _tabController,
           tabs: [
             const Tab(text: 'Users'),
+            const Tab(text: 'Groups'),
             Tab(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -410,28 +684,44 @@ class _AdminUsersPageState extends State<AdminUsersPage>
           ],
         ),
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.small(
-            heroTag: 'invite',
-            onPressed: _inviteUser,
-            tooltip: 'Invite user',
-            child: const Icon(Icons.mail_outline),
-          ),
-          const SizedBox(height: 8),
-          FloatingActionButton(
-            heroTag: 'add',
-            onPressed: _addUser,
-            tooltip: 'Add user',
-            child: const Icon(Icons.person_add),
-          ),
-        ],
+      floatingActionButton: AnimatedBuilder(
+        animation: _tabController,
+        builder: (context, _) {
+          if (_tabController.index == 0) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'invite',
+                  onPressed: _inviteUser,
+                  tooltip: 'Invite user',
+                  child: const Icon(Icons.mail_outline),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton(
+                  heroTag: 'add',
+                  onPressed: _addUser,
+                  tooltip: 'Add user',
+                  child: const Icon(Icons.person_add),
+                ),
+              ],
+            );
+          } else if (_tabController.index == 1) {
+            return FloatingActionButton(
+              heroTag: 'add-group',
+              onPressed: _createGroup,
+              tooltip: 'Create group',
+              child: const Icon(Icons.group_add),
+            );
+          }
+          return const SizedBox.shrink();
+        },
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
           _buildUsersTab(),
+          _buildGroupsTab(),
           _buildInvitationsTab(),
         ],
       ),

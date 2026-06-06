@@ -724,7 +724,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byIcon(Icons.admin_panel_settings), findsOneWidget);
-      expect(find.byTooltip('User Management'), findsOneWidget);
+      expect(find.byTooltip('Admin'), findsOneWidget);
     });
 
     testWidgets('admin icon not shown for non-admin user', (tester) async {

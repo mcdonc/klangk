@@ -59,7 +59,7 @@ class AppBarActions extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.admin_panel_settings,
                 color: KColors.textSecondary),
-            tooltip: 'User Management',
+            tooltip: 'Admin',
             onPressed: onAdminPressed ?? () => context.go('/admin/users'),
           ),
         IconButton(
