@@ -1028,6 +1028,50 @@ void main() {
       expect(logoutCalled, isTrue);
     });
 
+    testWidgets('logout with oidc redirect calls navigateTo', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/workspaces') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/auth/logout') {
+          return http.Response(
+            jsonEncode({
+              'status': 'ok',
+              'oidc_logout_url': 'https://idp.example.com/logout',
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => const WorkspaceListPage(),
+          ),
+          GoRoute(
+            path: '/login',
+            builder: (_, __) => const Scaffold(body: Text('Login')),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider(
+          create: (_) => AuthService(),
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.logout));
+      await tester.pumpAndSettle();
+      // navigateTo is a stub (no-op) in VM tests — just verifying no crash
+    });
+
     testWidgets('title tap navigates to home', (tester) async {
       testAuthHttpClientOverride = MockClient((request) async {
         if (request.url.path == '/workspaces') {

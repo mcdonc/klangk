@@ -2,11 +2,12 @@
 
 import base64
 import hashlib
-import json
 import logging
 import os
 import secrets
 import time
+
+import yaml
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -34,6 +35,7 @@ class OIDCProvider:
     admin_group: str | None = None
     ca_cert: str | None = None  # path to CA cert PEM for custom trust
     token_validation_pem: str | None = None  # static RSA/EC public key PEM
+    logout_redirect: bool = False  # redirect to IdP logout on user logout
 
 
 @dataclass
@@ -57,17 +59,28 @@ _providers: list[OIDCProvider] = []
 
 def load_config() -> list[OIDCProvider]:
     """Load OIDC provider config from the JSON file specified by
-    KLANGK_OIDC_CONFIG. Returns empty list if not configured."""
+    KLANGK_OIDC_CONFIG. Returns empty list if not configured.
+    Raises if the path is set but the file doesn't exist."""
     config_path = resolve_env_secret("KLANGK_OIDC_CONFIG", "")
-    if not config_path or not os.path.isfile(config_path):
+    if not config_path:
         return []
+    if not os.path.isfile(config_path):
+        raise RuntimeError(
+            f"KLANGK_OIDC_CONFIG={config_path!r} not found"
+            " (use an absolute path)"
+        )
 
+    config_dir = os.path.dirname(os.path.abspath(config_path))
     with open(config_path) as f:
-        raw = json.load(f)
+        raw = yaml.safe_load(f)
 
     providers = []
     for entry in raw:
         secret = resolve_file_secret(entry.get("client_secret", ""))
+        # Resolve ca_cert relative to the config file's directory
+        ca_cert = entry.get("ca_cert")
+        if ca_cert and not os.path.isabs(ca_cert):
+            ca_cert = os.path.join(config_dir, ca_cert)
         providers.append(
             OIDCProvider(
                 id=entry["id"],
@@ -78,17 +91,27 @@ def load_config() -> list[OIDCProvider]:
                 scopes=entry.get("scopes", "openid email profile"),
                 admin_claim=entry.get("admin_claim"),
                 admin_group=entry.get("admin_group"),
-                ca_cert=entry.get("ca_cert"),
+                ca_cert=ca_cert,
                 token_validation_pem=entry.get("token_validation_pem"),
+                logout_redirect=entry.get("logout_redirect", False),
             )
         )
     return providers
 
 
 def init_providers() -> None:
-    """Load providers into the module-level registry."""
+    """Load providers into the module-level registry.
+
+    Raises RuntimeError if KLANGK_AUTH_MODES requires OIDC but no
+    providers are configured or the config file is missing.
+    """
     global _providers
     _providers = load_config()
+    mode = auth_modes()
+    if mode in ("oidc", "both") and not _providers:
+        raise RuntimeError(
+            f"KLANGK_AUTH_MODES={mode!r} but no OIDC providers configured"
+        )
     if _providers:
         names = ", ".join(p.id for p in _providers)
         logger.info("OIDC providers loaded: %s", names)
@@ -240,11 +263,16 @@ async def exchange_code(
 # --- ID Token Validation ---
 
 
-async def validate_id_token(provider: OIDCProvider, id_token: str) -> dict:
+async def validate_id_token(
+    provider: OIDCProvider,
+    id_token: str,
+    access_token: str | None = None,
+) -> dict:
     """Validate and decode an ID token. Returns the claims dict.
 
     Uses the static token_validation_pem if configured, otherwise
-    fetches JWKS from the IdP's discovery endpoint.
+    fetches JWKS from the IdP's discovery endpoint. Pass access_token
+    so jose can verify the at_hash claim if present.
     """
     if provider.token_validation_pem:
         key = provider.token_validation_pem
@@ -256,6 +284,7 @@ async def validate_id_token(provider: OIDCProvider, id_token: str) -> dict:
         algorithms=["RS256", "ES256"],
         audience=provider.client_id,
         issuer=provider.issuer,
+        access_token=access_token,
     )
     return claims
 
@@ -282,6 +311,28 @@ def extract_admin_role(provider: OIDCProvider, claims: dict) -> bool | None:
     if isinstance(value, str):
         return value == provider.admin_group
     return False
+
+
+async def build_logout_url(
+    provider: OIDCProvider,
+    post_logout_redirect_uri: str,
+) -> str | None:
+    """Build the IdP logout URL for RP-Initiated Logout.
+
+    Returns None if logout_redirect is disabled or the IdP doesn't
+    advertise an end_session_endpoint.
+    """
+    if not provider.logout_redirect:
+        return None
+    disc = await discover(provider)
+    endpoint = disc.get("end_session_endpoint")
+    if not endpoint:
+        return None
+    params = {
+        "client_id": provider.client_id,
+        "post_logout_redirect_uri": post_logout_redirect_uri,
+    }
+    return f"{endpoint}?{urlencode(params)}"
 
 
 def clear_caches() -> None:

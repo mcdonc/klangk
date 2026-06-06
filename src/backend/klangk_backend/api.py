@@ -425,7 +425,20 @@ async def logout(
     authorization = request.headers.get("authorization", "")
     if authorization.startswith("Bearer "):
         await auth.logout(authorization[7:])
-    return {"status": "ok"}
+
+    # If the user logged in via OIDC and the provider has logout_redirect
+    # enabled, return the IdP logout URL so the frontend can redirect.
+    result: dict = {"status": "ok"}
+    db_user = await model.get_user_by_email(user["email"])
+    if db_user and db_user.get("provider", "local") != "local":
+        provider = oidc.get_provider(db_user["provider"])
+        if provider:
+            hostname, proto, base_path = derive_hosting_info(request.headers)
+            post_logout_uri = f"{proto}://{hostname}{base_path}/#/login"
+            logout_url = await oidc.build_logout_url(provider, post_logout_uri)
+            if logout_url:
+                result["oidc_logout_url"] = logout_url
+    return result
 
 
 # --- Invitation endpoints ---
@@ -689,7 +702,9 @@ async def oidc_callback(
         raise HTTPException(status_code=502, detail="No ID token in response")
 
     try:
-        claims = await oidc.validate_id_token(provider, id_token)
+        claims = await oidc.validate_id_token(
+            provider, id_token, access_token=tokens.get("access_token")
+        )
     except Exception as exc:
         logger.error("OIDC ID token validation failed: %s", exc)
         raise HTTPException(

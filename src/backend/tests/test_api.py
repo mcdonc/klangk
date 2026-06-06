@@ -3542,7 +3542,8 @@ class TestInvitations:
 
 
 class TestOIDCConfig:
-    async def test_config_includes_oidc_fields(self, client):
+    async def test_config_includes_oidc_fields(self, client, monkeypatch):
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
         resp = await client.get("/api/config")
         assert resp.status_code == 200
         data = resp.json()
@@ -4072,3 +4073,80 @@ class TestOIDCCallback:
             cookies={"oidc_test": "not-json"},
         )
         assert resp.status_code == 400
+
+
+class TestOIDCLogout:
+    async def test_logout_returns_oidc_logout_url(self, client, db):
+        """OIDC user with logout_redirect gets IdP logout URL in response."""
+        # Create OIDC user
+        user = await model.create_user(
+            "oidc-logout@example.com",
+            password_hash=None,
+            verified=True,
+            provider="test",
+            external_id="logout-sub",
+        )
+        roles = await model.get_user_roles(user["id"])
+        token = auth.create_token(user["id"], user["email"], roles)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+            logout_redirect=True,
+        )
+        with (
+            patch.object(api.oidc, "get_provider", return_value=provider),
+            patch.object(
+                api.oidc,
+                "build_logout_url",
+                AsyncMock(return_value="https://idp.example.com/logout?x=1"),
+            ),
+        ):
+            resp = await client.post("/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert (
+            resp.json()["oidc_logout_url"]
+            == "https://idp.example.com/logout?x=1"
+        )
+
+    async def test_logout_no_redirect_for_local_user(self, client, user):
+        """Local user gets no oidc_logout_url."""
+        login_resp = await client.post(
+            "/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        headers = {
+            "Authorization": f"Bearer {login_resp.json()['access_token']}"
+        }
+        resp = await client.post("/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert "oidc_logout_url" not in resp.json()
+
+    async def test_logout_no_redirect_when_disabled(self, client, db):
+        """OIDC user with logout_redirect=false gets no URL."""
+        user = await model.create_user(
+            "oidc-nologout@example.com",
+            password_hash=None,
+            verified=True,
+            provider="test",
+            external_id="nologout-sub",
+        )
+        token = auth.create_token(user["id"], user["email"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+            logout_redirect=False,
+        )
+        with patch.object(api.oidc, "get_provider", return_value=provider):
+            resp = await client.post("/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert "oidc_logout_url" not in resp.json()

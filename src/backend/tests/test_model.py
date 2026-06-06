@@ -1,8 +1,53 @@
 """Tests for model: users, workspaces, messages, port allocations."""
 
+import aiosqlite
 import pytest
 
 from klangk_backend import model
+
+
+class TestMigration:
+    async def test_migrate_old_schema(self, temp_data_dir):
+        """Migrates a pre-OIDC database: password_hash NOT NULL, no
+        provider/external_id columns."""
+        db = await aiosqlite.connect(str(model.DB_PATH))
+        model.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            await db.execute("""
+                CREATE TABLE users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT INTO users (id, email, password_hash, verified)"
+                " VALUES ('u1', 'old@example.com', 'hash', 1)"
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        await model.init_db()
+
+        # Old user survived migration
+        user = await model.get_user_by_email("old@example.com")
+        assert user is not None
+        assert user["password_hash"] == "hash"
+        assert user["provider"] == "local"
+        assert user["external_id"] is None
+
+        # Can create OIDC user (NULL password_hash)
+        oidc_user = await model.create_user(
+            "new@example.com",
+            password_hash=None,
+            verified=True,
+            provider="kc",
+            external_id="sub-1",
+        )
+        assert oidc_user["id"]
 
 
 class TestUsers:

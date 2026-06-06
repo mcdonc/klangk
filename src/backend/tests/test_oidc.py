@@ -1,8 +1,9 @@
 """Tests for OIDC client module."""
 
-import json
 import time
 from unittest.mock import AsyncMock, patch
+
+import yaml
 
 import pytest
 
@@ -10,8 +11,10 @@ from klangk_backend import oidc
 
 
 @pytest.fixture(autouse=True)
-def clean_oidc_state():
+def clean_oidc_state(monkeypatch):
     """Reset OIDC module state between tests."""
+    monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+    monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
     oidc._providers.clear()
     oidc.clear_caches()
     yield
@@ -41,12 +44,13 @@ class TestLoadConfig:
 
     def test_missing_file(self, monkeypatch, tmp_path):
         monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(tmp_path / "nope.json"))
-        assert oidc.load_config() == []
+        with pytest.raises(RuntimeError, match="absolute path"):
+            oidc.load_config()
 
     def test_valid_config(self, monkeypatch, tmp_path):
-        cfg = tmp_path / "oidc.json"
+        cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
-            json.dumps(
+            yaml.dump(
                 [
                     {
                         "id": "test",
@@ -71,9 +75,9 @@ class TestLoadConfig:
     def test_file_secret(self, monkeypatch, tmp_path):
         secret_file = tmp_path / "secret"
         secret_file.write_text("file-secret\n")
-        cfg = tmp_path / "oidc.json"
+        cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
-            json.dumps(
+            yaml.dump(
                 [
                     {
                         "id": "fs",
@@ -90,9 +94,9 @@ class TestLoadConfig:
         assert providers[0].client_secret == "file-secret"
 
     def test_ca_cert(self, monkeypatch, tmp_path):
-        cfg = tmp_path / "oidc.json"
+        cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
-            json.dumps(
+            yaml.dump(
                 [
                     {
                         "id": "dod",
@@ -111,9 +115,9 @@ class TestLoadConfig:
 
     def test_token_validation_pem(self, monkeypatch, tmp_path):
         pem = "-----BEGIN PUBLIC KEY-----\nMIIBI...\n-----END PUBLIC KEY-----"
-        cfg = tmp_path / "oidc.json"
+        cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
-            json.dumps(
+            yaml.dump(
                 [
                     {
                         "id": "dod",
@@ -130,10 +134,31 @@ class TestLoadConfig:
         providers = oidc.load_config()
         assert providers[0].token_validation_pem == pem
 
-    def test_ca_cert_default_none(self, monkeypatch, tmp_path):
-        cfg = tmp_path / "oidc.json"
+    def test_ca_cert_relative_resolved(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
-            json.dumps(
+            yaml.dump(
+                [
+                    {
+                        "id": "rel",
+                        "display_name": "Rel",
+                        "issuer": "https://idp.example.com",
+                        "client_id": "klangk",
+                        "client_secret": "s",
+                        "ca_cert": "certs/ca.pem",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        expected = str(tmp_path / "certs" / "ca.pem")
+        assert providers[0].ca_cert == expected
+
+    def test_ca_cert_default_none(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text(
+            yaml.dump(
                 [
                     {
                         "id": "test",
@@ -150,9 +175,9 @@ class TestLoadConfig:
         assert providers[0].ca_cert is None
 
     def test_multiple_providers(self, monkeypatch, tmp_path):
-        cfg = tmp_path / "oidc.json"
+        cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
-            json.dumps(
+            yaml.dump(
                 [
                     {
                         "id": "a",
@@ -180,9 +205,9 @@ class TestLoadConfig:
 
 class TestProviderRegistry:
     def test_init_and_lookup(self, monkeypatch, tmp_path):
-        cfg = tmp_path / "oidc.json"
+        cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
-            json.dumps(
+            yaml.dump(
                 [
                     {
                         "id": "test",
@@ -205,6 +230,28 @@ class TestProviderRegistry:
     def test_not_enabled_when_empty(self):
         assert not oidc.is_enabled()
         assert oidc.list_providers() == []
+
+    def test_init_raises_when_oidc_required_but_no_providers(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
+        with pytest.raises(RuntimeError, match="no OIDC providers"):
+            oidc.init_providers()
+
+    def test_init_raises_when_both_required_but_no_providers(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "both")
+        with pytest.raises(RuntimeError, match="no OIDC providers"):
+            oidc.init_providers()
+
+    def test_init_ok_when_password_only(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
+        oidc.init_providers()
+        assert not oidc.is_enabled()
 
 
 class TestAuthModes:
@@ -426,7 +473,9 @@ class TestValidateIdToken:
                 MagicMock(return_value=claims),
             ) as mock_decode,
         ):
-            result = await oidc.validate_id_token(provider, "fake-token")
+            result = await oidc.validate_id_token(
+                provider, "fake-token", access_token="fake-at"
+            )
             assert result == claims
             mock_jwks.assert_awaited_once()
             mock_decode.assert_called_once_with(
@@ -435,6 +484,7 @@ class TestValidateIdToken:
                 algorithms=["RS256", "ES256"],
                 audience="klangk",
                 issuer="https://idp.example.com",
+                access_token="fake-at",
             )
 
     async def test_validate_id_token_with_static_pem(self):
@@ -460,7 +510,40 @@ class TestValidateIdToken:
                 algorithms=["RS256", "ES256"],
                 audience="klangk",
                 issuer="https://idp.example.com",
+                access_token=None,
             )
+
+
+class TestBuildLogoutUrl:
+    async def test_disabled(self):
+        provider = _provider(logout_redirect=False)
+        result = await oidc.build_logout_url(provider, "https://klangk/login")
+        assert result is None
+
+    async def test_no_end_session_endpoint(self):
+        provider = _provider(logout_redirect=True)
+        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+            data={"authorization_endpoint": "https://idp/auth"},
+            fetched_at=time.time(),
+        )
+        result = await oidc.build_logout_url(provider, "https://klangk/login")
+        assert result is None
+
+    async def test_builds_url(self):
+        provider = _provider(logout_redirect=True)
+        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+            data={
+                "end_session_endpoint": "https://idp.example.com/logout",
+            },
+            fetched_at=time.time(),
+        )
+        result = await oidc.build_logout_url(
+            provider, "https://klangk.example.com/#/login"
+        )
+        assert result is not None
+        assert result.startswith("https://idp.example.com/logout?")
+        assert "client_id=klangk" in result
+        assert "post_logout_redirect_uri=" in result
 
 
 class TestExtractAdminRole:

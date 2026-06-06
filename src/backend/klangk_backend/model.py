@@ -41,24 +41,43 @@ async def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
-        # Migration: add verified column if missing
-        try:
-            await db.execute(
-                "ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0"
-            )
-        except Exception:
-            pass  # Column already exists
-        # Migration: add OIDC columns if missing
-        for col, defn in [
-            ("provider", "TEXT NOT NULL DEFAULT 'local'"),
-            ("external_id", "TEXT"),
-        ]:
-            try:
-                await db.execute(
-                    f"ALTER TABLE users ADD COLUMN {col} {defn}"  # noqa: S608
+        # Migration: make password_hash nullable and add OIDC columns.
+        # SQLite can't ALTER COLUMN, so we recreate the table if needed.
+        cursor = await db.execute("PRAGMA table_info(users)")
+        columns = {row[1]: row for row in await cursor.fetchall()}
+        needs_recreate = False
+        if "password_hash" in columns and columns["password_hash"][3]:
+            # password_hash has NOT NULL — need to drop it for OIDC users
+            needs_recreate = True
+        if "provider" not in columns:
+            needs_recreate = True
+        if needs_recreate:
+            await db.execute("""
+                CREATE TABLE users_new (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT 'local',
+                    external_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
-            except Exception:
-                pass  # Column already exists
+            """)
+            # Copy existing data — old tables may lack some columns
+            old_cols = list(columns.keys())
+            shared = [
+                c
+                for c in old_cols
+                if c
+                in ("id", "email", "password_hash", "verified", "created_at")
+            ]
+            cols_str = ", ".join(shared)
+            await db.execute(
+                f"INSERT INTO users_new ({cols_str})"  # noqa: S608
+                f" SELECT {cols_str} FROM users"
+            )
+            await db.execute("DROP TABLE users")
+            await db.execute("ALTER TABLE users_new RENAME TO users")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,

@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../auth/auth_service.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 
 /// Shared widget for the email chip, admin, and logout icons in the app bar.
 /// The email chip navigates to Settings when tapped.
@@ -65,8 +67,13 @@ class AppBarActions extends StatelessWidget {
           tooltip: 'Logout',
           onPressed: onLogoutPressed ??
               () async {
-                await context.read<AuthService>().logout();
-                if (context.mounted) context.go('/login');
+                final logoutUrl = await context.read<AuthService>().logout();
+                if (!context.mounted) return;
+                if (logoutUrl != null) {
+                  navigateTo(logoutUrl);
+                } else {
+                  context.go('/login');
+                }
               },
         ),
       ],

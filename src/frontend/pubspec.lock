@@ -274,34 +274,6 @@ packages:
       url: "https://github.com/mcdonc/klangk-plugin-api.git"
     source: git
     version: "0.1.0"
-  klangk_plugin_beep:
-    dependency: transitive
-    description:
-      path: "/home/chrism/projects/klangk/.devenv/state/klangk/plugins/beep/klangk"
-      relative: false
-    source: path
-    version: "0.1.0"
-  klangk_plugin_bobdobbs:
-    dependency: transitive
-    description:
-      path: "/home/chrism/projects/klangk/.devenv/state/klangk/plugins/bobdobbs/klangk"
-      relative: false
-    source: path
-    version: "0.1.0"
-  klangk_plugin_celebrate:
-    dependency: transitive
-    description:
-      path: "/home/chrism/projects/klangk/.devenv/state/klangk/plugins/celebrate/klangk"
-      relative: false
-    source: path
-    version: "0.1.0"
-  klangk_plugin_itstime:
-    dependency: transitive
-    description:
-      path: "/home/chrism/projects/klangk/.devenv/state/klangk/plugins/itstime/klangk"
-      relative: false
-    source: path
-    version: "0.1.0"
   klangk_plugins:
     dependency: "direct main"
     description:
