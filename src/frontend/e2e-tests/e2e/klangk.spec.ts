@@ -1144,7 +1144,7 @@ test.describe("Klangk E2E", () => {
     }
   });
 
-  test("admin can list users, add/remove roles, and delete users", async ({
+  test("admin can list users, add/remove groups, and delete users", async ({
     request,
   }) => {
     // Login as the default admin user (seeded on startup)
@@ -1171,7 +1171,7 @@ test.describe("Klangk E2E", () => {
       (u: any) => u.email === "admin-test@test.example.com",
     );
     expect(testUser).toBeTruthy();
-    expect(testUser.roles).toEqual([]);
+    expect(testUser.groups).toEqual([]);
 
     // Non-admin cannot list users
     const forbiddenResp = await request.get(`${API_BASE}/admin/users`, {
@@ -1179,28 +1179,35 @@ test.describe("Klangk E2E", () => {
     });
     expect(forbiddenResp.status()).toBe(403);
 
-    // Admin can add a role
-    const addRoleResp = await request.post(
-      `${API_BASE}/admin/users/${testUser.id}/roles/editor`,
-      { headers: adminHeaders },
-    );
-    expect(addRoleResp.ok()).toBeTruthy();
+    // Create a group and add the user to it
+    const createGroupResp = await request.post(`${API_BASE}/admin/groups`, {
+      headers: adminHeaders,
+      data: { name: "editor" },
+    });
+    expect(createGroupResp.ok()).toBeTruthy();
+    const editorGroup = await createGroupResp.json();
 
-    // Verify role was added
+    const addMemberResp = await request.post(
+      `${API_BASE}/admin/groups/${editorGroup.id}/members`,
+      { headers: adminHeaders, data: { user_id: testUser.id } },
+    );
+    expect(addMemberResp.ok()).toBeTruthy();
+
+    // Verify group membership was added
     const listResp2 = await request.get(`${API_BASE}/admin/users`, {
       headers: adminHeaders,
     });
     const updatedUser = (await listResp2.json()).find(
       (u: any) => u.email === "admin-test@test.example.com",
     );
-    expect(updatedUser.roles).toContain("editor");
+    expect(updatedUser.groups.map((g: any) => g.name)).toContain("editor");
 
-    // Admin can remove a role
-    const removeRoleResp = await request.delete(
-      `${API_BASE}/admin/users/${testUser.id}/roles/editor`,
+    // Admin can remove user from group
+    const removeMemberResp = await request.delete(
+      `${API_BASE}/admin/groups/${editorGroup.id}/members/${testUser.id}`,
       { headers: adminHeaders },
     );
-    expect(removeRoleResp.ok()).toBeTruthy();
+    expect(removeMemberResp.ok()).toBeTruthy();
 
     // Admin can delete a user
     const deleteResp = await request.delete(
@@ -1217,6 +1224,13 @@ test.describe("Klangk E2E", () => {
       (u: any) => u.email === "admin-test@test.example.com",
     );
     expect(deletedUser).toBeUndefined();
+
+    // Clean up the test group
+    const deleteGroupResp = await request.delete(
+      `${API_BASE}/admin/groups/${editorGroup.id}`,
+      { headers: adminHeaders },
+    );
+    expect(deleteGroupResp.ok()).toBeTruthy();
   });
 
   test("deep link redirects back after login", async ({ page, request }) => {
