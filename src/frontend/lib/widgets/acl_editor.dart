@@ -62,7 +62,7 @@ class AclEditorState extends State<AclEditor> {
       _message = null;
     });
     final auth = context.read<AuthService>();
-    final resp = await auth.authGet('/workspaces/${_wsId}/acl');
+    final resp = await auth.authGet(_aclUrl);
     if (!mounted) return;
     if (resp.statusCode == 200) {
       final data = List<Map<String, dynamic>>.from(jsonDecode(resp.body));
@@ -81,9 +81,12 @@ class AclEditorState extends State<AclEditor> {
     }
   }
 
-  String get _wsId {
+  String get _aclUrl {
     final parts = widget.resource.split('/');
-    return parts.length >= 3 ? parts[2] : '';
+    if (parts.length >= 3 && parts[1] == 'workspaces') {
+      return '/workspaces/${parts[2]}/acl';
+    }
+    return '/admin/acl/resource?resource=${Uri.encodeQueryComponent(widget.resource)}';
   }
 
   void _removeEntry(int index) {
@@ -275,7 +278,7 @@ class AclEditorState extends State<AclEditor> {
     }).toList();
 
     final resp = await auth.authPut(
-      '/workspaces/$_wsId/acl',
+      _aclUrl,
       body: jsonEncode(payload),
     );
     if (!mounted) return;

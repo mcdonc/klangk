@@ -2452,6 +2452,86 @@ class TestACLEndpoints:
         assert "terminal" not in perms
 
 
+class TestAdminResourceACL:
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testadmin@example.com", "password": "testpass"},
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_get_resource_acl(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            "/admin/acl/resource?resource=/workspaces", headers=headers
+        )
+        assert resp.status_code == 200
+        entries = resp.json()
+        # Default ACL has Authenticated create on /workspaces
+        assert any(e["permission"] == "create" for e in entries)
+
+    async def test_replace_resource_acl(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        # Get current ACL
+        resp = await client.get(
+            "/admin/acl/resource?resource=/workspaces", headers=headers
+        )
+        original = resp.json()
+
+        # Add a new entry
+        new_entries = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in original
+        ] + [
+            {
+                "action": model.ACTION_ALLOW,
+                "principal_type": model.PRINCIPAL_SYSTEM,
+                "permission": "view",
+                "system_principal": model.SYSTEM_AUTHENTICATED,
+            },
+        ]
+        resp = await client.put(
+            "/admin/acl/resource?resource=/workspaces",
+            headers=headers,
+            json=new_entries,
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()) == len(original) + 1
+
+        # Restore original
+        restore = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in original
+        ]
+        resp = await client.put(
+            "/admin/acl/resource?resource=/workspaces",
+            headers=headers,
+            json=restore,
+        )
+        assert resp.status_code == 200
+
+    async def test_get_resource_acl_requires_admin(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/admin/acl/resource?resource=/workspaces", headers=headers
+        )
+        assert resp.status_code == 403
+
+
 class TestSafePath:
     def test_valid_path(self, temp_data_dir):
         path = ws_mod._safe_path("user1", "home", "ws1")

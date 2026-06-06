@@ -1896,6 +1896,38 @@ async def get_acl_by_group(
     return await model.get_acl_entries_by_principal_group(group_id)
 
 
+@router.get("/admin/acl/resource")
+async def get_resource_acl(
+    resource: str,
+    admin: dict = Depends(acl.has_permission("admin", _admin_resource)),
+):
+    """Get resolved ACL entries for any resource (admin only)."""
+    return await model.get_acl_entries_resolved(resource)
+
+
+@router.put("/admin/acl/resource")
+async def replace_resource_acl(
+    resource: str,
+    entries: list[WorkspaceAclEntry],
+    admin: dict = Depends(acl.has_permission("admin", _admin_resource)),
+):
+    """Replace ACL entries for any resource (admin only)."""
+    acl_entries = [
+        {
+            "position": i,
+            "action": e.action,
+            "principal_type": e.principal_type,
+            "permission": e.permission,
+            "user_id": e.user_id,
+            "group_id": e.group_id,
+            "system_principal": e.system_principal,
+        }
+        for i, e in enumerate(entries)
+    ]
+    await model.replace_acl_entries(resource, acl_entries)
+    return await model.get_acl_entries_resolved(resource)
+
+
 STATIC_RESOURCES = [
     "/",
     "/workspaces",
