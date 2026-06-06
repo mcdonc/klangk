@@ -1458,6 +1458,190 @@ test.describe("Klangk E2E", () => {
     });
   });
 
+  test("ACL editing: remove chat permission denies chat access", async ({
+    request,
+  }) => {
+    // Register owner and member
+    const ownerEmail = `acl-owner-${Date.now()}@test.example.com`;
+    const memberEmail = `acl-member-${Date.now()}@test.example.com`;
+    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+    const { headers: memberHeaders } = await registerUser(request, memberEmail);
+
+    // Create workspace and share with member
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers: ownerHeaders,
+      data: { name: `acl-chat-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspace = await wsResp.json();
+    const workspaceId = workspace.id;
+
+    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+      headers: ownerHeaders,
+      data: { email: memberEmail },
+    });
+
+    // Member should have chat permission initially
+    let permResp = await request.get(
+      `${API_BASE}/api/my-permissions?resource=/workspaces/${workspaceId}`,
+      { headers: memberHeaders },
+    );
+    expect(permResp.ok()).toBeTruthy();
+    let perms = (await permResp.json()).permissions[
+      `/workspaces/${workspaceId}`
+    ];
+    expect(perms).toContain("chat");
+    expect(perms).toContain("terminal");
+
+    // Owner gets the ACL, removes the chat ACE for the member
+    const aclResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/acl`,
+      { headers: ownerHeaders },
+    );
+    expect(aclResp.ok()).toBeTruthy();
+    const aces = await aclResp.json();
+
+    // Filter out the member's chat ACE
+    const filtered = aces.filter(
+      (ace: any) =>
+        !(ace.permission === "chat" && ace.principal === memberEmail),
+    );
+    expect(filtered.length).toBeLessThan(aces.length);
+
+    // Save the modified ACL
+    const putResp = await request.put(
+      `${API_BASE}/workspaces/${workspaceId}/acl`,
+      {
+        headers: ownerHeaders,
+        data: filtered.map((ace: any) => ({
+          action: ace.action,
+          principal_type: ace.principal_type,
+          permission: ace.permission,
+          user_id: ace.user_id || null,
+          group_id: ace.group_id || null,
+          system_principal: ace.system_principal ?? null,
+        })),
+      },
+    );
+    expect(putResp.ok()).toBeTruthy();
+
+    // Member should no longer have chat permission
+    permResp = await request.get(
+      `${API_BASE}/api/my-permissions?resource=/workspaces/${workspaceId}`,
+      { headers: memberHeaders },
+    );
+    perms = (await permResp.json()).permissions[`/workspaces/${workspaceId}`];
+    expect(perms).not.toContain("chat");
+    // But still has terminal and files
+    expect(perms).toContain("terminal");
+    expect(perms).toContain("files");
+
+    // Clean up
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers: ownerHeaders,
+    });
+  });
+
+  test("ACL editing: reorder, add, and remove ACEs", async ({ request }) => {
+    const ownerEmail = `acl-edit-${Date.now()}@test.example.com`;
+    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+
+    // Create workspace
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers: ownerHeaders,
+      data: { name: `acl-edit-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspace = await wsResp.json();
+    const workspaceId = workspace.id;
+
+    // Get initial ACL (owner has * ACE)
+    let aclResp = await request.get(
+      `${API_BASE}/workspaces/${workspaceId}/acl`,
+      { headers: ownerHeaders },
+    );
+    expect(aclResp.ok()).toBeTruthy();
+    const initialAces = await aclResp.json();
+    expect(initialAces.length).toBeGreaterThanOrEqual(1);
+
+    // Add a new ACE: Allow Authenticated view
+    const newAces = [
+      ...initialAces.map((ace: any) => ({
+        action: ace.action,
+        principal_type: ace.principal_type,
+        permission: ace.permission,
+        user_id: ace.user_id || null,
+        group_id: ace.group_id || null,
+        system_principal: ace.system_principal ?? null,
+      })),
+      {
+        action: 1, // Allow
+        principal_type: 0, // System
+        permission: "view",
+        user_id: null,
+        group_id: null,
+        system_principal: 1, // Authenticated
+      },
+    ];
+
+    let putResp = await request.put(
+      `${API_BASE}/workspaces/${workspaceId}/acl`,
+      { headers: ownerHeaders, data: newAces },
+    );
+    expect(putResp.ok()).toBeTruthy();
+    let saved = await putResp.json();
+    expect(saved.length).toBe(initialAces.length + 1);
+    expect(saved[saved.length - 1].permission).toBe("view");
+    expect(saved[saved.length - 1].principal).toBe("Authenticated");
+
+    // Reorder: swap first and last
+    const reordered = [
+      ...saved.slice(1).map((ace: any) => ({
+        action: ace.action,
+        principal_type: ace.principal_type,
+        permission: ace.permission,
+        user_id: ace.user_id || null,
+        group_id: ace.group_id || null,
+        system_principal: ace.system_principal ?? null,
+      })),
+      {
+        action: saved[0].action,
+        principal_type: saved[0].principal_type,
+        permission: saved[0].permission,
+        user_id: saved[0].user_id || null,
+        group_id: saved[0].group_id || null,
+        system_principal: saved[0].system_principal ?? null,
+      },
+    ];
+
+    putResp = await request.put(`${API_BASE}/workspaces/${workspaceId}/acl`, {
+      headers: ownerHeaders,
+      data: reordered,
+    });
+    expect(putResp.ok()).toBeTruthy();
+    saved = await putResp.json();
+    // Last entry should now be the original first (owner *)
+    expect(saved[saved.length - 1].permission).toBe("*");
+
+    // Remove the Authenticated view ACE (now at position 0)
+    const withoutFirst = reordered.slice(1);
+    putResp = await request.put(`${API_BASE}/workspaces/${workspaceId}/acl`, {
+      headers: ownerHeaders,
+      data: withoutFirst,
+    });
+    expect(putResp.ok()).toBeTruthy();
+    saved = await putResp.json();
+    expect(saved.length).toBe(reordered.length - 1);
+    expect(
+      saved.every((ace: any) => ace.principal !== "Authenticated"),
+    ).toBeTruthy();
+
+    // Clean up
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers: ownerHeaders,
+    });
+  });
+
   test("browser-delegate routes to the correct connection", async ({
     browser,
     request,
