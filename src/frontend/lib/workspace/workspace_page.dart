@@ -18,6 +18,7 @@ import '../terminal/ghostty_terminal.dart';
 import '../browser/browser_delegate.dart';
 import '../chat/workspace_chat.dart';
 import '../debug/debug_panel.dart';
+import 'workspace_settings_panel.dart';
 
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
@@ -245,6 +246,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
             ),
             terminal: GhosttyTerminal(key: _terminalKey, wsClient: wsClient),
             chat: WorkspaceChat(key: _chatKey, wsClient: wsClient),
+            settings: WorkspaceSettingsPanel(
+              workspaceId: widget.workspaceId,
+            ),
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
             chatKey: _chatKey,

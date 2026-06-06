@@ -513,6 +513,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     }
   }
 
+  // coverage:ignore-start
+  // Kept for reference during Phase 2 migration; will be removed.
   Future<void> _editWorkspace(Map<String, dynamic> ws) async {
     final imageData = await _fetchImages();
     final defaultImage = imageData?['default'] as String? ?? 'klangk-pi';
@@ -902,6 +904,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       await _loadWorkspaces();
     }
   }
+  // coverage:ignore-end
 
   String _formatCreatedAt(String? raw) {
     if (raw == null || raw.isEmpty) return '';
@@ -1014,10 +1017,6 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              IconButton(
-                                icon: const Icon(Icons.settings_outlined),
-                                onPressed: () => _editWorkspace(ws),
-                              ),
                               IconButton(
                                 icon: const Icon(Icons.copy_outlined),
                                 onPressed: () => _duplicateWorkspace(ws),

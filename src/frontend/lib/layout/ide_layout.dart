@@ -10,6 +10,7 @@ class IdeLayout extends StatefulWidget {
   final Widget fileViewer;
   final Widget terminal;
   final Widget? chat;
+  final Widget? settings;
   final Widget? debug;
   final GlobalKey<GhosttyTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
@@ -20,6 +21,7 @@ class IdeLayout extends StatefulWidget {
     required this.fileViewer,
     required this.terminal,
     this.chat,
+    this.settings,
     this.debug,
     this.terminalKey,
     this.fileViewerKey,
@@ -48,7 +50,8 @@ class _IdeLayoutState extends State<IdeLayout> {
       widget.fileViewerKey?.currentState?.refresh();
     }
     // Notify chat widget of visibility change
-    widget.chatKey?.currentState?.setVisible(index == 2);
+    final chatIdx = widget.chat != null ? 2 : -1;
+    widget.chatKey?.currentState?.setVisible(index == chatIdx);
   }
 
   // coverage:ignore-start
@@ -61,6 +64,61 @@ class _IdeLayoutState extends State<IdeLayout> {
   Widget build(BuildContext context) {
     final hasDebug = widget.debug != null;
     final hasChat = widget.chat != null;
+    final hasSettings = widget.settings != null;
+
+    // Build dynamic tab list: Terminal(0), Files(1), Chat?(2), Settings?(last)
+    final tabs = <Widget>[
+      _SkeuoTab(
+        label: 'Terminal',
+        icon: Icons.terminal,
+        isSelected: _selectedIndex == 0,
+        onTap: () => _selectTab(0),
+      ),
+      _SkeuoTab(
+        label: 'Files',
+        icon: Icons.folder_outlined,
+        isSelected: _selectedIndex == 1,
+        onTap: () => _selectTab(1),
+      ),
+    ];
+    final content = <Widget>[
+      Container(
+        color: KColors.bgCanvas,
+        padding: const EdgeInsets.only(left: 6, top: 4),
+        child: widget.terminal,
+      ),
+      Container(
+        color: KColors.bgCanvas,
+        child: widget.fileViewer,
+      ),
+    ];
+    if (hasChat) {
+      final chatIndex = tabs.length;
+      tabs.add(_SkeuoTab(
+        label: 'Chat',
+        icon: Icons.chat_outlined,
+        isSelected: _selectedIndex == chatIndex,
+        badge: _chatUnread > 0 ? _chatUnread : null,
+        onTap: () => _selectTab(chatIndex),
+      ));
+      content.add(Container(
+        color: KColors.bgCanvas,
+        child: widget.chat!,
+      ));
+    }
+    if (hasSettings) {
+      final settingsIndex = tabs.length;
+      tabs.add(_SkeuoTab(
+        label: 'Settings',
+        icon: Icons.settings,
+        isSelected: _selectedIndex == settingsIndex,
+        onTap: () => _selectTab(settingsIndex),
+      ));
+      content.add(Container(
+        color: KColors.bgCanvas,
+        child: widget.settings!,
+      ));
+    }
 
     return Column(
       children: [
@@ -70,34 +128,7 @@ class _IdeLayoutState extends State<IdeLayout> {
           color: KColors.bgCanvas,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: _SkeuoTab(
-                  label: 'Terminal',
-                  icon: Icons.terminal,
-                  isSelected: _selectedIndex == 0,
-                  onTap: () => _selectTab(0),
-                ),
-              ),
-              Expanded(
-                child: _SkeuoTab(
-                  label: 'Files',
-                  icon: Icons.folder_outlined,
-                  isSelected: _selectedIndex == 1,
-                  onTap: () => _selectTab(1),
-                ),
-              ),
-              if (hasChat)
-                Expanded(
-                  child: _SkeuoTab(
-                    label: 'Chat',
-                    icon: Icons.chat_outlined,
-                    isSelected: _selectedIndex == 2,
-                    badge: _chatUnread > 0 ? _chatUnread : null,
-                    onTap: () => _selectTab(2),
-                  ),
-                ),
-            ],
+            children: tabs.map((t) => Expanded(child: t)).toList(),
           ),
         ),
         // Content area
@@ -105,22 +136,7 @@ class _IdeLayoutState extends State<IdeLayout> {
           child: ClipRect(
             child: IndexedStack(
               index: _selectedIndex,
-              children: [
-                Container(
-                  color: KColors.bgCanvas,
-                  padding: const EdgeInsets.only(left: 6, top: 4),
-                  child: widget.terminal,
-                ),
-                Container(
-                  color: KColors.bgCanvas,
-                  child: widget.fileViewer,
-                ),
-                if (hasChat)
-                  Container(
-                    color: KColors.bgCanvas,
-                    child: widget.chat!,
-                  ),
-              ],
+              children: content,
             ),
           ),
         ),
