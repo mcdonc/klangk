@@ -368,74 +368,74 @@ class AclEditorState extends State<AclEditor> {
                 _entries.insert(newIndex, item);
               });
             },
+            buildDefaultDragHandles: false,
             itemBuilder: (context, i) {
               final entry = _entries[i];
               final action = entry['action'] as int;
               final principal = entry['principal'] as String? ?? '?';
               final permission = entry['permission'] as String;
 
-              return Card(
+              return ReorderableDragStartListener(
                 key: ValueKey('ace-$i-${entry['id'] ?? i}'),
-                margin: const EdgeInsets.only(bottom: 2),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Row(
-                    children: [
-                      // Drag handle
-                      ReorderableDragStartListener(
-                        index: i,
-                        child: const Icon(Icons.drag_handle,
+                index: i,
+                child: Card(
+                  margin: const EdgeInsets.only(bottom: 2),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.drag_handle,
                             size: 18, color: KColors.textMuted),
-                      ),
-                      const SizedBox(width: 4),
-                      // Allow/Deny badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: action == 1
-                              ? KColors.accentGreen.withValues(alpha: 0.2)
-                              : KColors.accentRed.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          action == 1 ? 'Allow' : 'Deny',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                        const SizedBox(width: 4),
+                        // Allow/Deny badge
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
                             color: action == 1
-                                ? KColors.accentGreen
-                                : KColors.accentRed,
+                                ? KColors.accentGreen.withValues(alpha: 0.2)
+                                : KColors.accentRed.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            action == 1 ? 'Allow' : 'Deny',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: action == 1
+                                  ? KColors.accentGreen
+                                  : KColors.accentRed,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      // Principal
-                      Expanded(
-                        child: Text(principal,
-                            style: const TextStyle(fontSize: 12)),
-                      ),
-                      // Permission
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: KColors.bgCanvas,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: KColors.borderDefault),
+                        const SizedBox(width: 8),
+                        // Principal
+                        Expanded(
+                          child: Text(principal,
+                              style: const TextStyle(fontSize: 12)),
                         ),
-                        child: Text(permission,
-                            style: const TextStyle(fontSize: 11)),
-                      ),
-                      const SizedBox(width: 4),
-                      // Remove
-                      InkWell(
-                        onTap: () => _removeEntry(i),
-                        child: const Icon(Icons.close,
-                            size: 16, color: KColors.textMuted),
-                      ),
-                    ],
+                        // Permission
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: KColors.bgCanvas,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: KColors.borderDefault),
+                          ),
+                          child: Text(permission,
+                              style: const TextStyle(fontSize: 11)),
+                        ),
+                        const SizedBox(width: 4),
+                        // Remove
+                        InkWell(
+                          onTap: () => _removeEntry(i),
+                          child: const Icon(Icons.close,
+                              size: 16, color: KColors.textMuted),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );
