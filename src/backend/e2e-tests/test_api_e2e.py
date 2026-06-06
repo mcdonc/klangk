@@ -709,14 +709,14 @@ class TestACLCascades:
     def test_user_delete_cascades_aces(self, api, admin_headers):
         """Deleting a user removes their ACEs from all resources."""
         # Create a dedicated user for this test (not the shared user_a)
-        cascade_user = _register(
+        cascade_headers = _register(
             api, f"cascade-{uuid.uuid4().hex[:8]}@example.com"
         )
 
         # User creates a workspace (gets owner ACE)
         api.post(
             "/workspaces",
-            headers=cascade_user["headers"],
+            headers=cascade_headers,
             json={"name": _ws_name("cascade")},
         )
 
@@ -846,14 +846,17 @@ class TestSharedWorkspaceAccess:
             headers=user_a["headers"],
         )
 
-        # B immediately loses access
+        # B immediately loses workspace-specific permissions
+        # (view and create are inherited from / and /workspaces)
         resp = api.get(
             f"/api/my-permissions?resource=/workspaces/{ws_id}",
             headers=user_b["headers"],
         )
         perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
-        assert "view" not in perms
         assert "terminal" not in perms
+        assert "files" not in perms
+        assert "chat" not in perms
+        assert "*" not in perms
 
     def test_add_self_as_member_rejected(self, api, user_a):
         """Owner cannot share a workspace with themselves."""
