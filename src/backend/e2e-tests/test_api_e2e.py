@@ -879,3 +879,82 @@ class TestSharedWorkspaceAccess:
         )
         assert resp.status_code == 404
         assert "User not found" in resp.json()["detail"]
+
+
+class TestAdminResourceACL:
+    def test_get_workspaces_acl(self, api, admin_headers):
+        """Admin can read the /workspaces static resource ACL."""
+        resp = api.get(
+            "/admin/acl/resource?resource=/workspaces",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        entries = resp.json()
+        assert any(e["permission"] == "create" for e in entries)
+        assert any(e["principal"] == "Authenticated" for e in entries)
+
+    def test_modify_workspaces_acl(self, api, admin_headers):
+        """Admin can add and remove ACEs on /workspaces."""
+        # Get current
+        resp = api.get(
+            "/admin/acl/resource?resource=/workspaces",
+            headers=admin_headers,
+        )
+        original = resp.json()
+
+        # Add a view ACE
+        new_entries = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in original
+        ] + [
+            {
+                "action": 1,
+                "principal_type": 0,
+                "permission": "view",
+                "user_id": None,
+                "group_id": None,
+                "system_principal": 1,
+            },
+        ]
+        resp = api.put(
+            "/admin/acl/resource?resource=/workspaces",
+            headers=admin_headers,
+            json=new_entries,
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()) == len(original) + 1
+
+        # Restore original
+        restore = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in original
+        ]
+        resp = api.put(
+            "/admin/acl/resource?resource=/workspaces",
+            headers=admin_headers,
+            json=restore,
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()) == len(original)
+
+    def test_non_admin_denied(self, api, user_a):
+        """Non-admin cannot access the resource ACL endpoint."""
+        resp = api.get(
+            "/admin/acl/resource?resource=/workspaces",
+            headers=user_a["headers"],
+        )
+        assert resp.status_code == 403

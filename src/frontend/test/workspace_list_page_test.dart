@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/workspace/workspace_list_page.dart';
 import 'package:klangk_frontend/widgets/klangk_logo.dart';
+import 'package:klangk_frontend/widgets/skeuo_tab.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 void main() {
@@ -1509,6 +1510,48 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Key cannot'), findsNothing);
       expect(find.text('A=1'), findsOneWidget);
+    });
+
+    testWidgets('Access Control tab shown for admin', (tester) async {
+      final token = makeJwt({'sub': 'admin-1', 'email': 'admin@example.com'});
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      testAuthHttpClientOverride = withPermissions(
+        (request) async {
+          if (request.url.path == '/workspaces') {
+            return http.Response(jsonEncode([]), 200);
+          }
+          if (request.url.path == '/workspaces/shared') {
+            return http.Response(jsonEncode([]), 200);
+          }
+          return http.Response('Not found', 404);
+        },
+        permissions: {
+          '/admin': ['*'],
+          '/workspaces': ['create'],
+        },
+      );
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Access Control'), findsOneWidget);
+
+      // Switch to Access Control tab
+      await tester.tap(find.text('Access Control'));
+      await tester.pumpAndSettle();
+
+      // Switch back to Workspaces tab — use the SkeuoTab, not the AppBar title
+      await tester.tap(find.descendant(
+        of: find.byType(SkeuoTab),
+        matching: find.text('Workspaces'),
+      ));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Access Control tab hidden for non-admin', (tester) async {
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Access Control'), findsNothing);
     });
   });
 }
