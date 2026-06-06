@@ -718,6 +718,7 @@ async def oidc_callback(
             status_code=502,
             detail="ID token missing sub or email claim",
         )
+    auth.validate_email(email)
 
     # Find or create user
     user = await model.get_user_by_external_id(provider_id, sub)
