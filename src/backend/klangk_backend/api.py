@@ -1869,19 +1869,38 @@ ALL_PERMISSIONS = [
 @router.get("/api/my-permissions")
 async def my_permissions(
     request: Request,
+    resource: str | None = None,
     user: dict = Depends(auth.get_current_user),
 ):
-    """Return the current user's effective permissions."""
+    """Return the current user's effective permissions.
+
+    If ``resource`` query param is provided, checks permissions for that
+    specific resource path (e.g., ``/workspaces/{id}``). Otherwise
+    returns permissions for all static resources.
+    """
     principals = await acl.get_principals(user["id"])
     groups = await model.get_user_groups(user["id"])
+    if resource is not None:
+        perms = [
+            p
+            for p in ALL_PERMISSIONS
+            if await acl.check_permission(resource, principals, p)
+        ]
+        return {
+            "user_id": user["id"],
+            "email": user["email"],
+            "groups": groups,
+            "permissions": {resource: perms} if perms else {},
+        }
     permissions = {}
-    for resource in STATIC_RESOURCES:
-        perms = []
-        for perm in ALL_PERMISSIONS:
-            if await acl.check_permission(resource, principals, perm):
-                perms.append(perm)
+    for res in STATIC_RESOURCES:
+        perms = [
+            p
+            for p in ALL_PERMISSIONS
+            if await acl.check_permission(res, principals, p)
+        ]
         if perms:
-            permissions[resource] = perms
+            permissions[res] = perms
     return {
         "user_id": user["id"],
         "email": user["email"],

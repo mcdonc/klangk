@@ -432,6 +432,65 @@ class TestACLIntrospection:
         assert "/" in data["permissions"]
         assert "view" in data["permissions"]["/"]
 
+    def test_my_permissions_for_workspace(self, api, user_a):
+        """Check permissions for a specific workspace resource."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "perm-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resp = api.get(
+            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            headers=user_a["headers"],
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        perms = data["permissions"].get(f"/workspaces/{ws_id}", [])
+        assert "*" in perms
+
+    def test_my_permissions_for_unowned_workspace(self, api, user_a, user_b):
+        """User has no permissions on another user's workspace."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_b["headers"],
+            json={"name": "other-perm-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resp = api.get(
+            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            headers=user_a["headers"],
+        )
+        assert resp.status_code == 200
+        assert resp.json()["permissions"] == {}
+
+    def test_my_permissions_shared_workspace(self, api, user_a, user_b):
+        """Shared user gets view/terminal/files but not share or *."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "shared-perm-ws"},
+        )
+        ws_id = resp.json()["id"]
+        # Share with B
+        api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_b["email"]},
+        )
+        # Check B's permissions
+        resp = api.get(
+            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            headers=user_b["headers"],
+        )
+        assert resp.status_code == 200
+        perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
+        assert "view" in perms
+        assert "terminal" in perms
+        assert "files" in perms
+        assert "*" not in perms
+        assert "share" not in perms
+
 
 # --- Workspace sharing via ACL ---
 

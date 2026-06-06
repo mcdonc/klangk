@@ -2331,6 +2331,42 @@ class TestACLEndpoints:
         data = resp.json()
         assert "/admin" not in data["permissions"]
 
+    async def test_my_permissions_for_resource(self, client, user):
+        """Check permissions for a specific resource."""
+        headers = await _auth_headers(client)
+        # Create a workspace (owner gets * ACE)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "perm-check"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.get(
+            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        perms = data["permissions"].get(f"/workspaces/{ws_id}", [])
+        assert "*" in perms
+        assert "view" in perms
+        assert "terminal" in perms
+
+    async def test_my_permissions_for_resource_no_access(
+        self, client, admin_user, user
+    ):
+        """User without specific ACE only gets inherited permissions."""
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/my-permissions?resource=/workspaces/nonexistent",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        perms = data["permissions"].get("/workspaces/nonexistent", [])
+        # Inherits view from root, but not workspace-specific perms
+        assert "view" in perms
+        assert "*" not in perms
+        assert "terminal" not in perms
+
 
 class TestSafePath:
     def test_valid_path(self, temp_data_dir):
