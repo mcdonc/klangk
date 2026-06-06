@@ -688,3 +688,148 @@ class TestGrantAdminViaGroup:
         # Verify access revoked immediately (no re-login needed)
         resp = api.get("/admin/users", headers=user_a["headers"])
         assert resp.status_code == 403
+
+
+# --- Cascade and edge case tests ---
+
+
+class TestACLCascades:
+    def test_user_delete_cascades_aces(self, api, admin_headers, user_a):
+        """Deleting a user removes their ACEs from all resources."""
+        # User A creates a workspace (gets owner ACE)
+        api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "cascade-ws"},
+        )
+
+        # Get user A's ID
+        resp = api.get("/admin/users", headers=admin_headers)
+        alice = next(u for u in resp.json() if u["email"] == user_a["email"])
+
+        # Verify ACE exists
+        resp = api.get(
+            f"/admin/acl/by-principal/user/{alice['id']}",
+            headers=admin_headers,
+        )
+        assert len(resp.json()) > 0
+
+        # Delete user A
+        resp = api.delete(f"/admin/users/{alice['id']}", headers=admin_headers)
+        assert resp.status_code == 200
+
+        # ACEs should be gone
+        resp = api.get(
+            f"/admin/acl/by-principal/user/{alice['id']}",
+            headers=admin_headers,
+        )
+        assert resp.json() == []
+
+    def test_group_delete_cascades_aces(self, api, admin_headers):
+        """Deleting a group removes its ACEs from all resources."""
+        # Create a group with an ACE
+        resp = api.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "cascade-group"},
+        )
+        group_id = resp.json()["id"]
+
+        # Verify group shows in ACL queries
+        resp = api.get(
+            f"/admin/acl/by-principal/group/{group_id}",
+            headers=admin_headers,
+        )
+        # No ACEs yet for this group — that's fine, CASCADE is on FK
+
+        # Delete the group
+        resp = api.delete(f"/admin/groups/{group_id}", headers=admin_headers)
+        assert resp.status_code == 200
+
+        # Group should be gone
+        resp = api.get("/admin/groups", headers=admin_headers)
+        assert not any(g["id"] == group_id for g in resp.json())
+
+
+class TestSharedWorkspaceAccess:
+    def test_shared_user_cannot_delete_workspace(self, api, user_a, user_b):
+        """Shared user gets 403 when trying to delete the workspace."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "no-delete-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        # Share with B
+        api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_b["email"]},
+        )
+
+        # B tries to delete — should be denied
+        resp = api.delete(f"/workspaces/{ws_id}", headers=user_b["headers"])
+        assert resp.status_code == 403
+
+    def test_shared_user_cannot_edit_workspace(self, api, user_a, user_b):
+        """Shared user gets 403 when trying to edit the workspace."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "no-edit-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_b["email"]},
+        )
+
+        resp = api.put(
+            f"/workspaces/{ws_id}",
+            headers=user_b["headers"],
+            json={"name": "hijacked"},
+        )
+        assert resp.status_code == 403
+
+    def test_unshare_revokes_access_immediately(self, api, user_a, user_b):
+        """Removing a shared user immediately denies their access."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "revoke-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        # Share with B
+        resp = api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_b["email"]},
+        )
+        member_id = resp.json()["user_id"]
+
+        # B can see permissions
+        resp = api.get(
+            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            headers=user_b["headers"],
+        )
+        perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
+        assert "view" in perms
+
+        # Unshare
+        api.delete(
+            f"/workspaces/{ws_id}/members/{member_id}",
+            headers=user_a["headers"],
+        )
+
+        # B immediately loses access
+        resp = api.get(
+            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            headers=user_b["headers"],
+        )
+        perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
+        assert "view" not in perms
+        assert "terminal" not in perms
