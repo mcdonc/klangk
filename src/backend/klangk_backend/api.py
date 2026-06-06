@@ -1125,14 +1125,21 @@ async def export_workspace(
                 info.size = len(meta_bytes)
                 tar.addfile(info, io.BytesIO(meta_bytes))
 
-                # Add home directory. Symlinks that resolve outside the
-                # home dir are stripped to prevent leaking host files.
-                home_resolved = home_dir.resolve()
+                # Add home directory. Symlinks whose target is an absolute path
+                # outside the workspace are stripped to avoid dangling/host
+                # references. Two kinds are kept:
+                #   - relative targets (they stay within the tree), and
+                #   - container-absolute targets under "/home/klangk" (the
+                #     bind-mount path — see container.py); these resolve once
+                #     re-mounted in a container, e.g. uv writes
+                #     ".venv/bin/python -> /home/klangk/.local/.../python".
+                # Resolving against the host home_dir (as before) wrongly
+                # stripped the latter, breaking venvs on import.
+                container_home = "/home/klangk/"
 
                 def _safe_filter(ti):
-                    if ti.issym():
-                        target = (home_dir / ti.linkname).resolve()
-                        if not target.is_relative_to(home_resolved):
+                    if ti.issym() and os.path.isabs(ti.linkname):
+                        if not ti.linkname.startswith(container_home):
                             return None
                     return ti
 
@@ -1257,6 +1264,18 @@ async def import_workspace(
                 status_code=409,
                 detail=f"A workspace named {ws_name!r} already exists",
             )
+
+        # Grant owner full access via ACL (mirrors create_workspace). Without
+        # this an imported workspace has no ACL entries, so even its owner is
+        # denied terminal/exec/files access.
+        await model.add_acl_entry(
+            f"/workspaces/{ws['id']}",
+            0,
+            ACTION_ALLOW,
+            "*",
+            PRINCIPAL_USER,
+            user_id=user["id"],
+        )
 
         # Extract home directory using tar (much faster than Python tarfile
         # for archives with many members). --strip-components=1 removes

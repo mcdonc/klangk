@@ -74,16 +74,33 @@ async def _find_external_symlinks(home_dir: Path) -> list[str]:
     Returns relative paths (from home_dir's parent) suitable for
     tar --exclude arguments.
     """
-    home_resolved = home_dir.resolve()
-    # find -type l prints all symlinks; we filter in the shell using
-    # realpath to check whether each target is under home_dir.
-    # This avoids a Python walk over potentially huge directory trees.
+    # find -type l prints all symlinks; we filter in the shell by inspecting
+    # each link's *raw* target. This avoids a Python walk over potentially huge
+    # directory trees, and — crucially — avoids `realpath`, which dereferences
+    # the whole chain on the host and breaks on container-absolute targets.
+    #
+    # Symlinks inside a workspace commonly target the *container* home path
+    # ("/home/klangk", the bind-mount target — see container.py), e.g. uv writes
+    # ".venv/bin/python -> /home/klangk/.local/.../python". Those are internal,
+    # but the export runs on the host where "/home/klangk" doesn't exist, so
+    # resolving them would wrongly flag them external and strip them — breaking
+    # venvs on import. Relative symlinks (".../python3 -> python") chain through
+    # those, so they hit the same problem.
+    #
+    # A symlink is "external" (and excluded) only when its target is an absolute
+    # path NOT under the container home. Relative targets stay within the tree,
+    # and "/home/klangk/..." targets resolve correctly once re-mounted in a
+    # container, so both are kept.
+    container_home = "/home/klangk"
     script = (
         f'find "{home_dir}" -type l -print0 | '
         f'while IFS= read -r -d "" link; do '
-        f'target=$(realpath "$link" 2>/dev/null || echo "///broken"); '
-        f'case "$target" in "{home_resolved}/"*) ;; *) '
-        f'echo "$link" ;; esac; done'
+        f'raw=$(readlink "$link"); '
+        f'case "$raw" in '
+        f'"{container_home}/"*) ;; '  # internal container-absolute: keep
+        f'/*) echo "$link" ;; '  # other absolute (host path): exclude
+        f"*) ;; "  # relative: stays in tree, keep
+        f"esac; done"
     )
     proc = await asyncio.create_subprocess_exec(
         "bash",
