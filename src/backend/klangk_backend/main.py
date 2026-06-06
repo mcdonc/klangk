@@ -57,6 +57,15 @@ async def seed_default_acls(admin_group_id: str) -> None:
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_AUTHENTICATED,
     )
+    # /groups: Authenticated users can create groups
+    await model.add_acl_entry(
+        "/groups",
+        0,
+        ACTION_ALLOW,
+        "create",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_AUTHENTICATED,
+    )
     # /admin: admin group gets full access, deny everyone else
     await model.add_acl_entry(
         "/admin",

@@ -1075,10 +1075,11 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
   static const _resources = [
     ('/', 'Root', Icons.home),
     ('/workspaces', 'Workspaces', Icons.folder),
+    ('/groups', 'Groups', Icons.group),
     ('/admin', 'Admin', Icons.manage_accounts),
     ('/admin/users', 'Users', Icons.people),
     ('/admin/invitations', 'Invitations', Icons.mail_outline),
-    ('/admin/groups', 'Groups', Icons.group),
+    ('/admin/groups', 'Admin Groups', Icons.group),
   ];
 
   String _selectedResource = '/';
