@@ -605,6 +605,7 @@ async def get_acl_entries_resolved(resource: str) -> list[dict]:
                 entry["principal"] = (
                     "Everyone" if sp == SYSTEM_EVERYONE else "Authenticated"
                 )
+                entry["system_principal"] = sp
             elif pt == PRINCIPAL_USER:
                 entry["principal"] = row["user_email"] or row["user_id"]
                 entry["user_id"] = row["user_id"]

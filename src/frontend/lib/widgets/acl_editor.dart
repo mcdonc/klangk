@@ -119,6 +119,7 @@ class AclEditorState extends State<AclEditor> {
     String? selectedGroupId;
     var selectedPermission = 'view';
     var selectedAction = 1; // allow
+    var selectedSystemPrincipal = 1; // Authenticated
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -191,7 +192,7 @@ class AclEditorState extends State<AclEditor> {
                   ),
                 if (principalType == 0) ...[
                   DropdownButtonFormField<int>(
-                    value: 1,
+                    value: selectedSystemPrincipal,
                     decoration: const InputDecoration(
                       labelText: 'System Principal',
                       border: OutlineInputBorder(),
@@ -200,7 +201,8 @@ class AclEditorState extends State<AclEditor> {
                       DropdownMenuItem(value: 0, child: Text('Everyone')),
                       DropdownMenuItem(value: 1, child: Text('Authenticated')),
                     ],
-                    onChanged: (_) {},
+                    onChanged: (v) =>
+                        setDialogState(() => selectedSystemPrincipal = v ?? 1),
                   ),
                 ],
                 const SizedBox(height: 12),
@@ -231,8 +233,10 @@ class AclEditorState extends State<AclEditor> {
                   'permission': selectedPermission,
                 };
                 if (principalType == 0) {
-                  entry['system_principal'] = 1; // Authenticated default
-                  entry['principal'] = 'Authenticated';
+                  entry['system_principal'] = selectedSystemPrincipal;
+                  entry['principal'] = selectedSystemPrincipal == 0
+                      ? 'Everyone'
+                      : 'Authenticated';
                 } else if (principalType == 1 && selectedUserId != null) {
                   entry['user_id'] = selectedUserId;
                   final u = users.firstWhere((u) => u['id'] == selectedUserId);
