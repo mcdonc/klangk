@@ -811,7 +811,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.admin_panel_settings), findsOneWidget);
+      expect(find.byIcon(Icons.manage_accounts), findsOneWidget);
       expect(find.byTooltip('Admin'), findsOneWidget);
     });
 
@@ -836,7 +836,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.admin_panel_settings), findsNothing);
+      expect(find.byIcon(Icons.manage_accounts), findsNothing);
     });
 
     testWidgets('create dialog submit via text field onSubmitted',
@@ -1270,7 +1270,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.admin_panel_settings));
+      await tester.tap(find.byIcon(Icons.manage_accounts));
       await tester.pumpAndSettle();
 
       expect(navigatedTo, '/admin/users');

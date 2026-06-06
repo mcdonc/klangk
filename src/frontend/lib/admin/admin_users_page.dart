@@ -333,8 +333,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           margin: const EdgeInsets.only(bottom: 8),
           child: ListTile(
             leading: CircleAvatar(
-              backgroundColor:
-                  name == 'admin' ? KColors.accentAmber : KColors.accentBlue,
+              backgroundColor: KColors.colorForString(name),
               child: const Icon(Icons.group, color: Colors.white),
             ),
             title: Text(name),
@@ -563,7 +562,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
           child: ListTile(
-            leading: _UserAvatar(initial: initial, isAdmin: isAdmin),
+            leading:
+                _UserAvatar(initial: initial, email: email, isAdmin: isAdmin),
             title: Text(email),
             subtitle: Text(
               groupNames.isEmpty
@@ -1013,26 +1013,17 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
 
 class _UserAvatar extends StatelessWidget {
   final String initial;
+  final String email;
   final bool isAdmin;
 
-  const _UserAvatar({required this.initial, required this.isAdmin});
-
-  static const _letterColors = [
-    Color(0xFF3B82F6), // blue
-    Color(0xFF8B5CF6), // violet
-    Color(0xFFEC4899), // pink
-    Color(0xFFEF4444), // red
-    Color(0xFFF97316), // orange
-    Color(0xFFF59E0B), // amber
-    Color(0xFF10B981), // emerald
-    Color(0xFF14B8A6), // teal
-    Color(0xFF06B6D4), // cyan
-    Color(0xFF6366F1), // indigo
-  ];
+  const _UserAvatar({
+    required this.initial,
+    required this.email,
+    required this.isAdmin,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final colorIndex = initial.codeUnitAt(0) % _letterColors.length;
     return SizedBox(
       width: 40,
       height: 40,
@@ -1041,7 +1032,7 @@ class _UserAvatar extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 20,
-            backgroundColor: _letterColors[colorIndex],
+            backgroundColor: KColors.colorForString(email),
             child: Text(
               initial,
               style: const TextStyle(
@@ -1084,7 +1075,7 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
   static const _resources = [
     ('/', 'Root', Icons.home),
     ('/workspaces', 'Workspaces', Icons.folder),
-    ('/admin', 'Admin', Icons.admin_panel_settings),
+    ('/admin', 'Admin', Icons.manage_accounts),
     ('/admin/users', 'Users', Icons.people),
     ('/admin/invitations', 'Invitations', Icons.mail_outline),
     ('/admin/groups', 'Groups', Icons.group),

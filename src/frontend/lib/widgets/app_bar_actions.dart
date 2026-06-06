@@ -57,8 +57,8 @@ class AppBarActions extends StatelessWidget {
           ),
         if (context.watch<AuthService>().isAdmin)
           IconButton(
-            icon: const Icon(Icons.admin_panel_settings,
-                color: KColors.textSecondary),
+            icon:
+                const Icon(Icons.manage_accounts, color: KColors.textSecondary),
             tooltip: 'Admin',
             onPressed: onAdminPressed ?? () => context.go('/admin/users'),
           ),
