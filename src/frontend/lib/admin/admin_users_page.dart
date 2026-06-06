@@ -338,10 +338,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               child: const Icon(Icons.group, color: Colors.white),
             ),
             title: Text(name),
-            subtitle: desc.isNotEmpty
-                ? Text(desc,
-                    style: const TextStyle(color: KColors.textSecondary))
-                : null,
+            subtitle: Text(
+              desc.isNotEmpty ? desc : ' ',
+              style: const TextStyle(color: KColors.textSecondary),
+            ),
             onTap: () => _manageMembers(group),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
