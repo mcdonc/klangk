@@ -28,6 +28,7 @@ class AclEditorState extends State<AclEditor> {
     'view',
     'terminal',
     'files',
+    'chat',
     'edit',
     'share',
     'delete',

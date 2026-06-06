@@ -267,7 +267,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
               authToken: authToken,
             ),
             terminal: GhosttyTerminal(key: _terminalKey, wsClient: wsClient),
-            chat: WorkspaceChat(key: _chatKey, wsClient: wsClient),
+            chat: _hasPerm('chat')
+                ? WorkspaceChat(key: _chatKey, wsClient: wsClient)
+                : null,
             settings: _hasPerm('edit')
                 ? WorkspaceSettingsPanel(
                     workspaceId: widget.workspaceId,

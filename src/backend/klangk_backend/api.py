@@ -1376,6 +1376,14 @@ async def add_workspace_member(
         PRINCIPAL_USER,
         user_id=target["id"],
     )
+    await model.add_acl_entry(
+        resource,
+        max_pos + 4,
+        ACTION_ALLOW,
+        "chat",
+        PRINCIPAL_USER,
+        user_id=target["id"],
+    )
     return {
         "status": "shared",
         "user_id": target["id"],
@@ -1904,6 +1912,7 @@ ALL_PERMISSIONS = [
     "delete",
     "terminal",
     "files",
+    "chat",
     "share",
     "admin",
     "manage_users",

@@ -499,6 +499,7 @@ class TestACLIntrospection:
         assert "view" in perms
         assert "terminal" in perms
         assert "files" in perms
+        assert "chat" in perms
         assert "*" not in perms
         assert "share" not in perms
 
