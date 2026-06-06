@@ -255,6 +255,13 @@ void main() {
                 'created_at': '2026-02-01 10:00:00',
                 'owner_email': 'alice@example.com',
               },
+              {
+                'id': 'ws-shared-2',
+                'name': 'Other Project',
+                'container_id': null,
+                'created_at': '2026-03-01 10:00:00',
+                'owner_email': 'bob@example.com',
+              },
             ]),
             200,
           );
@@ -269,9 +276,11 @@ void main() {
       expect(find.text('My Project'), findsOneWidget);
       expect(find.text('Shared with Me'), findsOneWidget);
       expect(find.text('Team Project'), findsOneWidget);
+      expect(find.text('Other Project'), findsOneWidget);
       expect(find.textContaining('alice@example.com'), findsOneWidget);
-      // Shared workspaces use terminal icon with blue color
-      expect(find.byIcon(Icons.terminal), findsNWidgets(2));
+      expect(find.textContaining('bob@example.com'), findsOneWidget);
+      // 1 owned + 2 shared = 3 terminal icons
+      expect(find.byIcon(Icons.terminal), findsNWidgets(3));
     });
 
     testWidgets('shows only shared section when no owned workspaces',

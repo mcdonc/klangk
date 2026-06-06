@@ -518,49 +518,56 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     ],
                   ),
                 ),
-                ..._workspaces.map((ws) {
+                ..._workspaces.asMap().entries.map((e) {
+                  final i = e.key;
+                  final ws = e.value;
                   final wsMembers = _workspaceMembers[ws['id'] as String] ?? [];
-                  return ListTile(
-                    leading: const Icon(Icons.terminal,
-                        size: 20, color: KColors.accentGreen),
-                    title: Text(ws['name'] as String),
-                    subtitle: Row(
-                      children: [
-                        Text(_formatCreatedAt(ws['created_at'] as String?)),
-                        if (wsMembers.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          ...wsMembers.map((m) {
-                            final email = m['email'] as String;
-                            final letter =
-                                email.isNotEmpty ? email[0].toUpperCase() : '?';
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 2),
-                              child: Tooltip(
-                                message: email,
-                                child: CircleAvatar(
-                                  radius: 10,
-                                  backgroundColor: KColors.accentGreen,
-                                  child: Text(
-                                    letter,
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
+                  return Container(
+                    color:
+                        i.isOdd ? Colors.white.withValues(alpha: 0.03) : null,
+                    child: ListTile(
+                      leading: const Icon(Icons.terminal,
+                          size: 20, color: KColors.accentGreen),
+                      title: Text(ws['name'] as String),
+                      subtitle: Row(
+                        children: [
+                          Text(_formatCreatedAt(ws['created_at'] as String?)),
+                          if (wsMembers.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            ...wsMembers.map((m) {
+                              final email = m['email'] as String;
+                              final letter = email.isNotEmpty
+                                  ? email[0].toUpperCase()
+                                  : '?';
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 2),
+                                child: Tooltip(
+                                  message: email,
+                                  child: CircleAvatar(
+                                    radius: 10,
+                                    backgroundColor: KColors.accentGreen,
+                                    child: Text(
+                                      letter,
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            );
-                          }),
+                              );
+                            }),
+                          ],
                         ],
-                      ],
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Delete workspace',
+                        onPressed: () => _deleteWorkspace(ws['id'] as String),
+                      ),
+                      onTap: () => context.go('/workspace/${ws['id']}'),
                     ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Delete workspace',
-                      onPressed: () => _deleteWorkspace(ws['id'] as String),
-                    ),
-                    onTap: () => context.go('/workspace/${ws['id']}'),
                   );
                 }),
               ],
@@ -594,15 +601,20 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     ],
                   ),
                 ),
-                ..._sharedWorkspaces.map((ws) => ListTile(
-                      leading: const Icon(Icons.terminal,
-                          size: 20, color: KColors.accentBlue),
-                      title: Text(ws['name'] as String),
-                      subtitle: Text(
-                          '${ws['owner_email']} · ${_formatCreatedAt(ws['created_at'] as String?)}'),
-                      // coverage:ignore-start
-                      onTap: () => context.go('/workspace/${ws['id']}'),
-                      // coverage:ignore-end
+                ..._sharedWorkspaces.asMap().entries.map((e) => Container(
+                      color: e.key.isOdd
+                          ? Colors.white.withValues(alpha: 0.03)
+                          : null,
+                      child: ListTile(
+                        leading: const Icon(Icons.terminal,
+                            size: 20, color: KColors.accentBlue),
+                        title: Text(e.value['name'] as String),
+                        subtitle: Text(
+                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}'),
+                        // coverage:ignore-start
+                        onTap: () => context.go('/workspace/${e.value['id']}'),
+                        // coverage:ignore-end
+                      ),
                     )),
               ],
             ),
