@@ -30,8 +30,6 @@ def _provider(**overrides):
         "client_id": "klangk",
         "client_secret": "secret",
         "scopes": "openid email profile",
-        "admin_claim": None,
-        "admin_group": None,
     }
     defaults.update(overrides)
     return oidc.OIDCProvider(**defaults)
@@ -58,8 +56,6 @@ class TestLoadConfig:
                         "issuer": "https://idp.example.com/",
                         "client_id": "klangk",
                         "client_secret": "s3cret",
-                        "admin_claim": "roles",
-                        "admin_group": "admin",
                     }
                 ]
             )
@@ -70,7 +66,6 @@ class TestLoadConfig:
         assert providers[0].id == "test"
         assert providers[0].issuer == "https://idp.example.com"
         assert providers[0].client_secret == "s3cret"
-        assert providers[0].admin_claim == "roles"
 
     def test_file_secret(self, monkeypatch, tmp_path):
         secret_file = tmp_path / "secret"
@@ -544,45 +539,3 @@ class TestBuildLogoutUrl:
         assert result.startswith("https://idp.example.com/logout?")
         assert "client_id=klangk" in result
         assert "post_logout_redirect_uri=" in result
-
-
-class TestExtractAdminRole:
-    def test_no_mapping_configured(self):
-        provider = _provider()
-        assert oidc.extract_admin_role(provider, {}) is None
-
-    def test_admin_in_flat_list(self):
-        provider = _provider(admin_claim="roles", admin_group="klangk-admin")
-        claims = {"roles": ["user", "klangk-admin"]}
-        assert oidc.extract_admin_role(provider, claims) is True
-
-    def test_admin_not_in_list(self):
-        provider = _provider(admin_claim="roles", admin_group="klangk-admin")
-        claims = {"roles": ["user"]}
-        assert oidc.extract_admin_role(provider, claims) is False
-
-    def test_nested_claim_path(self):
-        provider = _provider(
-            admin_claim="realm_access.roles",
-            admin_group="admin",
-        )
-        claims = {"realm_access": {"roles": ["admin", "user"]}}
-        assert oidc.extract_admin_role(provider, claims) is True
-
-    def test_nested_claim_missing(self):
-        provider = _provider(
-            admin_claim="realm_access.roles",
-            admin_group="admin",
-        )
-        claims = {"other": "stuff"}
-        assert oidc.extract_admin_role(provider, claims) is False
-
-    def test_string_claim(self):
-        provider = _provider(admin_claim="role", admin_group="admin")
-        claims = {"role": "admin"}
-        assert oidc.extract_admin_role(provider, claims) is True
-
-    def test_string_claim_no_match(self):
-        provider = _provider(admin_claim="role", admin_group="admin")
-        claims = {"role": "user"}
-        assert oidc.extract_admin_role(provider, claims) is False

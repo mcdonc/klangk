@@ -343,8 +343,6 @@ Klangk supports OIDC authentication via one or more external Identity Providers 
   client_id: klangk
   client_secret: "file:/run/secrets/cac-secret"
   scopes: openid email profile
-  admin_claim: realm_access.roles
-  admin_group: klangk-admin
   ca_cert: /etc/pki/tls/certs/dod-ca-bundle.pem
   logout_redirect: true
 
@@ -376,8 +374,6 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 | `client_id`            | Yes      | OIDC client ID registered with the IdP                                                                                      |
 | `client_secret`        | Yes      | OIDC client secret. Supports `file:` prefix for secret management                                                           |
 | `scopes`               | No       | Space-separated scopes (default: `openid email profile`)                                                                    |
-| `admin_claim`          | No       | Dot-path to the claim containing roles/groups (e.g., `realm_access.roles`)                                                  |
-| `admin_group`          | No       | Value in that claim that maps to membership in the Klangk `admin` group                                                     |
 | `ca_cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs (e.g., DoD PKI)                                          |
 | `token_validation_pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                                             |
 | `logout_redirect`      | No       | If `true`, logout redirects to the IdP's `end_session_endpoint` (RP-Initiated Logout). Default: `false` (local-only logout) |
@@ -387,7 +383,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 - **Web**: Login page shows one button per provider. Clicking redirects to the IdP via Authorization Code flow with PKCE. After authentication, the IdP redirects back to Klangk which exchanges the code for tokens, validates the ID token, and issues a Klangk JWT.
 - **CLI**: `klangk login` detects OIDC from the server config, opens a browser for authentication, and receives the token via a temporary localhost callback server.
 - **User provisioning**: On first OIDC login, a user is created automatically (verified, no password). If a local user with the same email already exists, the OIDC identity is linked to it.
-- **Group mapping**: If `admin_claim` and `admin_group` are configured, the user is added to or removed from the `admin` group based on the IdP claim on every login. See [Authorization](#authorization-acl-system).
+- **Group mapping**: OIDC-to-group mapping (syncing IdP claims to Klangk group membership) is planned but not yet implemented. See issue #113.
 - **OIDC users** cannot use forgot-password, change-password, or change-email.
 - **Logout**: By default, logout only kills the Klangk session. With `logout_redirect: true`, the user is also redirected to the IdP's logout endpoint to end the SSO session (requires full re-authentication on next login).
 

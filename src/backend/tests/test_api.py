@@ -4255,36 +4255,6 @@ class TestOIDCCallback:
         assert linked is not None
         assert linked["id"] == user["id"]
 
-    async def test_callback_maps_admin_role(
-        self, client, monkeypatch, admin_group
-    ):
-        provider, cookie_data = await self._setup_callback(
-            client,
-            monkeypatch,
-            admin_group,  # db fixture is implied via admin_group
-            claims={
-                "sub": "admin-sub",
-                "email": "oidcadmin@example.com",
-                "roles": ["klangk-admin"],
-            },
-        )
-        # Enable role mapping on the provider
-        provider.admin_claim = "roles"
-        provider.admin_group = "klangk-admin"
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
-
-        resp = await client.get(
-            "/auth/oidc/test/callback",
-            params={"code": "code", "state": "test-state"},
-            cookies={"oidc_test": cookie_data},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 302
-
-        user = await model.get_user_by_email("oidcadmin@example.com")
-        group_ids = await model.get_user_group_ids(user["id"])
-        assert admin_group["id"] in group_ids
-
     async def test_callback_state_mismatch(self, client, monkeypatch, db):
         _, cookie_data = await self._setup_callback(client, monkeypatch, db)
         resp = await client.get(
@@ -4519,65 +4489,6 @@ class TestOIDCCallback:
             params={"code": "code", "state": "s"},
         )
         assert resp.status_code == 404
-
-    async def test_callback_revokes_admin_role(
-        self, client, monkeypatch, admin_group
-    ):
-        # Create user in admin group
-        user = await model.create_user(
-            "revoke-admin@example.com",
-            password_hash=None,
-            verified=True,
-            provider="test",
-            external_id="revoke-sub",
-        )
-        await model.add_user_to_group(user["id"], admin_group["id"])
-
-        import json as json_mod
-
-        provider = api.oidc.OIDCProvider(
-            id="test",
-            display_name="Test",
-            issuer="https://idp.example.com",
-            client_id="klangk",
-            client_secret="s",
-            admin_claim="roles",
-            admin_group="klangk-admin",
-        )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
-        monkeypatch.setattr(
-            api.oidc,
-            "exchange_code",
-            AsyncMock(return_value={"id_token": "t", "access_token": "at"}),
-        )
-        monkeypatch.setattr(
-            api.oidc,
-            "validate_id_token",
-            AsyncMock(
-                return_value={
-                    "sub": "revoke-sub",
-                    "email": "revoke-admin@example.com",
-                    "roles": ["user"],  # no admin group
-                }
-            ),
-        )
-        cookie_data = json_mod.dumps(
-            {
-                "state": "s",
-                "verifier": "v",
-                "redirect_uri": "https://cb",
-                "cli_redirect": None,
-            }
-        )
-        resp = await client.get(
-            "/auth/oidc/test/callback",
-            params={"code": "code", "state": "s"},
-            cookies={"oidc_test": cookie_data},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 302
-        group_ids = await model.get_user_group_ids(user["id"])
-        assert admin_group["id"] not in group_ids
 
     async def test_callback_invalid_cookie_json(self, client, monkeypatch, db):
         provider = api.oidc.OIDCProvider(
