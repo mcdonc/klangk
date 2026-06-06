@@ -1254,6 +1254,299 @@ class TestWorkspaceGroupSharing:
         assert resp.status_code == 403
 
 
+class TestUserGroupEndpoints:
+    """Tests for /groups endpoints (user-accessible, ACL-gated)."""
+
+    async def test_list_groups(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/groups", headers=headers)
+        assert resp.status_code == 200
+
+    async def test_create_group(self, client, admin_user, user):
+        """Any authenticated user with create permission can create groups."""
+        headers = await _auth_headers(client)
+        # Need create permission on /groups — seed it
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        resp = await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "user-group", "description": "My team"},
+        )
+        assert resp.status_code == 200
+        group = resp.json()
+        assert group["name"] == "user-group"
+
+        # Creator should have * ACE on /groups/{id}
+        entries = await model.get_acl_entries(f"/groups/{group['id']}")
+        assert len(entries) >= 1
+        assert any(
+            e["permission"] == "*" and e["user_id"] == user["id"]
+            for e in entries
+        )
+
+    async def test_create_group_duplicate(self, client, admin_user, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "dup-user-group"},
+        )
+        resp = await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "dup-user-group"},
+        )
+        assert resp.status_code == 409
+
+    async def test_update_own_group(self, client, admin_user, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        resp = await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "edit-group"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/groups/{group_id}",
+            headers=headers,
+            json={"description": "updated"},
+        )
+        assert resp.status_code == 200
+
+    async def test_delete_own_group(self, client, admin_user, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        resp = await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "del-group"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.delete(f"/groups/{group_id}", headers=headers)
+        assert resp.status_code == 200
+        # ACEs should be cleaned up
+        entries = await model.get_acl_entries(f"/groups/{group_id}")
+        assert entries == []
+
+    async def test_manage_members_own_group(self, client, admin_user, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        resp = await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "member-group"},
+        )
+        group_id = resp.json()["id"]
+
+        # Add admin_user as member
+        resp = await client.post(
+            f"/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": admin_user["id"]},
+        )
+        assert resp.status_code == 200
+
+        # List members
+        resp = await client.get(f"/groups/{group_id}/members", headers=headers)
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+
+        # Remove member
+        resp = await client.delete(
+            f"/groups/{group_id}/members/{admin_user['id']}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+    async def test_update_nonexistent_group(self, client, user):
+        headers = await _auth_headers(client)
+        # Grant * on fake group so ACL passes
+        await model.add_acl_entry(
+            "/groups/fake-id",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.patch(
+            "/groups/fake-id",
+            headers=headers,
+            json={"name": "x"},
+        )
+        assert resp.status_code == 404
+
+    async def test_update_group_no_fields(self, client, admin_user, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        resp = await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "noupdate-group"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/groups/{group_id}",
+            headers=headers,
+            json={},
+        )
+        assert resp.status_code == 400
+
+    async def test_delete_nonexistent_group(self, client, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups/fake-del",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.delete("/groups/fake-del", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_list_members_nonexistent_group(self, client, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups/fake-mem",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.get("/groups/fake-mem/members", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_add_member_nonexistent_group(self, client, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups/fake-add",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.post(
+            "/groups/fake-add/members",
+            headers=headers,
+            json={"user_id": user["id"]},
+        )
+        assert resp.status_code == 404
+
+    async def test_add_member_nonexistent_user(self, client, admin_user, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        resp = await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "baduser-group"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.post(
+            f"/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": "nonexistent"},
+        )
+        assert resp.status_code == 404
+
+    async def test_remove_nonmember(self, client, admin_user, user):
+        headers = await _auth_headers(client)
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        resp = await client.post(
+            "/groups",
+            headers=headers,
+            json={"name": "noremove-group"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.delete(
+            f"/groups/{group_id}/members/nonexistent",
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_non_owner_cannot_manage(self, client, admin_user, user):
+        """User without permission on the group gets 403."""
+        # Admin creates a group (no ACE for regular user)
+        admin_headers = {
+            "Authorization": f"Bearer {(await client.post('/auth/login', json={'email': 'testadmin@example.com', 'password': 'testpass'})).json()['access_token']}"
+        }
+        resp = await client.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "admin-only-group"},
+        )
+        group_id = resp.json()["id"]
+
+        # Regular user tries to manage members
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            f"/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": user["id"]},
+        )
+        assert resp.status_code == 403
+
+
 class TestUserSearch:
     async def test_search_users(self, client, user):
         headers = await _auth_headers(client)

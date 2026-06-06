@@ -1829,16 +1829,151 @@ async def update_user(
 # --- Group management endpoints ---
 
 
+class CreateGroupRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class UpdateGroupRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class AddGroupMemberRequest(BaseModel):
+    user_id: str
+
+
+# --- User-accessible group endpoints (ACL-gated per group) ---
+
+
+async def _group_resource(request: Request, user: dict) -> str:  # noqa: ARG001
+    """Resource function for group-level permission checks."""
+    group_id = request.path_params.get("group_id")
+    if group_id:
+        return f"/groups/{group_id}"
+    return "/groups"
+
+
+@router.get("/groups")
+async def user_list_groups(
+    user: dict = Depends(auth.get_current_user),
+):
+    """List all groups (any authenticated user can see groups)."""
+    return await model.list_groups()
+
+
+@router.post("/groups")
+async def user_create_group(
+    req: CreateGroupRequest,
+    user: dict = Depends(acl.has_permission("create", _group_resource)),
+):
+    """Create a group. The creator gets full ACL access."""
+    existing = await model.get_group_by_name(req.name)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail="A group with this name already exists"
+        )
+    group = await model.create_group(req.name, req.description)
+    # Grant creator full access via ACL
+    await model.add_acl_entry(
+        f"/groups/{group['id']}",
+        0,
+        ACTION_ALLOW,
+        "*",
+        PRINCIPAL_USER,
+        user_id=user["id"],
+    )
+    return group
+
+
+@router.patch("/groups/{group_id}")
+async def user_update_group(
+    group_id: str,
+    req: UpdateGroupRequest,
+    user: dict = Depends(acl.has_permission("edit", _group_resource)),
+):
+    """Update a group (requires edit permission on the group)."""
+    group = await model.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    updated = await model.update_group(
+        group_id, name=req.name, description=req.description
+    )
+    if not updated:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    return {"status": "updated"}
+
+
+@router.delete("/groups/{group_id}")
+async def user_delete_group(
+    group_id: str,
+    user: dict = Depends(acl.has_permission("delete", _group_resource)),
+):
+    """Delete a group (requires delete permission on the group)."""
+    group = await model.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    await model.delete_group(group_id)
+    await model.delete_acl_entries_for_resource(f"/groups/{group_id}")
+    return {"status": "deleted"}
+
+
+@router.get("/groups/{group_id}/members")
+async def user_list_group_members(
+    group_id: str,
+    user: dict = Depends(acl.has_permission("view", _group_resource)),
+):
+    """List group members (requires view permission on the group)."""
+    group = await model.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return await model.get_group_members(group_id)
+
+
+@router.post("/groups/{group_id}/members")
+async def user_add_group_member(
+    group_id: str,
+    req: AddGroupMemberRequest,
+    user: dict = Depends(
+        acl.has_permission("manage_members", _group_resource)
+    ),
+):
+    """Add a member (requires manage_members permission on the group)."""
+    group = await model.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    target = await model.get_user_by_id(req.user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    await model.add_user_to_group(req.user_id, group_id)
+    return {"status": "added"}
+
+
+@router.delete("/groups/{group_id}/members/{user_id}")
+async def user_remove_group_member(
+    group_id: str,
+    user_id: str,
+    user: dict = Depends(
+        acl.has_permission("manage_members", _group_resource)
+    ),
+):
+    """Remove a member (requires manage_members on the group)."""
+    removed = await model.remove_user_from_group(user_id, group_id)
+    if not removed:
+        raise HTTPException(
+            status_code=404, detail="User is not a member of this group"
+        )
+    return {"status": "removed"}
+
+
+# --- Admin group endpoints (admin-only, kept for backward compat) ---
+
+
 @router.get("/admin/groups")
 async def list_groups(
     admin: dict = Depends(acl.has_permission("admin")),
 ):
     return await model.list_groups()
-
-
-class CreateGroupRequest(BaseModel):
-    name: str
-    description: str | None = None
 
 
 @router.post("/admin/groups")
@@ -1853,11 +1988,6 @@ async def create_group(
         )
     group = await model.create_group(req.name, req.description)
     return group
-
-
-class UpdateGroupRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
 
 
 @router.patch("/admin/groups/{group_id}")
@@ -1898,10 +2028,6 @@ async def list_group_members(
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     return await model.get_group_members(group_id)
-
-
-class AddGroupMemberRequest(BaseModel):
-    user_id: str
 
 
 @router.post("/admin/groups/{group_id}/members")
@@ -2026,6 +2152,7 @@ async def replace_resource_acl(
 STATIC_RESOURCES = [
     "/",
     "/workspaces",
+    "/groups",
     "/admin",
     "/admin/users",
     "/admin/invitations",
@@ -2041,6 +2168,7 @@ ALL_PERMISSIONS = [
     "files",
     "chat",
     "share",
+    "manage_members",
     "admin",
     "manage_users",
     "manage_invitations",
