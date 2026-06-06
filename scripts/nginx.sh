@@ -84,6 +84,15 @@ http {
   server {
     listen ${KLANGK_NGINX_PORT};
 
+    # A hosted URL without a trailing slash (e.g. .../9001) can't match the
+    # proxy location below. Proxying it to the app root wouldn't help either:
+    # hosted apps emit relative asset paths (./assets/...) that resolve against
+    # the browser's base URL, so without the slash every asset 404s. Redirect to
+    # the canonical trailing-slash form so the base URL is correct.
+    location ~ ^/hosted/[^/]+/\d+\$ {
+      return 308 \$uri/\$is_args\$args;
+    }
+
     # Hosted app proxy: extract port from URL and proxy directly to container
     location ~ ^/hosted/[^/]+/(\d+)/(.*)\$ {
       proxy_pass http://127.0.0.1:\$1/\$2\$is_args\$args;
@@ -92,6 +101,11 @@ http {
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto \$scheme;
       proxy_http_version 1.1;
+      # Hosted apps (marimo, jupyter, vite, ...) talk to their backends over
+      # websockets. Without these the WS handshake never upgrades and the app
+      # reports things like "kernel not found".
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
     }
 ${LLM_BLOCK}
     # Browser-delegate bridge: Pi extensions delegate long-running actions
