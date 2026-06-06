@@ -559,6 +559,50 @@ async def get_acl_entries(resource: str) -> list[dict]:
         await db.close()
 
 
+async def get_acl_entries_resolved(resource: str) -> list[dict]:
+    """Get ACL entries with resolved principal names."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT ae.id, ae.resource, ae.position, ae.action,"
+            " ae.principal_type, ae.user_id, ae.group_id,"
+            " ae.system_principal, ae.permission,"
+            " u.email AS user_email, g.name AS group_name"
+            " FROM acl_entries ae"
+            " LEFT JOIN users u ON ae.user_id = u.id"
+            " LEFT JOIN groups g ON ae.group_id = g.id"
+            " WHERE ae.resource = ?"
+            " ORDER BY ae.position",
+            (resource,),
+        )
+        results = []
+        for row in await cursor.fetchall():
+            entry = {
+                "id": row["id"],
+                "resource": row["resource"],
+                "position": row["position"],
+                "action": row["action"],
+                "principal_type": row["principal_type"],
+                "permission": row["permission"],
+            }
+            pt = row["principal_type"]
+            if pt == PRINCIPAL_SYSTEM:
+                sp = row["system_principal"]
+                entry["principal"] = (
+                    "Everyone" if sp == SYSTEM_EVERYONE else "Authenticated"
+                )
+            elif pt == PRINCIPAL_USER:
+                entry["principal"] = row["user_email"] or row["user_id"]
+                entry["user_id"] = row["user_id"]
+            elif pt == PRINCIPAL_GROUP:
+                entry["principal"] = row["group_name"] or row["group_id"]
+                entry["group_id"] = row["group_id"]
+            results.append(entry)
+        return results
+    finally:
+        await db.close()
+
+
 async def replace_acl_entries(resource: str, entries: list[dict]) -> None:
     """Replace all ACL entries for a resource."""
     db = await get_db()

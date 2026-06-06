@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../widgets/acl_editor.dart';
 
 /// Simple workspace sharing panel: add/remove users by email.
 /// Used as a tab in the IDE layout for users with share permission.
@@ -19,7 +20,9 @@ class WorkspaceSharingPanel extends StatefulWidget {
 class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   List<Map<String, dynamic>> _members = [];
   bool _loading = true;
+  bool _aclExpanded = false;
   final _shareCtrl = TextEditingController();
+  final _aclEditorKey = GlobalKey<AclEditorState>();
   List<Map<String, dynamic>> _searchResults = [];
   Timer? _searchDebounce;
 
@@ -179,6 +182,38 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                     });
                   },
                 )),
+            const SizedBox(height: 24),
+            const Divider(),
+            // Collapsible ACL editor
+            GestureDetector(
+              onTap: () => setState(() => _aclExpanded = !_aclExpanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      _aclExpanded ? Icons.expand_less : Icons.expand_more,
+                      size: 20,
+                      color: KColors.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    const Text(
+                      'Advanced: Access Control',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: KColors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_aclExpanded)
+              AclEditor(
+                key: _aclEditorKey,
+                resource: '/workspaces/${widget.workspaceId}',
+              ),
           ],
         ),
       ),

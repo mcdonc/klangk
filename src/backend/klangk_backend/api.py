@@ -1406,6 +1406,52 @@ async def remove_workspace_member(
     return {"status": "removed"}
 
 
+# --- Workspace ACL endpoints (for workspace owners/admins) ---
+
+
+@router.get("/workspaces/{workspace_id}/acl")
+async def get_workspace_acl(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+):
+    """Get resolved ACL entries for a workspace."""
+    resource = f"/workspaces/{workspace_id}"
+    return await model.get_acl_entries_resolved(resource)
+
+
+class WorkspaceAclEntry(BaseModel):
+    action: int  # 0=deny, 1=allow
+    principal_type: int  # 0=system, 1=user, 2=group
+    permission: str
+    user_id: str | None = None
+    group_id: str | None = None
+    system_principal: int | None = None
+
+
+@router.put("/workspaces/{workspace_id}/acl")
+async def replace_workspace_acl(
+    workspace_id: str,
+    entries: list[WorkspaceAclEntry],
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+):
+    """Replace all ACL entries for a workspace."""
+    resource = f"/workspaces/{workspace_id}"
+    acl_entries = [
+        {
+            "position": i,
+            "action": e.action,
+            "principal_type": e.principal_type,
+            "permission": e.permission,
+            "user_id": e.user_id,
+            "group_id": e.group_id,
+            "system_principal": e.system_principal,
+        }
+        for i, e in enumerate(entries)
+    ]
+    await model.replace_acl_entries(resource, acl_entries)
+    return await model.get_acl_entries_resolved(resource)
+
+
 # --- User search endpoint ---
 
 

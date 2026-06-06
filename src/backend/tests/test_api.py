@@ -1104,6 +1104,90 @@ class TestWorkspaceSharingRoutes:
         assert resp.status_code == 403
 
 
+class TestWorkspaceACL:
+    async def test_get_workspace_acl(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "acl-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.get(f"/workspaces/{ws_id}/acl", headers=headers)
+        assert resp.status_code == 200
+        entries = resp.json()
+        # Owner has * ACE
+        assert len(entries) >= 1
+        assert any(
+            e["permission"] == "*" and e["principal"] == "testuser@example.com"
+            for e in entries
+        )
+
+    async def test_get_workspace_acl_no_permission(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/workspaces/nonexistent/acl", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_get_workspace_acl_with_group(
+        self, client, admin_user, user
+    ):
+        """ACL endpoint resolves group names."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "group-acl-ws"}
+        )
+        ws_id = resp.json()["id"]
+        # Add a group ACE
+        group = await model.create_group("test-acl-group")
+        await model.add_acl_entry(
+            f"/workspaces/{ws_id}",
+            1,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_GROUP,
+            group_id=group["id"],
+        )
+        resp = await client.get(f"/workspaces/{ws_id}/acl", headers=headers)
+        assert resp.status_code == 200
+        entries = resp.json()
+        group_entry = next(
+            (e for e in entries if e.get("group_id") == group["id"]), None
+        )
+        assert group_entry is not None
+        assert group_entry["principal"] == "test-acl-group"
+
+    async def test_replace_workspace_acl(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "replace-acl-ws"}
+        )
+        ws_id = resp.json()["id"]
+        # Replace with custom ACL
+        new_acl = [
+            {
+                "action": model.ACTION_ALLOW,
+                "principal_type": model.PRINCIPAL_USER,
+                "permission": "*",
+                "user_id": user["id"],
+            },
+            {
+                "action": model.ACTION_ALLOW,
+                "principal_type": model.PRINCIPAL_SYSTEM,
+                "permission": "view",
+                "system_principal": model.SYSTEM_AUTHENTICATED,
+            },
+        ]
+        resp = await client.put(
+            f"/workspaces/{ws_id}/acl",
+            headers=headers,
+            json=new_acl,
+        )
+        assert resp.status_code == 200
+        entries = resp.json()
+        assert len(entries) == 2
+        assert entries[0]["permission"] == "*"
+        assert entries[1]["permission"] == "view"
+        assert entries[1]["principal"] == "Authenticated"
+
+
 class TestUserSearch:
     async def test_search_users(self, client, user):
         headers = await _auth_headers(client)
