@@ -37,7 +37,7 @@ $EDITOR .env
 devenv processes up --no-tui
 ```
 
-Open [http://localhost:8995](http://localhost:8995) and log in with `admin@example.com` (or whatever you set `KLANGK_DEFAULT_USER` to). If you set `KLANGK_DEFAULT_PASSWORD` in `.env`, use that password. Otherwise, check the server log output for the generated password. The default user has the admin role and can manage other users at `/admin/users`.
+Open [http://localhost:8995](http://localhost:8995) and log in with `admin@example.com` (or whatever you set `KLANGK_DEFAULT_USER` to). If you set `KLANGK_DEFAULT_PASSWORD` in `.env`, use that password. Otherwise, check the server log output for the generated password. The default user is in the `admin` group and can manage other users and groups via the Admin page.
 
 ### What You Can Do
 
@@ -45,8 +45,13 @@ Open [http://localhost:8995](http://localhost:8995) and log in with `admin@examp
 2. **Chat with the AI agent** — execute "pi" in the terminal, then ask it to write code, create projects, fix bugs
 3. **Use the terminal** for direct shell access to the container (bash with tab completion and colors)
 4. **View files** in the file viewer panel, drag-and-drop files or folders to upload, right-click to download, rename, or delete
-5. **Monitor activity** in the debug panel
-6. **Manage users** (admin only) — add, edit, delete users and toggle admin roles
+5. **Share workspaces** with other users or groups, controlling access per-permission (terminal, files, chat, etc.)
+6. **Monitor activity** in the debug panel
+7. **Manage users and groups** (admin only) — add users, create groups, manage membership
+
+### Security
+
+Klangk uses an ACL (Access Control List) authorization system with fine-grained, per-resource permissions. Permissions are defined on a resource tree hierarchy and support allow/deny rules for individual users, groups, and system principals. See the [Authorization](HACKING.md#authorization-acl-system) section in HACKING.md for details.
 
 ## Environment Variables
 
