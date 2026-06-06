@@ -1492,7 +1492,7 @@ class TestFileRoutes:
         resp = await client.get(
             "/workspaces/fake-id/files?path=.", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_upload_and_read(self, client, user):
         headers = await _auth_headers(client)
@@ -1677,7 +1677,7 @@ class TestFileRoutes:
             headers=headers,
             files={"file": ("f.txt", b"data", "text/plain")},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_file_traversal_rejected(self, client, user):
         headers = await _auth_headers(client)
@@ -1702,7 +1702,7 @@ class TestFileRoutes:
         resp = await client.delete(
             "/workspaces/fake-id/files?path=f.txt", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_delete_file_traversal(self, client, user):
         headers = await _auth_headers(client)
@@ -1720,7 +1720,7 @@ class TestFileRoutes:
             headers=headers,
             json={"old_path": "a", "new_path": "b"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_rename_traversal(self, client, user):
         headers = await _auth_headers(client)
@@ -1737,7 +1737,7 @@ class TestFileRoutes:
         resp = await client.get(
             "/workspaces/fake-id/files/download?path=f.txt", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_download_traversal(self, client, user):
         headers = await _auth_headers(client)
@@ -1753,7 +1753,7 @@ class TestFileRoutes:
         resp = await client.get(
             "/workspaces/fake-id/files/content?path=f.txt", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_upload_traversal(self, client, user):
         headers = await _auth_headers(client)

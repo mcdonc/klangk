@@ -1426,10 +1426,10 @@ async def search_users(
 async def list_files(
     workspace_id: str,
     path: str = ".",
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         return files.list_files(workspace["user_id"], workspace_id, path)
@@ -1441,10 +1441,10 @@ async def list_files(
 async def read_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         content = files.read_file(workspace["user_id"], workspace_id, path)
@@ -1461,10 +1461,10 @@ async def read_file(
 async def delete_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         deleted = files.delete_path(workspace["user_id"], workspace_id, path)
@@ -1484,10 +1484,10 @@ class RenameFileRequest(BaseModel):
 async def rename_file(
     workspace_id: str,
     body: RenameFileRequest,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         renamed = files.rename_path(
@@ -1508,10 +1508,10 @@ async def rename_file(
 async def download_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         resolved = files.resolve_path(workspace["user_id"], workspace_id, path)
@@ -1541,10 +1541,10 @@ async def upload_file(
     workspace_id: str,
     file: UploadFile,
     path: str = "",
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     filename = path if path else posixpath.basename(file.filename or "")

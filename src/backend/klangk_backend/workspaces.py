@@ -292,7 +292,9 @@ async def list_workspaces(user_id: str) -> list[dict]:
     return await model.list_workspaces(user_id)
 
 
-async def get_workspace(workspace_id: str, user_id: str) -> dict | None:
+async def get_workspace(
+    workspace_id: str, user_id: str | None = None
+) -> dict | None:
     return await model.get_workspace(workspace_id, user_id)
 
 
