@@ -52,6 +52,9 @@ class AclEditorState extends State<AclEditor> {
     return true;
   }
 
+  /// Reload ACL entries from the server.
+  Future<void> reload() => _load();
+
   Future<void> _load() async {
     setState(() {
       _loading = true;

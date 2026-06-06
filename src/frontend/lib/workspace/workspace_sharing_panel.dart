@@ -65,6 +65,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     if (!mounted) return;
     if (resp.statusCode == 200) {
       _loadMembers();
+      _aclEditorKey.currentState?.reload();
     } else {
       String detail;
       try {
@@ -83,7 +84,10 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     await auth.authDelete(
       '/workspaces/${widget.workspaceId}/members/$memberId',
     );
-    if (mounted) _loadMembers();
+    if (mounted) {
+      _loadMembers();
+      _aclEditorKey.currentState?.reload();
+    }
   }
 
   void _searchUsers(String query) {
