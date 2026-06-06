@@ -37,6 +37,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   @override
   void initState() {
     super.initState();
+    // Load any buffered history that arrived before this widget was created.
+    if (widget.wsClient.chatHistory.isNotEmpty) {
+      _messages.addAll(widget.wsClient.chatHistory);
+    }
     _chatSub = widget.wsClient.chatMessages.listen(_onMessage);
   }
 

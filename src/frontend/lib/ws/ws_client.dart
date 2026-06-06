@@ -64,6 +64,9 @@ class WsClient extends ChangeNotifier {
   Stream<Map<String, dynamic>> get browserRequests =>
       _browserRequestController.stream;
 
+  /// Buffered chat history — populated from chat_history and chat_message.
+  final List<Map<String, dynamic>> chatHistory = [];
+
   /// Chat messages (individual and history) from the backend.
   Stream<Map<String, dynamic>> get chatMessages => _chatController.stream;
 
@@ -139,11 +142,14 @@ class WsClient extends ChangeNotifier {
           } else if (type == 'browser_request') {
             _browserRequestController.add(json);
           } else if (type == 'chat_message') {
+            chatHistory.add(json);
             _chatController.add(json);
           } else if (type == 'chat_history') {
             final messages = json['messages'] as List? ?? [];
             for (final m in messages) {
-              _chatController.add(m as Map<String, dynamic>);
+              final msg = m as Map<String, dynamic>;
+              chatHistory.add(msg);
+              _chatController.add(msg);
             }
           } else if (type == 'chat_updated') {
             _chatController.add(json);
@@ -199,6 +205,7 @@ class WsClient extends ChangeNotifier {
     _stopHeartbeat();
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
+    chatHistory.clear();
     notifyListeners();
   }
 
