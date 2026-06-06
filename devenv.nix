@@ -128,6 +128,14 @@ in
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
+  # Docker build platform for klangk images. Defaults to the host
+  # architecture so arm64 machines build/run natively instead of under
+  # amd64 emulation. Override in .env (e.g. KLANGK_PLATFORM=linux/amd64)
+  # to force a specific arch. Building the workspace natively on arm64
+  # requires a base image that has an arm64 variant (see push-base-image).
+  env.KLANGK_PLATFORM = lib.mkOverride 1500 (
+    if pkgs.stdenv.hostPlatform.isAarch64 then "linux/arm64" else "linux/amd64"
+  );
   dotenv.enable = true;
 
   scripts.flutterbuildweb.exec = ''

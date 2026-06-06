@@ -215,6 +215,22 @@ The `docker-host.yml` workflow builds and pushes the host image to GHCR on push 
 - Nginx starts automatically alongside uvicorn. If `KLANGK_LLM_BASE_URL` is not set, the LLM proxy block is omitted and nginx still serves the UI and API.
 - The workspace Docker image (`klangk`) must be available in the host's Docker daemon — the host container does not build it.
 
+## Build Architecture (amd64 / arm64)
+
+All `docker build` calls (`dockerbuild`, `dockerbuild-base`, `dockerbuild-host`) build for `$KLANGK_PLATFORM`, which `devenv.nix` defaults to the host architecture (`linux/arm64` on Apple Silicon, `linux/amd64` elsewhere). This means images build and run natively instead of under QEMU emulation. Override per-shell via `.env`:
+
+```bash
+KLANGK_PLATFORM=linux/amd64   # force amd64 even on an arm64 host
+```
+
+Building the **workspace** image natively requires a **base** image with a matching variant. The base (`ghcr.io/mcdonc/klangk/klangk-base`) is published as a multi-arch manifest (amd64 + arm64) by `push-base-image`, so `pull-base-image` automatically gets the right variant for the host. If the published base lacks your arch, build it locally first:
+
+```bash
+dockerbuild-base            # local single-arch build for $KLANGK_PLATFORM
+```
+
+`push-base-image` builds and pushes both arches in one step via `docker buildx` (a multi-arch manifest cannot be loaded into the local daemon). Override the published set with `KLANGK_BASE_PLATFORMS` (default `linux/amd64,linux/arm64`).
+
 ## Project Layout
 
 ```text

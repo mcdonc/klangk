@@ -20,7 +20,7 @@ IMAGE="${KLANGK_HOST_IMAGE:-klangk-host}"
 echo "Building $IMAGE $VERSION ..."
 
 docker build \
-  --platform linux/amd64 \
+  --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   -f src/docker/host/Dockerfile \
   --build-arg "KLANGK_BUILD_VERSION=$VERSION" \
   --build-arg "KLANGK_BUILD_COMMIT=$COMMIT" \
