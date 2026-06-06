@@ -103,6 +103,8 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_MIN_PASSWORD_LENGTH`    | `4`                                  | Minimum password length                                                                                                                                     |
 | `KLANGK_IMPORT_MAX_SIZE`        | `524288000`                          | Maximum upload size in bytes for workspace import (default 500 MB)                                                                                          |
 | `KLANGK_DISABLE_REGISTRATION`   |                                      | Set to any non-empty value to block new user signups and hide the registration link in the UI                                                               |
+| `KLANGK_OIDC_CONFIG`            |                                      | Path to OIDC provider config file (YAML or JSON). Enables OIDC authentication when set. See [OIDC Configuration](#oidc-configuration).                      |
+| `KLANGK_AUTH_MODES`             | `both` (if OIDC configured)          | Auth modes: `password`, `oidc`, or `both`. Defaults to `password` when no OIDC config.                                                                      |
 | `KLANGK_SMTP_HOST`              |                                      | SMTP server hostname (if set, uses SMTP; otherwise uses sendmail)                                                                                           |
 | `KLANGK_SMTP_PORT`              | `587`                                | SMTP server port                                                                                                                                            |
 | `KLANGK_SMTP_USER`              |                                      | SMTP auth username                                                                                                                                          |
@@ -325,6 +327,79 @@ git clone git@github.com:yourorg/private-repo.git
 ```
 
 For extra security, use `ssh-add -c` to require confirmation on the host for each SSH operation, preventing malicious code from silently using your key.
+
+## OIDC Configuration
+
+Klangk supports OIDC authentication via one or more external Identity Providers (e.g., Keycloak). This is used for CAC card login and other SSO scenarios. Klangk is a standard OIDC relying party — the IdP handles all certificate/credential complexity.
+
+### Setup
+
+1. Create a YAML config file with your OIDC providers:
+
+```yaml
+- id: cac
+  display_name: CAC Login
+  issuer: https://keycloak.example.com/realms/dod
+  client_id: klangk
+  client_secret: "file:/run/secrets/cac-secret"
+  scopes: openid email profile
+  admin_claim: realm_access.roles
+  admin_group: klangk-admin
+  ca_cert: /etc/pki/tls/certs/dod-ca-bundle.pem
+  logout_redirect: true
+
+- id: internal
+  display_name: Internal SSO
+  issuer: https://keycloak.example.com/realms/corp
+  client_id: klangk
+  client_secret: "file:/run/secrets/corp-secret"
+```
+
+1. Set `KLANGK_OIDC_CONFIG` in `.env`:
+
+```bash
+KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
+```
+
+1. Optionally set `KLANGK_AUTH_MODES` to control which login methods are available:
+   - `both` (default when OIDC configured) — SSO buttons + email/password form
+   - `oidc` — SSO buttons only, email/password disabled
+   - `password` — email/password only (same as no OIDC config)
+
+### Provider Config Fields
+
+| Field                  | Required | Description                                                                                                                 |
+| ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `id`                   | Yes      | URL-safe slug, used in endpoint paths (`/auth/oidc/{id}/login`) and stored as `provider` on users                           |
+| `display_name`         | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                                                |
+| `issuer`               | Yes      | OIDC issuer URL. Discovery via `{issuer}/.well-known/openid-configuration`                                                  |
+| `client_id`            | Yes      | OIDC client ID registered with the IdP                                                                                      |
+| `client_secret`        | Yes      | OIDC client secret. Supports `file:` prefix for secret management                                                           |
+| `scopes`               | No       | Space-separated scopes (default: `openid email profile`)                                                                    |
+| `admin_claim`          | No       | Dot-path to the claim containing roles/groups (e.g., `realm_access.roles`)                                                  |
+| `admin_group`          | No       | Value in that claim that maps to the Klangk admin role                                                                      |
+| `ca_cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs (e.g., DoD PKI)                                          |
+| `token_validation_pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                                             |
+| `logout_redirect`      | No       | If `true`, logout redirects to the IdP's `end_session_endpoint` (RP-Initiated Logout). Default: `false` (local-only logout) |
+
+### How It Works
+
+- **Web**: Login page shows one button per provider. Clicking redirects to the IdP via Authorization Code flow with PKCE. After authentication, the IdP redirects back to Klangk which exchanges the code for tokens, validates the ID token, and issues a Klangk JWT.
+- **CLI**: `klangk login` detects OIDC from the server config, opens a browser for authentication, and receives the token via a temporary localhost callback server.
+- **User provisioning**: On first OIDC login, a user is created automatically (verified, no password). If a local user with the same email already exists, the OIDC identity is linked to it.
+- **Role mapping**: If `admin_claim` and `admin_group` are configured, the admin role is synced from the IdP claim on every login.
+- **OIDC users** cannot use forgot-password, change-password, or change-email.
+- **Logout**: By default, logout only kills the Klangk session. With `logout_redirect: true`, the user is also redirected to the IdP's logout endpoint to end the SSO session (requires full re-authentication on next login).
+
+### IdP Setup (Keycloak Example)
+
+1. Create a client in your Keycloak realm:
+   - Client ID: `klangk`
+   - Client authentication: On (confidential)
+   - Valid redirect URIs: `https://your-klangk-host/auth/oidc/cac/callback` (one per provider ID)
+   - Web origins: `https://your-klangk-host`
+2. Copy the client secret to a file or set it directly in the OIDC config
+3. For CAC: configure the X.509 client certificate authenticator in the Keycloak authentication flow
 
 ## CLI Access
 

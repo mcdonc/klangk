@@ -334,6 +334,23 @@ void main() {
       expect(service.token, isNull);
     });
 
+    test('returns oidc logout url when present', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          '{"status":"ok","oidc_logout_url":"https://idp/logout"}',
+          200,
+        );
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final url = await service.logout();
+      expect(url, 'https://idp/logout');
+      expect(service.isLoggedIn, isFalse);
+    });
+
     test('clears token even if server call fails', () async {
       testAuthHttpClientOverride = MockClient((request) async {
         throw Exception('Server down');

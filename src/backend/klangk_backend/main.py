@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import container, model
+from . import container, model, oidc
 from .api import router
 from .util import resolve_env_secret
 from .wshandler import handle_websocket
@@ -58,6 +58,7 @@ async def seed_default_user() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await model.init_db()
+    oidc.init_providers()
     await seed_default_user()
     from . import wshandler
 

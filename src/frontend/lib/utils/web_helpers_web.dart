@@ -9,6 +9,11 @@ void openUrl(String url) {
   web.window.open(url, '_blank');
 }
 
+/// Navigate the current page to a URL (full page redirect).
+void navigateTo(String url) {
+  web.window.location.href = url;
+}
+
 /// Download bytes as a file via a temporary blob URL.
 void downloadBytes(List<int> bytes, String filename) {
   final parts = [Uint8List.fromList(bytes).toJS].toJS;

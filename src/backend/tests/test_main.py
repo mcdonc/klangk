@@ -54,7 +54,9 @@ class TestSeedDefaultUser:
 
 
 class TestLifespan:
-    async def test_lifespan_starts_and_stops(self, db):
+    async def test_lifespan_starts_and_stops(self, db, monkeypatch):
+        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
         app = FastAPI()
         with (
             patch.object(

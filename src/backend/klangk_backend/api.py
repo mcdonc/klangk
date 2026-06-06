@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import posixpath
+import secrets
 import sqlite3
 import subprocess
 import tarfile
@@ -14,8 +15,10 @@ import time
 import uuid
 import zipfile
 
+import httpx
+
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import (
@@ -23,6 +26,7 @@ from . import (
     container,
     emailsvc,
     files,
+    oidc,
     wshandler,
     model,
     workspaces,
@@ -140,6 +144,8 @@ async def get_config():
         "invitations_enabled": auth.invitations_enabled(),
         "login_banner_title": LOGIN_BANNER_TITLE,
         "login_banner": LOGIN_BANNER,
+        "oidc_providers": oidc.list_providers(),
+        "auth_modes": oidc.auth_modes(),
     }
 
 
@@ -151,6 +157,11 @@ async def register(
     req: auth.RegisterRequest,
     request: Request,
 ):
+    if not oidc.password_login_allowed():
+        raise HTTPException(
+            status_code=403,
+            detail="Password registration is disabled",
+        )
     if resolve_env_secret("KLANGK_TEST_MODE"):
         # Test mode: auto-verify so E2E tests get immediate access
         result = await auth.register(req, verified=True)
@@ -329,6 +340,10 @@ async def reset_password(req: ResetPasswordRequest):
 
 @router.post("/auth/login", response_model=auth.TokenResponse)
 async def login(req: auth.LoginRequest):
+    if not oidc.password_login_allowed():
+        raise HTTPException(
+            status_code=403, detail="Password login is disabled"
+        )
     return await auth.login(req)
 
 
@@ -410,7 +425,20 @@ async def logout(
     authorization = request.headers.get("authorization", "")
     if authorization.startswith("Bearer "):
         await auth.logout(authorization[7:])
-    return {"status": "ok"}
+
+    # If the user logged in via OIDC and the provider has logout_redirect
+    # enabled, return the IdP logout URL so the frontend can redirect.
+    result: dict = {"status": "ok"}
+    db_user = await model.get_user_by_email(user["email"])
+    if db_user and db_user.get("provider", "local") != "local":
+        provider = oidc.get_provider(db_user["provider"])
+        if provider:
+            hostname, proto, base_path = derive_hosting_info(request.headers)
+            post_logout_uri = f"{proto}://{hostname}{base_path}/#/login"
+            logout_url = await oidc.build_logout_url(provider, post_logout_uri)
+            if logout_url:
+                result["oidc_logout_url"] = logout_url
+    return result
 
 
 # --- Invitation endpoints ---
@@ -560,6 +588,188 @@ async def resend_invitation(
     )
 
     return {"status": "resent"}
+
+
+# --- OIDC endpoints ---
+
+
+@router.get("/auth/oidc/{provider_id}/login")
+async def oidc_login(
+    provider_id: str,
+    request: Request,
+    cli_redirect: str | None = None,
+):
+    """Redirect to the OIDC IdP for authentication."""
+    if not oidc.oidc_login_allowed():
+        raise HTTPException(status_code=404, detail="OIDC not enabled")
+
+    provider = oidc.get_provider(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Unknown OIDC provider")
+
+    # Validate cli_redirect is localhost only
+    if cli_redirect and not cli_redirect.startswith(
+        ("http://localhost:", "http://127.0.0.1:")
+    ):
+        raise HTTPException(
+            status_code=400, detail="cli_redirect must be localhost"
+        )
+
+    verifier, challenge = oidc.generate_pkce()
+    state = secrets.token_urlsafe(32)
+
+    hostname, proto, base_path = derive_hosting_info(request.headers)
+    redirect_uri = (
+        f"{proto}://{hostname}{base_path}/auth/oidc/{provider_id}/callback"
+    )
+
+    auth_url = await oidc.build_auth_url(
+        provider, redirect_uri, state, challenge
+    )
+
+    response = RedirectResponse(url=auth_url, status_code=302)
+    # Store state + verifier + cli_redirect in a cookie
+    cookie_value = json.dumps(
+        {
+            "state": state,
+            "verifier": verifier,
+            "redirect_uri": redirect_uri,
+            "cli_redirect": cli_redirect,
+        }
+    )
+    response.set_cookie(
+        key=f"oidc_{provider_id}",
+        value=cookie_value,
+        httponly=True,
+        max_age=600,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@router.get("/auth/oidc/{provider_id}/callback")
+async def oidc_callback(
+    provider_id: str,
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str | None = None,
+):
+    """Handle the OIDC callback from the IdP."""
+    if error:
+        raise HTTPException(status_code=400, detail=f"IdP error: {error}")
+
+    provider = oidc.get_provider(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Unknown OIDC provider")
+
+    # Retrieve and validate state from cookie
+    cookie_name = f"oidc_{provider_id}"
+    cookie_raw = request.cookies.get(cookie_name)
+    if not cookie_raw:
+        raise HTTPException(
+            status_code=400, detail="Missing OIDC state cookie"
+        )
+
+    try:
+        cookie_data = json.loads(cookie_raw)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=400, detail="Invalid OIDC state cookie"
+        )
+
+    if cookie_data.get("state") != state:
+        raise HTTPException(status_code=400, detail="State mismatch")
+
+    # Exchange code for tokens
+    try:
+        tokens = await oidc.exchange_code(
+            provider,
+            code,
+            cookie_data["redirect_uri"],
+            cookie_data["verifier"],
+        )
+    except httpx.HTTPStatusError as exc:
+        logger.error("OIDC token exchange failed: %s", exc.response.text)
+        raise HTTPException(
+            status_code=502, detail="Token exchange failed"
+        ) from None
+
+    # Validate ID token
+    id_token = tokens.get("id_token")
+    if not id_token:
+        raise HTTPException(status_code=502, detail="No ID token in response")
+
+    try:
+        claims = await oidc.validate_id_token(
+            provider, id_token, access_token=tokens.get("access_token")
+        )
+    except Exception as exc:
+        logger.error("OIDC ID token validation failed: %s", exc)
+        raise HTTPException(
+            status_code=502, detail="ID token validation failed"
+        ) from None
+
+    sub = claims.get("sub")
+    email = claims.get("email")
+    if not sub or not email:
+        raise HTTPException(
+            status_code=502,
+            detail="ID token missing sub or email claim",
+        )
+    auth.validate_email(email)
+
+    # Find or create user
+    user = await model.get_user_by_external_id(provider_id, sub)
+    if user is None:
+        # Check for existing local user with same email
+        existing = await model.get_user_by_email(email)
+        if existing is not None:
+            # Link OIDC identity to existing user
+            await model.link_oidc_identity(existing["id"], provider_id, sub)
+            user = existing
+        else:
+            # JIT provisioning
+            user = await model.create_user(
+                email=email,
+                password_hash=None,
+                verified=True,
+                provider=provider_id,
+                external_id=sub,
+            )
+
+    # Sync admin role from IdP claims
+    should_be_admin = oidc.extract_admin_role(provider, claims)
+    if should_be_admin is not None:
+        roles = await model.get_user_roles(user["id"])
+        if should_be_admin and "admin" not in roles:
+            await model.ensure_role("admin")
+            await model.assign_role(user["id"], "admin")
+        elif not should_be_admin and "admin" in roles:
+            await model.remove_role(user["id"], "admin")
+
+    # Issue Klangk JWT
+    roles = await model.get_user_roles(user["id"])
+    access_token = auth.create_token(user["id"], email, roles)
+
+    # Clear the state cookie
+    cli_redirect = cookie_data.get("cli_redirect")
+
+    if cli_redirect:
+        # CLI flow: redirect to the CLI's localhost server with the token
+        redirect_url = f"{cli_redirect}?token={access_token}"
+    else:
+        # Web flow: redirect to the frontend with token in the hash
+        hostname, proto, base_path = derive_hosting_info(request.headers)
+        redirect_url = (
+            f"{proto}://{hostname}{base_path}"
+            f"/#/oidc-complete?token={access_token}"
+        )
+
+    response = RedirectResponse(url=redirect_url, status_code=302)
+    response.delete_cookie(cookie_name, path="/")
+    return response
 
 
 # --- Workspace endpoints ---

@@ -28,7 +28,11 @@ void main() {
 
   // Provide a mock config client that returns no banner by default,
   // so login page tests don't need to worry about the AuthService config fetch.
-  http.Client _configClient({bool registrationEnabled = true}) {
+  http.Client _configClient({
+    bool registrationEnabled = true,
+    List<Map<String, dynamic>>? oidcProviders,
+    String authModes = 'password',
+  }) {
     return MockClient((request) async {
       if (request.url.path.contains('/api/config')) {
         return http.Response(
@@ -37,6 +41,8 @@ void main() {
             'registration_enabled': registrationEnabled,
             'login_banner_title': '',
             'login_banner': '',
+            'oidc_providers': oidcProviders ?? [],
+            'auth_modes': authModes,
           }),
           200,
         );
@@ -522,6 +528,70 @@ void main() {
 
       expect(find.textContaining('Create one'), findsNothing);
       expect(find.text('Log In'), findsWidgets);
+    });
+
+    testWidgets('shows OIDC buttons when providers configured', (tester) async {
+      testConfigHttpClientOverride = _configClient(
+        oidcProviders: [
+          {'id': 'cac', 'display_name': 'CAC Login'},
+          {'id': 'sso', 'display_name': 'Internal SSO'},
+        ],
+        authModes: 'both',
+      );
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Log in with CAC Login'), findsOneWidget);
+      expect(find.text('Log in with Internal SSO'), findsOneWidget);
+      // Password form still visible in "both" mode
+      expect(find.text('Email'), findsOneWidget);
+      expect(find.text('or'), findsOneWidget);
+    });
+
+    testWidgets('hides password form in oidc-only mode', (tester) async {
+      testConfigHttpClientOverride = _configClient(
+        oidcProviders: [
+          {'id': 'cac', 'display_name': 'CAC Login'},
+        ],
+        authModes: 'oidc',
+      );
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Log in with CAC Login'), findsOneWidget);
+      // Password form hidden
+      expect(find.text('Email'), findsNothing);
+      expect(find.text('Password'), findsNothing);
+    });
+
+    testWidgets('no OIDC buttons when no providers', (tester) async {
+      testConfigHttpClientOverride = _configClient(
+        oidcProviders: [],
+        authModes: 'password',
+      );
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      // No SSO buttons
+      expect(find.textContaining('Log in with'), findsNothing);
+      // Password form visible
+      expect(find.text('Email'), findsOneWidget);
+    });
+
+    testWidgets('OIDC button triggers navigateTo', (tester) async {
+      testConfigHttpClientOverride = _configClient(
+        oidcProviders: [
+          {'id': 'test', 'display_name': 'Test IdP'},
+        ],
+        authModes: 'both',
+      );
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      // Tapping the button calls navigateTo (which is a stub in tests)
+      await tester.tap(find.text('Log in with Test IdP'));
+      await tester.pumpAndSettle();
+      // No crash — navigateTo stub is a no-op
     });
   });
 }

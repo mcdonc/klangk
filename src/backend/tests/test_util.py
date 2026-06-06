@@ -1,6 +1,6 @@
 """Tests for util: file-backed secret resolution."""
 
-from klangk_backend.util import resolve_env_secret
+from klangk_backend.util import resolve_env_secret, resolve_file_secret
 
 
 class TestResolveEnvSecret:
@@ -29,3 +29,16 @@ class TestResolveEnvSecret:
     def test_empty_string_returned_as_is(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "")
         assert resolve_env_secret("TEST_SECRET") == ""
+
+
+class TestResolveFileSecret:
+    def test_plain_value(self):
+        assert resolve_file_secret("plain") == "plain"
+
+    def test_file_prefix(self, tmp_path):
+        f = tmp_path / "secret"
+        f.write_text("from-file\n")
+        assert resolve_file_secret(f"file:{f}") == "from-file"
+
+    def test_file_missing_returns_empty(self):
+        assert resolve_file_secret("file:/no/such/file") == ""

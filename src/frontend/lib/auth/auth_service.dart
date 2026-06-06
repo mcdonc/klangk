@@ -236,15 +236,23 @@ class AuthService extends ChangeNotifier {
     return response;
   }
 
-  Future<void> logout() async {
+  /// Log out. Returns the IdP logout URL if the provider requires
+  /// a redirect, or null for local-only logout.
+  Future<String?> logout() async {
+    String? oidcLogoutUrl;
     try {
-      await _client.post(
+      final resp = await _client.post(
         Uri.parse('$_baseUrl/auth/logout'),
         headers: _authHeaders,
       );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        oidcLogoutUrl = data['oidc_logout_url'] as String?;
+      }
     } catch (_) {
       // Best effort — clear token regardless
     }
     await _clearToken();
+    return oidcLogoutUrl;
   }
 }

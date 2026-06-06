@@ -30,6 +30,22 @@ def resolve_env_secret(key: str, default: str | None = None) -> str | None:
     return val
 
 
+def resolve_file_secret(value: str) -> str:
+    """Resolve a value that may have a 'file:' prefix.
+
+    If the value starts with 'file:', reads the file and returns
+    its stripped contents. Otherwise returns the value as-is.
+    """
+    if value.startswith("file:"):
+        path = value[5:]
+        try:
+            return open(path).read().strip()
+        except OSError as e:
+            logger.error("Cannot read secret from %s: %s", path, e)
+            return ""
+    return value
+
+
 def derive_hosting_info(headers) -> tuple[str, str, str]:
     """Derive hosting hostname, proto, and base path from env vars or request headers.
 

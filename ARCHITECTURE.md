@@ -64,7 +64,9 @@ In CI, `devenv processes up -d` starts nginx before E2E tests run.
 
 ### Authentication
 
-- Email/password with bcrypt hashing, email validated at registration
+- **Two auth methods**: email/password (local) and OIDC (external Identity Providers). Configurable via `KLANGK_AUTH_MODES`: `password`, `oidc`, or `both` (default: `both` if OIDC configured, `password` otherwise).
+- **OIDC authentication**: Supports multiple OIDC providers (e.g., two Keycloak realms for CAC + internal SSO). Configured via a JSON file (`KLANGK_OIDC_CONFIG`). Each provider has its own login/callback endpoints (`GET /auth/oidc/{provider_id}/login`, `GET /auth/oidc/{provider_id}/callback`). Uses Authorization Code flow with PKCE. ID token signature validated against the IdP's JWKS. Login page shows one button per configured provider. JIT user provisioning on first OIDC login — users are created as verified with no password. Existing email/password users are linked to their OIDC identity on first SSO login. Per-provider role mapping syncs IdP group claims to Klangk roles on every login. CLI login (`klangk login`) opens a browser for the OIDC flow and receives the token via a temporary localhost callback server.
+- **Email/password authentication**: bcrypt hashing, email validated at registration
 - Email verification: registration sends a verification email with a signed token link; user must click to activate account and is auto-logged-in on verification. Resend via "Resend verification email" link on login page (shown on 403 "not verified" error, rate-limited to 1/min per email)
 - Email sent via SMTP (`KLANGK_SMTP_HOST/PORT/USER/PASSWORD/FROM`) or local sendmail (default, configurable via `KLANGK_SENDMAIL_PATH`)
 - JWT tokens (24hr expiry, secret configurable via KLANGK_JWT_SECRET) with token blocklist for logout, roles claim in JWT payload

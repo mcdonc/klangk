@@ -10,6 +10,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from fastapi import FastAPI, HTTPException
+import httpx
 from httpx import AsyncClient, ASGITransport
 
 from klangk_backend import (
@@ -3535,3 +3536,617 @@ class TestInvitations:
         resp = await client.get("/api/config")
         assert resp.status_code == 200
         assert "invitations_enabled" in resp.json()
+
+
+# --- OIDC endpoints ---
+
+
+class TestOIDCConfig:
+    async def test_config_includes_oidc_fields(self, client, monkeypatch):
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        resp = await client.get("/api/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "oidc_providers" in data
+        assert "auth_modes" in data
+        assert data["oidc_providers"] == []
+        assert data["auth_modes"] == "password"
+
+    async def test_config_with_providers(self, client, monkeypatch):
+        monkeypatch.setattr(
+            api.oidc,
+            "list_providers",
+            lambda: [{"id": "test", "display_name": "Test"}],
+        )
+        monkeypatch.setattr(api.oidc, "auth_modes", lambda: "both")
+        resp = await client.get("/api/config")
+        data = resp.json()
+        assert len(data["oidc_providers"]) == 1
+        assert data["auth_modes"] == "both"
+
+
+class TestOIDCAuthModeGuards:
+    async def test_login_blocked_when_oidc_only(
+        self, client, monkeypatch, user
+    ):
+        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: False)
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        assert resp.status_code == 403
+        assert "disabled" in resp.json()["detail"]
+
+    async def test_register_blocked_when_oidc_only(
+        self, client, monkeypatch, db
+    ):
+        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: False)
+        resp = await client.post(
+            "/auth/register",
+            json={"email": "new@example.com", "password": "testpass"},
+        )
+        assert resp.status_code == 403
+
+    async def test_login_allowed_when_both(self, client, monkeypatch, user):
+        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: True)
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        assert resp.status_code == 200
+
+
+class TestOIDCLogin:
+    async def test_oidc_login_not_enabled(self, client, monkeypatch):
+        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: False)
+        resp = await client.get("/auth/oidc/test/login")
+        assert resp.status_code == 404
+
+    async def test_unknown_provider(self, client, monkeypatch):
+        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: True)
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)
+        resp = await client.get("/auth/oidc/nope/login")
+        assert resp.status_code == 404
+
+    async def test_invalid_cli_redirect(self, client, monkeypatch):
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: True)
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        resp = await client.get(
+            "/auth/oidc/test/login",
+            params={"cli_redirect": "https://evil.com/steal"},
+        )
+        assert resp.status_code == 400
+        assert "localhost" in resp.json()["detail"]
+
+    async def test_oidc_login_redirects(self, client, monkeypatch):
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: True)
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "build_auth_url",
+            AsyncMock(return_value="https://idp.example.com/auth?foo=bar"),
+        )
+        resp = await client.get(
+            "/auth/oidc/test/login", follow_redirects=False
+        )
+        assert resp.status_code == 302
+        assert (
+            resp.headers["location"] == "https://idp.example.com/auth?foo=bar"
+        )
+        assert "oidc_test" in resp.headers.get("set-cookie", "")
+
+
+class TestOIDCCallback:
+    async def _setup_callback(self, client, monkeypatch, db, claims=None):
+        """Set up mocks for a successful OIDC callback test."""
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(
+                return_value={
+                    "id_token": "fake-id-token",
+                    "access_token": "at",
+                }
+            ),
+        )
+        default_claims = {
+            "sub": "oidc-sub-123",
+            "email": "oidcuser@example.com",
+        }
+        if claims:
+            default_claims.update(claims)
+        monkeypatch.setattr(
+            api.oidc,
+            "validate_id_token",
+            AsyncMock(return_value=default_claims),
+        )
+        # Set the state cookie
+        cookie_data = json_mod.dumps(
+            {
+                "state": "test-state",
+                "verifier": "test-verifier",
+                "redirect_uri": "https://klangk.example.com/auth/oidc/test/callback",
+                "cli_redirect": None,
+            }
+        )
+        return provider, cookie_data
+
+    async def test_callback_creates_user(self, client, monkeypatch, db):
+        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        location = resp.headers["location"]
+        assert "oidc-complete" in location
+        assert "token=" in location
+
+        # User was created
+        user = await model.get_user_by_email("oidcuser@example.com")
+        assert user is not None
+        assert user["provider"] == "test"
+        assert user["external_id"] == "oidc-sub-123"
+        assert user["password_hash"] is None
+
+    async def test_callback_links_existing_user(
+        self, client, monkeypatch, db, user
+    ):
+        _, cookie_data = await self._setup_callback(
+            client,
+            monkeypatch,
+            db,
+            claims={"sub": "new-sub", "email": "testuser@example.com"},
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "test-state"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+        # Existing user was linked
+        linked = await model.get_user_by_external_id("test", "new-sub")
+        assert linked is not None
+        assert linked["id"] == user["id"]
+
+    async def test_callback_maps_admin_role(self, client, monkeypatch, db):
+        provider, cookie_data = await self._setup_callback(
+            client,
+            monkeypatch,
+            db,
+            claims={
+                "sub": "admin-sub",
+                "email": "oidcadmin@example.com",
+                "roles": ["klangk-admin"],
+            },
+        )
+        # Enable role mapping on the provider
+        provider.admin_claim = "roles"
+        provider.admin_group = "klangk-admin"
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "test-state"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+        user = await model.get_user_by_email("oidcadmin@example.com")
+        roles = await model.get_user_roles(user["id"])
+        assert "admin" in roles
+
+    async def test_callback_state_mismatch(self, client, monkeypatch, db):
+        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "wrong-state"},
+            cookies={"oidc_test": cookie_data},
+        )
+        assert resp.status_code == 400
+        assert "State mismatch" in resp.json()["detail"]
+
+    async def test_callback_missing_cookie(self, client, monkeypatch, db):
+        await self._setup_callback(client, monkeypatch, db)
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "test-state"},
+        )
+        assert resp.status_code == 400
+        assert "cookie" in resp.json()["detail"].lower()
+
+    async def test_callback_idp_error(self, client, monkeypatch, db):
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"error": "access_denied"},
+        )
+        assert resp.status_code == 400
+        assert "access_denied" in resp.json()["detail"]
+
+    async def test_callback_cli_redirect(self, client, monkeypatch, db):
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"id_token": "idt", "access_token": "at"}),
+        )
+        monkeypatch.setattr(
+            api.oidc,
+            "validate_id_token",
+            AsyncMock(
+                return_value={
+                    "sub": "cli-sub",
+                    "email": "cli@example.com",
+                }
+            ),
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "redirect_uri": "https://klangk.example.com/cb",
+                "cli_redirect": "http://localhost:12345/callback",
+            }
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert resp.headers["location"].startswith(
+            "http://localhost:12345/callback?token="
+        )
+
+    async def test_callback_token_exchange_failure(
+        self, client, monkeypatch, db
+    ):
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        mock_request = httpx.Request("POST", "https://idp/token")
+        mock_response = httpx.Response(
+            400, text="bad request", request=mock_request
+        )
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(
+                side_effect=httpx.HTTPStatusError(
+                    "err", request=mock_request, response=mock_response
+                )
+            ),
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "redirect_uri": "https://cb",
+                "cli_redirect": None,
+            }
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            cookies={"oidc_test": cookie_data},
+        )
+        assert resp.status_code == 502
+
+    async def test_callback_no_id_token(self, client, monkeypatch, db):
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"access_token": "at"}),
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "redirect_uri": "https://cb",
+                "cli_redirect": None,
+            }
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            cookies={"oidc_test": cookie_data},
+        )
+        assert resp.status_code == 502
+        assert "No ID token" in resp.json()["detail"]
+
+    async def test_callback_invalid_id_token(self, client, monkeypatch, db):
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"id_token": "bad", "access_token": "at"}),
+        )
+        monkeypatch.setattr(
+            api.oidc,
+            "validate_id_token",
+            AsyncMock(side_effect=Exception("bad token")),
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "redirect_uri": "https://cb",
+                "cli_redirect": None,
+            }
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            cookies={"oidc_test": cookie_data},
+        )
+        assert resp.status_code == 502
+        assert "validation failed" in resp.json()["detail"]
+
+    async def test_callback_missing_claims(self, client, monkeypatch, db):
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"id_token": "t", "access_token": "at"}),
+        )
+        monkeypatch.setattr(
+            api.oidc,
+            "validate_id_token",
+            AsyncMock(return_value={"sub": "s"}),  # no email
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "redirect_uri": "https://cb",
+                "cli_redirect": None,
+            }
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            cookies={"oidc_test": cookie_data},
+        )
+        assert resp.status_code == 502
+        assert "missing" in resp.json()["detail"].lower()
+
+    async def test_callback_unknown_provider(self, client, monkeypatch, db):
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)
+        resp = await client.get(
+            "/auth/oidc/nope/callback",
+            params={"code": "code", "state": "s"},
+        )
+        assert resp.status_code == 404
+
+    async def test_callback_revokes_admin_role(self, client, monkeypatch, db):
+        # Create user with admin role
+        user = await model.create_user(
+            "revoke-admin@example.com",
+            password_hash=None,
+            verified=True,
+            provider="test",
+            external_id="revoke-sub",
+        )
+        await model.ensure_role("admin")
+        await model.assign_role(user["id"], "admin")
+
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+            admin_claim="roles",
+            admin_group="klangk-admin",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"id_token": "t", "access_token": "at"}),
+        )
+        monkeypatch.setattr(
+            api.oidc,
+            "validate_id_token",
+            AsyncMock(
+                return_value={
+                    "sub": "revoke-sub",
+                    "email": "revoke-admin@example.com",
+                    "roles": ["user"],  # no admin group
+                }
+            ),
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "redirect_uri": "https://cb",
+                "cli_redirect": None,
+            }
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        roles = await model.get_user_roles(user["id"])
+        assert "admin" not in roles
+
+    async def test_callback_invalid_cookie_json(self, client, monkeypatch, db):
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            cookies={"oidc_test": "not-json"},
+        )
+        assert resp.status_code == 400
+
+
+class TestOIDCLogout:
+    async def test_logout_returns_oidc_logout_url(self, client, db):
+        """OIDC user with logout_redirect gets IdP logout URL in response."""
+        # Create OIDC user
+        user = await model.create_user(
+            "oidc-logout@example.com",
+            password_hash=None,
+            verified=True,
+            provider="test",
+            external_id="logout-sub",
+        )
+        roles = await model.get_user_roles(user["id"])
+        token = auth.create_token(user["id"], user["email"], roles)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+            logout_redirect=True,
+        )
+        with (
+            patch.object(api.oidc, "get_provider", return_value=provider),
+            patch.object(
+                api.oidc,
+                "build_logout_url",
+                AsyncMock(return_value="https://idp.example.com/logout?x=1"),
+            ),
+        ):
+            resp = await client.post("/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert (
+            resp.json()["oidc_logout_url"]
+            == "https://idp.example.com/logout?x=1"
+        )
+
+    async def test_logout_no_redirect_for_local_user(self, client, user):
+        """Local user gets no oidc_logout_url."""
+        login_resp = await client.post(
+            "/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        headers = {
+            "Authorization": f"Bearer {login_resp.json()['access_token']}"
+        }
+        resp = await client.post("/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert "oidc_logout_url" not in resp.json()
+
+    async def test_logout_no_redirect_when_disabled(self, client, db):
+        """OIDC user with logout_redirect=false gets no URL."""
+        user = await model.create_user(
+            "oidc-nologout@example.com",
+            password_hash=None,
+            verified=True,
+            provider="test",
+            external_id="nologout-sub",
+        )
+        token = auth.create_token(user["id"], user["email"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+            logout_redirect=False,
+        )
+        with patch.object(api.oidc, "get_provider", return_value=provider):
+            resp = await client.post("/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert "oidc_logout_url" not in resp.json()

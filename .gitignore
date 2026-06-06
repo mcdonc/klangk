@@ -32,6 +32,7 @@ src/frontend/coverage/
 # Environment / secrets
 .env
 *.env.local
+.oidc/
 
 # IDE
 .idea/

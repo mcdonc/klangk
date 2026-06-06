@@ -5,6 +5,8 @@ import 'package:flutter/widgets.dart';
 
 void openUrl(String url) {}
 
+void navigateTo(String url) {}
+
 void downloadBytes(List<int> bytes, String filename) {}
 
 void suppressContextMenuBriefly() {}
