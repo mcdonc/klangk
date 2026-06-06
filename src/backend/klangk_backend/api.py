@@ -35,7 +35,9 @@ from . import (
 from .model import (
     ACTION_ALLOW,
     PRINCIPAL_GROUP,
+    PRINCIPAL_SYSTEM,
     PRINCIPAL_USER,
+    SYSTEM_AUTHENTICATED,
 )
 from .util import derive_hosting_info, resolve_env_secret
 
@@ -1974,6 +1976,37 @@ async def replace_resource_acl(
     admin: dict = Depends(acl.has_permission("admin", _admin_resource)),
 ):
     """Replace ACL entries for any resource (admin only)."""
+    # Validate: root ACL must keep Authenticated view access
+    if resource == "/":
+        has_auth_view = any(
+            e.action == ACTION_ALLOW
+            and e.principal_type == PRINCIPAL_SYSTEM
+            and e.system_principal == SYSTEM_AUTHENTICATED
+            and e.permission in ("view", "*")
+            for e in entries
+        )
+        if not has_auth_view:
+            raise HTTPException(
+                status_code=400,
+                detail="Root ACL must include Allow Authenticated view "
+                "to prevent locking out all users",
+            )
+
+    # Validate: /admin ACL must keep admin group access
+    if resource == "/admin":
+        has_admin_group = any(
+            e.action == ACTION_ALLOW
+            and e.principal_type == PRINCIPAL_GROUP
+            and e.permission in ("*", "admin")
+            for e in entries
+        )
+        if not has_admin_group:
+            raise HTTPException(
+                status_code=400,
+                detail="Admin ACL must include at least one Allow "
+                "group entry to prevent locking out all admins",
+            )
+
     acl_entries = [
         {
             "position": i,

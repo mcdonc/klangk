@@ -2597,6 +2597,71 @@ class TestAdminResourceACL:
         )
         assert resp.status_code == 403
 
+    async def test_root_acl_rejects_removing_authenticated_view(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        # Try to save root ACL without Authenticated view
+        resp = await client.put(
+            "/admin/acl/resource?resource=/",
+            headers=headers,
+            json=[
+                {
+                    "action": model.ACTION_DENY,
+                    "principal_type": model.PRINCIPAL_SYSTEM,
+                    "permission": "*",
+                    "system_principal": model.SYSTEM_EVERYONE,
+                },
+            ],
+        )
+        assert resp.status_code == 400
+        assert "locking out" in resp.json()["detail"]
+
+    async def test_root_acl_accepts_wildcard_authenticated(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        # Authenticated with * should be accepted
+        resp = await client.put(
+            "/admin/acl/resource?resource=/",
+            headers=headers,
+            json=[
+                {
+                    "action": model.ACTION_ALLOW,
+                    "principal_type": model.PRINCIPAL_SYSTEM,
+                    "permission": "*",
+                    "system_principal": model.SYSTEM_AUTHENTICATED,
+                },
+                {
+                    "action": model.ACTION_DENY,
+                    "principal_type": model.PRINCIPAL_SYSTEM,
+                    "permission": "*",
+                    "system_principal": model.SYSTEM_EVERYONE,
+                },
+            ],
+        )
+        assert resp.status_code == 200
+
+    async def test_admin_acl_rejects_removing_all_group_access(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        # Try to save /admin ACL with no group Allow
+        resp = await client.put(
+            "/admin/acl/resource?resource=/admin",
+            headers=headers,
+            json=[
+                {
+                    "action": model.ACTION_DENY,
+                    "principal_type": model.PRINCIPAL_SYSTEM,
+                    "permission": "*",
+                    "system_principal": model.SYSTEM_EVERYONE,
+                },
+            ],
+        )
+        assert resp.status_code == 400
+        assert "locking out" in resp.json()["detail"]
+
 
 class TestSafePath:
     def test_valid_path(self, temp_data_dir):

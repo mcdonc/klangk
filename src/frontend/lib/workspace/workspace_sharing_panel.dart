@@ -180,7 +180,82 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Share-to-user section in a bordered card
+            // Group sharing card (first — encourage group-based sharing)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border.all(color: KColors.borderDefault),
+                borderRadius: BorderRadius.circular(8),
+                color: KColors.bgSurface,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.group,
+                          size: 18, color: KColors.textSecondary),
+                      const SizedBox(width: 8),
+                      const Text('Shared Groups',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 14)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (_sharedGroups.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text('No shared groups',
+                          style: TextStyle(color: KColors.textSecondary)),
+                    )
+                  else
+                    ..._sharedGroups.map((g) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 14,
+                                backgroundColor: KColors.accentAmber,
+                                child: const Icon(Icons.group,
+                                    size: 14, color: Colors.white),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(g['name'] as String,
+                                    style: const TextStyle(fontSize: 13)),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () =>
+                                    _removeGroup(g['id'] as String),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                tooltip: 'Remove group access',
+                              ),
+                            ],
+                          ),
+                        )),
+                  if (_availableGroups.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    DropdownButton<String>(
+                      isExpanded: true,
+                      hint: const Text('Add group...'),
+                      items: _availableGroups.map((g) {
+                        return DropdownMenuItem(
+                          value: g['id'] as String,
+                          child: Text(g['name'] as String),
+                        );
+                      }).toList(),
+                      onChanged: (groupId) {
+                        if (groupId != null) _addGroup(groupId);
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Share-to-user section
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -264,81 +339,6 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                           });
                         },
                       )),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Group sharing card
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border.all(color: KColors.borderDefault),
-                borderRadius: BorderRadius.circular(8),
-                color: KColors.bgSurface,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.group,
-                          size: 18, color: KColors.textSecondary),
-                      const SizedBox(width: 8),
-                      const Text('Shared Groups',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (_sharedGroups.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text('No shared groups',
-                          style: TextStyle(color: KColors.textSecondary)),
-                    )
-                  else
-                    ..._sharedGroups.map((g) => Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Row(
-                            children: [
-                              CircleAvatar(
-                                radius: 14,
-                                backgroundColor: KColors.accentAmber,
-                                child: const Icon(Icons.group,
-                                    size: 14, color: Colors.white),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(g['name'] as String,
-                                    style: const TextStyle(fontSize: 13)),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () =>
-                                    _removeGroup(g['id'] as String),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                tooltip: 'Remove group access',
-                              ),
-                            ],
-                          ),
-                        )),
-                  if (_availableGroups.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    DropdownButton<String>(
-                      isExpanded: true,
-                      hint: const Text('Add group...'),
-                      items: _availableGroups.map((g) {
-                        return DropdownMenuItem(
-                          value: g['id'] as String,
-                          child: Text(g['name'] as String),
-                        );
-                      }).toList(),
-                      onChanged: (groupId) {
-                        if (groupId != null) _addGroup(groupId);
-                      },
-                    ),
-                  ],
                 ],
               ),
             ),
