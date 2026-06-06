@@ -19,6 +19,8 @@ class WorkspaceSharingPanel extends StatefulWidget {
 
 class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   List<Map<String, dynamic>> _members = [];
+  List<Map<String, dynamic>> _sharedGroups = [];
+  List<Map<String, dynamic>> _allGroups = [];
   bool _loading = true;
   bool _aclExpanded = false;
   final _shareCtrl = TextEditingController();
@@ -29,7 +31,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   @override
   void initState() {
     super.initState();
-    _loadMembers();
+    _loadData();
   }
 
   @override
@@ -39,21 +41,38 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     super.dispose();
   }
 
-  Future<void> _loadMembers() async {
+  Future<void> _loadData() async {
     setState(() => _loading = true);
     final auth = context.read<AuthService>();
-    final resp = await auth.authGet(
+
+    // Load members
+    final membersResp = await auth.authGet(
       '/workspaces/${widget.workspaceId}/members',
     );
     if (!mounted) return;
-    if (resp.statusCode == 200) {
-      setState(() {
-        _members = List<Map<String, dynamic>>.from(jsonDecode(resp.body));
-        _loading = false;
-      });
-    } else {
-      setState(() => _loading = false);
+    if (membersResp.statusCode == 200) {
+      _members = List<Map<String, dynamic>>.from(jsonDecode(membersResp.body));
     }
+
+    // Load shared groups
+    final groupsResp = await auth.authGet(
+      '/workspaces/${widget.workspaceId}/groups',
+    );
+    if (!mounted) return;
+    if (groupsResp.statusCode == 200) {
+      _sharedGroups =
+          List<Map<String, dynamic>>.from(jsonDecode(groupsResp.body));
+    }
+
+    // Load all groups for the dropdown
+    try {
+      final allResp = await auth.authGet('/admin/groups');
+      if (mounted && allResp.statusCode == 200) {
+        _allGroups = List<Map<String, dynamic>>.from(jsonDecode(allResp.body));
+      }
+    } catch (_) {} // coverage:ignore-line
+
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _addMember(String email) async {
@@ -64,7 +83,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     );
     if (!mounted) return;
     if (resp.statusCode == 200) {
-      _loadMembers();
+      _loadData();
       _aclEditorKey.currentState?.reload();
     } else {
       String detail;
@@ -85,9 +104,48 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
       '/workspaces/${widget.workspaceId}/members/$memberId',
     );
     if (mounted) {
-      _loadMembers();
+      _loadData();
       _aclEditorKey.currentState?.reload();
     }
+  }
+
+  Future<void> _addGroup(String groupId) async {
+    final auth = context.read<AuthService>();
+    final resp = await auth.authPost(
+      '/workspaces/${widget.workspaceId}/groups',
+      body: jsonEncode({'group_id': groupId}),
+    );
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      _loadData();
+      _aclEditorKey.currentState?.reload();
+    } else {
+      String detail;
+      try {
+        detail = (jsonDecode(resp.body) as Map)['detail'] ?? resp.body;
+      } catch (_) {
+        detail = 'Error';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(detail)),
+      );
+    }
+  }
+
+  Future<void> _removeGroup(String groupId) async {
+    final auth = context.read<AuthService>();
+    await auth.authDelete(
+      '/workspaces/${widget.workspaceId}/groups/$groupId',
+    );
+    if (mounted) {
+      _loadData();
+      _aclEditorKey.currentState?.reload();
+    }
+  }
+
+  List<Map<String, dynamic>> get _availableGroups {
+    final sharedIds = _sharedGroups.map((g) => g['id']).toSet();
+    return _allGroups.where((g) => !sharedIds.contains(g['id'])).toList();
   }
 
   void _searchUsers(String query) {
@@ -206,6 +264,81 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                           });
                         },
                       )),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Group sharing card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border.all(color: KColors.borderDefault),
+                borderRadius: BorderRadius.circular(8),
+                color: KColors.bgSurface,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.group,
+                          size: 18, color: KColors.textSecondary),
+                      const SizedBox(width: 8),
+                      const Text('Shared Groups',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 14)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (_sharedGroups.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text('No shared groups',
+                          style: TextStyle(color: KColors.textSecondary)),
+                    )
+                  else
+                    ..._sharedGroups.map((g) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 14,
+                                backgroundColor: KColors.accentAmber,
+                                child: const Icon(Icons.group,
+                                    size: 14, color: Colors.white),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(g['name'] as String,
+                                    style: const TextStyle(fontSize: 13)),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () =>
+                                    _removeGroup(g['id'] as String),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                tooltip: 'Remove group access',
+                              ),
+                            ],
+                          ),
+                        )),
+                  if (_availableGroups.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    DropdownButton<String>(
+                      isExpanded: true,
+                      hint: const Text('Add group...'),
+                      items: _availableGroups.map((g) {
+                        return DropdownMenuItem(
+                          value: g['id'] as String,
+                          child: Text(g['name'] as String),
+                        );
+                      }).toList(),
+                      onChanged: (groupId) {
+                        if (groupId != null) _addGroup(groupId);
+                      },
+                    ),
+                  ],
                 ],
               ),
             ),
