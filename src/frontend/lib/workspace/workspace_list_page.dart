@@ -542,7 +542,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                                   message: email,
                                   child: CircleAvatar(
                                     radius: 10,
-                                    backgroundColor: KColors.accentGreen,
+                                    backgroundColor:
+                                        KColors.colorForString(email),
                                     child: Text(
                                       letter,
                                       style: const TextStyle(

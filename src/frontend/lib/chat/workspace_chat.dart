@@ -117,13 +117,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     }
   }
 
-  static Color _colorForEmail(String email) {
-    // Generate a stable, visually distinct color from the email hash.
-    // Use HSL with fixed saturation/lightness for readability on dark bg.
-    final hash = email.hashCode & 0x7fffffff;
-    final hue = (hash % 360).toDouble();
-    return HSLColor.fromAHSL(1.0, hue, 0.6, 0.7).toColor();
-  }
+  static Color _colorForEmail(String email) => KColors.colorForString(email);
 
   static final _urlRegex = RegExp(r'https?://[^\s<>"{}|\\^`\[\]]+');
 

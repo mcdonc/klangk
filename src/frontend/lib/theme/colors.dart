@@ -35,4 +35,12 @@ class KColors {
   // ── Logo gradient ────────────────────────────────────────────────────
   static const logoGradientStart = Color(0xFF238636);
   static const logoGradientEnd = Color(0xFF1A6B2A);
+
+  /// Generate a stable, visually distinct color from a string hash.
+  /// Used for user avatars and chat usernames.
+  static Color colorForString(String value) {
+    final hash = value.hashCode & 0x7fffffff;
+    final hue = (hash % 360).toDouble();
+    return HSLColor.fromAHSL(1.0, hue, 0.6, 0.7).toColor();
+  }
 }
