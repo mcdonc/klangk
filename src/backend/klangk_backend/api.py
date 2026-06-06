@@ -742,6 +742,9 @@ async def oidc_callback(
                 external_id=sub,
             )
 
+    # Sync group memberships from OIDC hook
+    await oidc.sync_oidc_groups(user["id"], provider, claims, email, tokens)
+
     # Issue Klangk JWT
     access_token = auth.create_token(user["id"], email)
 

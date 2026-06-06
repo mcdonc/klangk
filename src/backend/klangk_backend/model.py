@@ -469,6 +469,20 @@ async def get_user_group_ids(user_id: str) -> list[str]:
         await db.close()
 
 
+async def get_user_oidc_sync_group_ids(user_id: str) -> list[str]:
+    """Get group IDs where membership source is 'oidc_sync'."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT group_id FROM user_groups"
+            " WHERE user_id = ? AND source = 'oidc_sync'",
+            (user_id,),
+        )
+        return [row["group_id"] for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
 async def get_user_groups(user_id: str) -> list[dict]:
     """Get all groups a user belongs to."""
     db = await get_db()

@@ -112,6 +112,11 @@ async function globalSetup() {
         LOGFIRE_TOKEN: "", // Disable Logfire tracing during E2E tests
         KLANGK_LOGIN_BANNER_TITLE: "", // No consent banner in E2E tests
         KLANGK_LOGIN_BANNER: "",
+        KLANGK_OIDC_CONFIG: "", // Disable OIDC providers in E2E tests
+        KLANGK_AUTH_MODES: "", // Use default (password) auth mode
+        KLANGK_GROUP_MAPPING_HOOK: "", // No group mapping hook in E2E tests
+        KLANGK_DISABLE_REGISTRATION: "", // Allow registration in E2E tests
+        KLANGK_DISABLE_INVITES: "", // Allow invitations in E2E tests
       },
     },
   );
