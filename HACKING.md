@@ -95,7 +95,7 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_LOGIN_LOCKOUT_FAILURES` | `0`                                  | Number of failed login attempts before a lockout. Default `0` (disabled).                                                                                   |
 | `KLANGK_LOGIN_LOCKOUT_DURATION` | `900`                                | Duration of lockout in seconds (only relevant when `KLANGK_LOGIN_LOCKOUT_FAILURES` > 0).                                                                    |
 | `KLANGK_LLM_API_KEY`            |                                      | LLM provider API key                                                                                                                                        |
-| `KLANGK_LLM_BASE_URL`           |                                      | LLM API URL (any OpenAI-compatible provider)                                                                                                                |
+| `KLANGK_LLM_BASE_URL`           |                                      | LLM API URL — must use IP or public FQDN, not bare hostnames (see [Tailscale note](#tailscale-and-llm-proxy))                                               |
 | `KLANGK_LLM_MODEL`              |                                      | LLM model name                                                                                                                                              |
 | `KLANGK_JWT_SECRET`             |                                      | JWT signing secret                                                                                                                                          |
 | `KLANGK_DEFAULT_USER`           |                                      | Auto-seeded admin email on startup                                                                                                                          |
@@ -121,6 +121,22 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 - `KLANGK_NGINX_PORT` (default `8995`): **Primary access point** — nginx serves UI, API, WebSocket, and proxies hosted app URLs directly to container ports
 - `KLANGK_PORT` (default `8997`): Backend (FastAPI/uvicorn)
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
+
+### Tailscale and LLM Proxy
+
+If the LLM provider is on a Tailscale host (e.g., a self-hosted Ollama on another machine in the tailnet), `KLANGK_LLM_BASE_URL` **must use the Tailscale IP address**, not a hostname.
+
+The nginx LLM proxy uses lazy DNS resolution (so nginx can start even if the LLM host is temporarily unreachable). This means nginx sends raw DNS queries to the resolvers from `/etc/resolv.conf`. On a Tailscale host, those resolvers include MagicDNS (`100.100.100.100`), but MagicDNS only resolves tailnet names through the system resolver stack — raw UDP DNS queries from nginx don't go through Tailscale's networking, so both bare hostnames (`bizon`) and FQDNs (`bizon.tail33f8f4.ts.net`) fail to resolve.
+
+Meanwhile, `KLANGK_DNS_SERVERS=100.100.100.100,8.8.8.8` is still needed for workspace containers, because Docker configures container DNS with search domains that make MagicDNS work correctly inside containers.
+
+```bash
+# In .env on a Tailscale host:
+KLANGK_LLM_BASE_URL=http://100.122.115.33:11434/v1   # Tailscale IP, not hostname
+KLANGK_DNS_SERVERS=100.100.100.100,8.8.8.8            # for containers (works fine)
+```
+
+Tailscale IPs are stable and don't change, so using the IP directly is safe.
 
 ## Branch Protection
 
