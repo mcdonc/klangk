@@ -30,6 +30,7 @@ class Workspace:
     default_command: str | None = None
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
+    owner_email: str | None = None
 
 
 def _get_terminal_size() -> tuple[int, int]:
@@ -105,6 +106,25 @@ class KlangkClient:
                 default_command=w.get("default_command"),
                 mounts=w.get("mounts"),
                 env=w.get("env"),
+            )
+            for w in raw
+        ]
+
+    def list_shared_workspaces(self) -> list[Workspace]:
+        resp = self.get("/workspaces/shared")
+        self._check_auth(resp)
+        resp.raise_for_status()
+        raw = resp.json()
+        return [
+            Workspace(
+                id=w["id"],
+                name=w["name"],
+                created_at=w["created_at"],
+                image=w.get("image"),
+                default_command=w.get("default_command"),
+                mounts=w.get("mounts"),
+                env=w.get("env"),
+                owner_email=w.get("owner_email"),
             )
             for w in raw
         ]

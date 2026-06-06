@@ -574,7 +574,7 @@ class Connection:
         if not await _acl.check_permission(
             f"/workspaces/{workspace_id}", principals, "terminal"
         ):
-            send_error(self.sock, "Workspace not found")
+            send_error(self.sock, "Permission denied")
             return
         workspace = await workspaces.get_workspace(workspace_id)
         if workspace is None:

@@ -275,149 +275,175 @@ class _SettingsFormState extends State<_SettingsForm> {
               ),
               const SizedBox(height: 16),
             ],
-            TextField(
-              controller: _nameCtrl,
-              decoration: InputDecoration(
-                labelText: 'Workspace Name',
-                labelStyle: labelStyle,
-                floatingLabelBehavior: FloatingLabelBehavior.always,
-                border: const OutlineInputBorder(),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border.all(color: KColors.borderDefault),
+                borderRadius: BorderRadius.circular(8),
+                color: KColors.bgSurface,
               ),
-            ),
-            const SizedBox(height: 16),
-            if (widget.allowedImages.isNotEmpty)
-              DropdownButtonFormField<String>(
-                value: _selectedImage,
-                decoration: InputDecoration(
-                  labelText: 'Container Image',
-                  labelStyle: labelStyle,
-                  floatingLabelBehavior: FloatingLabelBehavior.always,
-                  border: const OutlineInputBorder(),
-                ),
-                items: widget.allowedImages
-                    .map(
-                        (img) => DropdownMenuItem(value: img, child: Text(img)))
-                    .toList(),
-                onChanged: (v) =>
-                    setState(() => _selectedImage = v ?? widget.defaultImage),
-              ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _cmdCtrl,
-              decoration: InputDecoration(
-                labelText: 'Default Shell Command',
-                labelStyle: labelStyle,
-                floatingLabelBehavior: FloatingLabelBehavior.always,
-                border: const OutlineInputBorder(),
-                hintText: 'Optional — runs on terminal open',
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text('Mounts', style: labelStyle),
-            const SizedBox(height: 8),
-            ..._mounts.asMap().entries.map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Expanded(
-                          child: Text(e.value,
-                              style: const TextStyle(fontSize: 13))),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        onPressed: () =>
-                            setState(() => _mounts.removeAt(e.key)),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
+                      const Icon(Icons.settings,
+                          size: 18, color: KColors.textSecondary),
+                      const SizedBox(width: 8),
+                      const Text('Workspace Configuration',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 14)),
                     ],
                   ),
-                )),
-            if (_mountError != null) ...[
-              Text(_mountError!,
-                  style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontSize: 12)),
-              const SizedBox(height: 4),
-            ],
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _mountCtrl,
-                    decoration: const InputDecoration(
-                      hintText: '/host/path:/container/path',
-                      isDense: true,
-                      border: OutlineInputBorder(),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _nameCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'Workspace Name',
+                      labelStyle: labelStyle,
+                      floatingLabelBehavior: FloatingLabelBehavior.always,
+                      border: const OutlineInputBorder(),
                     ),
-                    style: const TextStyle(fontSize: 13),
-                    onSubmitted: (_) => _tryAddMount(),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                    icon: const Icon(Icons.add), onPressed: _tryAddMount),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text('Environment Variables', style: labelStyle),
-            const SizedBox(height: 8),
-            ..._envVars.entries.toList().asMap().entries.map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Row(
+                  const SizedBox(height: 16),
+                  if (widget.allowedImages.isNotEmpty)
+                    DropdownButtonFormField<String>(
+                      value: _selectedImage,
+                      decoration: InputDecoration(
+                        labelText: 'Container Image',
+                        labelStyle: labelStyle,
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        border: const OutlineInputBorder(),
+                      ),
+                      items: widget.allowedImages
+                          .map((img) =>
+                              DropdownMenuItem(value: img, child: Text(img)))
+                          .toList(),
+                      onChanged: (v) => setState(
+                          () => _selectedImage = v ?? widget.defaultImage),
+                    ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _cmdCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'Default Shell Command',
+                      labelStyle: labelStyle,
+                      floatingLabelBehavior: FloatingLabelBehavior.always,
+                      border: const OutlineInputBorder(),
+                      hintText: 'Optional — runs on terminal open',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('Mounts', style: labelStyle),
+                  const SizedBox(height: 8),
+                  ..._mounts.asMap().entries.map((e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(
+                          children: [
+                            Expanded(
+                                child: Text(e.value,
+                                    style: const TextStyle(fontSize: 13))),
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: () =>
+                                  setState(() => _mounts.removeAt(e.key)),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        ),
+                      )),
+                  if (_mountError != null) ...[
+                    Text(_mountError!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12)),
+                    const SizedBox(height: 4),
+                  ],
+                  Row(
                     children: [
                       Expanded(
-                          child: Text('${e.value.key}=${e.value.value}',
-                              style: const TextStyle(fontSize: 13))),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        onPressed: () =>
-                            setState(() => _envVars.remove(e.value.key)),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
+                        child: TextField(
+                          controller: _mountCtrl,
+                          decoration: const InputDecoration(
+                            hintText: '/host/path:/container/path',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          style: const TextStyle(fontSize: 13),
+                          onSubmitted: (_) => _tryAddMount(),
+                        ),
                       ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                          icon: const Icon(Icons.add), onPressed: _tryAddMount),
                     ],
                   ),
-                )),
-            if (_envError != null) ...[
-              Text(_envError!,
-                  style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontSize: 12)),
-              const SizedBox(height: 4),
-            ],
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _envCtrl,
-                    decoration: const InputDecoration(
-                      hintText: 'KEY=VALUE',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    style: const TextStyle(fontSize: 13),
-                    onSubmitted: (_) => _tryAddEnv(),
+                  const SizedBox(height: 16),
+                  Text('Environment Variables', style: labelStyle),
+                  const SizedBox(height: 8),
+                  ..._envVars.entries.toList().asMap().entries.map((e) =>
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(
+                          children: [
+                            Expanded(
+                                child: Text('${e.value.key}=${e.value.value}',
+                                    style: const TextStyle(fontSize: 13))),
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: () =>
+                                  setState(() => _envVars.remove(e.value.key)),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        ),
+                      )),
+                  if (_envError != null) ...[
+                    Text(_envError!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12)),
+                    const SizedBox(height: 4),
+                  ],
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _envCtrl,
+                          decoration: const InputDecoration(
+                            hintText: 'KEY=VALUE',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          style: const TextStyle(fontSize: 13),
+                          onSubmitted: (_) => _tryAddEnv(),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                          icon: const Icon(Icons.add), onPressed: _tryAddEnv),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(icon: const Icon(Icons.add), onPressed: _tryAddEnv),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.icon(
-                onPressed: _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ))
-                    : const Icon(Icons.save, size: 18),
-                label: const Text('Save'),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.icon(
+                      onPressed: _saving ? null : _save,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ))
+                          : const Icon(Icons.save, size: 18),
+                      label: const Text('Save'),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
