@@ -710,23 +710,18 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         ? tabTypes[_selectedIndex]
         : '';
     if (currentType == 'users') {
-      fab = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.small(
-            heroTag: 'invite',
-            onPressed: _inviteUser,
-            tooltip: 'Invite user',
-            child: const Icon(Icons.mail_outline),
-          ),
-          const SizedBox(height: 8),
-          FloatingActionButton(
-            heroTag: 'add',
-            onPressed: _addUser,
-            tooltip: 'Add user',
-            child: const Icon(Icons.person_add),
-          ),
-        ],
+      fab = FloatingActionButton(
+        heroTag: 'add',
+        onPressed: _addUser,
+        tooltip: 'Add user',
+        child: const Icon(Icons.person_add),
+      );
+    } else if (currentType == 'invitations') {
+      fab = FloatingActionButton(
+        heroTag: 'invite',
+        onPressed: _inviteUser,
+        tooltip: 'Invite user',
+        child: const Icon(Icons.mail_outline),
       );
     } else if (currentType == 'groups') {
       fab = FloatingActionButton(
