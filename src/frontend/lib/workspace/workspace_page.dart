@@ -18,6 +18,8 @@ import '../terminal/ghostty_terminal.dart';
 import '../browser/browser_delegate.dart';
 import '../chat/workspace_chat.dart';
 import '../debug/debug_panel.dart';
+import 'workspace_settings_panel.dart';
+import 'workspace_sharing_panel.dart';
 
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
@@ -35,10 +37,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
   bool _connecting = true;
   String? _error;
   String _workspaceName = '';
+  int _chatUnread = 0;
   bool _containerStopped = false;
   bool _restarting = false;
   bool _disconnected = false;
   String _stopReason = '';
+  List<String> _workspacePermissions = [];
   BrowserDelegate? _browserDelegate;
   StreamSubscription<Map<String, dynamic>>? _customEventSub;
   StreamSubscription<String>? _errorSub;
@@ -58,8 +62,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   Future<void> _fetchWorkspaceName() async {
+    final auth = context.read<AuthService>();
     try {
-      final response = await context.read<AuthService>().authGet('/workspaces');
+      final response = await auth.authGet('/workspaces');
       if (response.statusCode == 200) {
         final workspaces = jsonDecode(response.body) as List;
         for (final ws in workspaces) {
@@ -73,7 +78,26 @@ class _WorkspacePageState extends State<WorkspacePage> {
         }
       }
     } catch (_) {}
+    // Fetch per-resource permissions for tab visibility
+    try {
+      final resource = '/workspaces/${widget.workspaceId}';
+      final permResp = await auth.authGet(
+        '/api/my-permissions?resource=${Uri.encodeQueryComponent(resource)}',
+      );
+      if (permResp.statusCode == 200 && mounted) {
+        final data = jsonDecode(permResp.body) as Map<String, dynamic>;
+        final permsMap = data['permissions'] as Map<String, dynamic>? ?? {};
+        final perms = permsMap[resource] as List? ?? [];
+        setState(() {
+          _workspacePermissions = List<String>.from(perms);
+        });
+      }
+    } catch (_) {}
   }
+
+  bool _hasPerm(String perm) =>
+      _workspacePermissions.contains(perm) ||
+      _workspacePermissions.contains('*');
 
   Future<void> _connectToWorkspace() async {
     final wsClient = context.read<WsClient>();
@@ -244,7 +268,26 @@ class _WorkspacePageState extends State<WorkspacePage> {
               authToken: authToken,
             ),
             terminal: GhosttyTerminal(key: _terminalKey, wsClient: wsClient),
-            chat: WorkspaceChat(key: _chatKey, wsClient: wsClient),
+            chat: _hasPerm('chat')
+                ? WorkspaceChat(
+                    key: _chatKey,
+                    wsClient: wsClient,
+                    onUnreadChanged: (count) {
+                      if (mounted) setState(() => _chatUnread = count);
+                    },
+                  )
+                : null,
+            chatUnread: _chatUnread,
+            settings: _hasPerm('edit')
+                ? WorkspaceSettingsPanel(
+                    workspaceId: widget.workspaceId,
+                  )
+                : null,
+            sharing: _hasPerm('share')
+                ? WorkspaceSharingPanel(
+                    workspaceId: widget.workspaceId,
+                  )
+                : null,
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
             chatKey: _chatKey,

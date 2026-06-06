@@ -80,6 +80,23 @@ def _base_conn(user=None, ws=None):
     return Connection(ws, user)
 
 
+async def _create_workspace_with_acl(user_id, name, **kwargs):
+    """Create a workspace and grant the owner full ACL access."""
+    from klangk_backend import model
+    from klangk_backend.model import ACTION_ALLOW, PRINCIPAL_USER
+
+    workspace = await ws_mod.create_workspace(user_id, name, **kwargs)
+    await model.add_acl_entry(
+        f"/workspaces/{workspace['id']}",
+        0,
+        ACTION_ALLOW,
+        "*",
+        PRINCIPAL_USER,
+        user_id=user_id,
+    )
+    return workspace
+
+
 # --- SafeWebSocket ---
 
 
@@ -770,11 +787,11 @@ class TestHandleWorkspaceConnect:
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         await conn.handle_workspace_connect({"workspaceId": "fake"})
-        assert "not found" in sock.send_json.call_args[0][0]["message"]
+        assert "Permission denied" in sock.send_json.call_args[0][0]["message"]
 
     async def test_connect_success(self, user):
         sock = _mock_sock()
-        workspace = await ws_mod.create_workspace(user["id"], "test-ws")
+        workspace = await _create_workspace_with_acl(user["id"], "test-ws")
         conn = _base_conn(user=user, ws=sock)
 
         async def fake_start(wid, workspace):
@@ -806,7 +823,7 @@ class TestHandleWorkspaceConnect:
 
     async def test_connect_sends_default_command(self, user):
         sock = _mock_sock()
-        workspace = await ws_mod.create_workspace(
+        workspace = await _create_workspace_with_acl(
             user["id"], "cmd-ws", default_command="pi"
         )
         conn = _base_conn(user=user, ws=sock)
@@ -833,6 +850,34 @@ class TestHandleWorkspaceConnect:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         ready = [c for c in calls if c.get("type") == "workspace_ready"]
         assert ready[0]["defaultCommand"] == "pi"
+
+    async def test_connect_denied_no_acl(self, user):
+        """User without ACL entry gets 'Permission denied'."""
+        sock = _mock_sock()
+        workspace = await ws_mod.create_workspace(user["id"], "no-acl-ws")
+        conn = _base_conn(user={"id": "other-user", "email": "x"}, ws=sock)
+        await conn.handle_workspace_connect({"workspaceId": workspace["id"]})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Permission denied" in str(c) for c in calls)
+
+    async def test_connect_race_deleted(self, user):
+        """ACL passes but workspace deleted before lookup."""
+        from klangk_backend import model
+
+        sock = _mock_sock()
+        fake_id = "deleted-ws-id"
+        await model.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        conn = _base_conn(user=user, ws=sock)
+        await conn.handle_workspace_connect({"workspaceId": fake_id})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Workspace not found" in str(c) for c in calls)
 
 
 class TestHandleWorkspaceDisconnect:
@@ -1106,7 +1151,7 @@ class TestHandleWebsocket:
 
         token = auth_mod.create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
-        workspace = await ws_mod.create_workspace(user["id"], "ui-ready-ws")
+        workspace = await _create_workspace_with_acl(user["id"], "ui-ready-ws")
 
         async def fake_start(self_arg, wid, ws_obj):
             self_arg.container_id = "cid"
@@ -2267,7 +2312,7 @@ class TestFractionalTimeout:
     async def test_fractional_timeout_display(self, user, monkeypatch):
         monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
         sock = _mock_sock()
-        workspace = await ws_mod.create_workspace(user["id"], "frac-ws")
+        workspace = await _create_workspace_with_acl(user["id"], "frac-ws")
         conn = _base_conn(user=user, ws=sock)
 
         async def fake_start(wid, workspace):
@@ -2469,7 +2514,7 @@ class TestChatSend:
     async def test_chat_history_on_connect(self, user):
         from klangk_backend import model
 
-        workspace = await ws_mod.create_workspace(user["id"], "chat-ws")
+        workspace = await _create_workspace_with_acl(user["id"], "chat-ws")
         await model.add_chat_message(
             workspace["id"], "uid-other", "someone@test.com", "old message"
         )

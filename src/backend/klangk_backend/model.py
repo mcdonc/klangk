@@ -94,28 +94,39 @@ async def init_db() -> None:
             )
         """)
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS workspace_access (
-                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                PRIMARY KEY (workspace_id, user_id)
-            )
-        """)
-        await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,
                 workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE
             )
         """)
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS roles (
-                name TEXT PRIMARY KEY
+            CREATE TABLE IF NOT EXISTS groups (
+                id TEXT PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS user_roles (
+            CREATE TABLE IF NOT EXISTS user_groups (
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                role_name TEXT NOT NULL REFERENCES roles(name) ON DELETE CASCADE,
-                PRIMARY KEY (user_id, role_name)
+                group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                source TEXT NOT NULL DEFAULT 'manual',
+                PRIMARY KEY (user_id, group_id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS acl_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                resource TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                action INTEGER NOT NULL,
+                principal_type INTEGER NOT NULL,
+                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+                group_id TEXT REFERENCES groups(id) ON DELETE CASCADE,
+                system_principal INTEGER,  -- 0 = Everyone, 1 = Authenticated
+                permission TEXT NOT NULL,
+                UNIQUE(resource, position)
             )
         """)
         await db.execute("""
@@ -152,9 +163,24 @@ async def init_db() -> None:
                 accepted_at TEXT
             )
         """)
+        # Migration: drop legacy role and workspace_access tables
+        for table in ("user_roles", "roles", "workspace_access"):
+            await db.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
         await db.commit()
     finally:
         await db.close()
+
+
+# ACL constants
+ACTION_DENY = 0
+ACTION_ALLOW = 1
+
+PRINCIPAL_SYSTEM = 0
+PRINCIPAL_USER = 1
+PRINCIPAL_GROUP = 2
+
+SYSTEM_EVERYONE = 0
+SYSTEM_AUTHENTICATED = 1
 
 
 @asynccontextmanager
@@ -256,40 +282,414 @@ async def verify_user(user_id: str) -> bool:
         await db.close()
 
 
-async def ensure_role(name: str) -> None:
-    """Create a role if it doesn't exist."""
+# --- Group operations ---
+
+
+async def create_group(
+    name: str, description: str | None = None, group_id: str | None = None
+) -> dict:
+    """Create a group. Returns the group dict."""
     db = await get_db()
     try:
+        gid = group_id or str(uuid.uuid4())
         await db.execute(
-            "INSERT OR IGNORE INTO roles (name) VALUES (?)", (name,)
+            "INSERT INTO groups (id, name, description) VALUES (?, ?, ?)",
+            (gid, name, description),
         )
         await db.commit()
+        return {"id": gid, "name": name, "description": description}
     finally:
         await db.close()
 
 
-async def assign_role(user_id: str, role_name: str) -> None:
-    """Assign a role to a user (idempotent)."""
-    db = await get_db()
-    try:
-        await db.execute(
-            "INSERT OR IGNORE INTO user_roles (user_id, role_name) VALUES (?, ?)",
-            (user_id, role_name),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
-async def get_user_roles(user_id: str) -> list[str]:
-    """Get all roles for a user."""
+async def get_group_by_name(name: str) -> dict | None:
+    """Find a group by name."""
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT role_name FROM user_roles WHERE user_id = ?", (user_id,)
+            "SELECT id, name, description, created_at"
+            " FROM groups WHERE name = ?",
+            (name,),
         )
-        rows = await cursor.fetchall()
-        return [row["role_name"] for row in rows]
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "created_at": row["created_at"],
+        }
+    finally:
+        await db.close()
+
+
+async def get_group_by_id(group_id: str) -> dict | None:
+    """Find a group by ID."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, name, description, created_at"
+            " FROM groups WHERE id = ?",
+            (group_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "created_at": row["created_at"],
+        }
+    finally:
+        await db.close()
+
+
+async def list_groups() -> list[dict]:
+    """List all groups."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, name, description, created_at"
+            " FROM groups ORDER BY name"
+        )
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "description": row["description"],
+                "created_at": row["created_at"],
+            }
+            for row in await cursor.fetchall()
+        ]
+    finally:
+        await db.close()
+
+
+async def delete_group(group_id: str) -> bool:
+    """Delete a group. Returns True if deleted."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "DELETE FROM groups WHERE id = ?", (group_id,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def update_group(
+    group_id: str,
+    name: str | None = None,
+    description: str | None = None,
+) -> bool:
+    """Update group name/description. Returns True if updated."""
+    updates = {}
+    if name is not None:
+        updates["name"] = name
+    if description is not None:
+        updates["description"] = description
+    if not updates:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [group_id]
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            f"UPDATE groups SET {set_clause} WHERE id = ?",  # noqa: S608
+            values,
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def add_user_to_group(
+    user_id: str, group_id: str, source: str = "manual"
+) -> None:
+    """Add a user to a group (idempotent)."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "INSERT OR IGNORE INTO user_groups (user_id, group_id, source)"
+            " VALUES (?, ?, ?)",
+            (user_id, group_id, source),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def remove_user_from_group(user_id: str, group_id: str) -> bool:
+    """Remove a user from a group. Returns True if removed."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?",
+            (user_id, group_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_group_members(group_id: str) -> list[dict]:
+    """List users in a group."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT u.id, u.email, ug.source FROM users u"
+            " JOIN user_groups ug ON u.id = ug.user_id"
+            " WHERE ug.group_id = ?"
+            " ORDER BY u.email",
+            (group_id,),
+        )
+        return [
+            {"id": row["id"], "email": row["email"], "source": row["source"]}
+            for row in await cursor.fetchall()
+        ]
+    finally:
+        await db.close()
+
+
+async def get_user_group_ids(user_id: str) -> list[str]:
+    """Get all group IDs for a user."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT group_id FROM user_groups WHERE user_id = ?",
+            (user_id,),
+        )
+        return [row["group_id"] for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_user_groups(user_id: str) -> list[dict]:
+    """Get all groups a user belongs to."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT g.id, g.name, g.description FROM groups g"
+            " JOIN user_groups ug ON g.id = ug.group_id"
+            " WHERE ug.user_id = ?"
+            " ORDER BY g.name",
+            (user_id,),
+        )
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "description": row["description"],
+            }
+            for row in await cursor.fetchall()
+        ]
+    finally:
+        await db.close()
+
+
+# --- ACL entry operations ---
+
+
+async def add_acl_entry(
+    resource: str,
+    position: int,
+    action: int,
+    permission: str,
+    principal_type: int,
+    user_id: str | None = None,
+    group_id: str | None = None,
+    system_principal: int | None = None,
+) -> int:
+    """Add an ACL entry. Returns the entry ID."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type,"
+            "  user_id, group_id, system_principal, permission)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                resource,
+                position,
+                action,
+                principal_type,
+                user_id,
+                group_id,
+                system_principal,
+                permission,
+            ),
+        )
+        await db.commit()
+        return cursor.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_acl_entries(resource: str) -> list[dict]:
+    """Get ACL entries for a resource, ordered by position."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE resource = ?"
+            " ORDER BY position",
+            (resource,),
+        )
+        return [
+            {
+                "id": row["id"],
+                "resource": row["resource"],
+                "position": row["position"],
+                "action": row["action"],
+                "principal_type": row["principal_type"],
+                "user_id": row["user_id"],
+                "group_id": row["group_id"],
+                "system_principal": row["system_principal"],
+                "permission": row["permission"],
+            }
+            for row in await cursor.fetchall()
+        ]
+    finally:
+        await db.close()
+
+
+async def get_acl_entries_resolved(resource: str) -> list[dict]:
+    """Get ACL entries with resolved principal names."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT ae.id, ae.resource, ae.position, ae.action,"
+            " ae.principal_type, ae.user_id, ae.group_id,"
+            " ae.system_principal, ae.permission,"
+            " u.email AS user_email, g.name AS group_name"
+            " FROM acl_entries ae"
+            " LEFT JOIN users u ON ae.user_id = u.id"
+            " LEFT JOIN groups g ON ae.group_id = g.id"
+            " WHERE ae.resource = ?"
+            " ORDER BY ae.position",
+            (resource,),
+        )
+        results = []
+        for row in await cursor.fetchall():
+            entry = {
+                "id": row["id"],
+                "resource": row["resource"],
+                "position": row["position"],
+                "action": row["action"],
+                "principal_type": row["principal_type"],
+                "permission": row["permission"],
+            }
+            pt = row["principal_type"]
+            if pt == PRINCIPAL_SYSTEM:
+                sp = row["system_principal"]
+                entry["principal"] = (
+                    "Everyone" if sp == SYSTEM_EVERYONE else "Authenticated"
+                )
+            elif pt == PRINCIPAL_USER:
+                entry["principal"] = row["user_email"] or row["user_id"]
+                entry["user_id"] = row["user_id"]
+            elif pt == PRINCIPAL_GROUP:
+                entry["principal"] = row["group_name"] or row["group_id"]
+                entry["group_id"] = row["group_id"]
+            results.append(entry)
+        return results
+    finally:
+        await db.close()
+
+
+async def replace_acl_entries(resource: str, entries: list[dict]) -> None:
+    """Replace all ACL entries for a resource."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "DELETE FROM acl_entries WHERE resource = ?", (resource,)
+        )
+        for entry in entries:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  user_id, group_id, system_principal, permission)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    resource,
+                    entry["position"],
+                    entry["action"],
+                    entry["principal_type"],
+                    entry.get("user_id"),
+                    entry.get("group_id"),
+                    entry.get("system_principal"),
+                    entry["permission"],
+                ),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def delete_acl_entries_for_resource(resource: str) -> int:
+    """Delete all ACL entries for a resource. Returns count deleted."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "DELETE FROM acl_entries WHERE resource = ?", (resource,)
+        )
+        await db.commit()
+        return cursor.rowcount
+    finally:
+        await db.close()
+
+
+async def get_acl_entries_by_principal_user(user_id: str) -> list[dict]:
+    """Get all ACL entries referencing a specific user."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE principal_type = ? AND user_id = ?"
+            " ORDER BY resource, position",
+            (PRINCIPAL_USER, user_id),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_acl_entries_by_principal_group(group_id: str) -> list[dict]:
+    """Get all ACL entries referencing a specific group."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE principal_type = ? AND group_id = ?"
+            " ORDER BY resource, position",
+            (PRINCIPAL_GROUP, group_id),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_acl_tree_summary() -> list[dict]:
+    """Get all distinct resources with their ACE counts."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT resource, COUNT(*) as ace_count"
+            " FROM acl_entries GROUP BY resource"
+            " ORDER BY resource"
+        )
+        return [
+            {"resource": row["resource"], "ace_count": row["ace_count"]}
+            for row in await cursor.fetchall()
+        ]
     finally:
         await db.close()
 
@@ -318,7 +718,7 @@ async def get_user_by_email(email: str) -> dict | None:
 
 
 async def list_users() -> list[dict]:
-    """List all users with their roles."""
+    """List all users with their groups."""
     db = await get_db()
     try:
         cursor = await db.execute(
@@ -326,18 +726,23 @@ async def list_users() -> list[dict]:
         )
         users = []
         for row in await cursor.fetchall():
-            role_cursor = await db.execute(
-                "SELECT role_name FROM user_roles WHERE user_id = ?",
+            group_cursor = await db.execute(
+                "SELECT g.id, g.name FROM groups g"
+                " JOIN user_groups ug ON g.id = ug.group_id"
+                " WHERE ug.user_id = ?",
                 (row["id"],),
             )
-            roles = [r["role_name"] for r in await role_cursor.fetchall()]
+            groups = [
+                {"id": r["id"], "name": r["name"]}
+                for r in await group_cursor.fetchall()
+            ]
             users.append(
                 {
                     "id": row["id"],
                     "email": row["email"],
                     "verified": bool(row["verified"]),
                     "created_at": row["created_at"],
-                    "roles": roles,
+                    "groups": groups,
                 }
             )
         return users
@@ -350,20 +755,6 @@ async def delete_user(user_id: str) -> bool:
     db = await get_db()
     try:
         cursor = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        await db.commit()
-        return cursor.rowcount > 0
-    finally:
-        await db.close()
-
-
-async def remove_role(user_id: str, role_name: str) -> bool:
-    """Remove a role from a user. Returns True if removed."""
-    db = await get_db()
-    try:
-        cursor = await db.execute(
-            "DELETE FROM user_roles WHERE user_id = ? AND role_name = ?",
-            (user_id, role_name),
-        )
         await db.commit()
         return cursor.rowcount > 0
     finally:
@@ -505,19 +896,24 @@ async def list_workspaces(user_id: str) -> list[dict]:
 
 
 async def list_shared_workspaces(user_id: str) -> list[dict]:
-    """List workspaces shared with (but not owned by) this user."""
+    """List workspaces shared with (but not owned by) this user via ACL.
+
+    Finds workspaces where the user has a direct user-level ACE on
+    /workspaces/{id} but is not the owner.
+    """
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT w.id, w.name, w.container_id, w.image,"
+            "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
             " w.default_command, w.mounts, w.env, w.created_at,"
             " u.email AS owner_email"
             " FROM workspaces w"
-            " JOIN workspace_access wa ON w.id = wa.workspace_id"
+            " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
             " JOIN users u ON w.user_id = u.id"
-            " WHERE wa.user_id = ?"
+            " WHERE ae.principal_type = ? AND ae.user_id = ?"
+            "   AND ae.action = ? AND w.user_id != ?"
             " ORDER BY w.created_at",
-            (user_id,),
+            (PRINCIPAL_USER, user_id, ACTION_ALLOW, user_id),
         )
         rows = await cursor.fetchall()
         return [
@@ -538,17 +934,30 @@ async def list_shared_workspaces(user_id: str) -> list[dict]:
         await db.close()
 
 
-async def get_workspace(workspace_id: str, user_id: str) -> dict | None:
+async def get_workspace(
+    workspace_id: str, user_id: str | None = None
+) -> dict | None:
+    """Get a workspace by ID.
+
+    If user_id is provided, restricts to workspaces owned by that user.
+    Access control for shared workspaces is handled by the ACL layer.
+    """
     db = await get_db()
     try:
-        cursor = await db.execute(
-            "SELECT id, user_id, name, container_id, num_ports, image,"
-            " default_command, mounts, env"
-            " FROM workspaces WHERE id = ? AND (user_id = ? OR id IN ("
-            "   SELECT workspace_id FROM workspace_access WHERE user_id = ?"
-            " ))",
-            (workspace_id, user_id, user_id),
-        )
+        if user_id is not None:
+            cursor = await db.execute(
+                "SELECT id, user_id, name, container_id, num_ports, image,"
+                " default_command, mounts, env"
+                " FROM workspaces WHERE id = ? AND user_id = ?",
+                (workspace_id, user_id),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT id, user_id, name, container_id, num_ports, image,"
+                " default_command, mounts, env"
+                " FROM workspaces WHERE id = ?",
+                (workspace_id,),
+            )
         row = await cursor.fetchone()
         if row is None:
             return None
@@ -595,42 +1004,27 @@ async def get_workspace_by_id(workspace_id: str) -> dict | None:
         await db.close()
 
 
-async def share_workspace(workspace_id: str, user_id: str) -> None:
-    """Grant a user access to a workspace."""
-    db = await get_db()
-    try:
-        await db.execute(
-            "INSERT OR IGNORE INTO workspace_access (workspace_id, user_id) VALUES (?, ?)",
-            (workspace_id, user_id),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
-async def unshare_workspace(workspace_id: str, user_id: str) -> None:
-    """Revoke a user's access to a workspace."""
-    db = await get_db()
-    try:
-        await db.execute(
-            "DELETE FROM workspace_access WHERE workspace_id = ? AND user_id = ?",
-            (workspace_id, user_id),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
 async def get_workspace_members(workspace_id: str) -> list[dict]:
-    """Get users who have been granted access to a workspace."""
+    """Get users who have been granted access to a workspace via ACL.
+
+    Returns users with direct user-level ACEs on /workspaces/{id},
+    excluding the workspace owner.
+    """
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT u.id, u.email FROM users u"
-            " JOIN workspace_access wa ON u.id = wa.user_id"
-            " WHERE wa.workspace_id = ?"
+            "SELECT DISTINCT u.id, u.email FROM users u"
+            " JOIN acl_entries ae ON ae.user_id = u.id"
+            " JOIN workspaces w ON w.id = ?"
+            " WHERE ae.resource = ? AND ae.principal_type = ?"
+            "   AND ae.action = ? AND u.id != w.user_id"
             " ORDER BY u.email",
-            (workspace_id,),
+            (
+                workspace_id,
+                f"/workspaces/{workspace_id}",
+                PRINCIPAL_USER,
+                ACTION_ALLOW,
+            ),
         )
         return [
             {"id": row["id"], "email": row["email"]}

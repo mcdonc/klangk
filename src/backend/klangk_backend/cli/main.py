@@ -119,25 +119,45 @@ def status(
 @app.command("list")
 def list_workspaces(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
+    shared: bool = typer.Option(
+        False, "--shared", help="Include workspaces shared with you"
+    ),
 ) -> None:
     """List all workspaces."""
     _require_auth()
     client = _client()
     workspaces = client.list_workspaces()
-    if not workspaces:
+    shared_workspaces = client.list_shared_workspaces() if shared else []
+    if not workspaces and not shared_workspaces:
         typer.echo("No workspaces found.")
         return
     if plain:
         for ws in workspaces:
             typer.echo(f"  {ws.name}  ({ws.id[:12]})  {ws.created_at[:10]}")
+        if shared_workspaces:
+            typer.echo("Shared with me:")
+            for ws in shared_workspaces:
+                owner = f"  by {ws.owner_email}" if ws.owner_email else ""
+                typer.echo(
+                    f"  {ws.name}  ({ws.id[:12]})  {ws.created_at[:10]}{owner}"
+                )
         return
     console = Console()
     table = Table(box=None, pad_edge=False)
     table.add_column("Name", style="bold")
     table.add_column("ID")
     table.add_column("Created")
+    if shared:
+        table.add_column("Owner")
     for ws in workspaces:
-        table.add_row(ws.name, ws.id[:12], ws.created_at[:10])
+        row = [ws.name, ws.id[:12], ws.created_at[:10]]
+        if shared:
+            row.append("")
+        table.add_row(*row)
+    for ws in shared_workspaces:
+        table.add_row(
+            ws.name, ws.id[:12], ws.created_at[:10], ws.owner_email or ""
+        )
     console.print(table)
 
 

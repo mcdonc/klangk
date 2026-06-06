@@ -94,9 +94,7 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-def create_token(
-    user_id: str, email: str, roles: list[str] | None = None
-) -> str:
+def create_token(user_id: str, email: str) -> str:
     jti = str(uuid.uuid4())
     expire = datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRE_HOURS)
     payload = {
@@ -104,7 +102,6 @@ def create_token(
         "email": email,
         "jti": jti,
         "exp": expire,
-        "roles": roles or [],
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -161,8 +158,7 @@ async def register(
     user = await model.create_user(req.email, password_hash, verified=verified)
     token = None
     if verified:
-        roles = await model.get_user_roles(user["id"])
-        token = create_token(user["id"], user["email"], roles)
+        token = create_token(user["id"], user["email"])
     return RegisterResult(
         user_id=user["id"], email=user["email"], access_token=token
     )
@@ -203,8 +199,7 @@ async def login(req: LoginRequest) -> TokenResponse:
 
     if LOGIN_LOCKOUT_FAILURES > 0:
         await model.clear_login_attempts(req.email)
-    roles = await model.get_user_roles(user["id"])
-    token = create_token(user["id"], user["email"], roles)
+    token = create_token(user["id"], user["email"])
     return TokenResponse(access_token=token)
 
 
@@ -305,23 +300,9 @@ async def get_current_user(
         user = await model.get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=401, detail="User not found")
-        user["roles"] = payload.get("roles", [])
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
-
-
-def require_role(role: str):
-    """FastAPI dependency that requires the current user to have a specific role."""
-
-    async def check(user: dict = Depends(get_current_user)) -> dict:
-        if role not in user.get("roles", []):
-            raise HTTPException(
-                status_code=403, detail=f"Role '{role}' required"
-            )
-        return user
-
-    return check
 
 
 async def get_current_user_optional(
@@ -338,10 +319,7 @@ async def get_current_user_optional(
             return None
         if await model.is_token_blocklisted(jti):
             return None
-        user = await model.get_user_by_id(user_id)
-        if user is not None:
-            user["roles"] = payload.get("roles", [])
-        return user
+        return await model.get_user_by_id(user_id)
     except JWTError:
         return None
 

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
+import '../widgets/skeuo_tab.dart';
 
 class AdminUsersPage extends StatefulWidget {
   const AdminUsersPage({super.key});
@@ -14,29 +15,37 @@ class AdminUsersPage extends StatefulWidget {
   State<AdminUsersPage> createState() => _AdminUsersPageState();
 }
 
-class _AdminUsersPageState extends State<AdminUsersPage>
-    with SingleTickerProviderStateMixin {
+class _AdminUsersPageState extends State<AdminUsersPage> {
   List<Map<String, dynamic>> _users = [];
   List<Map<String, dynamic>> _invitations = [];
+  List<Map<String, dynamic>> _groups = [];
   bool _loading = true;
   String? _error;
-  late final TabController _tabController;
+  int _selectedIndex = 0;
+
+  bool _canUsers = false;
+  bool _canGroups = false;
+  bool _canInvitations = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _resolvePermissions();
     _loadData();
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
+  void _resolvePermissions() {
+    final auth = context.read<AuthService>();
+    _canUsers = auth.hasPermission('/admin', '*') ||
+        auth.hasPermission('/admin/users', 'view');
+    _canGroups = auth.hasPermission('/admin', '*') ||
+        auth.hasPermission('/admin/groups', 'view');
+    _canInvitations = auth.hasPermission('/admin', '*') ||
+        auth.hasPermission('/admin/invitations', 'view');
   }
 
   Future<void> _loadData() async {
-    await Future.wait([_loadUsers(), _loadInvitations()]);
+    await Future.wait([_loadUsers(), _loadInvitations(), _loadGroups()]);
   }
 
   Future<void> _loadUsers() async {
@@ -82,6 +91,278 @@ class _AdminUsersPageState extends State<AdminUsersPage>
     } catch (_) {
       // Invitations tab is best-effort
     }
+  }
+
+  Future<void> _loadGroups() async {
+    try {
+      final auth = context.read<AuthService>();
+      final resp = await auth.authGet('/admin/groups');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as List;
+        if (mounted) {
+          setState(() {
+            _groups = data.cast<Map<String, dynamic>>();
+          });
+        }
+      }
+    } catch (_) {
+      // Groups tab is best-effort
+    }
+  }
+
+  Future<void> _createGroup() async {
+    final nameCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Create Group'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Group name'),
+              autofocus: true,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: descCtrl,
+              decoration:
+                  const InputDecoration(labelText: 'Description (optional)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Create')),
+        ],
+      ),
+    );
+    if (result != true || nameCtrl.text.trim().isEmpty) return;
+    final auth = context.read<AuthService>();
+    final resp = await auth.authPost(
+      '/admin/groups',
+      body: jsonEncode({
+        'name': nameCtrl.text.trim(),
+        if (descCtrl.text.trim().isNotEmpty)
+          'description': descCtrl.text.trim(),
+      }),
+    );
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      _loadGroups();
+    } else {
+      _showSnack(resp);
+    }
+  }
+
+  Future<void> _deleteGroup(String groupId, String groupName) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Group'),
+        content:
+            Text('Delete group "$groupName"? All ACL entries for this group '
+                'will be removed.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: KColors.accentRed),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final auth = context.read<AuthService>();
+    final resp = await auth.authDelete('/admin/groups/$groupId');
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      _loadGroups();
+    } else {
+      _showSnack(resp);
+    }
+  }
+
+  Future<void> _manageMembers(Map<String, dynamic> group) async {
+    final auth = context.read<AuthService>();
+    final groupId = group['id'] as String;
+    final groupName = group['name'] as String;
+
+    final membersResp = await auth.authGet('/admin/groups/$groupId/members');
+    final usersResp = await auth.authGet('/admin/users');
+    if (!mounted) return;
+    if (membersResp.statusCode != 200 || usersResp.statusCode != 200) return;
+
+    var members = List<Map<String, dynamic>>.from(
+      jsonDecode(membersResp.body),
+    );
+    final allUsers = List<Map<String, dynamic>>.from(
+      jsonDecode(usersResp.body),
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final memberIds = members.map((m) => m['id']).toSet();
+          final nonMembers =
+              allUsers.where((u) => !memberIds.contains(u['id'])).toList();
+
+          return AlertDialog(
+            title: Text('Members of "$groupName"'),
+            content: SizedBox(
+              width: 400,
+              height: 400,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (nonMembers.isNotEmpty)
+                    DropdownButton<String>(
+                      isExpanded: true,
+                      hint: const Text('Add member...'),
+                      items: nonMembers.map((u) {
+                        return DropdownMenuItem(
+                          value: u['id'] as String,
+                          child: Text(u['email'] as String),
+                        );
+                      }).toList(),
+                      onChanged: (userId) async {
+                        if (userId == null) return;
+                        final resp = await auth.authPost(
+                          '/admin/groups/$groupId/members',
+                          body: jsonEncode({'user_id': userId}),
+                        );
+                        if (resp.statusCode == 200) {
+                          final r = await auth
+                              .authGet('/admin/groups/$groupId/members');
+                          if (r.statusCode == 200) {
+                            setDialogState(() {
+                              members = List<Map<String, dynamic>>.from(
+                                jsonDecode(r.body),
+                              );
+                            });
+                          }
+                        }
+                      },
+                    ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: members.isEmpty
+                        ? const Center(
+                            child: Text('No members',
+                                style: TextStyle(color: KColors.textSecondary)))
+                        : ListView.builder(
+                            itemCount: members.length,
+                            itemBuilder: (ctx, i) {
+                              final member = members[i];
+                              return ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: KColors.accentBlue,
+                                  child: Text(
+                                    (member['email'] as String)[0]
+                                        .toUpperCase(),
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                                title: Text(member['email'] as String),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.remove_circle_outline,
+                                      color: KColors.accentRed),
+                                  tooltip: 'Remove from group',
+                                  onPressed: () async {
+                                    final resp = await auth.authDelete(
+                                      '/admin/groups/$groupId/members/${member['id']}',
+                                    );
+                                    if (resp.statusCode == 200) {
+                                      setDialogState(() {
+                                        members.removeAt(i);
+                                      });
+                                    }
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    _loadGroups();
+  }
+
+  void _showSnack(dynamic resp) {
+    String msg;
+    try {
+      msg = jsonDecode(resp.body)['detail'] ?? 'Error';
+    } catch (_) {
+      msg = 'Error: ${resp.statusCode}';
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Widget _buildGroupsTab() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_groups.isEmpty) return const Center(child: Text('No groups'));
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _groups.length,
+      itemBuilder: (ctx, i) {
+        final group = _groups[i];
+        final name = group['name'] as String;
+        final desc = group['description'] as String? ?? '';
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor:
+                  name == 'admin' ? KColors.accentAmber : KColors.accentBlue,
+              child: const Icon(Icons.group, color: Colors.white),
+            ),
+            title: Text(name),
+            subtitle: desc.isNotEmpty
+                ? Text(desc,
+                    style: const TextStyle(color: KColors.textSecondary))
+                : null,
+            onTap: () => _manageMembers(group),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.people, color: KColors.accentBlue),
+                  tooltip: 'Manage members',
+                  onPressed: () => _manageMembers(group),
+                ),
+                if (name != 'admin')
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline,
+                        color: KColors.accentRed),
+                    tooltip: 'Delete group',
+                    onPressed: () => _deleteGroup(group['id'], name),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _inviteUser() async {
@@ -261,16 +542,6 @@ class _AdminUsersPageState extends State<AdminUsersPage>
     }
   }
 
-  Future<void> _toggleRole(String userId, String role, bool hasRole) async {
-    final auth = context.read<AuthService>();
-    if (hasRole) {
-      await auth.authDelete('/admin/users/$userId/roles/$role');
-    } else {
-      await auth.authPost('/admin/users/$userId/roles/$role');
-    }
-    _loadUsers();
-  }
-
   Widget _buildUsersTab() {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return Center(child: Text(_error!));
@@ -280,8 +551,11 @@ class _AdminUsersPageState extends State<AdminUsersPage>
       itemCount: _users.length,
       itemBuilder: (ctx, i) {
         final user = _users[i];
-        final roles = List<String>.from(user['roles'] ?? []);
-        final isAdmin = roles.contains('admin');
+        final groups = List<Map<String, dynamic>>.from(
+          user['groups'] as List? ?? [],
+        );
+        final groupNames = groups.map((g) => g['name'] as String).toList();
+        final isAdmin = groupNames.contains('admin');
         final isSelf = user['id'] == context.read<AuthService>().userId;
         final email = user['email'] as String? ?? '';
         final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
@@ -291,7 +565,9 @@ class _AdminUsersPageState extends State<AdminUsersPage>
             leading: _UserAvatar(initial: initial, isAdmin: isAdmin),
             title: Text(email),
             subtitle: Text(
-              roles.isEmpty ? 'No roles' : 'Roles: ${roles.join(", ")}',
+              groupNames.isEmpty
+                  ? 'No groups'
+                  : 'Groups: ${groupNames.join(", ")}',
               style: const TextStyle(color: KColors.textSecondary),
             ),
             onTap: () => _editUser(user),
@@ -299,18 +575,6 @@ class _AdminUsersPageState extends State<AdminUsersPage>
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (!isSelf) ...[
-                  IconButton(
-                    icon: Icon(
-                      isAdmin ? Icons.shield : Icons.shield_outlined,
-                      color: isAdmin ? KColors.accentAmber : KColors.textMuted,
-                    ),
-                    tooltip: isAdmin ? 'Remove admin role' : 'Grant admin role',
-                    onPressed: () => _toggleRole(
-                      user['id'],
-                      'admin',
-                      isAdmin,
-                    ),
-                  ),
                   IconButton(
                     icon: const Icon(Icons.delete_outline,
                         color: KColors.accentRed),
@@ -388,68 +652,111 @@ class _AdminUsersPageState extends State<AdminUsersPage>
     );
   }
 
+  /// Map from tab index to tab type for FAB selection.
+  List<String> get _tabTypes {
+    final types = <String>[];
+    if (_canUsers) types.add('users');
+    if (_canGroups) types.add('groups');
+    if (_canInvitations) types.add('invitations');
+    return types;
+  }
+
   @override
   Widget build(BuildContext context) {
     final pendingCount =
         _invitations.where((i) => i['status'] == 'pending').length;
+    final tabs = <SkeuoTab>[];
+    final views = <Widget>[];
+    final tabTypes = _tabTypes;
+
+    if (_canUsers) {
+      final idx = tabs.length;
+      tabs.add(SkeuoTab(
+        label: 'Users',
+        icon: Icons.people,
+        isSelected: _selectedIndex == idx,
+        onTap: () => setState(() => _selectedIndex = idx),
+      ));
+      views.add(_buildUsersTab());
+    }
+    if (_canGroups) {
+      final idx = tabs.length;
+      tabs.add(SkeuoTab(
+        label: 'Groups',
+        icon: Icons.group,
+        isSelected: _selectedIndex == idx,
+        onTap: () => setState(() => _selectedIndex = idx),
+      ));
+      views.add(_buildGroupsTab());
+    }
+    if (_canInvitations) {
+      final idx = tabs.length;
+      tabs.add(SkeuoTab(
+        label: 'Invitations',
+        icon: Icons.mail_outline,
+        isSelected: _selectedIndex == idx,
+        badge: pendingCount > 0 ? pendingCount : null,
+        onTap: () => setState(() => _selectedIndex = idx),
+      ));
+      views.add(_buildInvitationsTab());
+    }
+
+    if (tabs.isEmpty) {
+      views.add(const Center(child: Text('No admin sections available')));
+    }
+
+    Widget? fab;
+    final currentType = tabTypes.isNotEmpty && _selectedIndex < tabTypes.length
+        ? tabTypes[_selectedIndex]
+        : '';
+    if (currentType == 'users') {
+      fab = FloatingActionButton(
+        heroTag: 'add',
+        onPressed: _addUser,
+        tooltip: 'Add user',
+        child: const Icon(Icons.person_add),
+      );
+    } else if (currentType == 'invitations') {
+      fab = FloatingActionButton(
+        heroTag: 'invite',
+        onPressed: _inviteUser,
+        tooltip: 'Invite user',
+        child: const Icon(Icons.mail_outline),
+      );
+    } else if (currentType == 'groups') {
+      fab = FloatingActionButton(
+        heroTag: 'add-group',
+        onPressed: _createGroup,
+        tooltip: 'Create group',
+        child: const Icon(Icons.group_add),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const AppBarTitle(title: 'User Management'),
+        title: const AppBarTitle(title: 'Admin'),
         actions: const [
           AppBarActions(),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: [
-            const Tab(text: 'Users'),
-            Tab(
+      ),
+      floatingActionButton: fab,
+      body: Column(
+        children: [
+          if (tabs.isNotEmpty)
+            Container(
+              height: 40,
+              color: KColors.bgCanvas,
               child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Invitations'),
-                  if (pendingCount > 0) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: KColors.accentAmber,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text('$pendingCount',
-                          style: const TextStyle(
-                              fontSize: 12, color: Colors.white)),
-                    ),
-                  ],
-                ],
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: tabs.map((t) => Expanded(child: t)).toList(),
               ),
             ),
-          ],
-        ),
-      ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.small(
-            heroTag: 'invite',
-            onPressed: _inviteUser,
-            tooltip: 'Invite user',
-            child: const Icon(Icons.mail_outline),
+          Expanded(
+            child: IndexedStack(
+              index: _selectedIndex < views.length ? _selectedIndex : 0,
+              children: views,
+            ),
           ),
-          const SizedBox(height: 8),
-          FloatingActionButton(
-            heroTag: 'add',
-            onPressed: _addUser,
-            tooltip: 'Add user',
-            child: const Icon(Icons.person_add),
-          ),
-        ],
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildUsersTab(),
-          _buildInvitationsTab(),
         ],
       ),
     );

@@ -279,9 +279,15 @@ class WorkspaceSession:
             target_sock.send_json(message)
         except _WS_ERRORS:
             state.streaming_browser_requests.pop(request_id, None)
-            yield json.dumps(
-                {"type": "error", "error": "Browser connection not available"}
-            ) + "\n"
+            yield (
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": "Browser connection not available",
+                    }
+                )
+                + "\n"
+            )
             return
 
         try:
@@ -291,13 +297,16 @@ class WorkspaceSession:
                         queue.get(), timeout=idle_timeout
                     )
                 except asyncio.TimeoutError:
-                    yield json.dumps(
-                        {
-                            "type": "error",
-                            "error": "Browser client did not respond "
-                            "within timeout",
-                        }
-                    ) + "\n"
+                    yield (
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "error": "Browser client did not respond "
+                                "within timeout",
+                            }
+                        )
+                        + "\n"
+                    )
                     return
                 yield json.dumps(item) + "\n"
                 if item["type"] != "chunk":
@@ -559,9 +568,15 @@ class Connection:
             send_error(self.sock, "Missing workspaceId")
             return
 
-        workspace = await workspaces.get_workspace(
-            workspace_id, self.user["id"]
-        )
+        from . import acl as _acl
+
+        principals = await _acl.get_principals(self.user["id"])
+        if not await _acl.check_permission(
+            f"/workspaces/{workspace_id}", principals, "terminal"
+        ):
+            send_error(self.sock, "Permission denied")
+            return
+        workspace = await workspaces.get_workspace(workspace_id)
         if workspace is None:
             send_error(self.sock, "Workspace not found")
             return

@@ -56,15 +56,72 @@ async def user(db):
 
 
 @pytest.fixture
-async def admin_user(db):
-    """Create a test user with admin role and return it."""
+async def admin_group(db):
+    """Create the admin group and seed default ACLs."""
+    import klangk_backend.model as us
+    from klangk_backend.model import (
+        ACTION_ALLOW,
+        ACTION_DENY,
+        PRINCIPAL_GROUP,
+        PRINCIPAL_SYSTEM,
+        SYSTEM_AUTHENTICATED,
+        SYSTEM_EVERYONE,
+    )
+
+    group = await us.create_group("admin", description="Administrators")
+    # Seed default ACLs
+    await us.add_acl_entry(
+        "/",
+        0,
+        ACTION_ALLOW,
+        "view",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_AUTHENTICATED,
+    )
+    await us.add_acl_entry(
+        "/",
+        1,
+        ACTION_DENY,
+        "*",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_EVERYONE,
+    )
+    await us.add_acl_entry(
+        "/workspaces",
+        0,
+        ACTION_ALLOW,
+        "create",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_AUTHENTICATED,
+    )
+    await us.add_acl_entry(
+        "/admin",
+        0,
+        ACTION_ALLOW,
+        "*",
+        PRINCIPAL_GROUP,
+        group_id=group["id"],
+    )
+    await us.add_acl_entry(
+        "/admin",
+        1,
+        ACTION_DENY,
+        "*",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_EVERYONE,
+    )
+    return group
+
+
+@pytest.fixture
+async def admin_user(admin_group):
+    """Create a test user in the admin group and return it."""
     import klangk_backend.model as us
 
     user = await us.create_user(
         "testadmin@example.com", _TEST_PASSWORD_HASH, verified=True
     )
-    await us.ensure_role("admin")
-    await us.assign_role(user["id"], "admin")
+    await us.add_user_to_group(user["id"], admin_group["id"])
     return user
 
 

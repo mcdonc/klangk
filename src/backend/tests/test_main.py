@@ -34,10 +34,11 @@ class TestSeedDefaultUser:
         await main.seed_default_user()
         user = await model.get_user_by_email("gen-test")
         assert user is not None
-        # Password was generated, so we can't know it, but user exists
-        # and has admin role
-        roles = await model.get_user_roles(user["id"])
-        assert "admin" in roles
+        # User exists and is in the admin group
+        admin_group = await model.get_group_by_name("admin")
+        assert admin_group is not None
+        group_ids = await model.get_user_group_ids(user["id"])
+        assert admin_group["id"] in group_ids
 
     async def test_generated_password_is_logged(self, db, monkeypatch, caplog):
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "log-test")

@@ -9,7 +9,7 @@ import zipfile
 import pytest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 import httpx
 from httpx import AsyncClient, ASGITransport
 
@@ -671,9 +671,24 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
 
-    async def test_delete_nonexistent(self, client, user):
+    async def test_delete_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.delete("/workspaces/fake-id", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_delete_not_found(self, client, user):
+        """ACL passes but workspace doesn't exist."""
+        headers = await _auth_headers(client)
+        fake_id = "fake-del-id"
+        await model.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.delete(f"/workspaces/{fake_id}", headers=headers)
         assert resp.status_code == 404
 
     async def test_delete_workspace_with_container(self, client, user):
@@ -730,10 +745,52 @@ class TestWorkspaceRoutes:
         assert match[0]["name"] == "renamed"
         assert match[0]["default_command"] == "pi"
 
-    async def test_update_workspace_not_found(self, client, user):
+    async def test_update_workspace_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.put(
             "/workspaces/nonexistent",
+            json={"default_command": "pi"},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_update_workspace_not_found(self, client, user):
+        """ACL passes but workspace doesn't exist."""
+        headers = await _auth_headers(client)
+        fake_id = "fake-ws-id"
+        await model.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.put(
+            f"/workspaces/{fake_id}",
+            json={"default_command": "pi"},
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_update_workspace_race_delete(
+        self, client, user, monkeypatch
+    ):
+        """Workspace deleted between get and update returns 404."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "race-ws"}
+        )
+        ws_id = resp.json()["id"]
+        original_update = model.update_workspace
+
+        async def _delete_then_update(workspace_id, user_id, **fields):
+            await model.delete_workspace(workspace_id, user_id)
+            return await original_update(workspace_id, user_id, **fields)
+
+        monkeypatch.setattr(model, "update_workspace", _delete_then_update)
+        resp = await client.put(
+            f"/workspaces/{ws_id}",
             json={"default_command": "pi"},
             headers=headers,
         )
@@ -814,10 +871,29 @@ class TestWorkspaceRoutes:
         assert data["env"] == {"FOO": "bar"}
         assert data["id"] != ws_id
 
-    async def test_duplicate_workspace_not_found(self, client, user):
+    async def test_duplicate_workspace_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
             "/workspaces/nonexistent/duplicate",
+            json={"name": "dup"},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_duplicate_workspace_not_found(self, client, user):
+        """ACL passes but workspace doesn't exist."""
+        headers = await _auth_headers(client)
+        fake_id = "fake-dup-id"
+        await model.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.post(
+            f"/workspaces/{fake_id}/duplicate",
             json={"name": "dup"},
             headers=headers,
         )
@@ -979,9 +1055,13 @@ class TestWorkspaceSharingRoutes:
             "/workspaces", headers=headers, json={"name": "share-ws"}
         )
         ws_id = resp.json()["id"]
-        # Share with other so they can see the workspace
-        await model.share_workspace(ws_id, other["id"])
-        # Other tries to list members
+        # Share with other (gives view/terminal/files but not share)
+        await client.post(
+            f"/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        # Other tries to list members — no share permission
         resp = await client.get(
             f"/workspaces/{ws_id}/members", headers=other_headers
         )
@@ -999,28 +1079,113 @@ class TestWorkspaceSharingRoutes:
         )
         assert resp.status_code == 403
 
-    async def test_members_workspace_not_found(self, client, user):
+    async def test_members_no_permission(self, client, user):
+        """User without share permission gets 403 on nonexistent workspace."""
         headers = await _auth_headers(client)
         resp = await client.get(
             "/workspaces/nonexistent/members", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
-    async def test_add_member_workspace_not_found(self, client, user):
+    async def test_add_member_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
             "/workspaces/nonexistent/members",
             headers=headers,
             json={"email": "other@example.com"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
-    async def test_remove_member_workspace_not_found(self, client, user):
+    async def test_remove_member_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.delete(
             "/workspaces/nonexistent/members/some-id", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
+
+
+class TestWorkspaceACL:
+    async def test_get_workspace_acl(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "acl-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.get(f"/workspaces/{ws_id}/acl", headers=headers)
+        assert resp.status_code == 200
+        entries = resp.json()
+        # Owner has * ACE
+        assert len(entries) >= 1
+        assert any(
+            e["permission"] == "*" and e["principal"] == "testuser@example.com"
+            for e in entries
+        )
+
+    async def test_get_workspace_acl_no_permission(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/workspaces/nonexistent/acl", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_get_workspace_acl_with_group(
+        self, client, admin_user, user
+    ):
+        """ACL endpoint resolves group names."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "group-acl-ws"}
+        )
+        ws_id = resp.json()["id"]
+        # Add a group ACE
+        group = await model.create_group("test-acl-group")
+        await model.add_acl_entry(
+            f"/workspaces/{ws_id}",
+            1,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_GROUP,
+            group_id=group["id"],
+        )
+        resp = await client.get(f"/workspaces/{ws_id}/acl", headers=headers)
+        assert resp.status_code == 200
+        entries = resp.json()
+        group_entry = next(
+            (e for e in entries if e.get("group_id") == group["id"]), None
+        )
+        assert group_entry is not None
+        assert group_entry["principal"] == "test-acl-group"
+
+    async def test_replace_workspace_acl(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "replace-acl-ws"}
+        )
+        ws_id = resp.json()["id"]
+        # Replace with custom ACL
+        new_acl = [
+            {
+                "action": model.ACTION_ALLOW,
+                "principal_type": model.PRINCIPAL_USER,
+                "permission": "*",
+                "user_id": user["id"],
+            },
+            {
+                "action": model.ACTION_ALLOW,
+                "principal_type": model.PRINCIPAL_SYSTEM,
+                "permission": "view",
+                "system_principal": model.SYSTEM_AUTHENTICATED,
+            },
+        ]
+        resp = await client.put(
+            f"/workspaces/{ws_id}/acl",
+            headers=headers,
+            json=new_acl,
+        )
+        assert resp.status_code == 200
+        entries = resp.json()
+        assert len(entries) == 2
+        assert entries[0]["permission"] == "*"
+        assert entries[1]["permission"] == "view"
+        assert entries[1]["principal"] == "Authenticated"
 
 
 class TestUserSearch:
@@ -1411,7 +1576,7 @@ class TestFileRoutes:
         resp = await client.get(
             "/workspaces/fake-id/files?path=.", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_upload_and_read(self, client, user):
         headers = await _auth_headers(client)
@@ -1596,7 +1761,7 @@ class TestFileRoutes:
             headers=headers,
             files={"file": ("f.txt", b"data", "text/plain")},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_file_traversal_rejected(self, client, user):
         headers = await _auth_headers(client)
@@ -1621,7 +1786,7 @@ class TestFileRoutes:
         resp = await client.delete(
             "/workspaces/fake-id/files?path=f.txt", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_delete_file_traversal(self, client, user):
         headers = await _auth_headers(client)
@@ -1639,7 +1804,7 @@ class TestFileRoutes:
             headers=headers,
             json={"old_path": "a", "new_path": "b"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_rename_traversal(self, client, user):
         headers = await _auth_headers(client)
@@ -1656,7 +1821,7 @@ class TestFileRoutes:
         resp = await client.get(
             "/workspaces/fake-id/files/download?path=f.txt", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_download_traversal(self, client, user):
         headers = await _auth_headers(client)
@@ -1672,7 +1837,7 @@ class TestFileRoutes:
         resp = await client.get(
             "/workspaces/fake-id/files/content?path=f.txt", headers=headers
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_upload_traversal(self, client, user):
         headers = await _auth_headers(client)
@@ -1748,89 +1913,50 @@ class TestSetIdleTimeout:
 # --- Roles ---
 
 
-class TestRoles:
-    async def test_require_role_passes(self, admin_user):
-        """require_role dependency passes when user has the role."""
-        checker = auth.require_role("admin")
-        user = {
-            "id": admin_user["id"],
-            "email": "testadmin@example.com",
-            "roles": ["admin"],
-        }
-        result = await checker(user)
-        assert result == user
+class TestGroups:
+    async def test_create_group(self, db):
+        group = await model.create_group("editors", "Editor group")
+        assert group["name"] == "editors"
+        assert group["description"] == "Editor group"
+        assert group["id"]
 
-    async def test_require_role_fails(self, user):
-        """require_role dependency raises 403 when user lacks the role."""
-        checker = auth.require_role("admin")
-        user_dict = {
-            "id": user["id"],
-            "email": "testuser@example.com",
-            "roles": [],
-        }
-        with pytest.raises(HTTPException) as exc_info:
-            await checker(user_dict)
-        assert exc_info.value.status_code == 403
+    async def test_get_group_by_name(self, db):
+        await model.create_group("testers")
+        found = await model.get_group_by_name("testers")
+        assert found is not None
+        assert found["name"] == "testers"
 
-    async def test_ensure_role(self, db):
-        await model.ensure_role("editor")
-        # Idempotent
-        await model.ensure_role("editor")
+    async def test_add_user_to_group(self, user):
+        group = await model.create_group("devs")
+        await model.add_user_to_group(user["id"], group["id"])
+        group_ids = await model.get_user_group_ids(user["id"])
+        assert group["id"] in group_ids
 
-    async def test_assign_and_get_roles(self, user):
-        await model.ensure_role("admin")
-        await model.ensure_role("editor")
-        await model.assign_role(user["id"], "admin")
-        await model.assign_role(user["id"], "editor")
-        roles = await model.get_user_roles(user["id"])
-        assert set(roles) == {"admin", "editor"}
+    async def test_add_user_to_group_idempotent(self, user):
+        group = await model.create_group("devs")
+        await model.add_user_to_group(user["id"], group["id"])
+        await model.add_user_to_group(user["id"], group["id"])
+        group_ids = await model.get_user_group_ids(user["id"])
+        assert group_ids.count(group["id"]) == 1
 
-    async def test_assign_role_idempotent(self, user):
-        await model.ensure_role("admin")
-        await model.assign_role(user["id"], "admin")
-        await model.assign_role(user["id"], "admin")
-        roles = await model.get_user_roles(user["id"])
-        assert roles == ["admin"]
+    async def test_get_groups_empty(self, user):
+        group_ids = await model.get_user_group_ids(user["id"])
+        assert group_ids == []
 
-    async def test_get_roles_empty(self, user):
-        roles = await model.get_user_roles(user["id"])
-        assert roles == []
-
-    async def test_roles_in_jwt(self, user):
-        await model.ensure_role("admin")
-        await model.assign_role(user["id"], "admin")
-        token = auth.create_token(
-            user["id"], "testuser@example.com", ["admin"]
-        )
-        payload = auth.decode_token(token)
-        assert payload["roles"] == ["admin"]
-
-    async def test_login_includes_roles(self, client, admin_user):
-        resp = await client.post(
-            "/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
-        )
-        assert resp.status_code == 200
-        token = resp.json()["access_token"]
-        payload = auth.decode_token(token)
-        assert "admin" in payload["roles"]
-
-    async def test_login_no_roles(self, client, user):
-        resp = await client.post(
-            "/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
-        )
-        assert resp.status_code == 200
-        token = resp.json()["access_token"]
-        payload = auth.decode_token(token)
-        assert payload["roles"] == []
+    async def test_remove_user_from_group(self, user):
+        group = await model.create_group("devs")
+        await model.add_user_to_group(user["id"], group["id"])
+        removed = await model.remove_user_from_group(user["id"], group["id"])
+        assert removed is True
+        group_ids = await model.get_user_group_ids(user["id"])
+        assert group["id"] not in group_ids
 
     async def test_cascade_delete_user(self, db):
-        """Deleting a user cascades to user_roles."""
+        """Deleting a user cascades to user_groups."""
         user = await model.create_user("delme", "hash")
-        await model.ensure_role("admin")
-        await model.assign_role(user["id"], "admin")
-        assert await model.get_user_roles(user["id"]) == ["admin"]
+        group = await model.create_group("devs")
+        await model.add_user_to_group(user["id"], group["id"])
+        assert group["id"] in await model.get_user_group_ids(user["id"])
         db_conn = await model.get_db()
         try:
             await db_conn.execute(
@@ -1839,22 +1965,31 @@ class TestRoles:
             await db_conn.commit()
         finally:
             await db_conn.close()
-        assert await model.get_user_roles(user["id"]) == []
+        assert await model.get_user_group_ids(user["id"]) == []
 
-    async def test_cascade_delete_role(self, user):
-        """Deleting a role cascades to user_roles."""
-        await model.ensure_role("temp")
-        await model.assign_role(user["id"], "temp")
-        assert "temp" in await model.get_user_roles(user["id"])
-        db_conn = await model.get_db()
-        try:
-            await db_conn.execute(
-                "DELETE FROM roles WHERE name = ?", ("temp",)
-            )
-            await db_conn.commit()
-        finally:
-            await db_conn.close()
-        assert "temp" not in await model.get_user_roles(user["id"])
+    async def test_cascade_delete_group(self, user):
+        """Deleting a group cascades to user_groups."""
+        group = await model.create_group("temp")
+        await model.add_user_to_group(user["id"], group["id"])
+        assert group["id"] in await model.get_user_group_ids(user["id"])
+        await model.delete_group(group["id"])
+        assert group["id"] not in await model.get_user_group_ids(user["id"])
+
+    async def test_jwt_has_no_roles(self, user):
+        """JWT tokens no longer include roles."""
+        token = auth.create_token(user["id"], "testuser@example.com")
+        payload = auth.decode_token(token)
+        assert "roles" not in payload
+
+    async def test_login_jwt_has_no_roles(self, client, user):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        assert resp.status_code == 200
+        token = resp.json()["access_token"]
+        payload = auth.decode_token(token)
+        assert "roles" not in payload
 
 
 # --- Admin API endpoints ---
@@ -1877,9 +2012,9 @@ class TestAdminEndpoints:
         emails = [u["email"] for u in users]
         assert "testadmin@example.com" in emails
         assert "testuser@example.com" in emails
-        # Admin user should have roles
+        # Admin user should have admin group
         admin = next(u for u in users if u["email"] == "testadmin@example.com")
-        assert "admin" in admin["roles"]
+        assert any(g["name"] == "admin" for g in admin["groups"])
 
     async def test_list_users_requires_admin(self, client, user):
         login_resp = await client.post(
@@ -2008,35 +2143,6 @@ class TestAdminEndpoints:
         ws_list = await model.get_user_workspaces_with_containers(user["id"])
         assert len(ws_list) == 0
 
-    async def test_add_role(self, client, admin_user, user):
-        headers = await self._admin_headers(client)
-        resp = await client.post(
-            f"/admin/users/{user['id']}/roles/editor", headers=headers
-        )
-        assert resp.status_code == 200
-        roles = await model.get_user_roles(user["id"])
-        assert "editor" in roles
-
-    async def test_add_role_nonexistent_user(self, client, admin_user):
-        headers = await self._admin_headers(client)
-        resp = await client.post(
-            "/admin/users/nonexistent-id/roles/admin", headers=headers
-        )
-        assert resp.status_code == 404
-
-    async def test_remove_role(self, client, admin_user, user):
-        headers = await self._admin_headers(client)
-        # First assign a role
-        await model.ensure_role("editor")
-        await model.assign_role(user["id"], "editor")
-        # Then remove it
-        resp = await client.delete(
-            f"/admin/users/{user['id']}/roles/editor", headers=headers
-        )
-        assert resp.status_code == 200
-        roles = await model.get_user_roles(user["id"])
-        assert "editor" not in roles
-
     async def test_update_email(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
@@ -2072,12 +2178,278 @@ class TestAdminEndpoints:
         )
         assert resp.status_code == 404
 
-    async def test_remove_role_not_assigned(self, client, admin_user, user):
+
+class TestGroupEndpoints:
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testadmin@example.com", "password": "testpass"},
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_list_groups(self, client, admin_user):
         headers = await self._admin_headers(client)
-        resp = await client.delete(
-            f"/admin/users/{user['id']}/roles/nonexistent", headers=headers
+        resp = await client.get("/admin/groups", headers=headers)
+        assert resp.status_code == 200
+        groups = resp.json()
+        assert any(g["name"] == "admin" for g in groups)
+
+    async def test_create_group(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "editors", "description": "Editor group"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "editors"
+
+    async def test_create_group_duplicate(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "dup-group"},
+        )
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "dup-group"},
+        )
+        assert resp.status_code == 409
+
+    async def test_update_group(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "to-rename"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/admin/groups/{group_id}",
+            headers=headers,
+            json={"name": "renamed", "description": "new desc"},
+        )
+        assert resp.status_code == 200
+
+    async def test_update_group_no_fields(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "no-update"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/admin/groups/{group_id}",
+            headers=headers,
+            json={},
+        )
+        assert resp.status_code == 400
+
+    async def test_update_group_not_found(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            "/admin/groups/nonexistent",
+            headers=headers,
+            json={"name": "x"},
         )
         assert resp.status_code == 404
+
+    async def test_delete_group(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "to-delete"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.delete(
+            f"/admin/groups/{group_id}", headers=headers
+        )
+        assert resp.status_code == 200
+
+    async def test_delete_group_not_found(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.delete(
+            "/admin/groups/nonexistent", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_list_group_members(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "members-test"},
+        )
+        group_id = resp.json()["id"]
+        # Add user to group
+        resp = await client.post(
+            f"/admin/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": user["id"]},
+        )
+        assert resp.status_code == 200
+        # List members
+        resp = await client.get(
+            f"/admin/groups/{group_id}/members", headers=headers
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["email"] == "testuser@example.com"
+
+    async def test_list_group_members_not_found(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            "/admin/groups/nonexistent/members", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_add_group_member_user_not_found(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "member-test2"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.post(
+            f"/admin/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": "nonexistent"},
+        )
+        assert resp.status_code == 404
+
+    async def test_add_group_member_group_not_found(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups/nonexistent/members",
+            headers=headers,
+            json={"user_id": "x"},
+        )
+        assert resp.status_code == 404
+
+    async def test_remove_group_member(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "remove-test"},
+        )
+        group_id = resp.json()["id"]
+        await client.post(
+            f"/admin/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": user["id"]},
+        )
+        resp = await client.delete(
+            f"/admin/groups/{group_id}/members/{user['id']}", headers=headers
+        )
+        assert resp.status_code == 200
+
+    async def test_remove_group_member_not_member(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/admin/groups",
+            headers=headers,
+            json={"name": "rm-test"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.delete(
+            f"/admin/groups/{group_id}/members/nonexistent", headers=headers
+        )
+        assert resp.status_code == 404
+
+
+class TestACLEndpoints:
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "testadmin@example.com", "password": "testpass"},
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_get_acl_tree(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.get("/admin/acl/tree", headers=headers)
+        assert resp.status_code == 200
+        tree = resp.json()
+        assert len(tree) > 0
+
+    async def test_get_acl_by_user(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/admin/acl/by-principal/user/{user['id']}", headers=headers
+        )
+        assert resp.status_code == 200
+
+    async def test_get_acl_by_group(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        # Get the admin group ID
+        groups = await model.list_groups()
+        admin_group = next(g for g in groups if g["name"] == "admin")
+        resp = await client.get(
+            f"/admin/acl/by-principal/group/{admin_group['id']}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        entries = resp.json()
+        assert len(entries) > 0
+
+    async def test_my_permissions(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.get("/api/my-permissions", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == "testadmin@example.com"
+        assert "/admin" in data["permissions"]
+        assert "*" in data["permissions"]["/admin"]
+
+    async def test_my_permissions_non_admin(self, client, admin_user, user):
+        """Non-admin user has no admin permissions."""
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/my-permissions", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "/admin" not in data["permissions"]
+
+    async def test_my_permissions_for_resource(self, client, user):
+        """Check permissions for a specific resource."""
+        headers = await _auth_headers(client)
+        # Create a workspace (owner gets * ACE)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "perm-check"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.get(
+            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        perms = data["permissions"].get(f"/workspaces/{ws_id}", [])
+        assert "*" in perms
+        assert "view" in perms
+        assert "terminal" in perms
+
+    async def test_my_permissions_for_resource_no_access(
+        self, client, admin_user, user
+    ):
+        """User without specific ACE only gets inherited permissions."""
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/my-permissions?resource=/workspaces/nonexistent",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        perms = data["permissions"].get("/workspaces/nonexistent", [])
+        # Inherits view from root, but not workspace-specific perms
+        assert "view" in perms
+        assert "*" not in perms
+        assert "terminal" not in perms
 
 
 class TestSafePath:
@@ -3737,11 +4109,13 @@ class TestOIDCCallback:
         assert linked is not None
         assert linked["id"] == user["id"]
 
-    async def test_callback_maps_admin_role(self, client, monkeypatch, db):
+    async def test_callback_maps_admin_role(
+        self, client, monkeypatch, admin_group
+    ):
         provider, cookie_data = await self._setup_callback(
             client,
             monkeypatch,
-            db,
+            admin_group,  # db fixture is implied via admin_group
             claims={
                 "sub": "admin-sub",
                 "email": "oidcadmin@example.com",
@@ -3762,8 +4136,8 @@ class TestOIDCCallback:
         assert resp.status_code == 302
 
         user = await model.get_user_by_email("oidcadmin@example.com")
-        roles = await model.get_user_roles(user["id"])
-        assert "admin" in roles
+        group_ids = await model.get_user_group_ids(user["id"])
+        assert admin_group["id"] in group_ids
 
     async def test_callback_state_mismatch(self, client, monkeypatch, db):
         _, cookie_data = await self._setup_callback(client, monkeypatch, db)
@@ -4000,8 +4374,10 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 404
 
-    async def test_callback_revokes_admin_role(self, client, monkeypatch, db):
-        # Create user with admin role
+    async def test_callback_revokes_admin_role(
+        self, client, monkeypatch, admin_group
+    ):
+        # Create user in admin group
         user = await model.create_user(
             "revoke-admin@example.com",
             password_hash=None,
@@ -4009,8 +4385,7 @@ class TestOIDCCallback:
             provider="test",
             external_id="revoke-sub",
         )
-        await model.ensure_role("admin")
-        await model.assign_role(user["id"], "admin")
+        await model.add_user_to_group(user["id"], admin_group["id"])
 
         import json as json_mod
 
@@ -4055,8 +4430,8 @@ class TestOIDCCallback:
             follow_redirects=False,
         )
         assert resp.status_code == 302
-        roles = await model.get_user_roles(user["id"])
-        assert "admin" not in roles
+        group_ids = await model.get_user_group_ids(user["id"])
+        assert admin_group["id"] not in group_ids
 
     async def test_callback_invalid_cookie_json(self, client, monkeypatch, db):
         provider = api.oidc.OIDCProvider(
@@ -4086,8 +4461,7 @@ class TestOIDCLogout:
             provider="test",
             external_id="logout-sub",
         )
-        roles = await model.get_user_roles(user["id"])
-        token = auth.create_token(user["id"], user["email"], roles)
+        token = auth.create_token(user["id"], user["email"])
         headers = {"Authorization": f"Bearer {token}"}
 
         provider = api.oidc.OIDCProvider(

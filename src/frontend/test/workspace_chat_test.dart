@@ -470,5 +470,23 @@ void main() {
       chatKey.currentState!.setVisible(true);
       expect(unreadCounts, [1, 0]);
     });
+
+    testWidgets('loads buffered chat history on init', (tester) async {
+      // Pre-populate the buffer before building the widget
+      client.chatHistory.addAll([
+        {
+          'id': 'h1',
+          'user_id': 'u1',
+          'user_email': 'alice@example.com',
+          'message': 'buffered message',
+          'created_at': '2026-01-01 00:00:00',
+        },
+      ]);
+
+      await tester.pumpWidget(buildChat());
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('buffered message'), findsOneWidget);
+    });
   });
 }

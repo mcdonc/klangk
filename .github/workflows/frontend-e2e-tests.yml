@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-flutter-e2e:
+  test-frontend-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

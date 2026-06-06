@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import (
+    acl,
     auth,
     container,
     emailsvc,
@@ -30,6 +31,10 @@ from . import (
     wshandler,
     model,
     workspaces,
+)
+from .model import (
+    ACTION_ALLOW,
+    PRINCIPAL_USER,
 )
 from .util import derive_hosting_info, resolve_env_secret
 
@@ -224,8 +229,7 @@ async def verify_email(token: str):
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
     user = await model.get_user_by_id(user_id)
-    roles = await model.get_user_roles(user_id)
-    access_token = auth.create_token(user_id, user["email"], roles)
+    access_token = auth.create_token(user_id, user["email"])
     return {"status": "verified", "access_token": access_token}
 
 
@@ -333,8 +337,7 @@ async def reset_password(req: ResetPasswordRequest):
     user = await model.get_user_by_id(user_id)
     if user is None:  # pragma: no cover
         raise HTTPException(status_code=404, detail="User not found")
-    roles = await model.get_user_roles(user_id)
-    token = auth.create_token(user_id, user["email"], roles)
+    token = auth.create_token(user_id, user["email"])
     return {"status": "reset", "access_token": token}
 
 
@@ -481,8 +484,7 @@ async def accept_invite(req: AcceptInviteRequest):
     user = await model.create_user(email, password_hash, verified=True)
     await model.mark_invitation_accepted(invitation_id)
 
-    roles = await model.get_user_roles(user["id"])
-    access_token = auth.create_token(user["id"], user["email"], roles)
+    access_token = auth.create_token(user["id"], user["email"])
     return {"status": "accepted", "access_token": access_token}
 
 
@@ -494,7 +496,7 @@ class SendInviteRequest(BaseModel):
 async def send_invitation(
     req: SendInviteRequest,
     request: Request,
-    admin: dict = Depends(auth.require_role("admin")),
+    admin: dict = Depends(acl.has_permission("admin")),
 ):
     """Send an invitation email (admin only)."""
     if not auth.invitations_enabled():
@@ -538,7 +540,7 @@ async def send_invitation(
 
 @router.get("/admin/invitations")
 async def list_invitations(
-    admin: dict = Depends(auth.require_role("admin")),
+    admin: dict = Depends(acl.has_permission("admin")),
 ):
     """List all invitations (admin only)."""
     return await model.list_invitations()
@@ -547,7 +549,7 @@ async def list_invitations(
 @router.delete("/admin/invitations/{invitation_id}")
 async def revoke_invitation(
     invitation_id: str,
-    admin: dict = Depends(auth.require_role("admin")),
+    admin: dict = Depends(acl.has_permission("admin")),
 ):
     """Revoke a pending invitation (admin only)."""
     revoked = await model.revoke_invitation(invitation_id)
@@ -563,7 +565,7 @@ async def revoke_invitation(
 async def resend_invitation(
     invitation_id: str,
     request: Request,
-    admin: dict = Depends(auth.require_role("admin")),
+    admin: dict = Depends(acl.has_permission("admin")),
 ):
     """Resend an invitation email (admin only)."""
     invitation = await model.get_invitation(invitation_id)
@@ -739,19 +741,21 @@ async def oidc_callback(
                 external_id=sub,
             )
 
-    # Sync admin role from IdP claims
+    # Sync admin group membership from IdP claims
     should_be_admin = oidc.extract_admin_role(provider, claims)
     if should_be_admin is not None:
-        roles = await model.get_user_roles(user["id"])
-        if should_be_admin and "admin" not in roles:
-            await model.ensure_role("admin")
-            await model.assign_role(user["id"], "admin")
-        elif not should_be_admin and "admin" in roles:
-            await model.remove_role(user["id"], "admin")
+        admin_group = await model.get_group_by_name("admin")
+        if admin_group:
+            current_groups = await model.get_user_group_ids(user["id"])
+            if should_be_admin and admin_group["id"] not in current_groups:
+                await model.add_user_to_group(user["id"], admin_group["id"])
+            elif not should_be_admin and admin_group["id"] in current_groups:
+                await model.remove_user_from_group(
+                    user["id"], admin_group["id"]
+                )
 
     # Issue Klangk JWT
-    roles = await model.get_user_roles(user["id"])
-    access_token = auth.create_token(user["id"], email, roles)
+    access_token = auth.create_token(user["id"], email)
 
     # Clear the state cookie
     cli_redirect = cookie_data.get("cli_redirect")
@@ -879,6 +883,17 @@ async def delete_volume(
     return {"status": "deleted"}
 
 
+async def _workspace_resource(request: Request, user: dict) -> str:
+    """Resource function for workspace-level permission checks."""
+    workspace_id = request.path_params["workspace_id"]
+    return f"/workspaces/{workspace_id}"
+
+
+async def _admin_resource(request: Request, user: dict) -> str:  # noqa: ARG001
+    """Resource function for admin operations (always checks /admin)."""
+    return "/admin"
+
+
 @router.post("/workspaces")
 async def create_workspace(
     body: CreateWorkspaceRequest, user: dict = Depends(auth.get_current_user)
@@ -894,7 +909,7 @@ async def create_workspace(
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
     try:
-        return await workspaces.create_workspace(
+        ws = await workspaces.create_workspace(
             user["id"],
             body.name,
             image=body.image,
@@ -909,6 +924,16 @@ async def create_workspace(
         )
     except OSError as e:  # pragma: no cover
         raise HTTPException(status_code=400, detail=str(e))
+    # Grant owner full access via ACL
+    await model.add_acl_entry(
+        f"/workspaces/{ws['id']}",
+        0,
+        ACTION_ALLOW,
+        "*",
+        PRINCIPAL_USER,
+        user_id=user["id"],
+    )
+    return ws
 
 
 class UpdateWorkspaceRequest(BaseModel):
@@ -923,7 +948,7 @@ class UpdateWorkspaceRequest(BaseModel):
 async def update_workspace(
     workspace_id: str,
     body: UpdateWorkspaceRequest,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("edit", _workspace_resource)),
 ):
     fields = body.model_dump(exclude_unset=True)
     if "image" in fields and fields["image"] is not None:
@@ -939,12 +964,17 @@ async def update_workspace(
             raise HTTPException(status_code=400, detail=mount_err)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
-    updated = await model.update_workspace(workspace_id, user["id"], **fields)
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    updated = await model.update_workspace(
+        workspace_id, workspace["user_id"], **fields
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="Workspace not found")
     if "default_command" in fields:
         workspaces.write_default_command(
-            user["id"], workspace_id, fields["default_command"]
+            workspace["user_id"], workspace_id, fields["default_command"]
         )
     return {"status": "updated"}
 
@@ -957,13 +987,13 @@ class DuplicateWorkspaceRequest(BaseModel):
 async def duplicate_workspace(
     workspace_id: str,
     body: DuplicateWorkspaceRequest,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("create", _workspace_resource)),
 ):
-    source = await workspaces.get_workspace(workspace_id, user["id"])
-    if source is None:
+    source = await model.get_workspace(workspace_id)
+    if source is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
-        return await workspaces.create_workspace(
+        ws = await workspaces.create_workspace(
             user["id"],
             body.name,
             image=source.get("image"),
@@ -976,13 +1006,24 @@ async def duplicate_workspace(
             status_code=409,
             detail=f"A workspace named {body.name!r} already exists",
         )
+    # Grant owner full access via ACL
+    await model.add_acl_entry(
+        f"/workspaces/{ws['id']}",
+        0,
+        ACTION_ALLOW,
+        "*",
+        PRINCIPAL_USER,
+        user_id=user["id"],
+    )
+    return ws
 
 
 @router.delete("/workspaces/{workspace_id}")
 async def delete_workspace(
-    workspace_id: str, user: dict = Depends(auth.get_current_user)
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("delete", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
+    workspace = await model.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
@@ -999,9 +1040,13 @@ async def delete_workspace(
         await container.registry.stop_and_remove_container(cid)
     await wshandler.reset_workspace_state(workspace_id)
 
-    deleted = await workspaces.delete_workspace(workspace_id, user["id"])
+    deleted = await workspaces.delete_workspace(
+        workspace_id, workspace["user_id"]
+    )
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="Workspace not found")
+    # Clean up ACL entries for this workspace
+    await model.delete_acl_entries_for_resource(f"/workspaces/{workspace_id}")
     return {"status": "deleted"}
 
 
@@ -1010,7 +1055,8 @@ async def delete_workspace(
 
 @router.get("/workspaces/{workspace_id}/export")
 async def export_workspace(
-    workspace_id: str, admin: dict = Depends(auth.require_role("admin"))
+    workspace_id: str,
+    admin: dict = Depends(acl.has_permission("admin", _admin_resource)),
 ):
     """Export a workspace as a .tar.gz archive (admin only).
 
@@ -1270,17 +1316,17 @@ async def import_workspace(
 # --- Workspace sharing endpoints ---
 
 
+async def _check_workspace_share(request: Request, user: dict) -> str:
+    """Resource function for workspace share permission."""
+    workspace_id = request.path_params["workspace_id"]
+    return f"/workspaces/{workspace_id}"
+
+
 @router.get("/workspaces/{workspace_id}/members")
 async def get_workspace_members(
-    workspace_id: str, user: dict = Depends(auth.get_current_user)
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
 ):
-    workspace = await model.get_workspace(workspace_id, user["id"])
-    if workspace is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    if workspace["user_id"] != user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Only the owner can manage members"
-        )
     return await model.get_workspace_members(workspace_id)
 
 
@@ -1292,15 +1338,8 @@ class AddMemberRequest(BaseModel):
 async def add_workspace_member(
     workspace_id: str,
     body: AddMemberRequest,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
 ):
-    workspace = await model.get_workspace(workspace_id, user["id"])
-    if workspace is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    if workspace["user_id"] != user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Only the owner can manage members"
-        )
     target = await model.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1308,7 +1347,43 @@ async def add_workspace_member(
         raise HTTPException(
             status_code=400, detail="Cannot share with yourself"
         )
-    await model.share_workspace(workspace_id, target["id"])
+    # Add ACL entries granting the target user view+terminal on this workspace
+    resource = f"/workspaces/{workspace_id}"
+    existing = await model.get_acl_entries(resource)
+    # Find the next available position
+    max_pos = max((e["position"] for e in existing), default=-1)
+    await model.add_acl_entry(
+        resource,
+        max_pos + 1,
+        ACTION_ALLOW,
+        "view",
+        PRINCIPAL_USER,
+        user_id=target["id"],
+    )
+    await model.add_acl_entry(
+        resource,
+        max_pos + 2,
+        ACTION_ALLOW,
+        "terminal",
+        PRINCIPAL_USER,
+        user_id=target["id"],
+    )
+    await model.add_acl_entry(
+        resource,
+        max_pos + 3,
+        ACTION_ALLOW,
+        "files",
+        PRINCIPAL_USER,
+        user_id=target["id"],
+    )
+    await model.add_acl_entry(
+        resource,
+        max_pos + 4,
+        ACTION_ALLOW,
+        "chat",
+        PRINCIPAL_USER,
+        user_id=target["id"],
+    )
     return {
         "status": "shared",
         "user_id": target["id"],
@@ -1320,17 +1395,69 @@ async def add_workspace_member(
 async def remove_workspace_member(
     workspace_id: str,
     member_id: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
 ):
-    workspace = await model.get_workspace(workspace_id, user["id"])
-    if workspace is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    if workspace["user_id"] != user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Only the owner can manage members"
+    # Remove all ACL entries for this user on this workspace
+    resource = f"/workspaces/{workspace_id}"
+    entries = await model.get_acl_entries(resource)
+    remaining = [
+        e
+        for e in entries
+        if not (
+            e["principal_type"] == PRINCIPAL_USER and e["user_id"] == member_id
         )
-    await model.unshare_workspace(workspace_id, member_id)
+    ]
+    # Rewrite entries with new positions
+    for i, entry in enumerate(remaining):
+        entry["position"] = i
+    await model.replace_acl_entries(resource, remaining)
     return {"status": "removed"}
+
+
+# --- Workspace ACL endpoints (for workspace owners/admins) ---
+
+
+@router.get("/workspaces/{workspace_id}/acl")
+async def get_workspace_acl(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+):
+    """Get resolved ACL entries for a workspace."""
+    resource = f"/workspaces/{workspace_id}"
+    return await model.get_acl_entries_resolved(resource)
+
+
+class WorkspaceAclEntry(BaseModel):
+    action: int  # 0=deny, 1=allow
+    principal_type: int  # 0=system, 1=user, 2=group
+    permission: str
+    user_id: str | None = None
+    group_id: str | None = None
+    system_principal: int | None = None
+
+
+@router.put("/workspaces/{workspace_id}/acl")
+async def replace_workspace_acl(
+    workspace_id: str,
+    entries: list[WorkspaceAclEntry],
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+):
+    """Replace all ACL entries for a workspace."""
+    resource = f"/workspaces/{workspace_id}"
+    acl_entries = [
+        {
+            "position": i,
+            "action": e.action,
+            "principal_type": e.principal_type,
+            "permission": e.permission,
+            "user_id": e.user_id,
+            "group_id": e.group_id,
+            "system_principal": e.system_principal,
+        }
+        for i, e in enumerate(entries)
+    ]
+    await model.replace_acl_entries(resource, acl_entries)
+    return await model.get_acl_entries_resolved(resource)
 
 
 # --- User search endpoint ---
@@ -1353,10 +1480,10 @@ async def search_users(
 async def list_files(
     workspace_id: str,
     path: str = ".",
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         return files.list_files(workspace["user_id"], workspace_id, path)
@@ -1368,10 +1495,10 @@ async def list_files(
 async def read_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         content = files.read_file(workspace["user_id"], workspace_id, path)
@@ -1388,10 +1515,10 @@ async def read_file(
 async def delete_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         deleted = files.delete_path(workspace["user_id"], workspace_id, path)
@@ -1411,10 +1538,10 @@ class RenameFileRequest(BaseModel):
 async def rename_file(
     workspace_id: str,
     body: RenameFileRequest,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         renamed = files.rename_path(
@@ -1435,10 +1562,10 @@ async def rename_file(
 async def download_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
         resolved = files.resolve_path(workspace["user_id"], workspace_id, path)
@@ -1468,10 +1595,10 @@ async def upload_file(
     workspace_id: str,
     file: UploadFile,
     path: str = "",
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await workspaces.get_workspace(workspace_id, user["id"])
-    if workspace is None:
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     filename = path if path else posixpath.basename(file.filename or "")
@@ -1566,7 +1693,7 @@ async def browser_delegate_stream(body: BrowserDelegateRequest):
 
 
 @router.get("/admin/users")
-async def list_users(admin: dict = Depends(auth.require_role("admin"))):
+async def list_users(admin: dict = Depends(acl.has_permission("admin"))):
     return await model.list_users()
 
 
@@ -1578,7 +1705,7 @@ class AdminCreateUserRequest(BaseModel):
 @router.post("/admin/users")
 async def admin_create_user(
     req: AdminCreateUserRequest,
-    admin: dict = Depends(auth.require_role("admin")),
+    admin: dict = Depends(acl.has_permission("admin")),
 ):
     """Create a verified user directly (admin only, no email verification)."""
     existing = await model.get_user_by_email(req.email)
@@ -1596,7 +1723,7 @@ async def admin_create_user(
 
 @router.delete("/admin/users/{user_id}")
 async def delete_user(
-    user_id: str, admin: dict = Depends(auth.require_role("admin"))
+    user_id: str, admin: dict = Depends(acl.has_permission("admin"))
 ):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
@@ -1613,34 +1740,6 @@ async def delete_user(
     return {"status": "deleted"}
 
 
-@router.post("/admin/users/{user_id}/roles/{role_name}")
-async def add_user_role(
-    user_id: str,
-    role_name: str,
-    admin: dict = Depends(auth.require_role("admin")),
-):
-    user = await model.get_user_by_id(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    await model.ensure_role(role_name)
-    await model.assign_role(user_id, role_name)
-    return {"status": "assigned", "user_id": user_id, "role": role_name}
-
-
-@router.delete("/admin/users/{user_id}/roles/{role_name}")
-async def remove_user_role(
-    user_id: str,
-    role_name: str,
-    admin: dict = Depends(auth.require_role("admin")),
-):
-    removed = await model.remove_role(user_id, role_name)
-    if not removed:
-        raise HTTPException(
-            status_code=404, detail="Role assignment not found"
-        )
-    return {"status": "removed", "user_id": user_id, "role": role_name}
-
-
 class UpdateUserRequest(auth.BaseModel):
     email: str | None = None
     password: str | None = None
@@ -1650,7 +1749,7 @@ class UpdateUserRequest(auth.BaseModel):
 async def update_user(
     user_id: str,
     req: UpdateUserRequest,
-    admin: dict = Depends(auth.require_role("admin")),
+    admin: dict = Depends(acl.has_permission("admin")),
 ):
     user = await model.get_user_by_id(user_id)
     if user is None:
@@ -1661,3 +1760,205 @@ async def update_user(
         password_hash = auth.hash_password(req.password)
         await model.update_password(user_id, password_hash)
     return {"status": "updated"}
+
+
+# --- Group management endpoints ---
+
+
+@router.get("/admin/groups")
+async def list_groups(
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    return await model.list_groups()
+
+
+class CreateGroupRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+@router.post("/admin/groups")
+async def create_group(
+    req: CreateGroupRequest,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    existing = await model.get_group_by_name(req.name)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail="A group with this name already exists"
+        )
+    group = await model.create_group(req.name, req.description)
+    return group
+
+
+class UpdateGroupRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+@router.patch("/admin/groups/{group_id}")
+async def update_group(
+    group_id: str,
+    req: UpdateGroupRequest,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    group = await model.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    updated = await model.update_group(
+        group_id, name=req.name, description=req.description
+    )
+    if not updated:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    return {"status": "updated"}
+
+
+@router.delete("/admin/groups/{group_id}")
+async def delete_group(
+    group_id: str,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    group = await model.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    await model.delete_group(group_id)
+    return {"status": "deleted"}
+
+
+@router.get("/admin/groups/{group_id}/members")
+async def list_group_members(
+    group_id: str,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    group = await model.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return await model.get_group_members(group_id)
+
+
+class AddGroupMemberRequest(BaseModel):
+    user_id: str
+
+
+@router.post("/admin/groups/{group_id}/members")
+async def add_group_member(
+    group_id: str,
+    req: AddGroupMemberRequest,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    group = await model.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    user = await model.get_user_by_id(req.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    await model.add_user_to_group(req.user_id, group_id)
+    return {"status": "added"}
+
+
+@router.delete("/admin/groups/{group_id}/members/{user_id}")
+async def remove_group_member(
+    group_id: str,
+    user_id: str,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    removed = await model.remove_user_from_group(user_id, group_id)
+    if not removed:
+        raise HTTPException(
+            status_code=404, detail="User is not a member of this group"
+        )
+    return {"status": "removed"}
+
+
+# --- ACL management endpoints ---
+
+
+@router.get("/admin/acl/tree")
+async def get_acl_tree(
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    return await model.get_acl_tree_summary()
+
+
+@router.get("/admin/acl/by-principal/user/{user_id}")
+async def get_acl_by_user(
+    user_id: str,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    return await model.get_acl_entries_by_principal_user(user_id)
+
+
+@router.get("/admin/acl/by-principal/group/{group_id}")
+async def get_acl_by_group(
+    group_id: str,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    return await model.get_acl_entries_by_principal_group(group_id)
+
+
+STATIC_RESOURCES = [
+    "/",
+    "/workspaces",
+    "/admin",
+    "/admin/users",
+    "/admin/invitations",
+    "/admin/groups",
+]
+
+ALL_PERMISSIONS = [
+    "view",
+    "create",
+    "edit",
+    "delete",
+    "terminal",
+    "files",
+    "chat",
+    "share",
+    "admin",
+    "manage_users",
+    "manage_invitations",
+    "*",
+]
+
+
+@router.get("/api/my-permissions")
+async def my_permissions(
+    request: Request,
+    resource: str | None = None,
+    user: dict = Depends(auth.get_current_user),
+):
+    """Return the current user's effective permissions.
+
+    If ``resource`` query param is provided, checks permissions for that
+    specific resource path (e.g., ``/workspaces/{id}``). Otherwise
+    returns permissions for all static resources.
+    """
+    principals = await acl.get_principals(user["id"])
+    groups = await model.get_user_groups(user["id"])
+    if resource is not None:
+        perms = [
+            p
+            for p in ALL_PERMISSIONS
+            if await acl.check_permission(resource, principals, p)
+        ]
+        return {
+            "user_id": user["id"],
+            "email": user["email"],
+            "groups": groups,
+            "permissions": {resource: perms} if perms else {},
+        }
+    permissions = {}
+    for res in STATIC_RESOURCES:
+        perms = [
+            p
+            for p in ALL_PERMISSIONS
+            if await acl.check_permission(res, principals, p)
+        ]
+        if perms:
+            permissions[res] = perms
+    return {
+        "user_id": user["id"],
+        "email": user["email"],
+        "groups": groups,
+        "permissions": permissions,
+    }

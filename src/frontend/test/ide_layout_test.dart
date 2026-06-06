@@ -2,12 +2,62 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/chat/workspace_chat.dart';
 import 'package:klangk_frontend/layout/ide_layout.dart';
+import 'package:klangk_frontend/widgets/skeuo_tab.dart';
 
 void main() {
+  group('SkeuoTab', () {
+    testWidgets('renders badge when provided', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SkeuoTab(
+            label: 'Test',
+            icon: Icons.star,
+            isSelected: false,
+            badge: 5,
+            onTap: () {},
+          ),
+        ),
+      ));
+      expect(find.text('5'), findsOneWidget);
+      expect(find.text('Test'), findsOneWidget);
+    });
+
+    testWidgets('badge shows 99+ for large counts', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SkeuoTab(
+            label: 'X',
+            icon: Icons.star,
+            isSelected: false,
+            badge: 150,
+            onTap: () {},
+          ),
+        ),
+      ));
+      expect(find.text('99+'), findsOneWidget);
+    });
+
+    testWidgets('no badge when null', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SkeuoTab(
+            label: 'Y',
+            icon: Icons.star,
+            isSelected: true,
+            onTap: () {},
+          ),
+        ),
+      ));
+      expect(find.text('Y'), findsOneWidget);
+    });
+  });
+
   Widget buildLayout({
     Widget? fileViewer,
     Widget? terminal,
     Widget? chat,
+    Widget? settings,
+    Widget? sharing,
     Widget? debug,
   }) {
     return MaterialApp(
@@ -19,6 +69,8 @@ void main() {
             fileViewer: fileViewer ?? const Text('Files'),
             terminal: terminal ?? const Text('Terminal'),
             chat: chat ?? const Text('Chat'),
+            sharing: sharing,
+            settings: settings,
             debug: debug ?? const Text('Debug'),
           ),
         ),
@@ -194,6 +246,65 @@ void main() {
       // Chat tab label should NOT be present (only Terminal and Files)
       final chatTabs = find.text('Chat');
       expect(chatTabs, findsNothing);
+    });
+
+    testWidgets('has Settings tab when settings provided', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        settings: const Text('SETTINGS_CONTENT'),
+      ));
+      expect(find.text('Settings'), findsOneWidget);
+    });
+
+    testWidgets('settings tab content is visible after switch', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        settings: const Text('SETTINGS_CONTENT'),
+      ));
+
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('SETTINGS_CONTENT'), findsOneWidget);
+    });
+
+    testWidgets('no settings tab when settings is null', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      expect(find.text('Settings'), findsNothing);
+    });
+
+    testWidgets('switching to settings tab with chat present', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        chat: const Text('CHAT'),
+        settings: const Text('SETTINGS'),
+      ));
+      // Switch to Settings (tab index 3: Terminal=0, Files=1, Chat=2, Settings=3)
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+      expect(find.text('SETTINGS'), findsOneWidget);
+      // Switch back to Chat
+      await tester.tap(find.text('Chat'));
+      await tester.pumpAndSettle();
+      expect(find.text('CHAT'), findsOneWidget);
+    });
+
+    testWidgets('has Sharing tab when sharing provided', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        sharing: const Text('SHARING_CONTENT'),
+      ));
+      expect(find.text('Sharing'), findsOneWidget);
+    });
+
+    testWidgets('sharing tab content is visible after switch', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        sharing: const Text('SHARING_CONTENT'),
+      ));
+      await tester.tap(find.text('Sharing'));
+      await tester.pumpAndSettle();
+      expect(find.text('SHARING_CONTENT'), findsOneWidget);
+    });
+
+    testWidgets('no sharing tab when sharing is null', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      expect(find.text('Sharing'), findsNothing);
     });
 
     testWidgets('selecting same tab does not rebuild', (tester) async {
