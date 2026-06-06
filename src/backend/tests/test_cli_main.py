@@ -147,12 +147,61 @@ class TestMainCLI:
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         client = MagicMock()
         client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = []
         monkeypatch.setattr(main, "_client", lambda: client)
 
-        with patch("typer.echo"):
-            main.list_workspaces()
+        with patch("typer.echo") as mock_echo:
+            main.list_workspaces(shared=True)
+        assert any("No workspaces" in str(c) for c in mock_echo.call_args_list)
 
-        client.list_workspaces.assert_called_once()
+    def test_list_shared_workspaces_plain(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        shared_ws = Workspace(
+            id="sw1" + "0" * 52,
+            name="shared-ws",
+            created_at="2025-01-01T00:00:00Z",
+            owner_email="owner@example.com",
+        )
+        client = MagicMock()
+        client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = [shared_ws]
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with patch("typer.echo") as mock_echo:
+            main.list_workspaces(plain=True, shared=True)
+        calls = [str(c) for c in mock_echo.call_args_list]
+        assert any("shared-ws" in c for c in calls)
+        assert any("owner@example.com" in c for c in calls)
+
+    def test_list_shared_workspaces_rich(self, logged_in_cfg, monkeypatch):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from klangk_backend.cli import main
+
+        shared_ws = Workspace(
+            id="sw1" + "0" * 52,
+            name="shared-ws",
+            created_at="2025-01-01T00:00:00Z",
+            owner_email="owner@example.com",
+        )
+        client = MagicMock()
+        client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = [shared_ws]
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        buf = StringIO()
+        with patch.object(
+            main,
+            "Console",
+            return_value=Console(file=buf, force_terminal=True),
+        ):
+            main.list_workspaces(plain=False, shared=True)
+        output = buf.getvalue()
+        assert "shared-ws" in output
+        assert "owner@example.com" in output
 
     def test_list_workspaces_plain(self, logged_in_cfg, monkeypatch):
         from klangk_backend.cli import main

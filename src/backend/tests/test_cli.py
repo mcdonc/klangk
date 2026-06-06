@@ -498,6 +498,26 @@ class TestKlangkClient:
         assert workspaces[0].name == "alpha"
         assert workspaces[1].id == "ws2"
 
+    def test_list_shared_workspaces_parses_response(self):
+        cfg = CLIConfig()
+        cfg.auth.token = "valid-token"
+        client = KlangkClient(cfg)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {
+                "id": "ws1",
+                "name": "shared-alpha",
+                "created_at": "2025-01-01T00:00:00Z",
+                "owner_email": "owner@example.com",
+            },
+        ]
+        with patch.object(client, "get", return_value=mock_resp):
+            workspaces = client.list_shared_workspaces()
+        assert len(workspaces) == 1
+        assert workspaces[0].name == "shared-alpha"
+        assert workspaces[0].owner_email == "owner@example.com"
+
     def test_create_workspace_returns_workspace(self):
         cfg = CLIConfig()
         cfg.auth.token = "token"
