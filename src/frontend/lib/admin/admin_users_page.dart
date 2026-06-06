@@ -21,18 +21,37 @@ class _AdminUsersPageState extends State<AdminUsersPage>
   List<Map<String, dynamic>> _groups = [];
   bool _loading = true;
   String? _error;
-  late final TabController _tabController;
+  TabController? _tabController;
+
+  bool _canUsers = false;
+  bool _canGroups = false;
+  bool _canInvitations = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _resolvePermissions();
     _loadData();
+  }
+
+  void _resolvePermissions() {
+    final auth = context.read<AuthService>();
+    _canUsers = auth.hasPermission('/admin', '*') ||
+        auth.hasPermission('/admin/users', 'view');
+    _canGroups = auth.hasPermission('/admin', '*') ||
+        auth.hasPermission('/admin/groups', 'view');
+    _canInvitations = auth.hasPermission('/admin', '*') ||
+        auth.hasPermission('/admin/invitations', 'view');
+    final tabCount =
+        [_canUsers, _canGroups, _canInvitations].where((v) => v).length;
+    _tabController?.dispose();
+    _tabController =
+        TabController(length: tabCount > 0 ? tabCount : 1, vsync: this);
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _tabController?.dispose();
     super.dispose();
   }
 
@@ -644,50 +663,79 @@ class _AdminUsersPageState extends State<AdminUsersPage>
     );
   }
 
+  /// Map from tab index to tab type for FAB selection.
+  List<String> get _tabTypes {
+    final types = <String>[];
+    if (_canUsers) types.add('users');
+    if (_canGroups) types.add('groups');
+    if (_canInvitations) types.add('invitations');
+    return types;
+  }
+
   @override
   Widget build(BuildContext context) {
     final pendingCount =
         _invitations.where((i) => i['status'] == 'pending').length;
+    final tabs = <Widget>[];
+    final views = <Widget>[];
+    final tabTypes = _tabTypes;
+
+    if (_canUsers) {
+      tabs.add(const Tab(text: 'Users'));
+      views.add(_buildUsersTab());
+    }
+    if (_canGroups) {
+      tabs.add(const Tab(text: 'Groups'));
+      views.add(_buildGroupsTab());
+    }
+    if (_canInvitations) {
+      tabs.add(Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Invitations'),
+            if (pendingCount > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: KColors.accentAmber,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text('$pendingCount',
+                    style: const TextStyle(fontSize: 12, color: Colors.white)),
+              ),
+            ],
+          ],
+        ),
+      ));
+      views.add(_buildInvitationsTab());
+    }
+
+    if (tabs.isEmpty) {
+      tabs.add(const Tab(text: 'Admin'));
+      views.add(const Center(child: Text('No admin sections available')));
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const AppBarTitle(title: 'User Management'),
+        title: const AppBarTitle(title: 'Admin'),
         actions: const [
           AppBarActions(),
         ],
         bottom: TabBar(
           controller: _tabController,
-          tabs: [
-            const Tab(text: 'Users'),
-            const Tab(text: 'Groups'),
-            Tab(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Invitations'),
-                  if (pendingCount > 0) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: KColors.accentAmber,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text('$pendingCount',
-                          style: const TextStyle(
-                              fontSize: 12, color: Colors.white)),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
+          tabs: tabs,
         ),
       ),
       floatingActionButton: AnimatedBuilder(
-        animation: _tabController,
+        animation: _tabController!,
         builder: (context, _) {
-          if (_tabController.index == 0) {
+          final currentType =
+              tabTypes.isNotEmpty && _tabController!.index < tabTypes.length
+                  ? tabTypes[_tabController!.index]
+                  : '';
+          if (currentType == 'users') {
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -706,7 +754,7 @@ class _AdminUsersPageState extends State<AdminUsersPage>
                 ),
               ],
             );
-          } else if (_tabController.index == 1) {
+          } else if (currentType == 'groups') {
             return FloatingActionButton(
               heroTag: 'add-group',
               onPressed: _createGroup,
@@ -719,11 +767,7 @@ class _AdminUsersPageState extends State<AdminUsersPage>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [
-          _buildUsersTab(),
-          _buildGroupsTab(),
-          _buildInvitationsTab(),
-        ],
+        children: views,
       ),
     );
   }
