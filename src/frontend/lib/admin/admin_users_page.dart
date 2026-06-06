@@ -1092,6 +1092,12 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
 
   String _selectedResource = '/';
 
+  String get _selectedLabel =>
+      _resources.firstWhere((r) => r.$1 == _selectedResource).$2;
+
+  IconData get _selectedIcon =>
+      _resources.firstWhere((r) => r.$1 == _selectedResource).$3;
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -1161,11 +1167,38 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'ACL for $_selectedResource',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: KColors.borderDefault),
+                    borderRadius: BorderRadius.circular(8),
+                    color: KColors.bgSurface,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(_selectedIcon, size: 20, color: KColors.accentGreen),
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _selectedLabel,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          Text(
+                            _selectedResource,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: KColors.textMuted,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 12),
