@@ -345,11 +345,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  icon: const Icon(Icons.people, color: KColors.accentBlue),
-                  tooltip: 'Manage members',
-                  onPressed: () => _manageMembers(group),
-                ),
                 if (name != 'admin')
                   IconButton(
                     icon: const Icon(Icons.delete_outline,
@@ -357,6 +352,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                     tooltip: 'Delete group',
                     onPressed: () => _deleteGroup(group['id'], name),
                   ),
+                IconButton(
+                  icon: const Icon(Icons.people, color: KColors.accentBlue),
+                  tooltip: 'Manage members',
+                  onPressed: () => _manageMembers(group),
+                ),
               ],
             ),
           ),
