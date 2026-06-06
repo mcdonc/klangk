@@ -1,11 +1,14 @@
 """OIDC client for external Identity Provider authentication."""
 
+import asyncio
 import base64
 import hashlib
+import importlib
 import logging
 import os
 import secrets
 import time
+from collections.abc import Callable
 
 import yaml
 from dataclasses import dataclass
@@ -307,7 +310,126 @@ async def build_logout_url(
     return f"{endpoint}?{urlencode(params)}"
 
 
+# --- Group mapping hook ---
+
+_group_hook: Callable | None = None
+_group_hook_is_async: bool = False
+
+
+def example_admin_hook(
+    provider: OIDCProvider,  # noqa: ARG001
+    claims: dict,
+    email: str,  # noqa: ARG001
+    tokens: dict,  # noqa: ARG001
+) -> set[str]:
+    """Example hook: map a Keycloak realm role to the admin group.
+
+    To use: KLANGK_GROUP_MAPPING_HOOK=klangk_backend.oidc.example_admin_hook
+
+    Customize the claim_path and claim_value for your IdP.
+    """
+    claim_path = "realm_access.roles"
+    claim_value = "klangk-admin"
+
+    value: object = claims
+    for key in claim_path.split("."):
+        if isinstance(value, dict):
+            value = value.get(key)
+        else:
+            return set()
+    if isinstance(value, list) and claim_value in value:
+        return {"admin"}
+    if isinstance(value, str) and value == claim_value:
+        return {"admin"}
+    return set()
+
+
+def load_group_hook() -> None:
+    """Load the group mapping hook from KLANGK_GROUP_MAPPING_HOOK env var.
+
+    Format: ``module.path.func_name`` (last dot separates function).
+    If not set, no group sync is performed on OIDC login.
+    """
+    global _group_hook, _group_hook_is_async
+    raw = os.environ.get("KLANGK_GROUP_MAPPING_HOOK")
+    if not raw:
+        _group_hook = None
+        _group_hook_is_async = False
+        return
+    dot = raw.rfind(".")
+    if dot <= 0:
+        raise RuntimeError(
+            f"KLANGK_GROUP_MAPPING_HOOK must be module.path.func_name, "
+            f"got: {raw!r}"
+        )
+    module_path = raw[:dot]
+    func_name = raw[dot + 1 :]
+    mod = importlib.import_module(module_path)
+    hook = getattr(mod, func_name)
+    if not callable(hook):
+        raise RuntimeError(
+            f"KLANGK_GROUP_MAPPING_HOOK: {raw!r} is not callable"
+        )
+    _group_hook = hook
+    _group_hook_is_async = asyncio.iscoroutinefunction(hook)
+    logger.info("OIDC group mapping hook loaded: %s", raw)
+
+
+async def call_group_hook(
+    provider: OIDCProvider,
+    claims: dict,
+    email: str,
+    tokens: dict,
+) -> set[str] | None:
+    """Call the group mapping hook. Returns None on error."""
+    if _group_hook is None:
+        return None
+    try:
+        if _group_hook_is_async:
+            result = await _group_hook(provider, claims, email, tokens)
+        else:
+            result = _group_hook(provider, claims, email, tokens)
+        return set(result)
+    except Exception:
+        logger.exception("Group mapping hook failed")
+        return None
+
+
+async def sync_oidc_groups(
+    user_id: str,
+    provider: OIDCProvider,
+    claims: dict,
+    email: str,
+    tokens: dict,
+) -> None:
+    """Sync group memberships based on the group mapping hook."""
+    from . import model
+
+    desired_names = await call_group_hook(provider, claims, email, tokens)
+    if desired_names is None:
+        return
+
+    # Resolve group names to IDs, auto-creating missing groups
+    desired_ids: set[str] = set()
+    for name in desired_names:
+        group = await model.get_group_by_name(name)
+        if group is None:
+            group = await model.create_group(name)
+            logger.info("Auto-created group %r from OIDC hook", name)
+        desired_ids.add(group["id"])
+
+    # Diff against current oidc_sync memberships
+    current_ids = set(await model.get_user_oidc_sync_group_ids(user_id))
+    for gid in desired_ids - current_ids:
+        await model.add_user_to_group(user_id, gid, source="oidc_sync")
+    for gid in current_ids - desired_ids:
+        await model.remove_user_from_group(user_id, gid)
+
+
 def clear_caches() -> None:
     """Clear all caches (for testing)."""
+    global _group_hook, _group_hook_is_async
     _discovery_cache.clear()
     _jwks_cache.clear()
+    _group_hook = None
+    _group_hook_is_async = False

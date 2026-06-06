@@ -383,7 +383,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 - **Web**: Login page shows one button per provider. Clicking redirects to the IdP via Authorization Code flow with PKCE. After authentication, the IdP redirects back to Klangk which exchanges the code for tokens, validates the ID token, and issues a Klangk JWT.
 - **CLI**: `klangk login` detects OIDC from the server config, opens a browser for authentication, and receives the token via a temporary localhost callback server.
 - **User provisioning**: On first OIDC login, a user is created automatically (verified, no password). If a local user with the same email already exists, the OIDC identity is linked to it.
-- **Group mapping**: OIDC-to-group mapping (syncing IdP claims to Klangk group membership) is planned but not yet implemented. See issue #113.
+- **Group mapping**: configurable via a Python hook. See [OIDC Group Mapping](#oidc-group-mapping) below.
 - **OIDC users** cannot use forgot-password, change-password, or change-email.
 - **Logout**: By default, logout only kills the Klangk session. With `logout_redirect: true`, the user is also redirected to the IdP's logout endpoint to end the SSO session (requires full re-authentication on next login).
 
@@ -396,6 +396,61 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
    - Web origins: `https://your-klangk-host`
 2. Copy the client secret to a file or set it directly in the OIDC config
 3. For CAC: configure the X.509 client certificate authenticator in the Keycloak authentication flow
+
+### OIDC Group Mapping
+
+Klangk can sync group memberships from OIDC claims on every login using a Python hook function.
+
+**Configuration:**
+
+```bash
+KLANGK_GROUP_MAPPING_HOOK=my_module.map_groups
+```
+
+The value is a dotted Python path where the last component is the function name. If not set, no group sync is performed.
+
+**Hook signature:**
+
+```python
+def map_groups(provider, claims, email, tokens):
+    """Return group names this user should belong to via OIDC sync.
+
+    Args:
+        provider: OIDCProvider object (id, issuer, client_id, etc.)
+        claims: decoded ID token payload (sub, email, custom claims)
+        email: user's email
+        tokens: raw token response (id_token, access_token, etc.)
+
+    Returns:
+        set of group name strings
+    """
+    groups = set()
+    roles = claims.get("realm_access", {}).get("roles", [])
+    if "klangk-admin" in roles:
+        groups.add("admin")
+    if "developers" in roles:
+        groups.add("devs")
+    return groups
+```
+
+Async hooks are also supported (`async def`).
+
+**Behavior:**
+
+- On every OIDC login, the hook is called with the IdP's claims
+- Groups returned by the hook are auto-created if they don't exist
+- Memberships are tracked with `source='oidc_sync'` — only these are added/removed by the sync
+- Manual group memberships (`source='manual'`) are never touched
+- If the hook raises an exception, it's logged and group sync is skipped (user still logs in)
+- If `KLANGK_GROUP_MAPPING_HOOK` is not set, no group sync occurs
+
+**Built-in example hook:**
+
+An example hook is included at `klangk_backend.oidc.example_admin_hook` that maps the `realm_access.roles` claim containing `klangk-admin` to the `admin` group. Use it as a starting point:
+
+```bash
+KLANGK_GROUP_MAPPING_HOOK=klangk_backend.oidc.example_admin_hook
+```
 
 ## Authorization (ACL System)
 

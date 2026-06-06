@@ -4233,6 +4233,47 @@ class TestOIDCCallback:
         assert user["external_id"] == "oidc-sub-123"
         assert user["password_hash"] is None
 
+    async def test_callback_syncs_groups_via_hook(
+        self, client, monkeypatch, db
+    ):
+        """OIDC callback calls the group mapping hook and syncs memberships."""
+
+        def test_hook(provider, claims, email, tokens):
+            if "admin-role" in claims.get("roles", []):
+                return {"admin", "power-users"}
+            return {"users"}
+
+        monkeypatch.setattr(api.oidc, "_group_hook", test_hook)
+        monkeypatch.setattr(api.oidc, "_group_hook_is_async", False)
+
+        _, cookie_data = await self._setup_callback(
+            client,
+            monkeypatch,
+            db,
+            claims={
+                "sub": "hook-sub",
+                "email": "hookuser@example.com",
+                "roles": ["admin-role"],
+            },
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "code", "state": "test-state"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+        user = await model.get_user_by_email("hookuser@example.com")
+        groups = await model.get_user_groups(user["id"])
+        names = {g["name"] for g in groups}
+        assert "admin" in names
+        assert "power-users" in names
+
+        # Verify source is oidc_sync
+        sync_ids = await model.get_user_oidc_sync_group_ids(user["id"])
+        assert len(sync_ids) == 2
+
     async def test_callback_links_existing_user(
         self, client, monkeypatch, db, user
     ):

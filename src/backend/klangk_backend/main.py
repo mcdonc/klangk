@@ -128,6 +128,7 @@ async def seed_default_user() -> None:
 async def lifespan(app: FastAPI):
     await model.init_db()
     oidc.init_providers()
+    oidc.load_group_hook()
     await seed_default_user()
     from . import wshandler
 
