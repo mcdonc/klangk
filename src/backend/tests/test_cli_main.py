@@ -47,6 +47,12 @@ def reset_env():
 
 
 class TestMainCLI:
+    @pytest.fixture(autouse=True)
+    def no_oidc(self, monkeypatch):
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config", lambda _: None
+        )
+
     def test_login_cmd_stores_token(self, tmp_path, monkeypatch):
         from klangk_backend.cli.main import login_cmd
 

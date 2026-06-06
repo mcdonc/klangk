@@ -87,6 +87,12 @@ class TestCLIConfig:
 
 
 class TestAuth:
+    @pytest.fixture(autouse=True)
+    def no_oidc(self, monkeypatch):
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config", lambda _: None
+        )
+
     def test_login_success(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
         monkeypatch.setattr(
@@ -278,6 +284,155 @@ class TestAuth:
             from klangk_backend.cli import auth
 
             auth.logout()  # Should not raise
+
+
+class TestOIDCCLILogin:
+    def test_fetch_config_success(self, monkeypatch):
+        from klangk_backend.cli.auth import _fetch_config
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"auth_modes": "both"}
+        with patch("httpx.get", return_value=mock_resp):
+            result = _fetch_config("http://localhost:8995")
+        assert result == {"auth_modes": "both"}
+
+    def test_fetch_config_failure(self, monkeypatch):
+        from klangk_backend.cli.auth import _fetch_config
+
+        with patch("httpx.get", side_effect=httpx.ConnectError("fail")):
+            result = _fetch_config("http://localhost:8995")
+        assert result is None
+
+    def test_oidc_single_provider(self, tmp_path, monkeypatch):
+        """OIDC login with single provider goes straight to browser."""
+        from klangk_backend.cli import auth
+
+        config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr(
+            "klangk_backend.cli.config._CONFIG_PATH", config_path
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config",
+            lambda _: {
+                "oidc_providers": [{"id": "test", "display_name": "Test"}],
+                "auth_modes": "oidc",
+            },
+        )
+        with patch.object(auth, "_oidc_browser_login") as mock_browser:
+            auth.login("http://localhost:8995")
+        mock_browser.assert_called_once()
+        assert mock_browser.call_args[0][1] == "test"
+
+    def test_oidc_multiple_providers_prompts(self, tmp_path, monkeypatch):
+        """OIDC login with multiple providers prompts for selection."""
+        from klangk_backend.cli import auth
+
+        config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr(
+            "klangk_backend.cli.config._CONFIG_PATH", config_path
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config",
+            lambda _: {
+                "oidc_providers": [
+                    {"id": "a", "display_name": "A"},
+                    {"id": "b", "display_name": "B"},
+                ],
+                "auth_modes": "oidc",
+            },
+        )
+        with (
+            patch.object(auth, "_oidc_browser_login") as mock_browser,
+            patch(
+                "klangk_backend.cli.auth.Prompt.ask",
+                return_value="2",
+            ),
+        ):
+            auth.login("http://localhost:8995")
+        mock_browser.assert_called_once()
+        assert mock_browser.call_args[0][1] == "b"
+
+    def test_oidc_skipped_when_credentials_provided(
+        self, tmp_path, monkeypatch
+    ):
+        """Explicit email+password skips OIDC even in both mode."""
+        from klangk_backend.cli import auth
+
+        config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr(
+            "klangk_backend.cli.config._CONFIG_PATH", config_path
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config",
+            lambda _: {
+                "oidc_providers": [{"id": "test", "display_name": "Test"}],
+                "auth_modes": "both",
+            },
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"access_token": "jwt"}
+        with patch("httpx.post", return_value=mock_resp):
+            auth.login(
+                "http://localhost:8995",
+                email="u@test.com",
+                password="pw",
+            )
+        cfg = CLIConfig.load()
+        assert cfg.auth.token == "jwt"
+
+    def test_oidc_invalid_provider_choice(self, tmp_path, monkeypatch):
+        from klangk_backend.cli import auth
+
+        config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr(
+            "klangk_backend.cli.config._CONFIG_PATH", config_path
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config",
+            lambda _: {
+                "oidc_providers": [
+                    {"id": "a", "display_name": "A"},
+                    {"id": "b", "display_name": "B"},
+                ],
+                "auth_modes": "oidc",
+            },
+        )
+        with (
+            patch(
+                "klangk_backend.cli.auth.Prompt.ask",
+                return_value="bad",
+            ),
+            pytest.raises(SystemExit),
+        ):
+            auth.login("http://localhost:8995")
+
+    def test_login_error_empty_body(self, tmp_path, monkeypatch):
+        """Login with empty error response doesn't crash."""
+        from klangk_backend.cli import auth
+
+        config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr(
+            "klangk_backend.cli.config._CONFIG_PATH", config_path
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config",
+            lambda _: None,
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_resp.json.side_effect = Exception("no body")
+        mock_resp.text = ""
+        with (
+            patch("httpx.post", return_value=mock_resp),
+            pytest.raises(SystemExit),
+        ):
+            auth.login(
+                "http://localhost:8995",
+                email="u@test.com",
+                password="pw",
+            )
 
 
 # --- KlangkClient tests ---
@@ -715,6 +870,12 @@ class TestRunShell:
 
 
 class TestMisc:
+    @pytest.fixture(autouse=True)
+    def no_oidc(self, monkeypatch):
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config", lambda _: None
+        )
+
     def test_auth_error_message(self):
         err = AuthError("Session expired — run `klangk login`")
         assert "Session expired" in str(err)
