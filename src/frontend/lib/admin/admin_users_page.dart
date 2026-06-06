@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
+import '../widgets/skeuo_tab.dart';
 
 class AdminUsersPage extends StatefulWidget {
   const AdminUsersPage({super.key});
@@ -14,14 +15,13 @@ class AdminUsersPage extends StatefulWidget {
   State<AdminUsersPage> createState() => _AdminUsersPageState();
 }
 
-class _AdminUsersPageState extends State<AdminUsersPage>
-    with SingleTickerProviderStateMixin {
+class _AdminUsersPageState extends State<AdminUsersPage> {
   List<Map<String, dynamic>> _users = [];
   List<Map<String, dynamic>> _invitations = [];
   List<Map<String, dynamic>> _groups = [];
   bool _loading = true;
   String? _error;
-  TabController? _tabController;
+  int _selectedIndex = 0;
 
   bool _canUsers = false;
   bool _canGroups = false;
@@ -42,17 +42,6 @@ class _AdminUsersPageState extends State<AdminUsersPage>
         auth.hasPermission('/admin/groups', 'view');
     _canInvitations = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/invitations', 'view');
-    final tabCount =
-        [_canUsers, _canGroups, _canInvitations].where((v) => v).length;
-    _tabController?.dispose();
-    _tabController =
-        TabController(length: tabCount > 0 ? tabCount : 1, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController?.dispose();
-    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -676,45 +665,76 @@ class _AdminUsersPageState extends State<AdminUsersPage>
   Widget build(BuildContext context) {
     final pendingCount =
         _invitations.where((i) => i['status'] == 'pending').length;
-    final tabs = <Widget>[];
+    final tabs = <SkeuoTab>[];
     final views = <Widget>[];
     final tabTypes = _tabTypes;
 
     if (_canUsers) {
-      tabs.add(const Tab(text: 'Users'));
+      final idx = tabs.length;
+      tabs.add(SkeuoTab(
+        label: 'Users',
+        icon: Icons.people,
+        isSelected: _selectedIndex == idx,
+        onTap: () => setState(() => _selectedIndex = idx),
+      ));
       views.add(_buildUsersTab());
     }
     if (_canGroups) {
-      tabs.add(const Tab(text: 'Groups'));
+      final idx = tabs.length;
+      tabs.add(SkeuoTab(
+        label: 'Groups',
+        icon: Icons.group,
+        isSelected: _selectedIndex == idx,
+        onTap: () => setState(() => _selectedIndex = idx),
+      ));
       views.add(_buildGroupsTab());
     }
     if (_canInvitations) {
-      tabs.add(Tab(
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Invitations'),
-            if (pendingCount > 0) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: KColors.accentAmber,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text('$pendingCount',
-                    style: const TextStyle(fontSize: 12, color: Colors.white)),
-              ),
-            ],
-          ],
-        ),
+      final idx = tabs.length;
+      tabs.add(SkeuoTab(
+        label: 'Invitations',
+        icon: Icons.mail_outline,
+        isSelected: _selectedIndex == idx,
+        badge: pendingCount > 0 ? pendingCount : null,
+        onTap: () => setState(() => _selectedIndex = idx),
       ));
       views.add(_buildInvitationsTab());
     }
 
     if (tabs.isEmpty) {
-      tabs.add(const Tab(text: 'Admin'));
       views.add(const Center(child: Text('No admin sections available')));
+    }
+
+    Widget? fab;
+    final currentType = tabTypes.isNotEmpty && _selectedIndex < tabTypes.length
+        ? tabTypes[_selectedIndex]
+        : '';
+    if (currentType == 'users') {
+      fab = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton.small(
+            heroTag: 'invite',
+            onPressed: _inviteUser,
+            tooltip: 'Invite user',
+            child: const Icon(Icons.mail_outline),
+          ),
+          const SizedBox(height: 8),
+          FloatingActionButton(
+            heroTag: 'add',
+            onPressed: _addUser,
+            tooltip: 'Add user',
+            child: const Icon(Icons.person_add),
+          ),
+        ],
+      );
+    } else if (currentType == 'groups') {
+      fab = FloatingActionButton(
+        heroTag: 'add-group',
+        onPressed: _createGroup,
+        tooltip: 'Create group',
+        child: const Icon(Icons.group_add),
+      );
     }
 
     return Scaffold(
@@ -723,51 +743,26 @@ class _AdminUsersPageState extends State<AdminUsersPage>
         actions: const [
           AppBarActions(),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: tabs,
-        ),
       ),
-      floatingActionButton: AnimatedBuilder(
-        animation: _tabController!,
-        builder: (context, _) {
-          final currentType =
-              tabTypes.isNotEmpty && _tabController!.index < tabTypes.length
-                  ? tabTypes[_tabController!.index]
-                  : '';
-          if (currentType == 'users') {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FloatingActionButton.small(
-                  heroTag: 'invite',
-                  onPressed: _inviteUser,
-                  tooltip: 'Invite user',
-                  child: const Icon(Icons.mail_outline),
-                ),
-                const SizedBox(height: 8),
-                FloatingActionButton(
-                  heroTag: 'add',
-                  onPressed: _addUser,
-                  tooltip: 'Add user',
-                  child: const Icon(Icons.person_add),
-                ),
-              ],
-            );
-          } else if (currentType == 'groups') {
-            return FloatingActionButton(
-              heroTag: 'add-group',
-              onPressed: _createGroup,
-              tooltip: 'Create group',
-              child: const Icon(Icons.group_add),
-            );
-          }
-          return const SizedBox.shrink();
-        },
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: views,
+      floatingActionButton: fab,
+      body: Column(
+        children: [
+          if (tabs.isNotEmpty)
+            Container(
+              height: 40,
+              color: KColors.bgCanvas,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: tabs.map((t) => Expanded(child: t)).toList(),
+              ),
+            ),
+          Expanded(
+            child: IndexedStack(
+              index: _selectedIndex < views.length ? _selectedIndex : 0,
+              children: views,
+            ),
+          ),
+        ],
       ),
     );
   }

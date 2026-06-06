@@ -3,6 +3,7 @@ import '../terminal/ghostty_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../chat/workspace_chat.dart';
 import '../theme/colors.dart';
+import '../widgets/skeuo_tab.dart';
 
 /// IDE layout: tabs (Terminal + Files + Chat) with optional
 /// debug pane at the bottom separated by a draggable divider.
@@ -70,13 +71,13 @@ class _IdeLayoutState extends State<IdeLayout> {
 
     // Build dynamic tab list: Terminal(0), Files(1), Chat?(2), Settings?(last)
     final tabs = <Widget>[
-      _SkeuoTab(
+      SkeuoTab(
         label: 'Terminal',
         icon: Icons.terminal,
         isSelected: _selectedIndex == 0,
         onTap: () => _selectTab(0),
       ),
-      _SkeuoTab(
+      SkeuoTab(
         label: 'Files',
         icon: Icons.folder_outlined,
         isSelected: _selectedIndex == 1,
@@ -96,7 +97,7 @@ class _IdeLayoutState extends State<IdeLayout> {
     ];
     if (hasChat) {
       final chatIndex = tabs.length;
-      tabs.add(_SkeuoTab(
+      tabs.add(SkeuoTab(
         label: 'Chat',
         icon: Icons.chat_outlined,
         isSelected: _selectedIndex == chatIndex,
@@ -110,7 +111,7 @@ class _IdeLayoutState extends State<IdeLayout> {
     }
     if (hasSettings) {
       final settingsIndex = tabs.length;
-      tabs.add(_SkeuoTab(
+      tabs.add(SkeuoTab(
         label: 'Settings',
         icon: Icons.settings,
         isSelected: _selectedIndex == settingsIndex,
@@ -123,7 +124,7 @@ class _IdeLayoutState extends State<IdeLayout> {
     }
     if (widget.sharing != null) {
       final sharingIndex = tabs.length;
-      tabs.add(_SkeuoTab(
+      tabs.add(SkeuoTab(
         label: 'Sharing',
         icon: Icons.people_outline,
         isSelected: _selectedIndex == sharingIndex,
@@ -193,78 +194,6 @@ class _IdeLayoutState extends State<IdeLayout> {
           ),
         ],
       ],
-    );
-  }
-}
-
-class _SkeuoTab extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool isSelected;
-  final int? badge;
-  final VoidCallback onTap;
-
-  const _SkeuoTab({
-    required this.label,
-    required this.icon,
-    required this.isSelected,
-    this.badge,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: ClipRRect(
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(8),
-          bottomRight: Radius.circular(8),
-        ),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          color: isSelected ? KColors.bgCanvas : KColors.bgAppBar,
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 14,
-                color: KColors.textSecondary,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal,
-                  color: KColors.textSecondary,
-                ),
-              ),
-              // coverage:ignore-start
-              if (badge != null) ...[
-                const SizedBox(width: 4),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: KColors.accentRed,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    badge! > 99 ? '99+' : badge.toString(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-              // coverage:ignore-end
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

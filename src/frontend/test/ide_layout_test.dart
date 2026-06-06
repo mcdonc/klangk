@@ -2,8 +2,56 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/chat/workspace_chat.dart';
 import 'package:klangk_frontend/layout/ide_layout.dart';
+import 'package:klangk_frontend/widgets/skeuo_tab.dart';
 
 void main() {
+  group('SkeuoTab', () {
+    testWidgets('renders badge when provided', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SkeuoTab(
+            label: 'Test',
+            icon: Icons.star,
+            isSelected: false,
+            badge: 5,
+            onTap: () {},
+          ),
+        ),
+      ));
+      expect(find.text('5'), findsOneWidget);
+      expect(find.text('Test'), findsOneWidget);
+    });
+
+    testWidgets('badge shows 99+ for large counts', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SkeuoTab(
+            label: 'X',
+            icon: Icons.star,
+            isSelected: false,
+            badge: 150,
+            onTap: () {},
+          ),
+        ),
+      ));
+      expect(find.text('99+'), findsOneWidget);
+    });
+
+    testWidgets('no badge when null', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SkeuoTab(
+            label: 'Y',
+            icon: Icons.star,
+            isSelected: true,
+            onTap: () {},
+          ),
+        ),
+      ));
+      expect(find.text('Y'), findsOneWidget);
+    });
+  });
+
   Widget buildLayout({
     Widget? fileViewer,
     Widget? terminal,
