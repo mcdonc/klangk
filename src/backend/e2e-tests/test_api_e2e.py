@@ -1,0 +1,631 @@
+"""API end-to-end tests against a real Klangk server.
+
+Exercises group management, ACL permissions, workspace sharing via ACL,
+and permission denials.
+
+Run with: devenv shell -- test-cli-e2e test_api_e2e.py
+"""
+
+import os
+import shutil
+import signal
+import subprocess
+import tempfile
+import time
+
+import httpx
+import pytest
+
+# Env vars from .env that could change test behavior.
+_SANITIZED_VARS = [
+    "KLANGK_AUTH_MODES",
+    "KLANGK_OIDC_CONFIG",
+    "KLANGK_DISABLE_REGISTRATION",
+    "KLANGK_DISABLE_INVITES",
+    "KLANGK_LOGIN_LOCKOUT_FAILURES",
+    "KLANGK_MIN_PASSWORD_LENGTH",
+]
+
+
+def _clean_env():
+    """Return os.environ with test-affecting vars removed."""
+    env = dict(os.environ)
+    for var in _SANITIZED_VARS:
+        env.pop(var, None)
+    return env
+
+
+def _start_server(data_dir, port, instance_id):
+    """Start a Klangk server and wait for it to be ready."""
+    env = {
+        **_clean_env(),
+        "KLANGK_PORT": port,
+        "KLANGK_DATA_DIR": data_dir,
+        "KLANGK_JWT_SECRET": "acl-e2e-test-secret",
+        "KLANGK_DEFAULT_USER": "admin@example.com",
+        "KLANGK_DEFAULT_PASSWORD": "adminpass",
+        "KLANGK_TEST_MODE": "1",
+        "KLANGK_INSTANCE_ID": instance_id,
+        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+        "KLANGK_PORT_RANGE_START": "9200",
+        "LOGFIRE_TOKEN": "",
+    }
+    proc = subprocess.Popen(
+        [
+            "uvicorn",
+            "klangk_backend.main:app",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            port,
+            "--ws-max-size",
+            "65536",
+        ],
+        cwd=os.path.join(os.path.dirname(__file__), ".."),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    base_url = f"http://localhost:{port}"
+    for _ in range(60):
+        try:
+            if httpx.get(f"{base_url}/health", timeout=2).status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+    else:
+        proc.kill()
+        stdout = proc.stdout.read().decode() if proc.stdout else ""
+        raise RuntimeError(f"Server failed to start:\n{stdout}")
+    return proc, base_url
+
+
+def _stop_server(proc, data_dir, instance_id):
+    """Stop a server and clean up."""
+    proc.send_signal(signal.SIGTERM)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            f"label=klangk.instance={instance_id}",
+            "-q",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout.strip():
+        subprocess.run(
+            ["docker", "rm", "-f", *result.stdout.strip().split()],
+            capture_output=True,
+        )
+    shutil.rmtree(data_dir, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def server():
+    """Start a real Klangk server for the test module."""
+    data_dir = tempfile.mkdtemp(prefix="klangk-acl-e2e-")
+    proc, base_url = _start_server(data_dir, "18993", "acl-e2e")
+    yield {"url": base_url, "data_dir": data_dir, "proc": proc}
+    _stop_server(proc, data_dir, "acl-e2e")
+
+
+@pytest.fixture(scope="module")
+def api(server):
+    """httpx client pointing at the test server."""
+    with httpx.Client(base_url=server["url"], timeout=10.0) as client:
+        yield client
+
+
+def _login(api, email, password):
+    """Login and return auth headers."""
+    resp = api.post("/auth/login", json={"email": email, "password": password})
+    assert resp.status_code == 200, f"Login failed for {email}: {resp.text}"
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _register(api, email, password="testpass"):
+    """Register a user (test mode) and return auth headers."""
+    resp = api.post(
+        "/auth/register", json={"email": email, "password": password}
+    )
+    assert resp.status_code == 200, f"Register failed for {email}: {resp.text}"
+    token = resp.json().get("access_token")
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    # If registration requires verification, login instead
+    return _login(api, email, password)
+
+
+@pytest.fixture(scope="module")
+def admin_headers(api):
+    """Auth headers for the default admin user."""
+    return _login(api, "admin@example.com", "adminpass")
+
+
+@pytest.fixture(scope="module")
+def user_a(api):
+    """Create user A and return (headers, email)."""
+    email = "alice@example.com"
+    headers = _register(api, email)
+    return {"headers": headers, "email": email}
+
+
+@pytest.fixture(scope="module")
+def user_b(api):
+    """Create user B and return (headers, email)."""
+    email = "bob@example.com"
+    headers = _register(api, email)
+    return {"headers": headers, "email": email}
+
+
+# --- Group management ---
+
+
+class TestGroupManagement:
+    def test_list_groups(self, api, admin_headers):
+        resp = api.get("/admin/groups", headers=admin_headers)
+        assert resp.status_code == 200
+        groups = resp.json()
+        assert any(g["name"] == "admin" for g in groups)
+
+    def test_create_group(self, api, admin_headers):
+        resp = api.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "editors", "description": "Can edit stuff"},
+        )
+        assert resp.status_code == 200
+        group = resp.json()
+        assert group["name"] == "editors"
+        assert group["id"]
+
+    def test_create_duplicate_group_fails(self, api, admin_headers):
+        api.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "dup-group"},
+        )
+        resp = api.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "dup-group"},
+        )
+        assert resp.status_code == 409
+
+    def test_update_group(self, api, admin_headers):
+        resp = api.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "to-rename"},
+        )
+        group_id = resp.json()["id"]
+        resp = api.patch(
+            f"/admin/groups/{group_id}",
+            headers=admin_headers,
+            json={"name": "renamed-group", "description": "Updated"},
+        )
+        assert resp.status_code == 200
+
+    def test_delete_group(self, api, admin_headers):
+        resp = api.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "to-delete"},
+        )
+        group_id = resp.json()["id"]
+        resp = api.delete(f"/admin/groups/{group_id}", headers=admin_headers)
+        assert resp.status_code == 200
+        # Verify gone
+        resp = api.get("/admin/groups", headers=admin_headers)
+        assert not any(g["id"] == group_id for g in resp.json())
+
+    def test_add_and_list_members(self, api, admin_headers, user_a):
+        # Create a group
+        resp = api.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "team-a"},
+        )
+        group_id = resp.json()["id"]
+
+        # Get user A's ID
+        resp = api.get("/admin/users", headers=admin_headers)
+        users = resp.json()
+        alice = next(u for u in users if u["email"] == user_a["email"])
+
+        # Add user A to group
+        resp = api.post(
+            f"/admin/groups/{group_id}/members",
+            headers=admin_headers,
+            json={"user_id": alice["id"]},
+        )
+        assert resp.status_code == 200
+
+        # List members
+        resp = api.get(
+            f"/admin/groups/{group_id}/members", headers=admin_headers
+        )
+        assert resp.status_code == 200
+        members = resp.json()
+        assert len(members) == 1
+        assert members[0]["email"] == user_a["email"]
+
+    def test_remove_member(self, api, admin_headers, user_b):
+        resp = api.post(
+            "/admin/groups",
+            headers=admin_headers,
+            json={"name": "temp-group"},
+        )
+        group_id = resp.json()["id"]
+
+        resp = api.get("/admin/users", headers=admin_headers)
+        bob = next(u for u in resp.json() if u["email"] == user_b["email"])
+
+        api.post(
+            f"/admin/groups/{group_id}/members",
+            headers=admin_headers,
+            json={"user_id": bob["id"]},
+        )
+        resp = api.delete(
+            f"/admin/groups/{group_id}/members/{bob['id']}",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+
+        resp = api.get(
+            f"/admin/groups/{group_id}/members", headers=admin_headers
+        )
+        assert resp.json() == []
+
+
+# --- Permission denials ---
+
+
+class TestPermissionDenials:
+    def test_non_admin_cannot_list_groups(self, api, user_a):
+        resp = api.get("/admin/groups", headers=user_a["headers"])
+        assert resp.status_code == 403
+
+    def test_non_admin_cannot_create_group(self, api, user_a):
+        resp = api.post(
+            "/admin/groups",
+            headers=user_a["headers"],
+            json={"name": "hacker-group"},
+        )
+        assert resp.status_code == 403
+
+    def test_non_admin_cannot_list_users(self, api, user_a):
+        resp = api.get("/admin/users", headers=user_a["headers"])
+        assert resp.status_code == 403
+
+    def test_non_admin_cannot_create_user(self, api, user_a):
+        resp = api.post(
+            "/admin/users",
+            headers=user_a["headers"],
+            json={"email": "evil@example.com", "password": "testpass"},
+        )
+        assert resp.status_code == 403
+
+    def test_non_admin_cannot_view_acl_tree(self, api, user_a):
+        resp = api.get("/admin/acl/tree", headers=user_a["headers"])
+        assert resp.status_code == 403
+
+    def test_non_admin_cannot_delete_other_workspace(
+        self, api, user_a, user_b
+    ):
+        # User B creates a workspace
+        resp = api.post(
+            "/workspaces",
+            headers=user_b["headers"],
+            json={"name": "bobs-ws"},
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+
+        # User A tries to delete it — no ACL entry for A on this workspace
+        resp = api.delete(f"/workspaces/{ws_id}", headers=user_a["headers"])
+        assert resp.status_code == 403
+
+    def test_non_admin_cannot_update_other_workspace(
+        self, api, user_a, user_b
+    ):
+        # User B creates a workspace
+        resp = api.post(
+            "/workspaces",
+            headers=user_b["headers"],
+            json={"name": "bobs-ws-2"},
+        )
+        ws_id = resp.json()["id"]
+
+        # User A tries to edit it
+        resp = api.put(
+            f"/workspaces/{ws_id}",
+            headers=user_a["headers"],
+            json={"name": "hijacked"},
+        )
+        assert resp.status_code == 403
+
+    def test_unauthenticated_denied(self, api):
+        resp = api.get("/workspaces")
+        assert resp.status_code == 401
+
+        resp = api.get("/admin/users")
+        assert resp.status_code == 401
+
+
+# --- ACL tree and introspection ---
+
+
+class TestACLIntrospection:
+    def test_acl_tree(self, api, admin_headers):
+        resp = api.get("/admin/acl/tree", headers=admin_headers)
+        assert resp.status_code == 200
+        tree = resp.json()
+        resources = [t["resource"] for t in tree]
+        assert "/" in resources
+        assert "/admin" in resources
+
+    def test_acl_by_group(self, api, admin_headers):
+        # Get admin group ID
+        resp = api.get("/admin/groups", headers=admin_headers)
+        admin_group = next(g for g in resp.json() if g["name"] == "admin")
+
+        resp = api.get(
+            f"/admin/acl/by-principal/group/{admin_group['id']}",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        entries = resp.json()
+        assert len(entries) > 0
+        # Admin group should have an ACE on /admin
+        assert any(e["resource"] == "/admin" for e in entries)
+
+    def test_acl_by_user(self, api, admin_headers, user_a):
+        # Create a workspace as user A so they have an ACE
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "introspect-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        # Get user A's ID
+        resp = api.get("/admin/users", headers=admin_headers)
+        alice = next(u for u in resp.json() if u["email"] == user_a["email"])
+
+        resp = api.get(
+            f"/admin/acl/by-principal/user/{alice['id']}",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        entries = resp.json()
+        # User A should have an ACE on their workspace
+        assert any(e["resource"] == f"/workspaces/{ws_id}" for e in entries)
+
+    def test_my_permissions_admin(self, api, admin_headers):
+        resp = api.get("/api/my-permissions", headers=admin_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == "admin@example.com"
+        assert "/admin" in data["permissions"]
+        assert "*" in data["permissions"]["/admin"]
+        assert len(data["groups"]) > 0
+        assert any(g["name"] == "admin" for g in data["groups"])
+
+    def test_my_permissions_regular_user(self, api, user_a):
+        resp = api.get("/api/my-permissions", headers=user_a["headers"])
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == user_a["email"]
+        # Regular user should NOT have admin permissions
+        assert "/admin" not in data["permissions"]
+        # But should have view on /
+        assert "/" in data["permissions"]
+        assert "view" in data["permissions"]["/"]
+
+
+# --- Workspace sharing via ACL ---
+
+
+class TestWorkspaceSharingACL:
+    def test_share_workspace_and_access(self, api, user_a, user_b):
+        # User A creates a workspace
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "shared-ws"},
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+
+        # User B cannot see it in shared list yet
+        resp = api.get("/workspaces/shared", headers=user_b["headers"])
+        assert not any(w["id"] == ws_id for w in resp.json())
+
+        # User A shares with user B
+        resp = api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_b["email"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "shared"
+
+        # User B now sees it in shared list
+        resp = api.get("/workspaces/shared", headers=user_b["headers"])
+        shared = resp.json()
+        assert any(w["id"] == ws_id for w in shared)
+        shared_ws = next(w for w in shared if w["id"] == ws_id)
+        assert shared_ws["owner_email"] == user_a["email"]
+
+    def test_shared_user_cannot_reshare(self, api, user_a, user_b):
+        """User B (shared, not owner) cannot manage members."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "no-reshare-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        # Share with B
+        api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_b["email"]},
+        )
+
+        # B tries to list members — no share permission
+        resp = api.get(
+            f"/workspaces/{ws_id}/members", headers=user_b["headers"]
+        )
+        assert resp.status_code == 403
+
+        # B tries to add someone
+        resp = api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_b["headers"],
+            json={"email": "admin@example.com"},
+        )
+        assert resp.status_code == 403
+
+    def test_unshare_workspace(self, api, user_a, user_b):
+        """Owner can remove a shared user."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "unshare-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        # Share with B
+        resp = api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_b["email"]},
+        )
+        member_id = resp.json()["user_id"]
+
+        # Verify B sees it
+        resp = api.get("/workspaces/shared", headers=user_b["headers"])
+        assert any(w["id"] == ws_id for w in resp.json())
+
+        # Unshare
+        resp = api.delete(
+            f"/workspaces/{ws_id}/members/{member_id}",
+            headers=user_a["headers"],
+        )
+        assert resp.status_code == 200
+
+        # B no longer sees it
+        resp = api.get("/workspaces/shared", headers=user_b["headers"])
+        assert not any(w["id"] == ws_id for w in resp.json())
+
+    def test_members_list(self, api, user_a, user_b):
+        """Owner can list workspace members."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "members-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        # Initially empty (owner is excluded)
+        resp = api.get(
+            f"/workspaces/{ws_id}/members", headers=user_a["headers"]
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+        # Share with B
+        api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_b["email"]},
+        )
+
+        # Now B shows up
+        resp = api.get(
+            f"/workspaces/{ws_id}/members", headers=user_a["headers"]
+        )
+        members = resp.json()
+        assert len(members) == 1
+        assert members[0]["email"] == user_b["email"]
+
+    def test_workspace_delete_cleans_acl(self, api, admin_headers, user_a):
+        """Deleting a workspace removes its ACL entries."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "delete-acl-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        # ACL tree should include this workspace
+        resp = api.get("/admin/acl/tree", headers=admin_headers)
+        assert any(
+            t["resource"] == f"/workspaces/{ws_id}" for t in resp.json()
+        )
+
+        # Delete the workspace
+        resp = api.delete(f"/workspaces/{ws_id}", headers=user_a["headers"])
+        assert resp.status_code == 200
+
+        # ACL tree should no longer include this workspace
+        resp = api.get("/admin/acl/tree", headers=admin_headers)
+        assert not any(
+            t["resource"] == f"/workspaces/{ws_id}" for t in resp.json()
+        )
+
+
+# --- Cross-cutting: granting admin to a regular user ---
+
+
+class TestGrantAdminViaGroup:
+    def test_add_user_to_admin_group_grants_access(
+        self, api, admin_headers, user_a
+    ):
+        """Adding a user to the admin group gives them admin permissions."""
+        # Verify user A cannot access admin endpoints
+        resp = api.get("/admin/users", headers=user_a["headers"])
+        assert resp.status_code == 403
+
+        # Get admin group and user A's ID
+        resp = api.get("/admin/groups", headers=admin_headers)
+        admin_group = next(g for g in resp.json() if g["name"] == "admin")
+
+        resp = api.get("/admin/users", headers=admin_headers)
+        alice = next(u for u in resp.json() if u["email"] == user_a["email"])
+
+        # Add user A to admin group
+        resp = api.post(
+            f"/admin/groups/{admin_group['id']}/members",
+            headers=admin_headers,
+            json={"user_id": alice["id"]},
+        )
+        assert resp.status_code == 200
+
+        # Now user A needs a fresh token (re-login) — group membership
+        # is checked on every request, not cached in JWT
+        resp = api.get("/admin/users", headers=user_a["headers"])
+        assert resp.status_code == 200
+        assert len(resp.json()) > 0
+
+        # Clean up — remove user A from admin group
+        resp = api.delete(
+            f"/admin/groups/{admin_group['id']}/members/{alice['id']}",
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+
+        # Verify access revoked immediately (no re-login needed)
+        resp = api.get("/admin/users", headers=user_a["headers"])
+        assert resp.status_code == 403

@@ -11,11 +11,79 @@ from fastapi.staticfiles import StaticFiles
 
 from . import container, model, oidc
 from .api import router
+from .model import (
+    ACTION_ALLOW,
+    ACTION_DENY,
+    PRINCIPAL_GROUP,
+    PRINCIPAL_SYSTEM,
+    SYSTEM_AUTHENTICATED,
+    SYSTEM_EVERYONE,
+)
 from .util import resolve_env_secret
 from .wshandler import handle_websocket
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+async def seed_default_acls(admin_group_id: str) -> None:
+    """Seed default ACL entries if none exist yet."""
+    existing = await model.get_acl_tree_summary()
+    if existing:
+        return
+    # /: Authenticated users can view, deny everyone else
+    await model.add_acl_entry(
+        "/",
+        0,
+        ACTION_ALLOW,
+        "view",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_AUTHENTICATED,
+    )
+    await model.add_acl_entry(
+        "/",
+        1,
+        ACTION_DENY,
+        "*",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_EVERYONE,
+    )
+    # /workspaces: Authenticated users can create
+    await model.add_acl_entry(
+        "/workspaces",
+        0,
+        ACTION_ALLOW,
+        "create",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_AUTHENTICATED,
+    )
+    # /admin: admin group gets full access, deny everyone else
+    await model.add_acl_entry(
+        "/admin",
+        0,
+        ACTION_ALLOW,
+        "*",
+        PRINCIPAL_GROUP,
+        group_id=admin_group_id,
+    )
+    await model.add_acl_entry(
+        "/admin",
+        1,
+        ACTION_DENY,
+        "*",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_EVERYONE,
+    )
+    logger.info("Seeded default ACL entries")
+
+
+async def ensure_admin_group() -> str:
+    """Ensure the 'admin' group exists. Returns the group ID."""
+    group = await model.get_group_by_name("admin")
+    if group is None:
+        group = await model.create_group("admin", description="Administrators")
+        logger.info("Created admin group: %s", group["id"])
+    return group["id"]
 
 
 async def seed_default_user() -> None:
@@ -28,6 +96,9 @@ async def seed_default_user() -> None:
 
     import bcrypt
 
+    admin_group_id = await ensure_admin_group()
+    await seed_default_acls(admin_group_id)
+
     email = resolve_env_secret("KLANGK_DEFAULT_USER", "admin@example.com")
     password = resolve_env_secret("KLANGK_DEFAULT_PASSWORD")
     existing = await model.get_user_by_email(email)
@@ -39,8 +110,7 @@ async def seed_default_user() -> None:
             password.encode(), bcrypt.gensalt()
         ).decode()
         user = await model.create_user(email, password_hash, verified=True)
-        await model.ensure_role("admin")
-        await model.assign_role(user["id"], "admin")
+        await model.add_user_to_group(user["id"], admin_group_id)
         if generated:
             logger.info(
                 "Created default admin user '%s' with generated password: %s",
@@ -48,11 +118,10 @@ async def seed_default_user() -> None:
                 password,
             )
         else:
-            logger.info("Created default user '%s' with admin role", email)
+            logger.info("Created default user '%s' in admin group", email)
     else:
-        # Ensure existing default user has admin role
-        await model.ensure_role("admin")
-        await model.assign_role(existing["id"], "admin")
+        # Ensure existing default user is in admin group
+        await model.add_user_to_group(existing["id"], admin_group_id)
 
 
 @asynccontextmanager

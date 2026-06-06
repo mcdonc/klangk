@@ -117,38 +117,56 @@ class TestWorkspaces:
 
 
 class TestWorkspaceSharing:
+    async def _share(self, workspace_id, user_id):
+        """Grant a user access via ACL entry."""
+        resource = f"/workspaces/{workspace_id}"
+        existing = await model.get_acl_entries(resource)
+        max_pos = max((e["position"] for e in existing), default=-1)
+        await model.add_acl_entry(
+            resource,
+            max_pos + 1,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_USER,
+            user_id=user_id,
+        )
+
     async def test_share_workspace(self, workspace, user):
         other = await model.create_user("other@example.com", "hash")
-        await model.share_workspace(workspace["id"], other["id"])
+        await self._share(workspace["id"], other["id"])
         members = await model.get_workspace_members(workspace["id"])
         assert len(members) == 1
         assert members[0]["id"] == other["id"]
         assert members[0]["email"] == "other@example.com"
 
-    async def test_get_workspace_shared_user(self, workspace, user):
-        other = await model.create_user("other@example.com", "hash")
-        # Before sharing, other cannot access
-        found = await model.get_workspace(workspace["id"], other["id"])
-        assert found is None
-        # After sharing, other can access
-        await model.share_workspace(workspace["id"], other["id"])
-        found = await model.get_workspace(workspace["id"], other["id"])
+    async def test_get_workspace_without_user_id(self, workspace, user):
+        """get_workspace without user_id returns any workspace."""
+        found = await model.get_workspace(workspace["id"])
         assert found is not None
         assert found["name"] == "test-workspace"
 
-    async def test_get_workspace_still_none_for_unshared(
-        self, workspace, user
-    ):
+    async def test_get_workspace_wrong_owner(self, workspace, user):
         other = await model.create_user("other@example.com", "hash")
         found = await model.get_workspace(workspace["id"], other["id"])
         assert found is None
 
     async def test_unshare_workspace(self, workspace, user):
         other = await model.create_user("other@example.com", "hash")
-        await model.share_workspace(workspace["id"], other["id"])
-        await model.unshare_workspace(workspace["id"], other["id"])
-        found = await model.get_workspace(workspace["id"], other["id"])
-        assert found is None
+        await self._share(workspace["id"], other["id"])
+        # Remove ACL entries for other user
+        resource = f"/workspaces/{workspace['id']}"
+        entries = await model.get_acl_entries(resource)
+        remaining = [
+            e
+            for e in entries
+            if not (
+                e["principal_type"] == model.PRINCIPAL_USER
+                and e["user_id"] == other["id"]
+            )
+        ]
+        for i, entry in enumerate(remaining):
+            entry["position"] = i
+        await model.replace_acl_entries(resource, remaining)
         members = await model.get_workspace_members(workspace["id"])
         assert len(members) == 0
 
@@ -158,30 +176,32 @@ class TestWorkspaceSharing:
 
     async def test_share_workspace_idempotent(self, workspace, user):
         other = await model.create_user("other@example.com", "hash")
-        await model.share_workspace(workspace["id"], other["id"])
-        await model.share_workspace(workspace["id"], other["id"])
+        await self._share(workspace["id"], other["id"])
+        await self._share(workspace["id"], other["id"])
         members = await model.get_workspace_members(workspace["id"])
+        # Two ACEs but same user — get_workspace_members uses DISTINCT
         assert len(members) == 1
 
     async def test_get_workspace_members_ordered(self, workspace, user):
         u_b = await model.create_user("b@example.com", "hash")
         u_a = await model.create_user("a@example.com", "hash")
-        await model.share_workspace(workspace["id"], u_b["id"])
-        await model.share_workspace(workspace["id"], u_a["id"])
+        await self._share(workspace["id"], u_b["id"])
+        await self._share(workspace["id"], u_a["id"])
         members = await model.get_workspace_members(workspace["id"])
         assert members[0]["email"] == "a@example.com"
         assert members[1]["email"] == "b@example.com"
 
-    async def test_workspace_access_cascade_on_delete(self, workspace, user):
+    async def test_acl_cascade_on_user_delete(self, workspace, user):
         other = await model.create_user("other@example.com", "hash")
-        await model.share_workspace(workspace["id"], other["id"])
-        await model.delete_workspace(workspace["id"], user["id"])
+        await self._share(workspace["id"], other["id"])
+        # Delete the user — CASCADE should remove ACL entries
+        await model.delete_user(other["id"])
         members = await model.get_workspace_members(workspace["id"])
         assert members == []
 
     async def test_list_shared_workspaces(self, workspace, user):
         other = await model.create_user("other@example.com", "hash")
-        await model.share_workspace(workspace["id"], other["id"])
+        await self._share(workspace["id"], other["id"])
         shared = await model.list_shared_workspaces(other["id"])
         assert len(shared) == 1
         assert shared[0]["id"] == workspace["id"]
