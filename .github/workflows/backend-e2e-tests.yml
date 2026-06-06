@@ -29,7 +29,7 @@ jobs:
               - 'src/docker/workspace/**'
               - 'devenv.nix'
               - 'devenv.yaml'
-              - '.github/workflows/cli-e2e-tests.yml'
+              - '.github/workflows/backend-e2e-tests.yml'
 
       - uses: ./.github/actions/devenv-setup
         if: steps.filter.outputs.e2e == 'true'
