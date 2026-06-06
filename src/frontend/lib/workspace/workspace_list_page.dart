@@ -490,94 +490,123 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       padding: const EdgeInsets.all(16),
       children: [
         if (_workspaces.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              'Owned by Me',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: KColors.textPrimary,
-                letterSpacing: 0.5,
-              ),
+          Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              border: Border.all(color: KColors.borderDefault),
+              borderRadius: BorderRadius.circular(8),
+              color: KColors.bgSurface,
             ),
-          ),
-        ..._workspaces.map((ws) {
-          final wsMembers = _workspaceMembers[ws['id'] as String] ?? [];
-          return Card(
-            child: ListTile(
-              leading: const Icon(Icons.folder, color: KColors.accentGreen),
-              title: Text(ws['name'] as String),
-              subtitle: Row(
-                children: [
-                  Text(_formatCreatedAt(ws['created_at'] as String?)),
-                  if (wsMembers.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    ...wsMembers.map((m) {
-                      final email = m['email'] as String;
-                      final letter =
-                          email.isNotEmpty ? email[0].toUpperCase() : '?';
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 2),
-                        child: Tooltip(
-                          message: email,
-                          child: CircleAvatar(
-                            radius: 10,
-                            backgroundColor: KColors.accentGreen,
-                            child: Text(
-                              letter,
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.folder,
+                          size: 18, color: KColors.textSecondary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Owned by Me',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: KColors.textPrimary,
                         ),
-                      );
-                    }),
-                  ],
-                ],
-              ),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline),
-                tooltip: 'Delete workspace',
-                onPressed: () => _deleteWorkspace(ws['id'] as String),
-              ),
-              onTap: () => context.go('/workspace/${ws['id']}'),
-            ),
-          );
-        }),
-        if (_sharedWorkspaces.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Divider(),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              'Shared with Me',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: KColors.textPrimary,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ),
-          ..._sharedWorkspaces.map((ws) => Card(
-                child: ListTile(
-                  leading: const Icon(Icons.folder_shared,
-                      color: KColors.accentGreen),
-                  title: Text(ws['name'] as String),
-                  subtitle: Text(
-                      '${ws['owner_email']} · ${_formatCreatedAt(ws['created_at'] as String?)}'),
-                  // coverage:ignore-start
-                  onTap: () => context.go('/workspace/${ws['id']}'),
-                  // coverage:ignore-end
+                      ),
+                    ],
+                  ),
                 ),
-              )),
-        ],
+                ..._workspaces.map((ws) {
+                  final wsMembers = _workspaceMembers[ws['id'] as String] ?? [];
+                  return ListTile(
+                    leading: const Icon(Icons.terminal,
+                        size: 20, color: KColors.accentGreen),
+                    title: Text(ws['name'] as String),
+                    subtitle: Row(
+                      children: [
+                        Text(_formatCreatedAt(ws['created_at'] as String?)),
+                        if (wsMembers.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          ...wsMembers.map((m) {
+                            final email = m['email'] as String;
+                            final letter =
+                                email.isNotEmpty ? email[0].toUpperCase() : '?';
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 2),
+                              child: Tooltip(
+                                message: email,
+                                child: CircleAvatar(
+                                  radius: 10,
+                                  backgroundColor: KColors.accentGreen,
+                                  child: Text(
+                                    letter,
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ],
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Delete workspace',
+                      onPressed: () => _deleteWorkspace(ws['id'] as String),
+                    ),
+                    onTap: () => context.go('/workspace/${ws['id']}'),
+                  );
+                }),
+              ],
+            ),
+          ),
+        if (_sharedWorkspaces.isNotEmpty)
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: KColors.borderDefault),
+              borderRadius: BorderRadius.circular(8),
+              color: KColors.bgSurface,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.folder_shared,
+                          size: 18, color: KColors.textSecondary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Shared with Me',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: KColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                ..._sharedWorkspaces.map((ws) => ListTile(
+                      leading: const Icon(Icons.terminal,
+                          size: 20, color: KColors.accentBlue),
+                      title: Text(ws['name'] as String),
+                      subtitle: Text(
+                          '${ws['owner_email']} · ${_formatCreatedAt(ws['created_at'] as String?)}'),
+                      // coverage:ignore-start
+                      onTap: () => context.go('/workspace/${ws['id']}'),
+                      // coverage:ignore-end
+                    )),
+              ],
+            ),
+          ),
       ],
     );
   }
