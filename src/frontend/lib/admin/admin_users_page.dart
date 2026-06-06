@@ -4,6 +4,7 @@ import '../theme/colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
+import '../widgets/acl_editor.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 import '../widgets/skeuo_tab.dart';
@@ -658,6 +659,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canUsers) types.add('users');
     if (_canGroups) types.add('groups');
     if (_canInvitations) types.add('invitations');
+    if (types.isNotEmpty) types.add('acl');
     return types;
   }
 
@@ -699,6 +701,18 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         onTap: () => setState(() => _selectedIndex = idx),
       ));
       views.add(_buildInvitationsTab());
+    }
+
+    // ACL tab — always visible for admins
+    if (tabTypes.isNotEmpty) {
+      final idx = tabs.length;
+      tabs.add(SkeuoTab(
+        label: 'ACL',
+        icon: Icons.security,
+        isSelected: _selectedIndex == idx,
+        onTap: () => setState(() => _selectedIndex = idx),
+      ));
+      views.add(const _AclBrowserTab());
     }
 
     if (tabs.isEmpty) {
@@ -1054,6 +1068,120 @@ class _UserAvatar extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// ACL browser tab: shows the static resource tree and lets you edit ACLs.
+class _AclBrowserTab extends StatefulWidget {
+  const _AclBrowserTab();
+
+  @override
+  State<_AclBrowserTab> createState() => _AclBrowserTabState();
+}
+
+class _AclBrowserTabState extends State<_AclBrowserTab> {
+  static const _resources = [
+    ('/', 'Root', Icons.home),
+    ('/workspaces', 'Workspaces', Icons.folder),
+    ('/admin', 'Admin', Icons.admin_panel_settings),
+    ('/admin/users', 'Admin / Users', Icons.people),
+    ('/admin/invitations', 'Admin / Invitations', Icons.mail_outline),
+    ('/admin/groups', 'Admin / Groups', Icons.group),
+  ];
+
+  String _selectedResource = '/';
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Resource tree sidebar
+        SizedBox(
+          width: 220,
+          child: Container(
+            decoration: const BoxDecoration(
+              border: Border(
+                right: BorderSide(color: KColors.borderDefault),
+              ),
+            ),
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: _resources.map((r) {
+                final (path, label, icon) = r;
+                final isSelected = path == _selectedResource;
+                final depth = path == '/' ? 0 : path.split('/').length - 1;
+                return InkWell(
+                  onTap: () => setState(() => _selectedResource = path),
+                  child: Container(
+                    color: isSelected
+                        ? KColors.accentGreen.withValues(alpha: 0.15)
+                        : null,
+                    padding: EdgeInsets.only(
+                      left: 12.0 + depth * 16.0,
+                      right: 12,
+                      top: 10,
+                      bottom: 10,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(icon,
+                            size: 16,
+                            color: isSelected
+                                ? KColors.accentGreen
+                                : KColors.textSecondary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color: isSelected
+                                  ? KColors.textPrimary
+                                  : KColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+        // ACL editor for selected resource
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ACL for $_selectedResource',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: AclEditor(
+                      key: ValueKey(_selectedResource),
+                      resource: _selectedResource,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
