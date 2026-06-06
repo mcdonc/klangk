@@ -14,6 +14,7 @@ class IdeLayout extends StatefulWidget {
   final Widget? settings;
   final Widget? sharing;
   final Widget? debug;
+  final int chatUnread;
   final GlobalKey<GhosttyTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
   final GlobalKey<WorkspaceChatState>? chatKey;
@@ -26,6 +27,7 @@ class IdeLayout extends StatefulWidget {
     this.settings,
     this.sharing,
     this.debug,
+    this.chatUnread = 0,
     this.terminalKey,
     this.fileViewerKey,
     this.chatKey,
@@ -38,7 +40,6 @@ class IdeLayout extends StatefulWidget {
 class _IdeLayoutState extends State<IdeLayout> {
   int _selectedIndex = 0;
   double _debugHeight = 0; // collapsed by default
-  int _chatUnread = 0;
 
   static const _dividerHeight = 6.0;
   static const _minDebugHeight = 0.0;
@@ -56,12 +57,6 @@ class _IdeLayoutState extends State<IdeLayout> {
     final chatIdx = widget.chat != null ? 2 : -1;
     widget.chatKey?.currentState?.setVisible(index == chatIdx);
   }
-
-  // coverage:ignore-start
-  void _onChatUnreadChanged(int count) {
-    if (mounted) setState(() => _chatUnread = count);
-  }
-  // coverage:ignore-end
 
   @override
   Widget build(BuildContext context) {
@@ -101,7 +96,7 @@ class _IdeLayoutState extends State<IdeLayout> {
         label: 'Chat',
         icon: Icons.chat_outlined,
         isSelected: _selectedIndex == chatIndex,
-        badge: _chatUnread > 0 ? _chatUnread : null,
+        badge: widget.chatUnread > 0 ? widget.chatUnread : null,
         onTap: () => _selectTab(chatIndex),
       ));
       content.add(Container(

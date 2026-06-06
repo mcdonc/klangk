@@ -37,6 +37,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   bool _connecting = true;
   String? _error;
   String _workspaceName = '';
+  int _chatUnread = 0;
   bool _containerStopped = false;
   bool _restarting = false;
   bool _disconnected = false;
@@ -268,8 +269,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
             ),
             terminal: GhosttyTerminal(key: _terminalKey, wsClient: wsClient),
             chat: _hasPerm('chat')
-                ? WorkspaceChat(key: _chatKey, wsClient: wsClient)
+                ? WorkspaceChat(
+                    key: _chatKey,
+                    wsClient: wsClient,
+                    onUnreadChanged: (count) {
+                      if (mounted) setState(() => _chatUnread = count);
+                    },
+                  )
                 : null,
+            chatUnread: _chatUnread,
             settings: _hasPerm('edit')
                 ? WorkspaceSettingsPanel(
                     workspaceId: widget.workspaceId,
