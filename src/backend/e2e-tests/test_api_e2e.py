@@ -833,3 +833,37 @@ class TestSharedWorkspaceAccess:
         perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
         assert "view" not in perms
         assert "terminal" not in perms
+
+    def test_add_self_as_member_rejected(self, api, user_a):
+        """Owner cannot share a workspace with themselves."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "self-share-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        resp = api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": user_a["email"]},
+        )
+        assert resp.status_code == 400
+        assert "yourself" in resp.json()["detail"]
+
+    def test_add_nonexistent_user_as_member(self, api, user_a):
+        """Sharing with a nonexistent email returns 404."""
+        resp = api.post(
+            "/workspaces",
+            headers=user_a["headers"],
+            json={"name": "nouser-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        resp = api.post(
+            f"/workspaces/{ws_id}/members",
+            headers=user_a["headers"],
+            json={"email": "nobody@example.com"},
+        )
+        assert resp.status_code == 404
+        assert "User not found" in resp.json()["detail"]
