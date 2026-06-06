@@ -33,6 +33,7 @@ class OIDCProvider:
     admin_claim: str | None = None
     admin_group: str | None = None
     ca_cert: str | None = None  # path to CA cert PEM for custom trust
+    token_validation_pem: str | None = None  # static RSA/EC public key PEM
 
 
 @dataclass
@@ -78,6 +79,7 @@ def load_config() -> list[OIDCProvider]:
                 admin_claim=entry.get("admin_claim"),
                 admin_group=entry.get("admin_group"),
                 ca_cert=entry.get("ca_cert"),
+                token_validation_pem=entry.get("token_validation_pem"),
             )
         )
     return providers
@@ -239,12 +241,18 @@ async def exchange_code(
 
 
 async def validate_id_token(provider: OIDCProvider, id_token: str) -> dict:
-    """Validate and decode an ID token. Returns the claims dict."""
-    jwks = await get_jwks(provider)
-    # python-jose needs the keys in JWKS format
+    """Validate and decode an ID token. Returns the claims dict.
+
+    Uses the static token_validation_pem if configured, otherwise
+    fetches JWKS from the IdP's discovery endpoint.
+    """
+    if provider.token_validation_pem:
+        key = provider.token_validation_pem
+    else:
+        key = await get_jwks(provider)
     claims = jose_jwt.decode(
         id_token,
-        jwks,
+        key,
         algorithms=["RS256", "ES256"],
         audience=provider.client_id,
         issuer=provider.issuer,

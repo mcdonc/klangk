@@ -372,17 +372,18 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.json
 
 ### Provider Config Fields
 
-| Field           | Required | Description                                                                                       |
-| --------------- | -------- | ------------------------------------------------------------------------------------------------- |
-| `id`            | Yes      | URL-safe slug, used in endpoint paths (`/auth/oidc/{id}/login`) and stored as `provider` on users |
-| `display_name`  | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                      |
-| `issuer`        | Yes      | OIDC issuer URL. Discovery via `{issuer}/.well-known/openid-configuration`                        |
-| `client_id`     | Yes      | OIDC client ID registered with the IdP                                                            |
-| `client_secret` | Yes      | OIDC client secret. Supports `file:` prefix for secret management                                 |
-| `scopes`        | No       | Space-separated scopes (default: `openid email profile`)                                          |
-| `admin_claim`   | No       | Dot-path to the claim containing roles/groups (e.g., `realm_access.roles`)                        |
-| `admin_group`   | No       | Value in that claim that maps to the Klangk admin role                                            |
-| `ca_cert`       | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs (e.g., DoD PKI)                |
+| Field                  | Required | Description                                                                                       |
+| ---------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `id`                   | Yes      | URL-safe slug, used in endpoint paths (`/auth/oidc/{id}/login`) and stored as `provider` on users |
+| `display_name`         | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                      |
+| `issuer`               | Yes      | OIDC issuer URL. Discovery via `{issuer}/.well-known/openid-configuration`                        |
+| `client_id`            | Yes      | OIDC client ID registered with the IdP                                                            |
+| `client_secret`        | Yes      | OIDC client secret. Supports `file:` prefix for secret management                                 |
+| `scopes`               | No       | Space-separated scopes (default: `openid email profile`)                                          |
+| `admin_claim`          | No       | Dot-path to the claim containing roles/groups (e.g., `realm_access.roles`)                        |
+| `admin_group`          | No       | Value in that claim that maps to the Klangk admin role                                            |
+| `ca_cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs (e.g., DoD PKI)                |
+| `token_validation_pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                   |
 
 ### How It Works
 

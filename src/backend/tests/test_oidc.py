@@ -109,6 +109,27 @@ class TestLoadConfig:
         providers = oidc.load_config()
         assert providers[0].ca_cert == "/etc/pki/dod-ca.pem"
 
+    def test_token_validation_pem(self, monkeypatch, tmp_path):
+        pem = "-----BEGIN PUBLIC KEY-----\nMIIBI...\n-----END PUBLIC KEY-----"
+        cfg = tmp_path / "oidc.json"
+        cfg.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "dod",
+                        "display_name": "DoD",
+                        "issuer": "https://sso.mil/realms/dod",
+                        "client_id": "klangk",
+                        "client_secret": "s",
+                        "token_validation_pem": pem,
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert providers[0].token_validation_pem == pem
+
     def test_ca_cert_default_none(self, monkeypatch, tmp_path):
         cfg = tmp_path / "oidc.json"
         cfg.write_text(
@@ -390,7 +411,7 @@ class TestGetJWKS:
 
 
 class TestValidateIdToken:
-    async def test_validate_id_token(self):
+    async def test_validate_id_token_with_jwks(self):
         from unittest.mock import MagicMock
 
         provider = _provider()
@@ -398,15 +419,48 @@ class TestValidateIdToken:
         with (
             patch.object(
                 oidc, "get_jwks", AsyncMock(return_value={"keys": []})
-            ),
+            ) as mock_jwks,
             patch.object(
                 oidc.jose_jwt,
                 "decode",
                 MagicMock(return_value=claims),
-            ),
+            ) as mock_decode,
         ):
             result = await oidc.validate_id_token(provider, "fake-token")
             assert result == claims
+            mock_jwks.assert_awaited_once()
+            mock_decode.assert_called_once_with(
+                "fake-token",
+                {"keys": []},
+                algorithms=["RS256", "ES256"],
+                audience="klangk",
+                issuer="https://idp.example.com",
+            )
+
+    async def test_validate_id_token_with_static_pem(self):
+        from unittest.mock import MagicMock
+
+        pem = "-----BEGIN PUBLIC KEY-----\nMIIBI...\n-----END PUBLIC KEY-----"
+        provider = _provider(token_validation_pem=pem)
+        claims = {"sub": "user1", "email": "user@example.com"}
+        with (
+            patch.object(oidc, "get_jwks", AsyncMock()) as mock_jwks,
+            patch.object(
+                oidc.jose_jwt,
+                "decode",
+                MagicMock(return_value=claims),
+            ) as mock_decode,
+        ):
+            result = await oidc.validate_id_token(provider, "fake-token")
+            assert result == claims
+            mock_jwks.assert_not_awaited()
+            mock_decode.assert_called_once_with(
+                "fake-token",
+                pem,
+                algorithms=["RS256", "ES256"],
+                audience="klangk",
+                issuer="https://idp.example.com",
+            )
 
 
 class TestExtractAdminRole:
