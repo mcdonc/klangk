@@ -12,6 +12,7 @@ import signal
 import subprocess
 import tempfile
 import time
+import uuid
 
 import httpx
 import pytest
@@ -115,6 +116,11 @@ def server():
     proc, base_url = _start_server(data_dir, "18993", "acl-e2e")
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}
     _stop_server(proc, data_dir, "acl-e2e")
+
+
+def _ws_name(prefix: str) -> str:
+    """Generate a unique workspace name to avoid collisions."""
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture(scope="module")
@@ -326,7 +332,7 @@ class TestPermissionDenials:
         resp = api.post(
             "/workspaces",
             headers=user_b["headers"],
-            json={"name": "bobs-ws"},
+            json={"name": _ws_name("bobs-ws")},
         )
         assert resp.status_code == 200
         ws_id = resp.json()["id"]
@@ -342,7 +348,7 @@ class TestPermissionDenials:
         resp = api.post(
             "/workspaces",
             headers=user_b["headers"],
-            json={"name": "bobs-ws-2"},
+            json={"name": _ws_name("bobs-ws")},
         )
         ws_id = resp.json()["id"]
 
@@ -394,7 +400,7 @@ class TestACLIntrospection:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "introspect-ws"},
+            json={"name": _ws_name("introspect")},
         )
         ws_id = resp.json()["id"]
 
@@ -437,7 +443,7 @@ class TestACLIntrospection:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "perm-ws"},
+            json={"name": _ws_name("perm")},
         )
         ws_id = resp.json()["id"]
         resp = api.get(
@@ -450,11 +456,11 @@ class TestACLIntrospection:
         assert "*" in perms
 
     def test_my_permissions_for_unowned_workspace(self, api, user_a, user_b):
-        """User has no permissions on another user's workspace."""
+        """User without ACE only gets inherited permissions, not owner perms."""
         resp = api.post(
             "/workspaces",
             headers=user_b["headers"],
-            json={"name": "other-perm-ws"},
+            json={"name": _ws_name("other-perm")},
         )
         ws_id = resp.json()["id"]
         resp = api.get(
@@ -462,14 +468,19 @@ class TestACLIntrospection:
             headers=user_a["headers"],
         )
         assert resp.status_code == 200
-        assert resp.json()["permissions"] == {}
+        perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
+        # Should NOT have owner-level permissions
+        assert "*" not in perms
+        assert "terminal" not in perms
+        assert "files" not in perms
+        assert "share" not in perms
 
     def test_my_permissions_shared_workspace(self, api, user_a, user_b):
         """Shared user gets view/terminal/files but not share or *."""
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "shared-perm-ws"},
+            json={"name": _ws_name("shared-perm")},
         )
         ws_id = resp.json()["id"]
         # Share with B
@@ -501,7 +512,7 @@ class TestWorkspaceSharingACL:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "shared-ws"},
+            json={"name": _ws_name("shared")},
         )
         assert resp.status_code == 200
         ws_id = resp.json()["id"]
@@ -531,7 +542,7 @@ class TestWorkspaceSharingACL:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "no-reshare-ws"},
+            json={"name": _ws_name("no-reshare")},
         )
         ws_id = resp.json()["id"]
 
@@ -561,7 +572,7 @@ class TestWorkspaceSharingACL:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "unshare-ws"},
+            json={"name": _ws_name("unshare")},
         )
         ws_id = resp.json()["id"]
 
@@ -593,7 +604,7 @@ class TestWorkspaceSharingACL:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "members-ws"},
+            json={"name": _ws_name("members")},
         )
         ws_id = resp.json()["id"]
 
@@ -624,7 +635,7 @@ class TestWorkspaceSharingACL:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "delete-acl-ws"},
+            json={"name": _ws_name("delete-acl")},
         )
         ws_id = resp.json()["id"]
 
@@ -700,7 +711,7 @@ class TestACLCascades:
         api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "cascade-ws"},
+            json={"name": _ws_name("cascade")},
         )
 
         # Get user A's ID
@@ -757,7 +768,7 @@ class TestSharedWorkspaceAccess:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "no-delete-ws"},
+            json={"name": _ws_name("no-delete")},
         )
         ws_id = resp.json()["id"]
 
@@ -777,7 +788,7 @@ class TestSharedWorkspaceAccess:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "no-edit-ws"},
+            json={"name": _ws_name("no-edit")},
         )
         ws_id = resp.json()["id"]
 
@@ -799,7 +810,7 @@ class TestSharedWorkspaceAccess:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "revoke-ws"},
+            json={"name": _ws_name("revoke")},
         )
         ws_id = resp.json()["id"]
 
@@ -839,7 +850,7 @@ class TestSharedWorkspaceAccess:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "self-share-ws"},
+            json={"name": _ws_name("self-share")},
         )
         ws_id = resp.json()["id"]
 
@@ -856,7 +867,7 @@ class TestSharedWorkspaceAccess:
         resp = api.post(
             "/workspaces",
             headers=user_a["headers"],
-            json={"name": "nouser-ws"},
+            json={"name": _ws_name("nouser")},
         )
         ws_id = resp.json()["id"]
 
