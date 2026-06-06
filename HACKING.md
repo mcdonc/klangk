@@ -339,11 +339,11 @@ Klangk supports OIDC authentication via one or more external Identity Providers 
 ```yaml
 - id: cac
   display_name: CAC Login
-  issuer: https://keycloak.example.com/realms/dod
+  issuer: https://keycloak.example.com/realms/company
   client_id: klangk
   client_secret: "file:/run/secrets/cac-secret"
   scopes: openid email profile
-  ca_cert: /etc/pki/tls/certs/dod-ca-bundle.pem
+  ca_cert: /etc/pki/tls/certs/company-ca-bundle.pem
   logout_redirect: true
 
 - id: internal
@@ -374,7 +374,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 | `client_id`            | Yes      | OIDC client ID registered with the IdP                                                                                      |
 | `client_secret`        | Yes      | OIDC client secret. Supports `file:` prefix for secret management                                                           |
 | `scopes`               | No       | Space-separated scopes (default: `openid email profile`)                                                                    |
-| `ca_cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs (e.g., DoD PKI)                                          |
+| `ca_cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs                                                          |
 | `token_validation_pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                                             |
 | `logout_redirect`      | No       | If `true`, logout redirects to the IdP's `end_session_endpoint` (RP-Initiated Logout). Default: `false` (local-only logout) |
 
