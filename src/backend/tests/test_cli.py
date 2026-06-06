@@ -408,6 +408,31 @@ class TestOIDCCLILogin:
         ):
             auth.login("http://localhost:8995")
 
+    def test_login_redirect_shows_hint(self, tmp_path, monkeypatch):
+        """301 redirect shows a helpful hint about HTTPS."""
+        from klangk_backend.cli import auth
+
+        config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr(
+            "klangk_backend.cli.config._CONFIG_PATH", config_path
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.auth._fetch_config",
+            lambda _: None,
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 301
+        mock_resp.headers = {"location": "https://example.com/auth/login"}
+        with (
+            patch("httpx.post", return_value=mock_resp),
+            pytest.raises(SystemExit),
+        ):
+            auth.login(
+                "http://example.com",
+                email="u@test.com",
+                password="pw",
+            )
+
     def test_login_error_empty_body(self, tmp_path, monkeypatch):
         """Login with empty error response doesn't crash."""
         from klangk_backend.cli import auth

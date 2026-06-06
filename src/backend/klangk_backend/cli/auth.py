@@ -58,23 +58,39 @@ def _oidc_browser_login(  # pragma: no cover
             token = params.get("token", [None])[0]
             if token:
                 token_holder[0] = token
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(
-                    b"<html><body><h2>Login successful!</h2>"
-                    b"<p>You can close this tab.</p></body></html>"
+                self._send_page(
+                    200,
+                    "Login Successful",
+                    "You are now logged in. You can close this tab.",
+                    "#2e7d32",
                 )
             else:
                 error = params.get("error", ["Unknown error"])[0]
                 error_holder[0] = error
-                self.send_response(400)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(
-                    f"<html><body><h2>Login failed</h2>"
-                    f"<p>{error}</p></body></html>".encode()
+                self._send_page(
+                    400,
+                    "Login Failed",
+                    error,
+                    "#c62828",
                 )
+
+        def _send_page(self, code, title, message, color):
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(
+                f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{title}</title></head>
+<body style="font-family:system-ui,sans-serif;display:flex;
+justify-content:center;align-items:center;min-height:100vh;
+margin:0;background:#1a1a2e;color:#e0e0e0">
+<div style="text-align:center;max-width:400px;padding:40px">
+<div style="font-size:48px;margin-bottom:16px">
+{"&#10003;" if code == 200 else "&#10007;"}</div>
+<h1 style="color:{color};margin:0 0 12px">{title}</h1>
+<p style="color:#aaa;font-size:16px">{message}</p>
+</div></body></html>""".encode()
+            )
 
         def log_message(self, format, *args):  # noqa: A002
             pass  # Suppress request logging
@@ -190,11 +206,21 @@ def login(
         timeout=15.0,
     )
     if resp.status_code != 200:
-        try:
-            detail = resp.json().get("detail", resp.text)
-        except Exception:
-            detail = resp.text or f"HTTP {resp.status_code}"
-        _err.print(f"[red]Login failed:[/red] {detail}")
+        if resp.status_code in (301, 302, 307, 308):
+            location = resp.headers.get("location", "")
+            _err.print(
+                f"[red]Login failed:[/red] server redirected to {location}"
+            )
+            if location.startswith("https://"):
+                _err.print(
+                    "[yellow]Hint:[/yellow] use https:// in the --server URL"
+                )
+        else:
+            try:
+                detail = resp.json().get("detail", resp.text)
+            except Exception:
+                detail = resp.text or f"HTTP {resp.status_code}"
+            _err.print(f"[red]Login failed:[/red] {detail}")
         raise SystemExit(1)
 
     token = resp.json()["access_token"]
