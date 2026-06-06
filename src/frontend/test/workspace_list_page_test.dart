@@ -13,9 +13,70 @@ import 'package:klangk_frontend/widgets/klangk_logo.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 void main() {
+  /// Wraps a handler to also serve /api/config and /api/my-permissions.
+  http.Client withPermissions(
+    Future<http.Response> Function(http.Request) handler, {
+    Map<String, List<String>>? permissions,
+    List<Map<String, dynamic>>? groups,
+  }) {
+    return MockClient((request) async {
+      if (request.url.path.contains('/api/config')) {
+        return http.Response(
+          jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+          200,
+        );
+      }
+      if (request.url.path.contains('/api/my-permissions')) {
+        return http.Response(
+          jsonEncode({
+            'user_id': 'test',
+            'email': 'test@example.com',
+            'permissions': permissions ??
+                {
+                  '/': ['view'],
+                  '/workspaces': ['create'],
+                },
+            'groups': groups ?? [],
+          }),
+          200,
+        );
+      }
+      return handler(request);
+    });
+  }
+
+  /// Default mock that serves workspaces, config, and permissions.
+  http.Client defaultMockClient() {
+    return withPermissions((request) async {
+      if (request.url.path == '/workspaces') {
+        return http.Response(jsonEncode([]), 200);
+      }
+      if (request.url.path == '/workspaces/shared') {
+        return http.Response(jsonEncode([]), 200);
+      }
+      return http.Response('Not found', 404);
+    });
+  }
+
+  /// Default JWT for tests that need a logged-in user.
+  late String defaultToken;
+
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
-    SharedPreferences.setMockInitialValues({});
+    // Most tests need a logged-in user with workspace create permission.
+    defaultToken = base64Url
+            .encode(utf8.encode(jsonEncode({'alg': 'HS256', 'typ': 'JWT'})))
+            .replaceAll('=', '') +
+        '.' +
+        base64Url
+            .encode(utf8.encode(jsonEncode({
+              'sub': 'test-user',
+              'email': 'test@example.com',
+            })))
+            .replaceAll('=', '') +
+        '.fakesig';
+    SharedPreferences.setMockInitialValues({'klangk_jwt': defaultToken});
+    testAuthHttpClientOverride = defaultMockClient();
   });
 
   tearDown(() {
@@ -49,11 +110,35 @@ void main() {
     });
 
     testWidgets('has FAB for creating workspaces', (tester) async {
+      final token = makeJwt({'sub': 'u1', 'email': 'u@example.com'});
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      testAuthHttpClientOverride = defaultMockClient();
       await tester.pumpWidget(buildPage());
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       expect(find.byType(FloatingActionButton), findsOneWidget);
       expect(find.byIcon(Icons.add), findsOneWidget);
+    });
+
+    testWidgets('no FAB when user lacks create permission', (tester) async {
+      testAuthHttpClientOverride = withPermissions(
+        (request) async {
+          if (request.url.path == '/workspaces') {
+            return http.Response(jsonEncode([]), 200);
+          }
+          if (request.url.path == '/workspaces/shared') {
+            return http.Response(jsonEncode([]), 200);
+          }
+          return http.Response('Not found', 404);
+        },
+        permissions: {
+          '/': ['view']
+        },
+      );
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FloatingActionButton), findsNothing);
     });
 
     testWidgets('has logout button', (tester) async {
@@ -72,7 +157,7 @@ void main() {
     });
 
     testWidgets('shows workspace list from mock', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -107,7 +192,7 @@ void main() {
     });
 
     testWidgets('shows member avatars on workspace cards', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -145,7 +230,7 @@ void main() {
     });
 
     testWidgets('shows shared workspaces section', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -189,7 +274,7 @@ void main() {
 
     testWidgets('shows only shared section when no owned workspaces',
         (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -220,7 +305,7 @@ void main() {
 
     testWidgets('handles missing and invalid created_at gracefully',
         (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -265,7 +350,7 @@ void main() {
     });
 
     testWidgets('shows empty state when no workspaces', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -279,7 +364,7 @@ void main() {
     });
 
     testWidgets('shows delete button for each workspace', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -304,7 +389,7 @@ void main() {
 
     testWidgets('shows loading indicator initially', (tester) async {
       final completer = Completer<http.Response>();
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         return completer.future;
       });
 
@@ -319,7 +404,7 @@ void main() {
     });
 
     testWidgets('shows error snackbar on load failure', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         throw Exception('Network error');
       });
 
@@ -330,7 +415,7 @@ void main() {
     });
 
     testWidgets('shows created date for workspaces', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -354,7 +439,7 @@ void main() {
     });
 
     testWidgets('FAB opens create workspace dialog', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -373,7 +458,7 @@ void main() {
     });
 
     testWidgets('create dialog has text field', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -391,7 +476,7 @@ void main() {
     });
 
     testWidgets('cancel button closes create dialog', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -411,7 +496,7 @@ void main() {
     });
 
     testWidgets('delete button shows confirmation dialog', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -441,7 +526,7 @@ void main() {
     });
 
     testWidgets('cancel delete closes dialog without deleting', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -472,7 +557,7 @@ void main() {
     });
 
     testWidgets('workspace cards use ListTile', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -503,7 +588,7 @@ void main() {
         'roles': ['user'],
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -518,7 +603,7 @@ void main() {
 
     testWidgets('create dialog submit adds workspace to list', (tester) async {
       var postCalled = false;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           if (postCalled) {
             return http.Response(
@@ -567,7 +652,7 @@ void main() {
     });
 
     testWidgets('create dialog shows inline error on failure', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -595,7 +680,7 @@ void main() {
 
     testWidgets('confirm delete removes workspace from list', (tester) async {
       var deleteCalled = false;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           if (deleteCalled) {
             return http.Response(jsonEncode([]), 200);
@@ -640,7 +725,7 @@ void main() {
 
     testWidgets('tapping workspace card navigates to workspace URL',
         (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(
             jsonEncode([
@@ -698,27 +783,21 @@ void main() {
         'email': 'admin@example.com',
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path == '/workspaces') {
-          return http.Response(jsonEncode([]), 200);
-        }
-        if (request.url.path.contains('/api/my-permissions')) {
-          return http.Response(
-            jsonEncode({
-              'user_id': 'admin-1',
-              'email': 'admin@example.com',
-              'permissions': {
-                '/admin': ['*'],
-              },
-              'groups': [
-                {'id': 'g1', 'name': 'admin'},
-              ],
-            }),
-            200,
-          );
-        }
-        return http.Response('Not found', 404);
-      });
+      testAuthHttpClientOverride = withPermissions(
+        (request) async {
+          if (request.url.path == '/workspaces') {
+            return http.Response(jsonEncode([]), 200);
+          }
+          return http.Response('Not found', 404);
+        },
+        permissions: {
+          '/admin': ['*'],
+          '/workspaces': ['create'],
+        },
+        groups: [
+          {'id': 'g1', 'name': 'admin'},
+        ],
+      );
 
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
@@ -733,25 +812,17 @@ void main() {
         'email': 'user@example.com',
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path == '/workspaces') {
-          return http.Response(jsonEncode([]), 200);
-        }
-        if (request.url.path.contains('/api/my-permissions')) {
-          return http.Response(
-            jsonEncode({
-              'user_id': 'user-1',
-              'email': 'user@example.com',
-              'permissions': {
-                '/': ['view'],
-              },
-              'groups': [],
-            }),
-            200,
-          );
-        }
-        return http.Response('Not found', 404);
-      });
+      testAuthHttpClientOverride = withPermissions(
+        (request) async {
+          if (request.url.path == '/workspaces') {
+            return http.Response(jsonEncode([]), 200);
+          }
+          return http.Response('Not found', 404);
+        },
+        permissions: {
+          '/': ['view'],
+        },
+      );
 
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
@@ -762,7 +833,7 @@ void main() {
     testWidgets('create dialog submit via text field onSubmitted',
         (tester) async {
       var postCalled = false;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           if (postCalled) {
             return http.Response(
@@ -811,7 +882,7 @@ void main() {
 
     testWidgets('create dialog with image selection', (tester) async {
       String? postedBody;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -867,7 +938,7 @@ void main() {
     testWidgets('create dialog sends default_command when provided',
         (tester) async {
       String? postedBody;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -907,7 +978,7 @@ void main() {
     testWidgets('create dialog submit via command field onSubmitted',
         (tester) async {
       var postCalled = false;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           if (postCalled) {
             return http.Response(
@@ -956,7 +1027,7 @@ void main() {
 
     testWidgets('create workspace exception shows inline error',
         (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -981,7 +1052,7 @@ void main() {
 
     testWidgets('delete workspace exception shows error snackbar',
         (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(
             jsonEncode([
@@ -1016,7 +1087,7 @@ void main() {
 
     testWidgets('logout button calls logout and navigates', (tester) async {
       var logoutCalled = false;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -1056,7 +1127,7 @@ void main() {
     });
 
     testWidgets('logout with oidc redirect calls navigateTo', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -1100,7 +1171,7 @@ void main() {
     });
 
     testWidgets('title tap navigates to home', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -1148,27 +1219,21 @@ void main() {
         'email': 'admin@example.com',
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path == '/workspaces') {
-          return http.Response(jsonEncode([]), 200);
-        }
-        if (request.url.path.contains('/api/my-permissions')) {
-          return http.Response(
-            jsonEncode({
-              'user_id': 'user-1',
-              'email': 'admin@example.com',
-              'permissions': {
-                '/admin': ['*'],
-              },
-              'groups': [
-                {'id': 'g1', 'name': 'admin'},
-              ],
-            }),
-            200,
-          );
-        }
-        return http.Response('Not found', 404);
-      });
+      testAuthHttpClientOverride = withPermissions(
+        (request) async {
+          if (request.url.path == '/workspaces') {
+            return http.Response(jsonEncode([]), 200);
+          }
+          return http.Response('Not found', 404);
+        },
+        permissions: {
+          '/admin': ['*'],
+          '/workspaces': ['create'],
+        },
+        groups: [
+          {'id': 'g1', 'name': 'admin'},
+        ],
+      );
 
       String? navigatedTo;
       final router = GoRouter(
@@ -1204,7 +1269,7 @@ void main() {
 
     testWidgets('create workspace with mounts', (tester) async {
       String? postedBody;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -1268,7 +1333,7 @@ void main() {
 
     testWidgets('create dialog adds mount via Enter key', (tester) async {
       String? postedBody;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -1310,7 +1375,7 @@ void main() {
     });
 
     testWidgets('create dialog rejects invalid mount', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -1358,7 +1423,7 @@ void main() {
 
     testWidgets('create workspace with env vars', (tester) async {
       String? postedBody;
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -1413,7 +1478,7 @@ void main() {
     });
 
     testWidgets('create dialog rejects invalid env var', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/workspaces' && request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
@@ -1444,229 +1509,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Key cannot'), findsNothing);
       expect(find.text('A=1'), findsOneWidget);
-    });
-
-    testWidgets('duplicate button opens dialog and duplicates workspace',
-        (tester) async {
-      var postCalled = false;
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
-          if (postCalled) {
-            return http.Response(
-              jsonEncode([
-                {
-                  'id': 'ws-1',
-                  'name': 'Original',
-                  'container_id': null,
-                  'created_at': '2026-05-28',
-                },
-                {
-                  'id': 'ws-2',
-                  'name': 'Original-copy',
-                  'container_id': null,
-                  'created_at': '2026-05-28',
-                },
-              ]),
-              200,
-            );
-          }
-          return http.Response(
-            jsonEncode([
-              {
-                'id': 'ws-1',
-                'name': 'Original',
-                'container_id': null,
-                'created_at': '2026-05-28',
-              },
-            ]),
-            200,
-          );
-        }
-        if (request.url.path == '/workspaces/ws-1/duplicate' &&
-            request.method == 'POST') {
-          postCalled = true;
-          final body = jsonDecode(request.body) as Map<String, dynamic>;
-          return http.Response(
-            jsonEncode({
-              'id': 'ws-2',
-              'name': body['name'],
-              'container_id': null,
-              'created_at': '2026-05-28',
-            }),
-            200,
-          );
-        }
-        return http.Response('Not found', 404);
-      });
-
-      await tester.pumpWidget(buildPage());
-      await tester.pumpAndSettle();
-
-      // Tap the duplicate (copy) button
-      await tester.tap(find.byIcon(Icons.copy_outlined));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Duplicate Workspace'), findsOneWidget);
-      // Default name should be "Original-copy"
-      final textField = tester.widget<TextField>(find.byType(TextField));
-      expect(textField.controller!.text, 'Original-copy');
-
-      // Submit
-      await tester.tap(find.text('Duplicate'));
-      await tester.pumpAndSettle();
-
-      expect(postCalled, isTrue);
-      expect(find.text('Original-copy'), findsOneWidget);
-    });
-
-    testWidgets('duplicate dialog cancel does not create', (tester) async {
-      var postCalled = false;
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
-          return http.Response(
-            jsonEncode([
-              {
-                'id': 'ws-1',
-                'name': 'Original',
-                'container_id': null,
-                'created_at': '2026-05-28',
-              },
-            ]),
-            200,
-          );
-        }
-        if (request.url.path.contains('/duplicate')) {
-          postCalled = true;
-          return http.Response('{}', 200);
-        }
-        return http.Response('Not found', 404);
-      });
-
-      await tester.pumpWidget(buildPage());
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byIcon(Icons.copy_outlined));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
-
-      expect(postCalled, isFalse);
-    });
-
-    testWidgets('duplicate shows error on name conflict', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
-          return http.Response(
-            jsonEncode([
-              {
-                'id': 'ws-1',
-                'name': 'Original',
-                'container_id': null,
-                'created_at': '2026-05-28',
-              },
-            ]),
-            200,
-          );
-        }
-        if (request.url.path.contains('/duplicate')) {
-          return http.Response(
-            jsonEncode(
-                {'detail': 'A workspace named \'taken\' already exists'}),
-            409,
-          );
-        }
-        return http.Response('Not found', 404);
-      });
-
-      await tester.pumpWidget(buildPage());
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byIcon(Icons.copy_outlined));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(find.byType(TextField), 'taken');
-      await tester.tap(find.text('Duplicate'));
-      await tester.pumpAndSettle();
-
-      expect(find.textContaining('already exists'), findsOneWidget);
-    });
-
-    testWidgets('duplicate shows error on exception', (tester) async {
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
-          return http.Response(
-            jsonEncode([
-              {
-                'id': 'ws-1',
-                'name': 'Original',
-                'container_id': null,
-                'created_at': '2026-05-28',
-              },
-            ]),
-            200,
-          );
-        }
-        if (request.url.path.contains('/duplicate')) {
-          throw Exception('Network error');
-        }
-        return http.Response('Not found', 404);
-      });
-
-      await tester.pumpWidget(buildPage());
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byIcon(Icons.copy_outlined));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Duplicate'));
-      await tester.pumpAndSettle();
-
-      expect(find.textContaining('Error:'), findsOneWidget);
-    });
-
-    testWidgets('duplicate dialog submit via Enter key', (tester) async {
-      var postCalled = false;
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
-          return http.Response(
-            jsonEncode([
-              {
-                'id': 'ws-1',
-                'name': 'Original',
-                'container_id': null,
-                'created_at': '2026-05-28',
-              },
-            ]),
-            200,
-          );
-        }
-        if (request.url.path.contains('/duplicate')) {
-          postCalled = true;
-          return http.Response(
-            jsonEncode({
-              'id': 'ws-2',
-              'name': 'via-enter',
-              'container_id': null,
-              'created_at': '2026-05-28',
-            }),
-            200,
-          );
-        }
-        return http.Response('Not found', 404);
-      });
-
-      await tester.pumpWidget(buildPage());
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byIcon(Icons.copy_outlined));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(find.byType(TextField), 'via-enter');
-      await tester.testTextInput.receiveAction(TextInputAction.done);
-      await tester.pumpAndSettle();
-
-      expect(postCalled, isTrue);
     });
   });
 }
