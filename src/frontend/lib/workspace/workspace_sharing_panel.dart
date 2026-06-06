@@ -122,72 +122,94 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Shared Users',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            if (_loading)
-              const Center(child: CircularProgressIndicator())
-            else if (_members.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: Text('No shared users',
-                    style: TextStyle(color: KColors.textSecondary)),
-              )
-            else
-              ..._members.map((m) => Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 14,
-                          backgroundColor: KColors.accentBlue,
-                          child: Text(
-                            (m['email'] as String)[0].toUpperCase(),
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 12),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(m['email'] as String,
-                              style: const TextStyle(fontSize: 13)),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: () => _removeMember(m['id'] as String),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          tooltip: 'Remove access',
-                        ),
-                      ],
-                    ),
-                  )),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _shareCtrl,
-              decoration: const InputDecoration(
-                hintText: 'Type email to share...',
-                isDense: true,
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.person_add, size: 18),
+            // Share-to-user section in a bordered card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border.all(color: KColors.borderDefault),
+                borderRadius: BorderRadius.circular(8),
+                color: KColors.bgSurface,
               ),
-              style: const TextStyle(fontSize: 13),
-              onChanged: _searchUsers,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.people_outline,
+                          size: 18, color: KColors.textSecondary),
+                      const SizedBox(width: 8),
+                      const Text('Shared Users',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 14)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (_loading)
+                    const Center(child: CircularProgressIndicator())
+                  else if (_members.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text('No shared users',
+                          style: TextStyle(color: KColors.textSecondary)),
+                    )
+                  else
+                    ..._members.map((m) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 14,
+                                backgroundColor: KColors.accentBlue,
+                                child: Text(
+                                  (m['email'] as String)[0].toUpperCase(),
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 12),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(m['email'] as String,
+                                    style: const TextStyle(fontSize: 13)),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () =>
+                                    _removeMember(m['id'] as String),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                tooltip: 'Remove access',
+                              ),
+                            ],
+                          ),
+                        )),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _shareCtrl,
+                    decoration: const InputDecoration(
+                      hintText: 'Type email to share...',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.person_add, size: 18),
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                    onChanged: _searchUsers,
+                  ),
+                  ..._searchResults.map((r) => ListTile(
+                        dense: true,
+                        title: Text(r['email'] as String,
+                            style: const TextStyle(fontSize: 13)),
+                        onTap: () {
+                          _addMember(r['email'] as String);
+                          setState(() {
+                            _searchResults = [];
+                            _shareCtrl.clear();
+                          });
+                        },
+                      )),
+                ],
+              ),
             ),
-            ..._searchResults.map((r) => ListTile(
-                  dense: true,
-                  title: Text(r['email'] as String,
-                      style: const TextStyle(fontSize: 13)),
-                  onTap: () {
-                    _addMember(r['email'] as String);
-                    setState(() {
-                      _searchResults = [];
-                      _shareCtrl.clear();
-                    });
-                  },
-                )),
-            const SizedBox(height: 24),
-            const Divider(),
+            const SizedBox(height: 16),
             // Collapsible ACL editor
             GestureDetector(
               onTap: () => setState(() => _aclExpanded = !_aclExpanded),
