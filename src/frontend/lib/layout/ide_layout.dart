@@ -109,19 +109,6 @@ class _IdeLayoutState extends State<IdeLayout> {
         child: widget.chat!,
       ));
     }
-    if (hasSettings) {
-      final settingsIndex = tabs.length;
-      tabs.add(SkeuoTab(
-        label: 'Settings',
-        icon: Icons.settings,
-        isSelected: _selectedIndex == settingsIndex,
-        onTap: () => _selectTab(settingsIndex),
-      ));
-      content.add(Container(
-        color: KColors.bgCanvas,
-        child: widget.settings!,
-      ));
-    }
     if (widget.sharing != null) {
       final sharingIndex = tabs.length;
       tabs.add(SkeuoTab(
@@ -133,6 +120,19 @@ class _IdeLayoutState extends State<IdeLayout> {
       content.add(Container(
         color: KColors.bgCanvas,
         child: widget.sharing!,
+      ));
+    }
+    if (hasSettings) {
+      final settingsIndex = tabs.length;
+      tabs.add(SkeuoTab(
+        label: 'Settings',
+        icon: Icons.settings,
+        isSelected: _selectedIndex == settingsIndex,
+        onTap: () => _selectTab(settingsIndex),
+      ));
+      content.add(Container(
+        color: KColors.bgCanvas,
+        child: widget.settings!,
       ));
     }
 
