@@ -11,6 +11,7 @@ class IdeLayout extends StatefulWidget {
   final Widget terminal;
   final Widget? chat;
   final Widget? settings;
+  final Widget? sharing;
   final Widget? debug;
   final GlobalKey<GhosttyTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
@@ -22,6 +23,7 @@ class IdeLayout extends StatefulWidget {
     required this.terminal,
     this.chat,
     this.settings,
+    this.sharing,
     this.debug,
     this.terminalKey,
     this.fileViewerKey,
@@ -117,6 +119,19 @@ class _IdeLayoutState extends State<IdeLayout> {
       content.add(Container(
         color: KColors.bgCanvas,
         child: widget.settings!,
+      ));
+    }
+    if (widget.sharing != null) {
+      final sharingIndex = tabs.length;
+      tabs.add(_SkeuoTab(
+        label: 'Sharing',
+        icon: Icons.people_outline,
+        isSelected: _selectedIndex == sharingIndex,
+        onTap: () => _selectTab(sharingIndex),
+      ));
+      content.add(Container(
+        color: KColors.bgCanvas,
+        child: widget.sharing!,
       ));
     }
 

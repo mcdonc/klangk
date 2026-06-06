@@ -9,6 +9,7 @@ void main() {
     Widget? terminal,
     Widget? chat,
     Widget? settings,
+    Widget? sharing,
     Widget? debug,
   }) {
     return MaterialApp(
@@ -20,6 +21,7 @@ void main() {
             fileViewer: fileViewer ?? const Text('Files'),
             terminal: terminal ?? const Text('Terminal'),
             chat: chat ?? const Text('Chat'),
+            sharing: sharing,
             settings: settings,
             debug: debug ?? const Text('Debug'),
           ),
@@ -234,6 +236,27 @@ void main() {
       await tester.tap(find.text('Chat'));
       await tester.pumpAndSettle();
       expect(find.text('CHAT'), findsOneWidget);
+    });
+
+    testWidgets('has Sharing tab when sharing provided', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        sharing: const Text('SHARING_CONTENT'),
+      ));
+      expect(find.text('Sharing'), findsOneWidget);
+    });
+
+    testWidgets('sharing tab content is visible after switch', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        sharing: const Text('SHARING_CONTENT'),
+      ));
+      await tester.tap(find.text('Sharing'));
+      await tester.pumpAndSettle();
+      expect(find.text('SHARING_CONTENT'), findsOneWidget);
+    });
+
+    testWidgets('no sharing tab when sharing is null', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      expect(find.text('Sharing'), findsNothing);
     });
 
     testWidgets('selecting same tab does not rebuild', (tester) async {

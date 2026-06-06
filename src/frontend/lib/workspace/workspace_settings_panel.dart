@@ -1,11 +1,10 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
 
-/// Workspace settings panel: config editing + ACL management.
+/// Workspace settings panel: config editing only.
 /// Used as a tab in the IDE layout.
 class WorkspaceSettingsPanel extends StatefulWidget {
   final String workspaceId;
@@ -18,13 +17,11 @@ class WorkspaceSettingsPanel extends StatefulWidget {
 
 class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   Map<String, dynamic>? _workspace;
-  List<Map<String, dynamic>> _members = [];
   List<String> _allowedImages = [];
   String _defaultImage = 'klangk-pi';
   bool _loading = true;
   String? _error;
   String? _saveMessage;
-  bool _canShare = false;
 
   @override
   void initState() {
@@ -39,42 +36,30 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     });
     final auth = context.read<AuthService>();
 
-    // Load workspace list to find this workspace's data
     final wsResp = await auth.authGet('/workspaces');
     if (!mounted) return;
-    if (wsResp.statusCode != 200) {
-      // Try shared workspaces
+
+    List<Map<String, dynamic>> workspaces = [];
+    if (wsResp.statusCode == 200) {
+      workspaces = List<Map<String, dynamic>>.from(jsonDecode(wsResp.body));
+    }
+
+    var ws = workspaces
+        .cast<Map<String, dynamic>?>()
+        .firstWhere((w) => w!['id'] == widget.workspaceId, orElse: () => null);
+
+    // Try shared workspaces if not found in owned
+    if (ws == null) {
       final sharedResp = await auth.authGet('/workspaces/shared');
       if (!mounted) return;
       if (sharedResp.statusCode == 200) {
-        final shared = List<Map<String, dynamic>>.from(
-          jsonDecode(sharedResp.body),
-        );
-        final ws = shared.cast<Map<String, dynamic>?>().firstWhere(
+        final shared =
+            List<Map<String, dynamic>>.from(jsonDecode(sharedResp.body));
+        ws = shared.cast<Map<String, dynamic>?>().firstWhere(
             (w) => w!['id'] == widget.workspaceId,
             orElse: () => null);
-        if (ws != null) {
-          setState(() {
-            _workspace = ws;
-            _loading = false;
-            _canShare = false;
-          });
-          return;
-        }
       }
-      setState(() {
-        _error = 'Failed to load workspace';
-        _loading = false;
-      });
-      return;
     }
-
-    final workspaces = List<Map<String, dynamic>>.from(
-      jsonDecode(wsResp.body),
-    );
-    final ws = workspaces
-        .cast<Map<String, dynamic>?>()
-        .firstWhere((w) => w!['id'] == widget.workspaceId, orElse: () => null);
 
     if (ws == null) {
       setState(() {
@@ -85,21 +70,6 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     }
 
     _workspace = ws;
-    _canShare = true; // Owner can share
-
-    // Load members
-    try {
-      final membersResp = await auth.authGet(
-        '/workspaces/${widget.workspaceId}/members',
-      );
-      if (mounted && membersResp.statusCode == 200) {
-        _members = List<Map<String, dynamic>>.from(
-          jsonDecode(membersResp.body),
-        );
-      }
-    } catch (_) {
-      _canShare = false;
-    }
 
     // Load allowed images
     try {
@@ -112,9 +82,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       }
     } catch (_) {} // coverage:ignore-line
 
-    if (mounted) {
-      setState(() => _loading = false);
-    }
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _saveSettings(Map<String, dynamic> fields) async {
@@ -141,36 +109,6 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     }
   }
 
-  Future<void> _addMember(String email) async {
-    final auth = context.read<AuthService>();
-    final resp = await auth.authPost(
-      '/workspaces/${widget.workspaceId}/members',
-      body: jsonEncode({'email': email}),
-    );
-    if (!mounted) return;
-    if (resp.statusCode == 200) {
-      _loadData();
-    } else {
-      String detail;
-      try {
-        detail = (jsonDecode(resp.body) as Map)['detail'] ?? resp.body;
-      } catch (_) {
-        detail = 'Error';
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(detail)),
-      );
-    }
-  }
-
-  Future<void> _removeMember(String memberId) async {
-    final auth = context.read<AuthService>();
-    await auth.authDelete(
-      '/workspaces/${widget.workspaceId}/members/$memberId',
-    );
-    if (mounted) _loadData();
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -179,39 +117,27 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
 
     return _SettingsForm(
       workspace: _workspace!,
-      members: _members,
       allowedImages: _allowedImages,
       defaultImage: _defaultImage,
-      canShare: _canShare,
       saveMessage: _saveMessage,
       onSave: _saveSettings,
-      onAddMember: _addMember,
-      onRemoveMember: _removeMember,
     );
   }
 }
 
 class _SettingsForm extends StatefulWidget {
   final Map<String, dynamic> workspace;
-  final List<Map<String, dynamic>> members;
   final List<String> allowedImages;
   final String defaultImage;
-  final bool canShare;
   final String? saveMessage;
   final Future<void> Function(Map<String, dynamic>) onSave;
-  final Future<void> Function(String email) onAddMember;
-  final Future<void> Function(String memberId) onRemoveMember;
 
   const _SettingsForm({
     required this.workspace,
-    required this.members,
     required this.allowedImages,
     required this.defaultImage,
-    required this.canShare,
     required this.saveMessage,
     required this.onSave,
-    required this.onAddMember,
-    required this.onRemoveMember,
   });
 
   @override
@@ -223,14 +149,11 @@ class _SettingsFormState extends State<_SettingsForm> {
   late TextEditingController _cmdCtrl;
   final _mountCtrl = TextEditingController();
   final _envCtrl = TextEditingController();
-  final _shareCtrl = TextEditingController();
   late String _selectedImage;
   late List<String> _mounts;
   late Map<String, String> _envVars;
   String? _mountError;
   String? _envError;
-  List<Map<String, dynamic>> _searchResults = [];
-  Timer? _searchDebounce;
   bool _saving = false;
 
   @override
@@ -274,8 +197,6 @@ class _SettingsFormState extends State<_SettingsForm> {
     _cmdCtrl.dispose();
     _mountCtrl.dispose();
     _envCtrl.dispose();
-    _shareCtrl.dispose();
-    _searchDebounce?.cancel();
     super.dispose();
   }
 
@@ -326,29 +247,6 @@ class _SettingsFormState extends State<_SettingsForm> {
     });
   }
 
-  void _searchUsers(String query) {
-    _searchDebounce?.cancel();
-    if (query.trim().isEmpty) {
-      setState(() => _searchResults = []);
-      return;
-    }
-    _searchDebounce = Timer(const Duration(milliseconds: 300), () async {
-      final auth = context.read<AuthService>();
-      try {
-        final resp = await auth.authGet(
-          '/users/search?q=${Uri.encodeQueryComponent(query.trim())}',
-        );
-        if (mounted && resp.statusCode == 200) {
-          setState(() {
-            _searchResults = List<Map<String, dynamic>>.from(
-              jsonDecode(resp.body) as List,
-            );
-          });
-        }
-      } catch (_) {} // coverage:ignore-line
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final labelStyle = TextStyle(
@@ -363,7 +261,6 @@ class _SettingsFormState extends State<_SettingsForm> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Save feedback
             if (widget.saveMessage != null) ...[
               Container(
                 padding:
@@ -378,7 +275,6 @@ class _SettingsFormState extends State<_SettingsForm> {
               ),
               const SizedBox(height: 16),
             ],
-            // Name
             TextField(
               controller: _nameCtrl,
               decoration: InputDecoration(
@@ -389,7 +285,6 @@ class _SettingsFormState extends State<_SettingsForm> {
               ),
             ),
             const SizedBox(height: 16),
-            // Image
             if (widget.allowedImages.isNotEmpty)
               DropdownButtonFormField<String>(
                 value: _selectedImage,
@@ -407,7 +302,6 @@ class _SettingsFormState extends State<_SettingsForm> {
                     setState(() => _selectedImage = v ?? widget.defaultImage),
               ),
             const SizedBox(height: 16),
-            // Default command
             TextField(
               controller: _cmdCtrl,
               decoration: InputDecoration(
@@ -419,7 +313,6 @@ class _SettingsFormState extends State<_SettingsForm> {
               ),
             ),
             const SizedBox(height: 16),
-            // Mounts
             Text('Mounts', style: labelStyle),
             const SizedBox(height: 8),
             ..._mounts.asMap().entries.map((e) => Padding(
@@ -466,7 +359,6 @@ class _SettingsFormState extends State<_SettingsForm> {
               ],
             ),
             const SizedBox(height: 16),
-            // Environment variables
             Text('Environment Variables', style: labelStyle),
             const SizedBox(height: 8),
             ..._envVars.entries.toList().asMap().entries.map((e) => Padding(
@@ -512,7 +404,6 @@ class _SettingsFormState extends State<_SettingsForm> {
               ],
             ),
             const SizedBox(height: 16),
-            // Save button
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
@@ -529,81 +420,6 @@ class _SettingsFormState extends State<_SettingsForm> {
                 label: const Text('Save'),
               ),
             ),
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
-            // Sharing / ACL section
-            Text('Access Control', style: labelStyle),
-            const SizedBox(height: 8),
-            if (!widget.canShare)
-              const Text(
-                'You do not have permission to manage access for this workspace.',
-                style: TextStyle(color: KColors.textSecondary),
-              )
-            else ...[
-              // Current members
-              if (widget.members.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 8),
-                  child: Text('No shared users',
-                      style: TextStyle(color: KColors.textSecondary)),
-                )
-              else
-                ...widget.members.map((m) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 14,
-                            backgroundColor: KColors.accentBlue,
-                            child: Text(
-                              (m['email'] as String)[0].toUpperCase(),
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 12),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(m['email'] as String,
-                                style: const TextStyle(fontSize: 13)),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close, size: 18),
-                            onPressed: () =>
-                                widget.onRemoveMember(m['id'] as String),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            tooltip: 'Remove access',
-                          ),
-                        ],
-                      ),
-                    )),
-              const SizedBox(height: 8),
-              // Search to add
-              TextField(
-                controller: _shareCtrl,
-                decoration: const InputDecoration(
-                  hintText: 'Type email to share...',
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person_add, size: 18),
-                ),
-                style: const TextStyle(fontSize: 13),
-                onChanged: _searchUsers,
-              ),
-              ..._searchResults.map((r) => ListTile(
-                    dense: true,
-                    title: Text(r['email'] as String,
-                        style: const TextStyle(fontSize: 13)),
-                    onTap: () {
-                      widget.onAddMember(r['email'] as String);
-                      setState(() {
-                        _searchResults = [];
-                        _shareCtrl.clear();
-                      });
-                    },
-                  )),
-            ],
           ],
         ),
       ),

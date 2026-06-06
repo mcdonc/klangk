@@ -19,6 +19,7 @@ import '../browser/browser_delegate.dart';
 import '../chat/workspace_chat.dart';
 import '../debug/debug_panel.dart';
 import 'workspace_settings_panel.dart';
+import 'workspace_sharing_panel.dart';
 
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
@@ -267,8 +268,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
             ),
             terminal: GhosttyTerminal(key: _terminalKey, wsClient: wsClient),
             chat: WorkspaceChat(key: _chatKey, wsClient: wsClient),
-            settings: _hasPerm('share') || _hasPerm('edit')
+            settings: _hasPerm('edit')
                 ? WorkspaceSettingsPanel(
+                    workspaceId: widget.workspaceId,
+                  )
+                : null,
+            sharing: _hasPerm('share')
+                ? WorkspaceSharingPanel(
                     workspaceId: widget.workspaceId,
                   )
                 : null,
