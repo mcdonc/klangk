@@ -1644,6 +1644,93 @@ test.describe("Klangk E2E", () => {
     });
   });
 
+  test("admin ACL browser: read and modify static resource ACL", async ({
+    request,
+  }) => {
+    // Login as admin
+    const loginResp = await request.post(`${API_BASE}/auth/login`, {
+      data: { email: "admin@example.com", password: "admin" },
+    });
+    expect(loginResp.ok()).toBeTruthy();
+    const adminHeaders = {
+      Authorization: `Bearer ${(await loginResp.json()).access_token}`,
+    };
+
+    // Read the root resource ACL
+    let resp = await request.get(`${API_BASE}/admin/acl/resource?resource=/`, {
+      headers: adminHeaders,
+    });
+    expect(resp.ok()).toBeTruthy();
+    const rootAces = await resp.json();
+    expect(rootAces.length).toBeGreaterThan(0);
+    // Root has Authenticated view and Everyone deny
+    expect(
+      rootAces.some(
+        (a: any) => a.principal === "Authenticated" && a.permission === "view",
+      ),
+    ).toBeTruthy();
+
+    // Read /admin resource ACL
+    resp = await request.get(`${API_BASE}/admin/acl/resource?resource=/admin`, {
+      headers: adminHeaders,
+    });
+    expect(resp.ok()).toBeTruthy();
+    const adminAces = await resp.json();
+    expect(
+      adminAces.some(
+        (a: any) => a.principal === "admin" && a.permission === "*",
+      ),
+    ).toBeTruthy();
+
+    // Modify /admin/groups ACL: add a view entry, then restore
+    resp = await request.get(
+      `${API_BASE}/admin/acl/resource?resource=/admin/groups`,
+      { headers: adminHeaders },
+    );
+    const originalGroupsAces = await resp.json();
+
+    const newEntries = [
+      ...originalGroupsAces.map((a: any) => ({
+        action: a.action,
+        principal_type: a.principal_type,
+        permission: a.permission,
+        user_id: a.user_id || null,
+        group_id: a.group_id || null,
+        system_principal: a.system_principal ?? null,
+      })),
+      {
+        action: 1,
+        principal_type: 0,
+        permission: "view",
+        user_id: null,
+        group_id: null,
+        system_principal: 1,
+      },
+    ];
+
+    resp = await request.put(
+      `${API_BASE}/admin/acl/resource?resource=/admin/groups`,
+      { headers: adminHeaders, data: newEntries },
+    );
+    expect(resp.ok()).toBeTruthy();
+    expect((await resp.json()).length).toBe(originalGroupsAces.length + 1);
+
+    // Restore original
+    const restore = originalGroupsAces.map((a: any) => ({
+      action: a.action,
+      principal_type: a.principal_type,
+      permission: a.permission,
+      user_id: a.user_id || null,
+      group_id: a.group_id || null,
+      system_principal: a.system_principal ?? null,
+    }));
+    resp = await request.put(
+      `${API_BASE}/admin/acl/resource?resource=/admin/groups`,
+      { headers: adminHeaders, data: restore },
+    );
+    expect(resp.ok()).toBeTruthy();
+  });
+
   test("browser-delegate routes to the correct connection", async ({
     browser,
     request,
