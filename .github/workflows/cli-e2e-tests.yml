@@ -1,4 +1,4 @@
-name: CLI E2E Tests
+name: Backend E2E Tests
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-cli-e2e:
+  test-backend-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -42,7 +42,7 @@ jobs:
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           devenv processes down --no-tui 2>/dev/null || true
 
-      - name: Run CLI E2E tests
+      - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
@@ -50,4 +50,4 @@ jobs:
 
       - name: Skip notice
         if: steps.filter.outputs.e2e != 'true'
-        run: echo "No backend/docker/plugin changes — skipping CLI E2E tests"
+        run: echo "No backend/docker/plugin changes — skipping backend E2E tests"
