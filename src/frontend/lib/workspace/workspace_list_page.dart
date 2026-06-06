@@ -7,10 +7,8 @@ import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../utils/page_title.dart';
-import '../widgets/acl_editor.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
-import '../widgets/skeuo_tab.dart';
 
 const _validMountOptions = {
   'ro',
@@ -56,7 +54,6 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   List<Map<String, dynamic>> _sharedWorkspaces = [];
   Map<String, List<Map<String, dynamic>>> _workspaceMembers = {};
   bool _loading = true;
-  int _selectedTab = 0;
 
   @override
   void initState() {
@@ -625,38 +622,6 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthService>();
-    final canAdmin = auth.hasPermission('/workspaces', '*') ||
-        auth.hasPermission('/admin', '*');
-
-    final tabs = <SkeuoTab>[
-      SkeuoTab(
-        label: 'Workspaces',
-        icon: Icons.folder,
-        isSelected: _selectedTab == 0,
-        onTap: () => setState(() => _selectedTab = 0),
-      ),
-    ];
-    final views = <Widget>[_buildWorkspacesList()];
-
-    if (canAdmin) {
-      tabs.add(SkeuoTab(
-        label: 'Access Control',
-        icon: Icons.security,
-        isSelected: _selectedTab == 1,
-        onTap: () => setState(() => _selectedTab = 1),
-      ));
-      views.add(
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 500),
-            child: const AclEditor(resource: '/workspaces'),
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: const AppBarTitle(title: 'Workspaces'),
@@ -665,31 +630,13 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         ],
       ),
       floatingActionButton:
-          _selectedTab == 0 && auth.hasPermission('/workspaces', 'create')
+          context.watch<AuthService>().hasPermission('/workspaces', 'create')
               ? FloatingActionButton(
                   onPressed: _createWorkspace,
                   child: const Icon(Icons.add),
                 )
               : null,
-      body: Column(
-        children: [
-          if (tabs.length > 1)
-            Container(
-              height: 40,
-              color: KColors.bgCanvas,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: tabs.map((t) => Expanded(child: t)).toList(),
-              ),
-            ),
-          Expanded(
-            child: IndexedStack(
-              index: _selectedTab < views.length ? _selectedTab : 0,
-              children: views,
-            ),
-          ),
-        ],
-      ),
+      body: _buildWorkspacesList(),
     );
   }
 }

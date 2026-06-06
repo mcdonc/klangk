@@ -707,7 +707,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (tabTypes.isNotEmpty) {
       final idx = tabs.length;
       tabs.add(SkeuoTab(
-        label: 'ACL',
+        label: 'Access Control',
         icon: Icons.security,
         isSelected: _selectedIndex == idx,
         onTap: () => setState(() => _selectedIndex = idx),
@@ -1085,9 +1085,9 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
     ('/', 'Root', Icons.home),
     ('/workspaces', 'Workspaces', Icons.folder),
     ('/admin', 'Admin', Icons.admin_panel_settings),
-    ('/admin/users', 'Admin / Users', Icons.people),
-    ('/admin/invitations', 'Admin / Invitations', Icons.mail_outline),
-    ('/admin/groups', 'Admin / Groups', Icons.group),
+    ('/admin/users', 'Users', Icons.people),
+    ('/admin/invitations', 'Invitations', Icons.mail_outline),
+    ('/admin/groups', 'Groups', Icons.group),
   ];
 
   String _selectedResource = '/';

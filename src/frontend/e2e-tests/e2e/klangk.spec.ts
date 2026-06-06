@@ -1731,6 +1731,47 @@ test.describe("Klangk E2E", () => {
     expect(resp.ok()).toBeTruthy();
   });
 
+  test("admin ACL browser: all static resources readable", async ({
+    request,
+  }) => {
+    const loginResp = await request.post(`${API_BASE}/auth/login`, {
+      data: { email: "admin@example.com", password: "admin" },
+    });
+    const adminHeaders = {
+      Authorization: `Bearer ${(await loginResp.json()).access_token}`,
+    };
+
+    const resources = [
+      "/",
+      "/workspaces",
+      "/admin",
+      "/admin/users",
+      "/admin/invitations",
+      "/admin/groups",
+    ];
+
+    for (const resource of resources) {
+      const resp = await request.get(
+        `${API_BASE}/admin/acl/resource?resource=${encodeURIComponent(resource)}`,
+        { headers: adminHeaders },
+      );
+      expect(resp.ok()).toBeTruthy();
+    }
+  });
+
+  test("admin ACL browser: non-admin denied access", async ({ request }) => {
+    const { headers: userHeaders } = await registerUser(
+      request,
+      `acl-denied-${Date.now()}@test.example.com`,
+    );
+
+    const resp = await request.get(
+      `${API_BASE}/admin/acl/resource?resource=/`,
+      { headers: userHeaders },
+    );
+    expect(resp.status()).toBe(403);
+  });
+
   test("browser-delegate routes to the correct connection", async ({
     browser,
     request,
