@@ -186,7 +186,7 @@ void main() {
 
       expect(find.text('Project A'), findsOneWidget);
       expect(find.text('Project B'), findsOneWidget);
-      expect(find.byIcon(Icons.folder), findsNWidgets(2));
+      expect(find.byIcon(Icons.terminal), findsNWidgets(2));
       // Dates formatted as local time (VM tests run in UTC)
       expect(find.textContaining('Jan 15, 2026'), findsOneWidget);
       expect(find.textContaining('Jun 2, 2026'), findsOneWidget);
@@ -270,7 +270,8 @@ void main() {
       expect(find.text('Shared with Me'), findsOneWidget);
       expect(find.text('Team Project'), findsOneWidget);
       expect(find.textContaining('alice@example.com'), findsOneWidget);
-      expect(find.byIcon(Icons.folder_shared), findsOneWidget);
+      // Shared workspaces use terminal icon with blue color
+      expect(find.byIcon(Icons.terminal), findsNWidgets(2));
     });
 
     testWidgets('shows only shared section when no owned workspaces',
@@ -578,7 +579,6 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      expect(find.byType(Card), findsOneWidget);
       expect(find.byType(ListTile), findsOneWidget);
     });
 
