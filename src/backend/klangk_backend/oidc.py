@@ -32,6 +32,7 @@ class OIDCProvider:
     scopes: str = "openid email profile"
     admin_claim: str | None = None
     admin_group: str | None = None
+    ca_cert: str | None = None  # path to CA cert PEM for custom trust
 
 
 @dataclass
@@ -76,6 +77,7 @@ def load_config() -> list[OIDCProvider]:
                 scopes=entry.get("scopes", "openid email profile"),
                 admin_claim=entry.get("admin_claim"),
                 admin_group=entry.get("admin_group"),
+                ca_cert=entry.get("ca_cert"),
             )
         )
     return providers
@@ -131,6 +133,18 @@ def generate_pkce() -> tuple[str, str]:
     return verifier, challenge
 
 
+# --- HTTP client ---
+
+
+def _client_kwargs(provider: OIDCProvider) -> dict:
+    """Return httpx.AsyncClient kwargs for a provider, including
+    custom CA cert if configured."""
+    kwargs: dict = {}
+    if provider.ca_cert:
+        kwargs["verify"] = provider.ca_cert
+    return kwargs
+
+
 # --- Discovery ---
 
 
@@ -142,7 +156,7 @@ async def discover(provider: OIDCProvider) -> dict:
         return cached.data
 
     url = f"{provider.issuer}/.well-known/openid-configuration"
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(**_client_kwargs(provider)) as client:
         resp = await client.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -160,7 +174,7 @@ async def get_jwks(provider: OIDCProvider) -> dict:
 
     disc = await discover(provider)
     jwks_uri = disc["jwks_uri"]
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(**_client_kwargs(provider)) as client:
         resp = await client.get(jwks_uri, timeout=10)
         resp.raise_for_status()
         keys = resp.json()
@@ -211,7 +225,7 @@ async def exchange_code(
         "client_secret": provider.client_secret,
         "code_verifier": code_verifier,
     }
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(**_client_kwargs(provider)) as client:
         resp = await client.post(
             disc["token_endpoint"],
             data=data,

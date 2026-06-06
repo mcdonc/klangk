@@ -89,6 +89,45 @@ class TestLoadConfig:
         providers = oidc.load_config()
         assert providers[0].client_secret == "file-secret"
 
+    def test_ca_cert(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.json"
+        cfg.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "dod",
+                        "display_name": "DoD",
+                        "issuer": "https://sso.mil/realms/dod",
+                        "client_id": "klangk",
+                        "client_secret": "s",
+                        "ca_cert": "/etc/pki/dod-ca.pem",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert providers[0].ca_cert == "/etc/pki/dod-ca.pem"
+
+    def test_ca_cert_default_none(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.json"
+        cfg.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "test",
+                        "display_name": "Test",
+                        "issuer": "https://idp.example.com",
+                        "client_id": "klangk",
+                        "client_secret": "s",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert providers[0].ca_cert is None
+
     def test_multiple_providers(self, monkeypatch, tmp_path):
         cfg = tmp_path / "oidc.json"
         cfg.write_text(
@@ -174,6 +213,16 @@ class TestAuthModes:
         assert oidc.auth_modes() == "password"
         assert oidc.password_login_allowed()
         assert not oidc.oidc_login_allowed()
+
+
+class TestClientKwargs:
+    def test_no_ca_cert(self):
+        provider = _provider()
+        assert oidc._client_kwargs(provider) == {}
+
+    def test_with_ca_cert(self):
+        provider = _provider(ca_cert="/etc/pki/ca.pem")
+        assert oidc._client_kwargs(provider) == {"verify": "/etc/pki/ca.pem"}
 
 
 class TestPKCE:

@@ -346,7 +346,8 @@ Klangk supports OIDC authentication via one or more external Identity Providers 
     "client_secret": "file:/run/secrets/cac-secret",
     "scopes": "openid email profile",
     "admin_claim": "realm_access.roles",
-    "admin_group": "klangk-admin"
+    "admin_group": "klangk-admin",
+    "ca_cert": "/etc/pki/tls/certs/dod-ca-bundle.pem"
   },
   {
     "id": "internal",
@@ -381,6 +382,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.json
 | `scopes`        | No       | Space-separated scopes (default: `openid email profile`)                                          |
 | `admin_claim`   | No       | Dot-path to the claim containing roles/groups (e.g., `realm_access.roles`)                        |
 | `admin_group`   | No       | Value in that claim that maps to the Klangk admin role                                            |
+| `ca_cert`       | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs (e.g., DoD PKI)                |
 
 ### How It Works
 
