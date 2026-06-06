@@ -31,8 +31,6 @@ class OIDCProvider:
     client_id: str
     client_secret: str
     scopes: str = "openid email profile"
-    admin_claim: str | None = None
-    admin_group: str | None = None
     ca_cert: str | None = None  # path to CA cert PEM for custom trust
     token_validation_pem: str | None = None  # static RSA/EC public key PEM
     logout_redirect: bool = False  # redirect to IdP logout on user logout
@@ -89,8 +87,6 @@ def load_config() -> list[OIDCProvider]:
                 client_id=entry["client_id"],
                 client_secret=secret or "",
                 scopes=entry.get("scopes", "openid email profile"),
-                admin_claim=entry.get("admin_claim"),
-                admin_group=entry.get("admin_group"),
                 ca_cert=ca_cert,
                 token_validation_pem=entry.get("token_validation_pem"),
                 logout_redirect=entry.get("logout_redirect", False),
@@ -287,30 +283,6 @@ async def validate_id_token(
         access_token=access_token,
     )
     return claims
-
-
-def extract_admin_role(provider: OIDCProvider, claims: dict) -> bool | None:
-    """Check if the user should have the admin role based on IdP claims.
-
-    Returns True (grant), False (revoke), or None (no mapping configured).
-    """
-    if not provider.admin_claim or not provider.admin_group:
-        return None
-
-    # Support dot-path claims like "realm_access.roles"
-    value = claims
-    for key in provider.admin_claim.split("."):
-        if isinstance(value, dict):
-            value = value.get(key)
-        else:
-            value = None
-            break
-
-    if isinstance(value, list):
-        return provider.admin_group in value
-    if isinstance(value, str):
-        return value == provider.admin_group
-    return False
 
 
 async def build_logout_url(

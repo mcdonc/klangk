@@ -742,19 +742,6 @@ async def oidc_callback(
                 external_id=sub,
             )
 
-    # Sync admin group membership from IdP claims
-    should_be_admin = oidc.extract_admin_role(provider, claims)
-    if should_be_admin is not None:
-        admin_group = await model.get_group_by_name("admin")
-        if admin_group:
-            current_groups = await model.get_user_group_ids(user["id"])
-            if should_be_admin and admin_group["id"] not in current_groups:
-                await model.add_user_to_group(user["id"], admin_group["id"])
-            elif not should_be_admin and admin_group["id"] in current_groups:
-                await model.remove_user_from_group(
-                    user["id"], admin_group["id"]
-                )
-
     # Issue Klangk JWT
     access_token = auth.create_token(user["id"], email)
 
