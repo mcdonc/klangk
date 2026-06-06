@@ -443,6 +443,7 @@ void main() {
 
   group('AuthService.saveTokenFromVerification', () {
     test('saves token and logs user in', () async {
+      testAuthHttpClientOverride = _emptyConfigClient();
       final service = AuthService();
       await Future.delayed(Duration.zero);
       expect(service.isLoggedIn, isFalse);

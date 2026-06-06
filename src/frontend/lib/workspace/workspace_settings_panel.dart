@@ -19,6 +19,8 @@ class WorkspaceSettingsPanel extends StatefulWidget {
 class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   Map<String, dynamic>? _workspace;
   List<Map<String, dynamic>> _members = [];
+  List<String> _allowedImages = [];
+  String _defaultImage = 'klangk-pi';
   bool _loading = true;
   String? _error;
   String? _saveMessage;
@@ -99,6 +101,17 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       _canShare = false;
     }
 
+    // Load allowed images
+    try {
+      final imgResp = await auth.authGet('/images');
+      if (mounted && imgResp.statusCode == 200) {
+        final imgData = jsonDecode(imgResp.body) as Map<String, dynamic>;
+        _defaultImage = imgData['default'] as String? ?? 'klangk-pi';
+        _allowedImages =
+            (imgData['allowed'] as List?)?.cast<String>() ?? [_defaultImage];
+      }
+    } catch (_) {} // coverage:ignore-line
+
     if (mounted) {
       setState(() => _loading = false);
     }
@@ -167,6 +180,8 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     return _SettingsForm(
       workspace: _workspace!,
       members: _members,
+      allowedImages: _allowedImages,
+      defaultImage: _defaultImage,
       canShare: _canShare,
       saveMessage: _saveMessage,
       onSave: _saveSettings,
@@ -179,6 +194,8 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
 class _SettingsForm extends StatefulWidget {
   final Map<String, dynamic> workspace;
   final List<Map<String, dynamic>> members;
+  final List<String> allowedImages;
+  final String defaultImage;
   final bool canShare;
   final String? saveMessage;
   final Future<void> Function(Map<String, dynamic>) onSave;
@@ -188,6 +205,8 @@ class _SettingsForm extends StatefulWidget {
   const _SettingsForm({
     required this.workspace,
     required this.members,
+    required this.allowedImages,
+    required this.defaultImage,
     required this.canShare,
     required this.saveMessage,
     required this.onSave,
@@ -202,7 +221,14 @@ class _SettingsForm extends StatefulWidget {
 class _SettingsFormState extends State<_SettingsForm> {
   late TextEditingController _nameCtrl;
   late TextEditingController _cmdCtrl;
+  final _mountCtrl = TextEditingController();
+  final _envCtrl = TextEditingController();
   final _shareCtrl = TextEditingController();
+  late String _selectedImage;
+  late List<String> _mounts;
+  late Map<String, String> _envVars;
+  String? _mountError;
+  String? _envError;
   List<Map<String, dynamic>> _searchResults = [];
   Timer? _searchDebounce;
   bool _saving = false;
@@ -215,6 +241,18 @@ class _SettingsFormState extends State<_SettingsForm> {
     );
     _cmdCtrl = TextEditingController(
       text: widget.workspace['default_command'] as String? ?? '',
+    );
+    _selectedImage =
+        widget.workspace['image'] as String? ?? widget.defaultImage;
+    if (!widget.allowedImages.contains(_selectedImage)) {
+      _selectedImage = widget.defaultImage;
+    }
+    _mounts = List<String>.from(
+      (widget.workspace['mounts'] as List?)?.cast<String>() ?? <String>[],
+    );
+    _envVars = Map<String, String>.from(
+      (widget.workspace['env'] as Map?)?.cast<String, String>() ??
+          <String, String>{},
     );
   }
 
@@ -234,6 +272,8 @@ class _SettingsFormState extends State<_SettingsForm> {
   void dispose() {
     _nameCtrl.dispose();
     _cmdCtrl.dispose();
+    _mountCtrl.dispose();
+    _envCtrl.dispose();
     _shareCtrl.dispose();
     _searchDebounce?.cancel();
     super.dispose();
@@ -243,10 +283,47 @@ class _SettingsFormState extends State<_SettingsForm> {
     setState(() => _saving = true);
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
+      'image': _selectedImage,
       'default_command':
           _cmdCtrl.text.trim().isEmpty ? null : _cmdCtrl.text.trim(),
+      'mounts': _mounts.isNotEmpty ? _mounts : null,
+      'env': _envVars.isNotEmpty ? _envVars : null,
     });
     if (mounted) setState(() => _saving = false);
+  }
+
+  void _tryAddMount() {
+    final v = _mountCtrl.text.trim();
+    if (v.isEmpty) return;
+    if (!v.contains(':')) {
+      setState(() => _mountError = 'Expected host:container format');
+      return;
+    }
+    setState(() {
+      _mounts.add(v);
+      _mountCtrl.clear();
+      _mountError = null;
+    });
+  }
+
+  void _tryAddEnv() {
+    final v = _envCtrl.text.trim();
+    if (v.isEmpty) return;
+    if (!v.contains('=')) {
+      setState(() => _envError = 'Expected KEY=VALUE format');
+      return;
+    }
+    final key = v.substring(0, v.indexOf('='));
+    final value = v.substring(v.indexOf('=') + 1);
+    if (key.isEmpty) {
+      setState(() => _envError = 'Key cannot be empty');
+      return;
+    }
+    setState(() {
+      _envVars[key] = value;
+      _envCtrl.clear();
+      _envError = null;
+    });
   }
 
   void _searchUsers(String query) {
@@ -312,6 +389,24 @@ class _SettingsFormState extends State<_SettingsForm> {
               ),
             ),
             const SizedBox(height: 16),
+            // Image
+            if (widget.allowedImages.isNotEmpty)
+              DropdownButtonFormField<String>(
+                value: _selectedImage,
+                decoration: InputDecoration(
+                  labelText: 'Container Image',
+                  labelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                ),
+                items: widget.allowedImages
+                    .map(
+                        (img) => DropdownMenuItem(value: img, child: Text(img)))
+                    .toList(),
+                onChanged: (v) =>
+                    setState(() => _selectedImage = v ?? widget.defaultImage),
+              ),
+            const SizedBox(height: 16),
             // Default command
             TextField(
               controller: _cmdCtrl,
@@ -322,6 +417,99 @@ class _SettingsFormState extends State<_SettingsForm> {
                 border: const OutlineInputBorder(),
                 hintText: 'Optional — runs on terminal open',
               ),
+            ),
+            const SizedBox(height: 16),
+            // Mounts
+            Text('Mounts', style: labelStyle),
+            const SizedBox(height: 8),
+            ..._mounts.asMap().entries.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                          child: Text(e.value,
+                              style: const TextStyle(fontSize: 13))),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: () =>
+                            setState(() => _mounts.removeAt(e.key)),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                )),
+            if (_mountError != null) ...[
+              Text(_mountError!,
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12)),
+              const SizedBox(height: 4),
+            ],
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _mountCtrl,
+                    decoration: const InputDecoration(
+                      hintText: '/host/path:/container/path',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                    onSubmitted: (_) => _tryAddMount(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                    icon: const Icon(Icons.add), onPressed: _tryAddMount),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Environment variables
+            Text('Environment Variables', style: labelStyle),
+            const SizedBox(height: 8),
+            ..._envVars.entries.toList().asMap().entries.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                          child: Text('${e.value.key}=${e.value.value}',
+                              style: const TextStyle(fontSize: 13))),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: () =>
+                            setState(() => _envVars.remove(e.value.key)),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                )),
+            if (_envError != null) ...[
+              Text(_envError!,
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12)),
+              const SizedBox(height: 4),
+            ],
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _envCtrl,
+                    decoration: const InputDecoration(
+                      hintText: 'KEY=VALUE',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                    onSubmitted: (_) => _tryAddEnv(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(icon: const Icon(Icons.add), onPressed: _tryAddEnv),
+              ],
             ),
             const SizedBox(height: 16),
             // Save button
