@@ -691,16 +691,31 @@ void main() {
       expect(navigatedTo, '/workspace/ws-42');
     });
 
-    testWidgets('admin icon shown when JWT has admin role', (tester) async {
+    testWidgets('admin icon shown when user has admin permission',
+        (tester) async {
       final token = makeJwt({
         'sub': 'admin-1',
         'email': 'admin@example.com',
-        'roles': ['admin'],
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = MockClient((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-1',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/admin': ['*'],
+              },
+              'groups': [
+                {'id': 'g1', 'name': 'admin'},
+              ],
+            }),
+            200,
+          );
         }
         return http.Response('Not found', 404);
       });
@@ -716,12 +731,24 @@ void main() {
       final token = makeJwt({
         'sub': 'user-1',
         'email': 'user@example.com',
-        'roles': ['user'],
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = MockClient((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'user-1',
+              'email': 'user@example.com',
+              'permissions': {
+                '/': ['view'],
+              },
+              'groups': [],
+            }),
+            200,
+          );
         }
         return http.Response('Not found', 404);
       });
@@ -1119,12 +1146,26 @@ void main() {
       final token = makeJwt({
         'sub': 'user-1',
         'email': 'admin@example.com',
-        'roles': ['admin'],
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = MockClient((request) async {
         if (request.url.path == '/workspaces') {
           return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'user-1',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/admin': ['*'],
+              },
+              'groups': [
+                {'id': 'g1', 'name': 'admin'},
+              ],
+            }),
+            200,
+          );
         }
         return http.Response('Not found', 404);
       });

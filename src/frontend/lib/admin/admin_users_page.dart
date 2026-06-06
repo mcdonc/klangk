@@ -261,16 +261,6 @@ class _AdminUsersPageState extends State<AdminUsersPage>
     }
   }
 
-  Future<void> _toggleRole(String userId, String role, bool hasRole) async {
-    final auth = context.read<AuthService>();
-    if (hasRole) {
-      await auth.authDelete('/admin/users/$userId/roles/$role');
-    } else {
-      await auth.authPost('/admin/users/$userId/roles/$role');
-    }
-    _loadUsers();
-  }
-
   Widget _buildUsersTab() {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return Center(child: Text(_error!));
@@ -280,8 +270,11 @@ class _AdminUsersPageState extends State<AdminUsersPage>
       itemCount: _users.length,
       itemBuilder: (ctx, i) {
         final user = _users[i];
-        final roles = List<String>.from(user['roles'] ?? []);
-        final isAdmin = roles.contains('admin');
+        final groups = List<Map<String, dynamic>>.from(
+          user['groups'] as List? ?? [],
+        );
+        final groupNames = groups.map((g) => g['name'] as String).toList();
+        final isAdmin = groupNames.contains('admin');
         final isSelf = user['id'] == context.read<AuthService>().userId;
         final email = user['email'] as String? ?? '';
         final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
@@ -291,7 +284,9 @@ class _AdminUsersPageState extends State<AdminUsersPage>
             leading: _UserAvatar(initial: initial, isAdmin: isAdmin),
             title: Text(email),
             subtitle: Text(
-              roles.isEmpty ? 'No roles' : 'Roles: ${roles.join(", ")}',
+              groupNames.isEmpty
+                  ? 'No groups'
+                  : 'Groups: ${groupNames.join(", ")}',
               style: const TextStyle(color: KColors.textSecondary),
             ),
             onTap: () => _editUser(user),
@@ -299,18 +294,6 @@ class _AdminUsersPageState extends State<AdminUsersPage>
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (!isSelf) ...[
-                  IconButton(
-                    icon: Icon(
-                      isAdmin ? Icons.shield : Icons.shield_outlined,
-                      color: isAdmin ? KColors.accentAmber : KColors.textMuted,
-                    ),
-                    tooltip: isAdmin ? 'Remove admin role' : 'Grant admin role',
-                    onPressed: () => _toggleRole(
-                      user['id'],
-                      'admin',
-                      isAdmin,
-                    ),
-                  ),
                   IconButton(
                     icon: const Icon(Icons.delete_outline,
                         color: KColors.accentRed),

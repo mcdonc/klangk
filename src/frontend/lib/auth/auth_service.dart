@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,12 +15,15 @@ class AuthService extends ChangeNotifier {
 
   http.Client get _client => testAuthHttpClientOverride ?? http.Client();
 
+  static const _permissionRefreshSeconds = 60;
+
   String? _token;
   bool _loading = false;
   bool _initialized = false;
   String _bannerTitle = '';
   String _bannerText = '';
   bool _bannerAccepted = false;
+  Timer? _permissionTimer;
 
   String? get token => _token;
   bool get isLoggedIn => _token != null;
@@ -49,9 +54,22 @@ class AuthService extends ChangeNotifier {
 
   String? get userId => _payload?['sub'] as String?;
   String? get email => _payload?['email'] as String?;
-  List<String> get roles =>
-      List<String>.from(_payload?['roles'] as List? ?? []);
-  bool get isAdmin => roles.contains('admin');
+
+  /// Permissions fetched from /api/my-permissions.
+  Map<String, List<String>> _permissions = {};
+  List<Map<String, dynamic>> _groups = [];
+
+  Map<String, List<String>> get permissions => _permissions;
+  List<Map<String, dynamic>> get groups => _groups;
+
+  bool get isAdmin => hasPermission('/admin', '*');
+
+  /// Check if the user has a specific permission on a resource.
+  bool hasPermission(String resource, String permission) {
+    final perms = _permissions[resource];
+    if (perms == null) return false;
+    return perms.contains(permission) || perms.contains('*');
+  }
 
   AuthService() {
     _loadToken();
@@ -76,8 +94,57 @@ class AuthService extends ChangeNotifier {
       _bannerAccepted = acceptedHash == _bannerText.hashCode.toString();
     }
 
+    if (_token != null) {
+      await _fetchPermissions();
+      _startPermissionRefresh();
+    }
+
     _initialized = true;
     notifyListeners();
+  }
+
+  /// Fetch permissions from the server and cache them.
+  Future<void> _fetchPermissions() async {
+    try {
+      final resp = await _client.get(
+        Uri.parse('$_baseUrl/api/my-permissions'),
+        headers: _authHeaders,
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final permsRaw = data['permissions'] as Map<String, dynamic>? ?? {};
+        _permissions = permsRaw.map(
+          (k, v) => MapEntry(k, List<String>.from(v as List)),
+        );
+        _groups = List<Map<String, dynamic>>.from(
+          data['groups'] as List? ?? [],
+        );
+      } else if (resp.statusCode == 401) {
+        await _clearToken();
+      }
+    } catch (_) {} // coverage:ignore-line
+  }
+
+  /// Refresh permissions from the server (call after group changes).
+  Future<void> refreshPermissions() async {
+    await _fetchPermissions();
+    notifyListeners();
+  }
+
+  void _startPermissionRefresh() {
+    _permissionTimer?.cancel();
+    // Add jitter (0-15s) to avoid thundering herd when many users
+    // are logged in simultaneously.
+    final jitter = Random().nextInt(15);
+    _permissionTimer = Timer.periodic(
+      Duration(seconds: _permissionRefreshSeconds + jitter),
+      (_) => refreshPermissions(),
+    );
+  }
+
+  void _stopPermissionRefresh() {
+    _permissionTimer?.cancel();
+    _permissionTimer = null;
   }
 
   Future<void> acceptBanner() async {
@@ -93,6 +160,8 @@ class AuthService extends ChangeNotifier {
     _token = token;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, token);
+    await _fetchPermissions();
+    _startPermissionRefresh();
     notifyListeners();
   }
 
@@ -103,6 +172,9 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _clearToken() async {
     _token = null;
+    _permissions = {};
+    _groups = [];
+    _stopPermissionRefresh();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
     notifyListeners();
@@ -254,5 +326,11 @@ class AuthService extends ChangeNotifier {
     }
     await _clearToken();
     return oidcLogoutUrl;
+  }
+
+  @override
+  void dispose() {
+    _stopPermissionRefresh();
+    super.dispose();
   }
 }

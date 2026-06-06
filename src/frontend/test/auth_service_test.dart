@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -18,14 +19,28 @@ void main() {
     testAuthHttpClientOverride = null;
   });
 
-  /// Mock client that returns empty config for /api/config and 404 otherwise.
-  http.Client _emptyConfigClient() {
+  /// Mock client that returns empty config and no permissions.
+  http.Client _emptyConfigClient({
+    Map<String, List<String>>? permissions,
+    List<Map<String, dynamic>>? groups,
+  }) {
     return MockClient((request) async {
       if (request.url.path.contains('/api/config')) {
         return http.Response(
           jsonEncode({
             'login_banner_title': '',
             'login_banner': '',
+          }),
+          200,
+        );
+      }
+      if (request.url.path.contains('/api/my-permissions')) {
+        return http.Response(
+          jsonEncode({
+            'user_id': 'test',
+            'email': 'test@example.com',
+            'permissions': permissions ?? {},
+            'groups': groups ?? [],
           }),
           200,
         );
@@ -489,51 +504,183 @@ void main() {
       expect(service.userId, 'user-42');
     });
 
-    test('roles returns roles list from JWT payload', () async {
-      final token = makeJwt({
-        'sub': 'user-1',
-        'roles': ['user', 'admin'],
-      });
-      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-      final service = AuthService();
-      await Future.delayed(Duration.zero);
-      expect(service.roles, ['user', 'admin']);
-    });
-
-    test('roles returns empty list when no roles in payload', () async {
+    test('isAdmin returns true when admin permission present', () async {
+      testAuthHttpClientOverride = _emptyConfigClient(
+        permissions: {
+          '/admin': ['*'],
+        },
+        groups: [
+          {'id': 'g1', 'name': 'admin'},
+        ],
+      );
       final token = makeJwt({'sub': 'user-1'});
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       final service = AuthService();
       await Future.delayed(Duration.zero);
-      expect(service.roles, isEmpty);
-    });
-
-    test('isAdmin returns true when admin role present', () async {
-      final token = makeJwt({
-        'sub': 'user-1',
-        'roles': ['admin'],
-      });
-      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-      final service = AuthService();
-      await Future.delayed(Duration.zero);
       expect(service.isAdmin, isTrue);
+      expect(service.hasPermission('/admin', 'manage_users'), isTrue);
     });
 
-    test('isAdmin returns false when no admin role', () async {
-      final token = makeJwt({
-        'sub': 'user-1',
-        'roles': ['user'],
-      });
+    test('isAdmin returns false when no admin permission', () async {
+      testAuthHttpClientOverride = _emptyConfigClient(
+        permissions: {
+          '/': ['view'],
+        },
+      );
+      final token = makeJwt({'sub': 'user-1'});
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       final service = AuthService();
       await Future.delayed(Duration.zero);
       expect(service.isAdmin, isFalse);
+    });
+
+    test('hasPermission checks specific permission', () async {
+      testAuthHttpClientOverride = _emptyConfigClient(
+        permissions: {
+          '/workspaces': ['create'],
+          '/': ['view'],
+        },
+      );
+      final token = makeJwt({'sub': 'user-1'});
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.hasPermission('/workspaces', 'create'), isTrue);
+      expect(service.hasPermission('/workspaces', 'delete'), isFalse);
+      expect(service.hasPermission('/nonexistent', 'view'), isFalse);
+    });
+
+    test('permissions cleared on logout', () async {
+      testAuthHttpClientOverride = _emptyConfigClient(
+        permissions: {
+          '/admin': ['*'],
+        },
+      );
+      final token = makeJwt({'sub': 'user-1'});
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isAdmin, isTrue);
+      await service.logout();
+      expect(service.isAdmin, isFalse);
+      expect(service.permissions, isEmpty);
+      expect(service.groups, isEmpty);
+    });
+
+    test('groups populated from my-permissions', () async {
+      testAuthHttpClientOverride = _emptyConfigClient(
+        permissions: {
+          '/': ['view']
+        },
+        groups: [
+          {'id': 'g1', 'name': 'editors', 'description': 'Edit stuff'},
+        ],
+      );
+      final token = makeJwt({'sub': 'user-1'});
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.groups, hasLength(1));
+      expect(service.groups[0]['name'], 'editors');
+    });
+
+    test('refreshPermissions updates cached permissions', () async {
+      var callCount = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          callCount++;
+          final isAdmin = callCount > 1;
+          return http.Response(
+            jsonEncode({
+              'user_id': 'u',
+              'email': 'u',
+              'permissions': isAdmin
+                  ? {
+                      '/admin': ['*']
+                    }
+                  : {
+                      '/': ['view']
+                    },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      final token = makeJwt({'sub': 'user-1'});
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isAdmin, isFalse);
+      await service.refreshPermissions();
+      expect(service.isAdmin, isTrue);
+    });
+
+    test('periodic timer refreshes permissions', () {
+      fakeAsync((async) {
+        var fetchCount = 0;
+        testAuthHttpClientOverride = MockClient((request) {
+          if (request.url.path.contains('/api/config')) {
+            return Future.value(http.Response(
+              jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+              200,
+            ));
+          }
+          if (request.url.path.contains('/api/my-permissions')) {
+            fetchCount++;
+            return Future.value(http.Response(
+              jsonEncode({
+                'user_id': 'u',
+                'email': 'u',
+                'permissions': {},
+                'groups': [],
+              }),
+              200,
+            ));
+          }
+          return Future.value(http.Response('Not found', 404));
+        });
+        final token = makeJwt({'sub': 'user-1'});
+        SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+        final service = AuthService();
+        async.elapse(Duration.zero);
+        // Initial fetch
+        final initialCount = fetchCount;
+        // Advance past the refresh interval (60-75s with jitter)
+        async.elapse(const Duration(seconds: 80));
+        expect(fetchCount, greaterThan(initialCount));
+        service.dispose();
+      });
     });
   });
 
   group('AuthService authenticated requests', () {
     test('authGet clears token on 401', () async {
       testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'x',
+              'email': 'x',
+              'permissions': {},
+              'groups': [],
+            }),
+            200,
+          );
+        }
         return http.Response('Unauthorized', 401);
       });
 
