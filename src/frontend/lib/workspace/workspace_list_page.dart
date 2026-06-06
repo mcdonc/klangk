@@ -524,7 +524,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   final wsMembers = _workspaceMembers[ws['id'] as String] ?? [];
                   return Container(
                     color:
-                        i.isOdd ? Colors.white.withValues(alpha: 0.03) : null,
+                        i.isEven ? Colors.white.withValues(alpha: 0.03) : null,
                     child: ListTile(
                       leading: const Icon(Icons.terminal,
                           size: 20, color: KColors.accentGreen),
@@ -602,7 +602,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   ),
                 ),
                 ..._sharedWorkspaces.asMap().entries.map((e) => Container(
-                      color: e.key.isOdd
+                      color: e.key.isEven
                           ? Colors.white.withValues(alpha: 0.03)
                           : null,
                       child: ListTile(
