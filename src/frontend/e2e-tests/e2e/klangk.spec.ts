@@ -429,9 +429,10 @@ test.describe("Klangk E2E", () => {
 
       const { width } = vp(page);
       const f = fv(page);
-      // Switch to the Files tab so the terminal isn't focused. Tabs span
-      // full width: Terminal on the left half, Files on the right.
-      const filesTabX = (width * 3) / 4;
+      // Switch to the Files tab so the terminal isn't focused.
+      // Owner has 5 tabs (Terminal, Files, Chat, Sharing, Settings).
+      const tabWidth = width / 5;
+      const filesTabX = tabWidth + tabWidth / 2;
       await f.click({ position: { x: filesTabX, y: 76 }, force: true });
       await page.waitForTimeout(500);
 
@@ -836,10 +837,11 @@ test.describe("Klangk E2E", () => {
       const { width, height } = vp(page);
       const f = fv(page);
 
-      // Tabs span full width now (no chat panel). Terminal tab is on the
-      // left half, Files tab is on the right half of the tab bar.
-      const termTabX = width / 4;
-      const filesTabX = (width * 3) / 4;
+      // Workspace owner has 5 tabs: Terminal, Files, Chat, Sharing, Settings.
+      // Each tab is width/5 wide; use center of each tab.
+      const tabWidth = width / 5;
+      const termTabX = tabWidth / 2;
+      const filesTabX = tabWidth + tabWidth / 2;
 
       // Switch to Files tab
       await f.click({ position: { x: filesTabX, y: 76 }, force: true });
