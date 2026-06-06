@@ -34,6 +34,7 @@ from . import (
 )
 from .model import (
     ACTION_ALLOW,
+    PRINCIPAL_GROUP,
     PRINCIPAL_USER,
 )
 from .util import derive_hosting_info, resolve_env_secret
@@ -1408,6 +1409,77 @@ async def remove_workspace_member(
         )
     ]
     # Rewrite entries with new positions
+    for i, entry in enumerate(remaining):
+        entry["position"] = i
+    await model.replace_acl_entries(resource, remaining)
+    return {"status": "removed"}
+
+
+@router.get("/workspaces/{workspace_id}/groups")
+async def get_workspace_groups(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+):
+    """Get groups with access to this workspace via ACL."""
+    resource = f"/workspaces/{workspace_id}"
+    entries = await model.get_acl_entries_resolved(resource)
+    seen = set()
+    groups = []
+    for e in entries:
+        if e["principal_type"] == PRINCIPAL_GROUP and e.get("group_id"):
+            gid = e["group_id"]
+            if gid not in seen:
+                seen.add(gid)
+                groups.append({"id": gid, "name": e["principal"]})
+    return groups
+
+
+class AddGroupShareRequest(BaseModel):
+    group_id: str
+
+
+@router.post("/workspaces/{workspace_id}/groups")
+async def add_workspace_group(
+    workspace_id: str,
+    body: AddGroupShareRequest,
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+):
+    """Share a workspace with a group (view/terminal/files/chat)."""
+    group = await model.get_group_by_id(body.group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    resource = f"/workspaces/{workspace_id}"
+    existing = await model.get_acl_entries(resource)
+    max_pos = max((e["position"] for e in existing), default=-1)
+    for i, perm in enumerate(["view", "terminal", "files", "chat"]):
+        await model.add_acl_entry(
+            resource,
+            max_pos + 1 + i,
+            ACTION_ALLOW,
+            perm,
+            PRINCIPAL_GROUP,
+            group_id=body.group_id,
+        )
+    return {"status": "shared", "group_id": group["id"], "name": group["name"]}
+
+
+@router.delete("/workspaces/{workspace_id}/groups/{group_id}")
+async def remove_workspace_group(
+    workspace_id: str,
+    group_id: str,
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+):
+    """Remove all ACL entries for a group on this workspace."""
+    resource = f"/workspaces/{workspace_id}"
+    entries = await model.get_acl_entries(resource)
+    remaining = [
+        e
+        for e in entries
+        if not (
+            e["principal_type"] == PRINCIPAL_GROUP
+            and e["group_id"] == group_id
+        )
+    ]
     for i, entry in enumerate(remaining):
         entry["position"] = i
     await model.replace_acl_entries(resource, remaining)

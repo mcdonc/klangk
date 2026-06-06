@@ -1188,6 +1188,72 @@ class TestWorkspaceACL:
         assert entries[1]["principal"] == "Authenticated"
 
 
+class TestWorkspaceGroupSharing:
+    async def test_share_with_group(self, client, admin_user, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "group-share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        group = await model.create_group("devs")
+
+        resp = await client.post(
+            f"/workspaces/{ws_id}/groups",
+            headers=headers,
+            json={"group_id": group["id"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "devs"
+
+        # Group shows up in list
+        resp = await client.get(f"/workspaces/{ws_id}/groups", headers=headers)
+        assert resp.status_code == 200
+        groups = resp.json()
+        assert len(groups) == 1
+        assert groups[0]["name"] == "devs"
+
+    async def test_remove_group(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "group-rm-ws"}
+        )
+        ws_id = resp.json()["id"]
+        group = await model.create_group("temp-devs")
+
+        await client.post(
+            f"/workspaces/{ws_id}/groups",
+            headers=headers,
+            json={"group_id": group["id"]},
+        )
+        resp = await client.delete(
+            f"/workspaces/{ws_id}/groups/{group['id']}", headers=headers
+        )
+        assert resp.status_code == 200
+
+        resp = await client.get(f"/workspaces/{ws_id}/groups", headers=headers)
+        assert resp.json() == []
+
+    async def test_share_with_nonexistent_group(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "bad-group-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/workspaces/{ws_id}/groups",
+            headers=headers,
+            json={"group_id": "nonexistent"},
+        )
+        assert resp.status_code == 404
+
+    async def test_group_share_no_permission(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/workspaces/nonexistent/groups", headers=headers
+        )
+        assert resp.status_code == 403
+
+
 class TestUserSearch:
     async def test_search_users(self, client, user):
         headers = await _auth_headers(client)

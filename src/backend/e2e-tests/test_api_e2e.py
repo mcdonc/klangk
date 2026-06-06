@@ -706,33 +706,42 @@ class TestGrantAdminViaGroup:
 
 
 class TestACLCascades:
-    def test_user_delete_cascades_aces(self, api, admin_headers, user_a):
+    def test_user_delete_cascades_aces(self, api, admin_headers):
         """Deleting a user removes their ACEs from all resources."""
-        # User A creates a workspace (gets owner ACE)
+        # Create a dedicated user for this test (not the shared user_a)
+        cascade_user = _register(
+            api, f"cascade-{uuid.uuid4().hex[:8]}@example.com"
+        )
+
+        # User creates a workspace (gets owner ACE)
         api.post(
             "/workspaces",
-            headers=user_a["headers"],
+            headers=cascade_user["headers"],
             json={"name": _ws_name("cascade")},
         )
 
-        # Get user A's ID
+        # Get user's ID
         resp = api.get("/admin/users", headers=admin_headers)
-        alice = next(u for u in resp.json() if u["email"] == user_a["email"])
+        target = next(
+            u for u in resp.json() if u["email"].startswith("cascade-")
+        )
 
         # Verify ACE exists
         resp = api.get(
-            f"/admin/acl/by-principal/user/{alice['id']}",
+            f"/admin/acl/by-principal/user/{target['id']}",
             headers=admin_headers,
         )
         assert len(resp.json()) > 0
 
-        # Delete user A
-        resp = api.delete(f"/admin/users/{alice['id']}", headers=admin_headers)
+        # Delete user
+        resp = api.delete(
+            f"/admin/users/{target['id']}", headers=admin_headers
+        )
         assert resp.status_code == 200
 
         # ACEs should be gone
         resp = api.get(
-            f"/admin/acl/by-principal/user/{alice['id']}",
+            f"/admin/acl/by-principal/user/{target['id']}",
             headers=admin_headers,
         )
         assert resp.json() == []
