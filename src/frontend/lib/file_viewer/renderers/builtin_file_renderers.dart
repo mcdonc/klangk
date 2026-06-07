@@ -1,5 +1,6 @@
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
+import 'code_renderer.dart';
 import 'image_renderer.dart';
 import 'markdown_renderer.dart';
 import 'raw_text_renderer.dart';
@@ -10,5 +11,6 @@ import 'raw_text_renderer.dart';
 List<FileRenderer> builtinFileRenderers() => [
       MarkdownRenderer(),
       ImageRenderer(),
+      CodeRenderer(),
       RawTextRenderer(),
     ];
