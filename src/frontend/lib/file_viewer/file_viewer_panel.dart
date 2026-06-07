@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../theme/colors.dart';
 import 'package:http/http.dart' as http;
@@ -7,6 +8,7 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import 'file_upload.dart';
+import 'renderers/builtin_file_renderers.dart';
 import '../utils/suppress_browser_menu.dart';
 
 /// Override for testing — set to intercept all HTTP calls in file viewer.
@@ -32,11 +34,17 @@ class FileViewerPanel extends StatefulWidget {
   final String workspaceId;
   final String? authToken;
 
+  /// Registry of file renderers. When null, the built-in renderers are used.
+  /// `workspace_page` builds one (builtins + plugin renderers) and passes it
+  /// in; tests inject custom registries to exercise the mode switcher.
+  final FileRendererRegistry? registry;
+
   const FileViewerPanel({
     super.key,
     required this.wsClient,
     required this.workspaceId,
     this.authToken,
+    this.registry,
   });
 
   @override
@@ -49,8 +57,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   List<Map<String, dynamic>> _entries = [];
   String _currentPath = 'work';
   String? _selectedFile;
-  String? _fileContent;
   bool _loading = false;
+  late final FileRendererRegistry _registry;
 
   /// Refresh the file list for the current directory.
   void refresh() => _loadFiles();
@@ -58,6 +66,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   @override
   void initState() {
     super.initState();
+    _registry = widget.registry ??
+        (FileRendererRegistry()..registerAll(builtinFileRenderers()));
     _loadFiles();
   }
 
@@ -89,28 +99,57 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     }
   }
 
-  Future<void> _readFile(String path) async {
-    try {
-      final response = await _client.get(
-        Uri.parse(
-            '$_baseUrl/workspaces/${widget.workspaceId}/files/content?path=$path'),
-        headers: _headers,
-      );
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        setState(() {
-          _selectedFile = path;
-          _fileContent = data['content'] as String?;
-        });
-      }
-    } catch (_) {}
+  /// Reads a file's decoded text via the `/files/content` endpoint. Injected
+  /// into [RenderableFile.readText] for the renderer to call lazily.
+  Future<String> _readFileText(String path) async {
+    final response = await _client.get(
+      Uri.parse(
+          '$_baseUrl/workspaces/${widget.workspaceId}/files/content?path=$path'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to read $path: ${response.statusCode}');
+    }
+    final data = jsonDecode(response.body);
+    return data['content'] as String? ?? '';
+  }
+
+  /// Reads a file's raw bytes via the `/files/download` endpoint. Injected into
+  /// [RenderableFile.readBytes] for binary renderers (image/pdf/video).
+  Future<Uint8List> _readFileBytes(String path) async {
+    final response = await _client.get(
+      Uri.parse(
+          '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to download $path: ${response.statusCode}');
+    }
+    return response.bodyBytes;
+  }
+
+  /// Builds the registry's view of [path] with loaders bound to this panel's
+  /// http client.
+  RenderableFile _renderableFor(String path) {
+    final name =
+        path.contains('/') ? path.substring(path.lastIndexOf('/') + 1) : path;
+    final dot = name.lastIndexOf('.');
+    final extension = dot > 0 ? name.substring(dot + 1).toLowerCase() : '';
+    return RenderableFile(
+      path: path,
+      name: name,
+      extension: extension,
+      readText: () => _readFileText(path),
+      readBytes: () => _readFileBytes(path),
+      downloadUrl:
+          '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
+    );
   }
 
   void _navigateTo(String path) {
     setState(() {
       _currentPath = path;
       _selectedFile = null;
-      _fileContent = null;
     });
     _loadFiles();
   }
@@ -381,8 +420,20 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           ),
           // File list or content
           Expanded(
-            child:
-                _selectedFile != null ? _buildFileContent() : _buildFileList(),
+            child: _selectedFile != null
+                ? _FileViewer(
+                    registry: _registry,
+                    file: _renderableFor(_selectedFile!),
+                    onClose: () => setState(() => _selectedFile = null),
+                    onDownload: () {
+                      final path = _selectedFile!;
+                      final name = path.contains('/')
+                          ? path.substring(path.lastIndexOf('/') + 1)
+                          : path;
+                      _downloadPath(path, name, false);
+                    },
+                  )
+                : _buildFileList(),
           ),
         ],
       ),
@@ -431,7 +482,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
                     if (isDir) {
                       _navigateTo(path);
                     } else {
-                      _readFile(path);
+                      setState(() => _selectedFile = path);
                     }
                   },
                 ),
@@ -450,8 +501,45 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       ],
     );
   }
+}
 
-  Widget _buildFileContent() {
+/// Registry-driven file viewer with shared chrome: back/close, filename, a mode
+/// switcher (shown when a file has more than one renderer), download, and a
+/// view-raw shortcut. The selected renderer's widget fills the body; per-mode
+/// actions (e.g. image rotate) live inside that widget.
+class _FileViewer extends StatefulWidget {
+  const _FileViewer({
+    required this.registry,
+    required this.file,
+    required this.onClose,
+    required this.onDownload,
+  });
+
+  final FileRendererRegistry registry;
+  final RenderableFile file;
+  final VoidCallback onClose;
+  final VoidCallback onDownload;
+
+  @override
+  State<_FileViewer> createState() => _FileViewerState();
+}
+
+class _FileViewerState extends State<_FileViewer> {
+  late final List<FileRenderer> _renderers =
+      widget.registry.renderersFor(widget.file);
+  late FileRenderer _selected = _renderers.first;
+
+  /// The Raw renderer, if the registry offers one for this file.
+  FileRenderer? get _rawRenderer {
+    for (final renderer in _renderers) {
+      if (renderer.id == 'raw') return renderer;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = _rawRenderer;
     return Column(
       children: [
         Container(
@@ -460,30 +548,44 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           child: Row(
             children: [
               InkWell(
-                onTap: () => setState(() {
-                  _selectedFile = null;
-                  _fileContent = null;
-                }),
+                onTap: widget.onClose,
                 child: const Icon(Icons.arrow_back, size: 16),
               ),
               const SizedBox(width: 8),
               Expanded(
-                  child: Text(_selectedFile!,
-                      style: const TextStyle(fontSize: 12))),
+                child: Text(widget.file.name,
+                    style: const TextStyle(fontSize: 12)),
+              ),
+              if (_renderers.length > 1)
+                for (final renderer in _renderers)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: ChoiceChip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(renderer.modeLabel,
+                          style: const TextStyle(fontSize: 11)),
+                      selected: identical(renderer, _selected),
+                      onSelected: (_) => setState(() => _selected = renderer),
+                    ),
+                  ),
+              IconButton(
+                icon: const Icon(Icons.download, size: 18),
+                tooltip: 'Download',
+                onPressed: widget.onDownload,
+              ),
+              if (raw != null && !identical(raw, _selected))
+                IconButton(
+                  icon: const Icon(Icons.subject, size: 18),
+                  tooltip: 'View raw',
+                  onPressed: () => setState(() => _selected = raw),
+                ),
             ],
           ),
         ),
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(8),
-            child: SizedBox(
-              width: double.infinity,
-              child: SelectableText(
-                _fileContent ?? 'Loading...',
-                style: TextStyle(fontFamily: 'JetBrains Mono', fontSize: 14),
-                textAlign: TextAlign.left,
-              ),
-            ),
+          child: KeyedSubtree(
+            key: ValueKey('${widget.file.path}::${_selected.id}'),
+            child: _selected.build(context, widget.file),
           ),
         ),
       ],
