@@ -3816,6 +3816,111 @@ class TestWorkspaceExportImport:
             assert ext[0].issym()
             assert ext[0].linkname == "/etc/passwd"
 
+    async def test_export_import_deep_nesting(self, client, admin_user, user):
+        """Export and import a workspace with deep directory nesting."""
+        import random
+        import tarfile
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "deep-export"}
+        )
+        ws = resp.json()
+
+        import klangk_backend.workspaces as ws_mod
+
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+
+        # Create a deep directory structure with files at various depths
+        rng = random.Random(42)
+        expected_files = {}
+        for depth in range(1, 8):
+            dir_path = home / "work"
+            for d in range(depth):
+                dir_path = dir_path / f"level{d}"
+            dir_path.mkdir(parents=True, exist_ok=True)
+
+            # Write a few files at each level
+            for i in range(3):
+                content = f"depth{depth}-file{i}-" + "x" * rng.randint(10, 500)
+                file_path = dir_path / f"file{i}.txt"
+                file_path.write_text(content)
+                rel = str(file_path.relative_to(home))
+                expected_files[rel] = content
+
+            # Add a symlink at each level
+            (dir_path / "link.txt").symlink_to("file0.txt")
+
+        # Also add some binary-ish content
+        bin_dir = home / "work" / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        bin_content = bytes(rng.getrandbits(8) for _ in range(4096))
+        (bin_dir / "data.bin").write_bytes(bin_content)
+
+        # Export
+        admin_headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 200
+        archive_bytes = resp.content
+        assert len(archive_bytes) > 0
+
+        # Verify archive structure
+        buf = io.BytesIO(archive_bytes)
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+            names = tar.getnames()
+            assert "workspace.json" in names
+            # Check deep files are present
+            for rel in expected_files:
+                assert any(rel.replace("\\", "/") in n for n in names), (
+                    f"Missing: {rel}"
+                )
+            # Check symlinks present
+            sym_members = [m for m in tar.getmembers() if m.issym()]
+            assert len(sym_members) >= 7  # one per depth level
+            # Check binary file
+            assert any("data.bin" in n for n in names)
+
+        # Import into a new workspace
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            params={"name": "deep-imported"},
+            files={
+                "file": (
+                    "archive.tar.gz",
+                    archive_bytes,
+                    "application/gzip",
+                )
+            },
+        )
+        assert resp.status_code == 200
+        imported = resp.json()
+        assert imported["name"] == "deep-imported"
+
+        # Verify all files survived
+        imported_home = ws_mod.home_path(user["id"], imported["id"])
+        for rel, content in expected_files.items():
+            file_path = imported_home / rel
+            assert file_path.exists(), f"Missing after import: {rel}"
+            assert file_path.read_text() == content
+
+        # Verify binary file
+        assert (
+            imported_home / "work" / "bin" / "data.bin"
+        ).read_bytes() == bin_content
+
+        # Verify symlinks survived as symlinks
+        for depth in range(1, 8):
+            link_path = imported_home / "work"
+            for d in range(depth):
+                link_path = link_path / f"level{d}"
+            link_path = link_path / "link.txt"
+            assert link_path.is_symlink(), f"Not a symlink: {link_path}"
+            assert os.readlink(str(link_path)) == "file0.txt"
+
     async def test_import_size_limit(self, client, user, monkeypatch):
         """Upload exceeding size limit is rejected."""
         import klangk_backend.api as api_mod
