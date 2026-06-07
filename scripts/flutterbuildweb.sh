@@ -17,7 +17,12 @@ python3 scripts/import_dart_plugins.py
 # can still override the binary; defaults to `flutter` on PATH (nix toolchain).
 FLUTTER="${KLANGK_WEB_FLUTTER:-flutter}"
 
-cd src/frontend && "$FLUTTER" --disable-analytics && "$FLUTTER" pub get && "$FLUTTER" build web --wasm --release --base-href=/ --no-web-resources-cdn --source-maps --no-strip-wasm --no-minify-wasm --no-minify-js
+# TEMPORARY: wasm builds are disabled to debug a production-only issue on
+# rag.enfoldsystems.net that is not reproducible locally. This builds the
+# dart2js (JS) renderer instead of WasmGC. To revert, restore the wasm flags:
+#   --wasm --no-strip-wasm --no-minify-wasm
+# (a benign "Wasm dry run succeeded" warning is expected in JS-only mode.)
+cd src/frontend && "$FLUTTER" --disable-analytics && "$FLUTTER" pub get && "$FLUTTER" build web --release --base-href=/ --no-web-resources-cdn --source-maps --no-minify-js
 rm -f build/web/flutter_service_worker.js
 
 # Inline `sourcesContent` into the source maps so devtools (especially
@@ -27,8 +32,15 @@ rm -f build/web/flutter_service_worker.js
 # app tree; the .map files grow (~25MB each) but the .wasm/.js artifacts are
 # unaffected.
 FLUTTER_SDK_DIR="$(cd "$(dirname "$(readlink -f "$(command -v "$FLUTTER")")")/.." && pwd)"
-python3 "$SCRIPT_DIR/inline_sources_in_map.py" "$FLUTTER_SDK_DIR" \
-  build/web/main.dart.wasm.map build/web/main.dart.js.map
+# Inline whichever maps exist: wasm builds emit main.dart.wasm.map, JS-only
+# builds emit only main.dart.js.map.
+MAPS=()
+for m in build/web/main.dart.wasm.map build/web/main.dart.js.map; do
+  [ -f "$m" ] && MAPS+=("$m")
+done
+if [ ${#MAPS[@]} -gt 0 ]; then
+  python3 "$SCRIPT_DIR/inline_sources_in_map.py" "$FLUTTER_SDK_DIR" "${MAPS[@]}"
+fi
 
 # Cache-busting: append a content hash to flutter_bootstrap.js reference
 # in index.html. Since index.html is served with no-cache headers, browsers
