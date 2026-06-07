@@ -17,6 +17,7 @@ The binary is configurable via ``KLANGK_PODMAN_BIN`` (defaults to
 import asyncio
 import json
 import logging
+import tempfile
 
 from . import util
 
@@ -58,18 +59,37 @@ async def _run(
     """Run ``podman <args>`` and return ``(returncode, stdout, stderr)``.
 
     When ``check`` is true a non-zero exit raises :class:`PodmanError`.
+
+    Output is captured to temp files rather than ``stdout=PIPE`` +
+    ``communicate()``. Lifecycle commands such as ``podman start --publish``
+    spawn a long-lived rootless network helper (``pasta``) that inherits the
+    child's stdout/stderr. Under uvloop (which uvicorn selects) that helper
+    keeps the inherited *pipe* write-end open for the container's lifetime,
+    so ``communicate()`` blocks forever waiting for an EOF that never comes.
+    A regular file has no such EOF dependency: the helper harmlessly inherits
+    a file fd and we read the output after the process exits.
     """
-    proc = await asyncio.create_subprocess_exec(
-        PODMAN_BIN,
-        *args,
-        stdin=(asyncio.subprocess.PIPE if stdin_data is not None else None),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out_b, err_b = await proc.communicate(stdin_data)
+    with (
+        tempfile.TemporaryFile() as out_f,
+        tempfile.TemporaryFile() as err_f,
+    ):
+        proc = await asyncio.create_subprocess_exec(
+            PODMAN_BIN,
+            *args,
+            stdin=(asyncio.subprocess.PIPE if stdin_data is not None else None),
+            stdout=out_f,
+            stderr=err_f,
+        )
+        if stdin_data is not None:
+            proc.stdin.write(stdin_data)
+            await proc.stdin.drain()
+            proc.stdin.close()
+        await proc.wait()
+        out_f.seek(0)
+        err_f.seek(0)
+        out = out_f.read().decode("utf-8", errors="replace")
+        err = err_f.read().decode("utf-8", errors="replace")
     rc = proc.returncode or 0
-    out = out_b.decode("utf-8", errors="replace")
-    err = err_b.decode("utf-8", errors="replace")
     if check and rc != 0:
         raise PodmanError(_classify(err), err.strip() or f"podman {args[0]}")
     return rc, out, err

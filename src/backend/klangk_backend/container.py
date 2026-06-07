@@ -339,6 +339,33 @@ class ContainerRegistry:
                     existing_container_id,
                     workspace_id,
                 )
+        else:
+            # DB has no container_id (e.g. after a backend restart that lost
+            # in-memory state).  Scan by label so we can adopt a running
+            # container rather than blindly --replace it (which hangs trying
+            # to stop it).
+            containers = await podman.list_containers(
+                f"klangk.workspace-id={workspace_id}"
+            )
+            if containers:
+                found_id = containers[0].get("Id") or containers[0].get("ID", "")
+                info = await podman.inspect_container(found_id)
+                if info and info["State"]["Running"]:
+                    logger.info(
+                        "Adopted running container %s for workspace %s",
+                        found_id,
+                        workspace_id,
+                    )
+                    await model.update_workspace_container(workspace_id, found_id)
+                    self.track_activity(found_id, workspace_id)
+                    return found_id, "connected"
+                elif info:
+                    await podman.remove_container(found_id)
+                    logger.info(
+                        "Removed stopped orphan container %s for workspace %s",
+                        found_id,
+                        workspace_id,
+                    )
 
         # Lock the entire read+allocate sequence to prevent
         # concurrent start_container calls from double-allocating.
@@ -436,32 +463,47 @@ class ContainerRegistry:
             for i, host_port in enumerate(host_ports)
         ]
 
-        container_id = await podman.create_container(
-            f"klangk-{INSTANCE_ID}-{workspace_id[:12]}",
-            resolved_image,
-            labels={
-                "klangk.managed": "true",
-                "klangk.instance": INSTANCE_ID,
-                "klangk.workspace-id": workspace_id,
-            },
-            binds=binds,
-            tmpfs={
-                "/tmp": "rw,exec,nosuid,size=2g",
-                "/run": "rw,noexec,nosuid,size=256m",
-                "/var/log": "rw,noexec,nosuid,size=256m",
-            },
-            publish=publish,
-            add_hosts=[f"{host_gateway}:{_resolve_add_host_target(host_gateway)}"],
-            dns=_container_dns_config().get("Dns"),
-            env=env_vars,
-            init=True,
-            interactive=True,
-            pull=image_pull_policy(),
-        )
-        await podman.start_container(container_id)
+        # Create, persist, and start as one cancellation-shielded unit.
+        # The connecting client's websocket can drop mid-startup (idle
+        # ping-timeout, navigation), which cancels this coroutine. Without
+        # the shield, a cancel landing between `create`/`start` and the DB
+        # write orphans a running container with no `container_id` on record
+        # — the workspace then appears "stuck" until the adopt-by-label path
+        # recovers it on a later connect. Persisting the id immediately after
+        # create (before start) also means the container is never lost even
+        # if start raises: the next connect inspects it via existing_id and
+        # recreates if needed.
+        async def _create_and_start() -> str:
+            cid = await podman.create_container(
+                f"klangk-{INSTANCE_ID}-{workspace_id[:12]}",
+                resolved_image,
+                labels={
+                    "klangk.managed": "true",
+                    "klangk.instance": INSTANCE_ID,
+                    "klangk.workspace-id": workspace_id,
+                },
+                binds=binds,
+                tmpfs={
+                    "/tmp": "rw,exec,nosuid,size=2g",
+                    "/run": "rw,noexec,nosuid,size=256m",
+                    "/var/log": "rw,noexec,nosuid,size=256m",
+                },
+                publish=publish,
+                add_hosts=[
+                    f"{host_gateway}:{_resolve_add_host_target(host_gateway)}"
+                ],
+                dns=_container_dns_config().get("Dns"),
+                env=env_vars,
+                init=True,
+                interactive=True,
+                pull=image_pull_policy(),
+            )
+            await model.update_workspace_container(workspace_id, cid)
+            self.track_activity(cid, workspace_id)
+            await podman.start_container(cid)
+            return cid
 
-        await model.update_workspace_container(workspace_id, container_id)
-        self.track_activity(container_id, workspace_id)
+        container_id = await asyncio.shield(_create_and_start())
 
         logger.info(
             "Started container %s for workspace %s (ports %s)",

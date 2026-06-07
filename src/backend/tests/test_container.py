@@ -298,6 +298,99 @@ class TestStartContainer:
         p.start_container.assert_awaited_once_with("new-cid")
         assert workspace["id"] in container.registry.states
 
+    async def test_container_id_persisted_before_start(self, workspace, user):
+        # If `start` fails, the id created just before it must already be on
+        # record so the next connect can inspect/recreate it rather than
+        # orphaning a created-but-unrecorded container.
+        with patch_podman(
+            start_container=AsyncMock(side_effect=RuntimeError("boom"))
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await container.registry.start_container(
+                    workspace["id"], "/tmp/ws", "/tmp/home"
+                )
+        ws = await model.get_workspace(workspace["id"], user["id"])
+        assert ws["container_id"] == "new-cid"
+        assert workspace["id"] in container.registry.states
+
+    async def test_cancel_during_start_still_persists(self, workspace, user):
+        # The connecting client can disconnect mid-startup, cancelling this
+        # coroutine. The shield must let create+persist+start finish so a
+        # running container is never orphaned with a NULL container_id.
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_start(_cid):
+            started.set()
+            await release.wait()
+
+        with patch_podman(
+            start_container=AsyncMock(side_effect=slow_start)
+        ) as p:
+            task = asyncio.create_task(
+                container.registry.start_container(
+                    workspace["id"], "/tmp/ws", "/tmp/home"
+                )
+            )
+            await started.wait()
+            task.cancel()  # client disconnects mid-startup
+            release.set()  # let the shielded inner run to completion
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        # Despite the cancel, the container was started and recorded.
+        ws = await model.get_workspace(workspace["id"], user["id"])
+        assert ws["container_id"] == "new-cid"
+        p.start_container.assert_awaited_once_with("new-cid")
+        assert workspace["id"] in container.registry.states
+
+    async def test_adopts_running_orphan_when_db_has_no_id(
+        self, workspace, user
+    ):
+        # No container_id on record but a running container exists for the
+        # workspace (e.g. a prior connect cancelled before persisting). Adopt
+        # it instead of `--replace`-ing a running container, which hangs.
+        with patch_podman(
+            list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}]),
+            inspect_container=_running(True),
+        ) as p:
+            cid, status = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert cid == "orphan-cid"
+        assert status == "connected"
+        p.create_container.assert_not_awaited()
+        ws = await model.get_workspace(workspace["id"], user["id"])
+        assert ws["container_id"] == "orphan-cid"
+        assert workspace["id"] in container.registry.states
+
+    async def test_removes_stopped_orphan_when_db_has_no_id(self, workspace):
+        # A stopped orphan can't be adopted — remove it and create fresh.
+        with patch_podman(
+            list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}]),
+            inspect_container=_running(False),
+        ) as p:
+            cid, status = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert cid == "new-cid"
+        assert status == "created"
+        p.remove_container.assert_awaited_once_with("orphan-cid")
+        p.create_container.assert_awaited_once()
+
+    async def test_orphan_vanished_between_list_and_inspect(self, workspace):
+        # Listed orphan is gone by the time we inspect it → create fresh.
+        with patch_podman(
+            list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}]),
+            inspect_container=AsyncMock(return_value=None),
+        ) as p:
+            cid, status = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert cid == "new-cid"
+        assert status == "created"
+        p.remove_container.assert_not_awaited()
+
     async def test_ssh_agent_forwarded_when_socket_exists(
         self, workspace, monkeypatch, tmp_path
     ):

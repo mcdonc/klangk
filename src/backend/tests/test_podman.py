@@ -11,21 +11,43 @@ EXEC = "klangk_backend.podman.asyncio.create_subprocess_exec"
 
 
 def _procs(*results):
-    """Build fake subprocess objects, one per (stdout, stderr, rc)."""
+    """Build fake subprocess objects, one per (stdout, stderr, rc).
+
+    ``_run`` reads output from the temp files it passes as stdout/stderr and
+    awaits ``proc.wait()`` (not ``communicate()``), so each fake carries its
+    canned bytes for ``_exec`` to write into those files.
+    """
     out = []
     for stdout, stderr, rc in results:
         p = MagicMock()
         p.returncode = rc
-        p.communicate = AsyncMock(
-            return_value=(stdout.encode(), stderr.encode())
-        )
+        p._canned = (stdout.encode(), stderr.encode())
+        p.wait = AsyncMock(return_value=rc)
+        p.stdin = MagicMock()
+        p.stdin.drain = AsyncMock()
         out.append(p)
     return out
 
 
 def _exec(*results):
-    """An AsyncMock standing in for create_subprocess_exec."""
-    return AsyncMock(side_effect=_procs(*results))
+    """An AsyncMock standing in for create_subprocess_exec.
+
+    Writes each fake's canned output into the temp files ``_run`` passes as
+    ``stdout``/``stderr`` so the wrapper reads them back as real output.
+    """
+    procs = iter(_procs(*results))
+
+    def side_effect(*args, **kwargs):
+        p = next(procs)
+        out_b, err_b = p._canned
+        stdout_f, stderr_f = kwargs.get("stdout"), kwargs.get("stderr")
+        if hasattr(stdout_f, "write"):
+            stdout_f.write(out_b)
+        if hasattr(stderr_f, "write"):
+            stderr_f.write(err_b)
+        return p
+
+    return AsyncMock(side_effect=side_effect)
 
 
 def _args(mock_exec, call_index=0):
@@ -88,7 +110,8 @@ class TestRun:
         with patch(EXEC, AsyncMock(return_value=proc)) as m:
             await podman._run(["x"], stdin_data=b"payload")
         assert m.call_args.kwargs["stdin"] is not None
-        assert proc.communicate.await_args.args == (b"payload",)
+        proc.stdin.write.assert_called_once_with(b"payload")
+        proc.stdin.close.assert_called_once()
 
     async def test_returncode_none_treated_as_zero(self):
         with patch(EXEC, _exec(("ok", "", None))):
