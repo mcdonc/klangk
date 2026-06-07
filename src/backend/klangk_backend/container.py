@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import sys
 import time
 import uuid
 
@@ -360,9 +361,15 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
 
-        # Forward host SSH agent if available
+        # Forward host SSH agent if available.
+        # On macOS, Podman runs containers in a Linux VM so host Unix
+        # sockets cannot be bind-mounted; skip SSH forwarding there.
         ssh_auth_sock = os.environ.get("SSH_AUTH_SOCK", "")
-        if ssh_auth_sock and os.path.exists(ssh_auth_sock):
+        if (
+            ssh_auth_sock
+            and os.path.exists(ssh_auth_sock)
+            and sys.platform != "darwin"
+        ):
             env_vars.append("SSH_AUTH_SOCK=/run/ssh-agent.sock")
 
         if extra_env:
@@ -386,7 +393,11 @@ class ContainerRegistry:
         binds = [
             f"{home_path}:/home/klangk",
         ]
-        if ssh_auth_sock and os.path.exists(ssh_auth_sock):
+        if (
+            ssh_auth_sock
+            and os.path.exists(ssh_auth_sock)
+            and sys.platform != "darwin"
+        ):
             binds.append(f"{ssh_auth_sock}:/run/ssh-agent.sock:ro")
         if config_path:
             binds.append(f"{config_path}:/opt/klangk/config:ro")
