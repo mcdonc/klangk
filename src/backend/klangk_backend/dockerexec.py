@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncGenerator
 
 from .util import BoundedOutputQueue
@@ -44,7 +45,7 @@ class ExecSession:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            env=podman.subprocess_env(),
+            env=os.environ,
         )
         self._read_task = asyncio.create_task(self._read_stdout())
         logger.info(

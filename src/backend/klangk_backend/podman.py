@@ -25,16 +25,6 @@ logger = logging.getLogger(__name__)
 PODMAN_BIN = util.resolve_env_secret("KLANGK_PODMAN_BIN", "podman")
 
 
-def subprocess_env() -> dict[str, str]:
-    """Return an environment dict for podman subprocesses.
-
-    Strips ``LD_LIBRARY_PATH`` so the podman binary uses its own
-    libraries.  Nix binaries have RPATH baked in and don't need it;
-    system binaries (e.g. on CI) break if nix's glibc leaks in.
-    """
-    return {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
-
-
 class PodmanError(Exception):
     """A podman CLI invocation failed.
 
@@ -82,7 +72,7 @@ async def _run(
             ),
             stdout=out_f,
             stderr=err_f,
-            env=subprocess_env(),
+            env=os.environ,
         )
         if stdin_data is not None:
             proc.stdin.write(stdin_data)
