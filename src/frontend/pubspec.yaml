@@ -12,13 +12,16 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.0
   xterm: ^4.0.0
-  # flterm: forked to build on Flutter 3.41 / Dart 3.11 (upstream 0.0.3 needs
-  # Dart 3.12 for private-named parameters; the fork removes that usage), so no
-  # host Flutter is required -- builds with the nix toolchain.
+  # flterm: vendored in libghostty as packages/flterm, patched to build on
+  # Flutter 3.41 / Dart 3.11 (upstream 0.0.3 needs Dart 3.12 for private-named
+  # parameters; the patch removes that usage), so no host Flutter is required --
+  # builds with the nix toolchain. Consumed from libghostty (the standalone
+  # runyaga/flterm fork is archived).
   flterm:
     git:
-      url: https://github.com/runyaga/flterm.git
+      url: https://github.com/runyaga/libghostty.git
       ref: main
+      path: packages/flterm
   libghostty: ^0.0.9
   google_fonts: ^8.1.0
   web_socket_channel: ^3.0.0
