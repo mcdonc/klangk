@@ -807,10 +807,8 @@ class TestExportSymlinks:
         assert len(user_dirs) == 1
         return user_dirs[0] / "home" / ws_id
 
-    def test_export_keeps_internal_strips_external_symlinks(
-        self, server, cli_config, tmp_path
-    ):
-        """Internal symlinks are kept, external symlinks are stripped."""
+    def test_export_preserves_all_symlinks(self, server, cli_config, tmp_path):
+        """All symlinks are preserved (stored as links, not content)."""
         env = cli_config["env"]
 
         result = _run(["klangk", "create", "e2e-symlink"], env=env)
@@ -823,10 +821,10 @@ class TestExportSymlinks:
             home_dir.mkdir(parents=True, exist_ok=True)
 
             (home_dir / "real.txt").write_text("real content")
-            # Internal: relative symlink to a file within home (kept)
-            (home_dir / "good_link").symlink_to("real.txt")
-            # External: absolute symlink to /etc/hostname (stripped)
-            (home_dir / "bad_link").symlink_to("/etc/hostname")
+            # Relative symlink
+            (home_dir / "relative_link").symlink_to("real.txt")
+            # External absolute symlink (preserved as symlink, not content)
+            (home_dir / "external_link").symlink_to("/etc/hostname")
 
             archive = tmp_path / "symlink-test.tar.gz"
             result = _run(
@@ -840,14 +838,15 @@ class TestExportSymlinks:
 
             with tarfile.open(archive, "r:gz") as tar:
                 names = tar.getnames()
-                # Internal symlink preserved
                 assert any("real.txt" in n for n in names)
-                assert any("good_link" in n for n in names)
-                good = [m for m in tar.getmembers() if "good_link" in m.name]
-                assert len(good) == 1
-                assert good[0].issym()
-                # External symlink stripped
-                assert not any("bad_link" in n for n in names)
+                assert any("relative_link" in n for n in names)
+                # External symlink preserved as a symlink
+                assert any("external_link" in n for n in names)
+                ext = [
+                    m for m in tar.getmembers() if "external_link" in m.name
+                ]
+                assert len(ext) == 1
+                assert ext[0].issym()
         finally:
             _run(["klangk", "rm", "e2e-symlink"], env=env)
 

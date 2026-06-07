@@ -3006,26 +3006,6 @@ class TestRmtree:
         assert "test-label" in caplog.text
 
 
-class TestFindExternalSymlinks:
-    async def test_ignores_unrelated_paths_in_output(self, temp_data_dir):
-        """Paths that can't be made relative to home_dir's parent are skipped."""
-        ws_root = ws_mod.WORKSPACES_ROOT
-        ws_root.mkdir(parents=True, exist_ok=True)
-        home_dir = ws_root / "user1" / "home" / "ws1"
-        home_dir.mkdir(parents=True)
-
-        mock_proc = AsyncMock()
-        # Return a path that isn't under home_dir's parent
-        mock_proc.communicate = AsyncMock(
-            return_value=(b"/completely/unrelated/path\n", b"")
-        )
-        mock_proc.returncode = 0
-
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await ws_mod._find_external_symlinks(home_dir)
-        assert result == []
-
-
 class TestBuildWorkspaceArchive:
     async def test_builds_importable_archive(self, temp_data_dir):
         """Archive contains workspace.json and home/ directory."""
@@ -3089,8 +3069,8 @@ class TestBuildWorkspaceArchive:
         home_dir = ws_root / "user1" / "home" / "ws1"
         home_dir.mkdir(parents=True)
         (home_dir / "good.txt").write_text("keep")
-        (home_dir / "bad_link").symlink_to("/etc/passwd")
-        (home_dir / "good_link").symlink_to("good.txt")
+        (home_dir / "external_link").symlink_to("/etc/passwd")
+        (home_dir / "relative_link").symlink_to("good.txt")
 
         metadata = {"name": "test"}
         archive_path = ws_root / "symtest.tar.gz"
@@ -3107,8 +3087,9 @@ class TestBuildWorkspaceArchive:
         )
         members = listing.stdout.strip().split("\n")
         assert any("good.txt" in m for m in members)
-        assert not any("bad_link" in m for m in members)
-        assert any("good_link" in m for m in members)
+        # All symlinks are preserved (stored as symlinks, not contents)
+        assert any("external_link" in m for m in members)
+        assert any("relative_link" in m for m in members)
 
     async def test_tar_failure_returns_false(self, temp_data_dir):
         """Returns False when tar exits non-zero."""
@@ -3796,10 +3777,10 @@ class TestWorkspaceExportImport:
         assert len(created_tmp) == 1
         assert not os.path.exists(created_tmp[0])
 
-    async def test_export_strips_external_symlinks(
+    async def test_export_preserves_all_symlinks(
         self, client, admin_user, user
     ):
-        """Symlinks pointing outside the home dir are excluded from export."""
+        """All symlinks are preserved in export (stored as links, not content)."""
         headers = await self._user_headers(client)
         resp = await client.post(
             "/workspaces", headers=headers, json={"name": "symlink-export"}
@@ -3812,9 +3793,7 @@ class TestWorkspaceExportImport:
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "real.txt").write_text("real file")
-        # Internal symlink (should be kept)
-        (home / "work" / "internal_link").symlink_to("real.txt")
-        # External symlink (should be stripped)
+        (home / "work" / "relative_link").symlink_to("real.txt")
         (home / "work" / "external_link").symlink_to("/etc/passwd")
 
         admin_headers = await self._admin_headers(client)
@@ -3829,8 +3808,13 @@ class TestWorkspaceExportImport:
         with tarfile.open(fileobj=buf, mode="r:gz") as tar:
             names = tar.getnames()
             assert any("real.txt" in n for n in names)
-            assert any("internal_link" in n for n in names)
-            assert not any("external_link" in n for n in names)
+            assert any("relative_link" in n for n in names)
+            # External symlinks preserved as symlinks (not contents)
+            assert any("external_link" in n for n in names)
+            ext = [m for m in tar.getmembers() if "external_link" in m.name]
+            assert len(ext) == 1
+            assert ext[0].issym()
+            assert ext[0].linkname == "/etc/passwd"
 
     async def test_import_size_limit(self, client, user, monkeypatch):
         """Upload exceeding size limit is rejected."""
