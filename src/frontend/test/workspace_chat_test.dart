@@ -471,6 +471,20 @@ void main() {
       expect(unreadCounts, [1, 0]);
     });
 
+    testWidgets('requestFocus focuses the message input', (tester) async {
+      final chatKey = GlobalKey<WorkspaceChatState>();
+      await tester.pumpWidget(buildChat(chatKey: chatKey));
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.focusNode, isNotNull);
+      expect(field.focusNode!.hasFocus, isFalse);
+
+      chatKey.currentState!.requestFocus();
+      await tester.pump();
+
+      expect(field.focusNode!.hasFocus, isTrue);
+    });
+
     testWidgets('loads buffered chat history on init', (tester) async {
       // Pre-populate the buffer before building the widget
       client.chatHistory.addAll([

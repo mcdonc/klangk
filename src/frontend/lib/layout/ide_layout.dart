@@ -45,17 +45,43 @@ class _IdeLayoutState extends State<IdeLayout> {
   static const _minDebugHeight = 0.0;
   static const _maxDebugHeight = 500.0;
 
+  @override
+  void initState() {
+    super.initState();
+    // Focus the pane shown first (Terminal by default) so the user can type
+    // immediately on workspace open, without an extra click into it.
+    _focusPane(_selectedIndex);
+  }
+
   void _selectTab(int index) {
-    if (index == _selectedIndex) return;
-    setState(() => _selectedIndex = index);
-    if (index == 0) {
-      widget.terminalKey?.currentState?.requestFocus();
-    } else if (index == 1) {
-      widget.fileViewerKey?.currentState?.refresh();
+    final changed = index != _selectedIndex;
+    if (changed) {
+      setState(() => _selectedIndex = index);
+      if (index == 1) {
+        widget.fileViewerKey?.currentState?.refresh();
+      }
+      // Notify chat widget of visibility change.
+      final chatIdx = widget.chat != null ? 2 : -1;
+      widget.chatKey?.currentState?.setVisible(index == chatIdx);
     }
-    // Notify chat widget of visibility change
+    // Always (re)focus the tab's input — even when re-clicking the already
+    // active tab — so clicking Terminal/Chat returns focus to its input.
+    _focusPane(index);
+  }
+
+  /// Focuses the input of the pane at [index] (Terminal or Chat). Deferred to
+  /// after the frame so the target's FocusNode is attached and the pane is
+  /// visible in the IndexedStack before we request focus.
+  void _focusPane(int index) {
     final chatIdx = widget.chat != null ? 2 : -1;
-    widget.chatKey?.currentState?.setVisible(index == chatIdx);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (index == 0) {
+        widget.terminalKey?.currentState?.requestFocus();
+      } else if (index == chatIdx) {
+        widget.chatKey?.currentState?.requestFocus();
+      }
+    });
   }
 
   @override
