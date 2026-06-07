@@ -39,35 +39,11 @@ jobs:
           build-tasks: klangk:build-backend-image
           cache-nix: "false"
 
-      - name: Debug subuid/podman info
-        if: steps.filter.outputs.e2e == 'true'
-        run: |
-          echo "=== whoami ==="
-          id
-          echo "=== /etc/subuid ==="
-          cat /etc/subuid || echo "no subuid"
-          echo "=== /etc/subgid ==="
-          cat /etc/subgid || echo "no subgid"
-          echo "=== newuidmap ==="
-          ls -la "$(which newuidmap 2>/dev/null)" || echo "not found"
-          echo "=== podman info (system) ==="
-          /usr/bin/podman info --format '{{.Host.IDMappings}}' 2>&1 || echo "failed"
-          echo "=== test keep-id:uid=1000 ==="
-          /usr/bin/podman run --rm --userns=keep-id:uid=1000,gid=1000 alpine id 2>&1 || echo "keep-id:uid=1000 FAILED"
-
       - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- python -m pytest \
-            src/backend/e2e-tests/test_cli_e2e.py::TestExec::test_exec_echo \
-            src/backend/e2e-tests/test_cli_e2e.py::TestExec::test_exec_piped_stdin \
-            src/backend/e2e-tests/test_cli_e2e.py::TestExec::test_exec_exit_code \
-            src/backend/e2e-tests/test_cli_e2e.py::TestExec::test_exec_yes_backpressure \
-            src/backend/e2e-tests/test_cli_e2e.py::TestSync::test_sync_to_container \
-            src/backend/e2e-tests/test_cli_e2e.py::TestSync::test_sync_from_container \
-            src/backend/e2e-tests/test_cli_e2e.py::TestDefaultCommand::test_default_command_written_to_container \
-            -v -p no:xdist --no-cov
+          devenv shell -- test-cli-e2e
 
       - name: Skip notice
         if: steps.filter.outputs.e2e != 'true'
