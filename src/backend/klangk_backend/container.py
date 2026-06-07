@@ -31,6 +31,27 @@ ALLOWED_IMAGES: set[str] = {
 }
 ALLOWED_IMAGES.add(IMAGE_NAME)  # default image is always allowed
 
+_VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
+
+
+def image_pull_policy() -> str:
+    """Resolve the workspace-image pull policy from the environment.
+
+    Default ``never`` keeps airgapped behavior (image must already exist
+    locally).  Set ``KLANGK_IMAGE_PULL_POLICY=missing`` to pull from a
+    registry when the image isn't present.
+    """
+    policy = util.resolve_env_secret("KLANGK_IMAGE_PULL_POLICY", "never")
+    if policy not in _VALID_PULL_POLICIES:
+        logger.warning(
+            "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
+            policy,
+            ", ".join(sorted(_VALID_PULL_POLICIES)),
+        )
+        return "never"
+    return policy
+
+
 _VALID_MOUNT_OPTIONS = {
     "ro",
     "rw",
@@ -406,6 +427,7 @@ class ContainerRegistry:
                 init=True,
                 interactive=True,
                 userns="keep-id:uid=0,gid=0",
+                pull=image_pull_policy(),
             )
             await model.update_workspace_container(workspace_id, cid)
             self.track_activity(cid, workspace_id)

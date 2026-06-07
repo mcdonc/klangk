@@ -24,6 +24,7 @@ _TEST_PASSWORD_HASH = bcrypt.hashpw(
 def temp_data_dir(tmp_path, monkeypatch):
     """Point KLANGK_DATA_DIR to a temp directory for each test."""
     monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
     # Re-import to pick up the new env var
     import klangk_backend.model as us
     import klangk_backend.workspaces as wm

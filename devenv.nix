@@ -128,6 +128,10 @@ in
     config.devenv.root + "/.devenv/state/klangk/plugins"
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
+  # Rootless podman from nix has no default policy.json; generated in
+  # enterShell, scripts reference it via this env var + --signature-policy.
+  env.KLANGK_SIGNATURE_POLICY =
+    config.devenv.state + "/klangk/containers/policy.json";
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
   # Docker build platform for klangk images. Defaults to the host
   # architecture so arm64 machines build/run natively instead of under
@@ -303,6 +307,22 @@ in
 
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
+
+    # Podman storage: keep images, containers, and volumes under
+    # .devenv/state so they don't pollute ~/.local/share/containers.
+    _PODMAN_DIR="$DEVENV_STATE/klangk/containers"
+    mkdir -p "$_PODMAN_DIR/storage" "$_PODMAN_DIR/run"
+    cat > "$_PODMAN_DIR/storage.conf" <<STORAGE
+    [storage]
+    driver = "overlay"
+    graphroot = "$_PODMAN_DIR/storage"
+    runroot = "$_PODMAN_DIR/run"
+    STORAGE
+    export CONTAINERS_STORAGE_CONF="$_PODMAN_DIR/storage.conf"
+    if [ ! -f "$_PODMAN_DIR/policy.json" ]; then
+      echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
+        > "$_PODMAN_DIR/policy.json"
+    fi
 
     # Ensure klangk_plugins stub exists so flutter pub get works
     # before plugins are fetched (first-time checkout / CI)

@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
-docker pull ghcr.io/mcdonc/klangk/klangk-base:latest
+podman pull --signature-policy "${KLANGK_SIGNATURE_POLICY}" \
+  ghcr.io/mcdonc/klangk/klangk-base:latest

@@ -42,6 +42,22 @@ class TestParseIdleTimeout:
         assert interval == 60  # clamped to max 60
 
 
+class TestImagePullPolicy:
+    def test_default_is_never(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
+        assert container.image_pull_policy() == "never"
+
+    def test_valid_override(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_IMAGE_PULL_POLICY", "missing")
+        assert container.image_pull_policy() == "missing"
+
+    def test_invalid_falls_back_to_never(self, monkeypatch, caplog):
+        monkeypatch.setenv("KLANGK_IMAGE_PULL_POLICY", "sometimes")
+        with caplog.at_level("WARNING"):
+            assert container.image_pull_policy() == "never"
+        assert "Invalid KLANGK_IMAGE_PULL_POLICY" in caplog.text
+
+
 class TestActivityTracking:
     def setup_method(self):
         container.registry.states.clear()
@@ -426,6 +442,21 @@ class TestStartContainer:
         assert not any(e.startswith("ANTHROPIC_API_KEY=") for e in env)
         # host.containers.internal must be resolvable
         assert "host.containers.internal:host-gateway" in kwargs["add_hosts"]
+
+    async def test_pull_policy_default_never(self, workspace):
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert p.create_container.call_args.kwargs["pull"] == "never"
+
+    async def test_pull_policy_from_env(self, workspace, monkeypatch):
+        monkeypatch.setenv("KLANGK_IMAGE_PULL_POLICY", "missing")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert p.create_container.call_args.kwargs["pull"] == "missing"
 
     async def test_config_mount_added(self, workspace):
         """Container gets read-only config mount when config_path is set."""

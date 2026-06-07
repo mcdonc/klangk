@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build base Docker image locally (single arch, loaded into Docker).
+# Build base image locally (single arch, loaded into podman).
 # Run when Dockerfile.base, apt packages, or Pi agent version changes.
 # Builds for KLANGK_PLATFORM (the host arch by default) so the image
 # can be loaded and run locally. To publish a multi-arch base to GHCR,
@@ -14,7 +14,8 @@ VERSION="${CALVER}-${COMMIT}"
 IMAGE="ghcr.io/mcdonc/klangk/klangk-base"
 
 echo "==> Building base image $VERSION (${KLANGK_PLATFORM:-linux/amd64})"
-docker build --platform "${KLANGK_PLATFORM:-linux/amd64}" \
+podman build --signature-policy "${KLANGK_SIGNATURE_POLICY}" \
+  --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-arg KLANGK_UID="$(id -u)" \
   --build-arg KLANGK_GID="$(id -g)" \
   -f src/docker/workspace/Dockerfile.base \
@@ -23,4 +24,4 @@ docker build --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   "$@" src/docker/workspace/
 
 echo "==> Done: $IMAGE:$VERSION"
-docker images "$IMAGE" --format "  {{.Tag}}\t{{.Size}}"
+podman images "$IMAGE" --format "  {{.Tag}}\t{{.Size}}"
