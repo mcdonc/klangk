@@ -132,7 +132,7 @@ in
   # Rootless podman from nix has no default policy.json; generated in
   # enterShell, scripts reference it via this env var + --signature-policy.
   env.KLANGK_SIGNATURE_POLICY =
-    config.devenv.state + "/klangk/containers/policy.json";
+    config.devenv.state + "/klangk/podman/policy.json";
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
   # Docker build platform for klangk images. Defaults to the host
   # architecture so arm64 machines build/run natively instead of under
@@ -144,12 +144,8 @@ in
   );
   dotenv.enable = true;
 
-  scripts.flutterbuildweb.exec = ''
-    exec devenv tasks run klangk:flutter-build \
-      --refresh-task-cache "$@"'';
-  scripts.build-backend-image.exec = ''
-    exec devenv tasks run klangk:build-backend-image \
-      --refresh-task-cache "$@"'';
+  scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
+  scripts.build-backend-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-backend-image.sh" "$@"'';
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
   scripts.build-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-base-image.sh" "$@"'';
@@ -309,20 +305,26 @@ in
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
 
-    # Podman storage: keep images, containers, and volumes under
-    # .devenv/state so they don't pollute ~/.local/share/containers.
-    _PODMAN_DIR="$DEVENV_STATE/klangk/containers"
-    mkdir -p "$_PODMAN_DIR/storage" "$_PODMAN_DIR/run"
-    cat > "$_PODMAN_DIR/storage.conf" <<STORAGE
+    # Podman config lives outside the storage directory so
+    # `podman system reset` doesn't delete it.
+    _PODMAN_CONF="$DEVENV_STATE/klangk/podman"
+    _PODMAN_STORE="$DEVENV_STATE/klangk/containers"
+    # KLANGK_PODMAN_STORAGE: custom path for podman image storage.
+    # Use an ext4 filesystem (not ZFS) for --userns=keep-id support.
+    # ZFS lacks idmapped mounts, causing storage-chown-by-maps to hang.
+    _PODMAN_GRAPHROOT="''${KLANGK_PODMAN_STORAGE:-$_PODMAN_STORE/storage}"
+    mkdir -p "$_PODMAN_CONF" "$_PODMAN_STORE/run" "$_PODMAN_GRAPHROOT"
+
+    cat > "$_PODMAN_CONF/storage.conf" <<STORAGE
     [storage]
     driver = "overlay"
-    graphroot = "$_PODMAN_DIR/storage"
-    runroot = "$_PODMAN_DIR/run"
+    graphroot = "$_PODMAN_GRAPHROOT"
+    runroot = "$_PODMAN_STORE/run"
     STORAGE
-    export CONTAINERS_STORAGE_CONF="$_PODMAN_DIR/storage.conf"
-    if [ ! -f "$_PODMAN_DIR/policy.json" ]; then
+    export CONTAINERS_STORAGE_CONF="$_PODMAN_CONF/storage.conf"
+    if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
       echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
-        > "$_PODMAN_DIR/policy.json"
+        > "$_PODMAN_CONF/policy.json"
     fi
 
     # Ensure klangk_plugins stub exists so flutter pub get works

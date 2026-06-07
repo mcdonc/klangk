@@ -5,6 +5,18 @@
 - Podman (rootless) available
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (or run `./bootstrap`)
 
+### macOS
+
+On macOS, podman runs inside a Linux VM. Install it via Homebrew and start the VM before using Klangk:
+
+```bash
+brew install podman
+podman machine init    # one-time setup
+podman machine start   # run before each dev session
+```
+
+The devenv shell provides its own `podman` binary, but it delegates to the running VM. If `podman machine` is not running, container operations will fail.
+
 ## Getting Started
 
 ```bash
@@ -86,6 +98,7 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_PLUGINS_DIR`            | `$DEVENV_STATE/klangk/plugins`       | Fetched plugins (outside repo for `execIfModified`)                                                                                                                                        |
 | `KLANGK_IMAGE_NAME`             | `klangk`                             | Podman image name for workspace containers                                                                                                                                                 |
 | `KLANGK_IMAGE_PULL_POLICY`      | `never`                              | Podman `--pull` policy for workspace containers (`never`, `missing`, `always`, `newer`). Default `never` requires the image to exist locally; `missing` pulls from a registry if not found |
+| `KLANGK_PODMAN_STORAGE`         |                                      | Custom path for podman image storage (graphroot). Set to a path on ext4 (not ZFS) for `--userns=keep-id` support. ZFS lacks idmapped mounts, causing slow container startup.               |
 | `KLANGK_INSTANCE_ID`            | `default`                            | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup                                                                              |
 | `KLANGK_DNS_SERVERS`            |                                      | Comma-separated DNS server IPs for containers (e.g., `100.100.100.100,8.8.8.8` for Tailscale MagicDNS). If unset, containers use podman's default DNS.                                     |
 | `KLANGK_HOSTING_HOSTNAME`       | (auto-derived)                       | Hostname for hosted app URLs. Behind a reverse proxy: uses `X-Forwarded-Host` as-is. Direct access: uses `Host` header with `KLANGK_NGINX_PORT` substituted                                |
