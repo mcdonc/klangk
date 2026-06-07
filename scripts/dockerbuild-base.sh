@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Build base Docker image.
+# Build base Docker image locally (single arch, loaded into Docker).
 # Run when Dockerfile.base, apt packages, or Pi agent version changes.
+# Builds for KLANGK_PLATFORM (the host arch by default) so the image
+# can be loaded and run locally. To publish a multi-arch base to GHCR,
+# use push-base-image.sh instead.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
@@ -10,8 +13,8 @@ CALVER="$(date -u +%Y.%m.%d)"
 VERSION="${CALVER}-${COMMIT}"
 IMAGE="ghcr.io/mcdonc/klangk/klangk-base"
 
-echo "==> Building base image $VERSION"
-docker build --platform linux/amd64 \
+echo "==> Building base image $VERSION (${KLANGK_PLATFORM:-linux/amd64})"
+docker build --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-arg KLANGK_UID="$(id -u)" \
   --build-arg KLANGK_GID="$(id -g)" \
   -f src/docker/workspace/Dockerfile.base \
