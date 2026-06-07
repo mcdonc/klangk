@@ -818,6 +818,49 @@ class TestValidateMountSpec:
         assert err is not None
 
 
+class TestAllowedMountRoots:
+    def test_bind_mount_allowed(self, monkeypatch):
+        monkeypatch.setattr(
+            container, "ALLOWED_MOUNT_ROOTS", ["/home", "/data"]
+        )
+        assert container.validate_mount_spec("/home/user/src:/work") is None
+
+    def test_bind_mount_exact_root(self, monkeypatch):
+        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/home"])
+        assert container.validate_mount_spec("/home:/work") is None
+
+    def test_bind_mount_denied(self, monkeypatch):
+        monkeypatch.setattr(
+            container, "ALLOWED_MOUNT_ROOTS", ["/home", "/data"]
+        )
+        err = container.validate_mount_spec("/etc/passwd:/etc/passwd:ro")
+        assert err is not None
+        assert "allowed root" in err.lower()
+
+    def test_bind_mount_traversal_denied(self, monkeypatch):
+        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/home"])
+        err = container.validate_mount_spec("/home/../etc:/work")
+        assert err is not None
+        assert "allowed root" in err.lower()
+
+    def test_named_volume_always_allowed(self, monkeypatch):
+        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/home"])
+        assert container.validate_mount_spec("my-volume:/data") is None
+
+    def test_no_restriction_when_empty(self, monkeypatch):
+        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", [])
+        assert container.validate_mount_spec("/etc/shadow:/secrets") is None
+
+    def test_multiple_roots(self, monkeypatch):
+        monkeypatch.setattr(
+            container, "ALLOWED_MOUNT_ROOTS", ["/home", "/data", "/opt"]
+        )
+        assert container.validate_mount_spec("/data/files:/work") is None
+        assert container.validate_mount_spec("/opt/app:/app") is None
+        err = container.validate_mount_spec("/var/log:/logs")
+        assert err is not None
+
+
 class TestExtraMountsVolumeCreation:
     async def test_auto_creates_named_volume(self, workspace):
         """Named volumes (no leading /) are auto-created with klangk labels."""

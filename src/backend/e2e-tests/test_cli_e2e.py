@@ -1244,6 +1244,77 @@ class TestExportImport:
             _run(["klangk", "rm", "export-symlink"], env=env)
 
 
+class TestAllowedMountRoots:
+    """Verify KLANGK_ALLOWED_MOUNT_ROOTS restricts bind mount sources."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def restricted_server(self, tmp_path_factory):
+        data_dir = tempfile.mkdtemp(prefix="klangk-mount-roots-")
+        proc, base_url = _start_server(
+            data_dir,
+            "18998",
+            "mount-roots-e2e",
+            extra_env={"KLANGK_ALLOWED_MOUNT_ROOTS": "/tmp,/home"},
+        )
+        config_dir = tmp_path_factory.mktemp("klangk-mount-roots-config")
+        env = {**os.environ, "HOME": str(config_dir)}
+        klangk_config_dir = config_dir / ".config" / "klangk"
+        klangk_config_dir.mkdir(parents=True)
+        _run(
+            [
+                "klangk",
+                "login",
+                "test@example.com",
+                "--server",
+                base_url,
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+        self.__class__._env = env
+        self.__class__._base_url = base_url
+        yield
+        _stop_server(proc, data_dir, "mount-roots-e2e")
+
+    def test_allowed_mount_succeeds(self):
+        env = self._env
+        try:
+            result = _run(
+                [
+                    "klangk",
+                    "create",
+                    "e2e-mount-ok",
+                    "--mount",
+                    "/tmp:/mnt/tmp",
+                ],
+                env=env,
+            )
+            assert result.returncode == 0
+            assert "e2e-mount-ok" in result.stdout
+        finally:
+            _run(["klangk", "rm", "e2e-mount-ok"], env=env)
+
+    def test_denied_mount_fails(self):
+        env = self._env
+        result = _run(
+            [
+                "klangk",
+                "create",
+                "e2e-mount-denied",
+                "--mount",
+                "/etc/passwd:/secrets:ro",
+            ],
+            env=env,
+        )
+        assert result.returncode != 0
+        assert (
+            "allowed root" in result.stderr.lower()
+            or "allowed root" in result.stdout.lower()
+        )
+
+
 class TestContainerReplace:
     """Verify podman --replace handles stale/crashed containers."""
 
