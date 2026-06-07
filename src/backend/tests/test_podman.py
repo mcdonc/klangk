@@ -166,11 +166,15 @@ class TestCreateContainer:
                 init=True,
                 interactive=True,
                 replace=True,
+                userns="keep-id:uid=0,gid=0",
             )
         args = _args(m)
         assert "--replace" in args
         assert "--init" in args
         assert "-i" in args
+        assert ["--userns", "keep-id:uid=0,gid=0"] == args[
+            args.index("--userns") : args.index("--userns") + 2
+        ]
         assert ["--label", "a=1"] == args[
             args.index("--label") : args.index("--label") + 2
         ]
