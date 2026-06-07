@@ -129,18 +129,32 @@ in
     config.devenv.root + "/.devenv/state/klangk/plugins"
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
-  # Rootless podman from nix has no default policy.json; generated in
-  # enterShell, scripts reference it via this env var + --signature-policy.
-  env.KLANGK_SIGNATURE_POLICY =
-    config.devenv.state + "/klangk/podman/policy.json";
+  # Rootless podman from nix (Linux) has no default policy.json; it is
+  # generated in enterShell and scripts pass it via --signature-policy.
+  # On macOS podman runs in *remote* mode against the VM, which has its own
+  # policy and rejects the local-storage --signature-policy flag, so leave
+  # this empty there (scripts skip the flag when the var is unset).
+  env.KLANGK_SIGNATURE_POLICY = lib.mkOverride 1500 (
+    if pkgs.stdenv.hostPlatform.isDarwin then
+      ""
+    else
+      config.devenv.state + "/klangk/podman/policy.json"
+  );
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
-  # Docker build platform for klangk images. Defaults to the host
-  # architecture so arm64 machines build/run natively instead of under
-  # amd64 emulation. Override in .env (e.g. KLANGK_PLATFORM=linux/amd64)
-  # to force a specific arch. Building the workspace natively on arm64
-  # requires a base image that has an arm64 variant (see push-base-image).
+  # Docker build platform for klangk images. On Linux, default to the host
+  # architecture so arm64 machines build/run natively instead of under amd64
+  # emulation. On macOS, pin to linux/amd64: the published GHCR base
+  # (klangk-base:latest) is amd64-only, so an arm64 default would mismatch
+  # (containers run in the podman VM, emulated when needed). Override in .env
+  # to force a specific arch; native arm64 needs an arm64 base variant (see
+  # push-base-image).
   env.KLANGK_PLATFORM = lib.mkOverride 1500 (
-    if pkgs.stdenv.hostPlatform.isAarch64 then "linux/arm64" else "linux/amd64"
+    if pkgs.stdenv.hostPlatform.isDarwin then
+      "linux/amd64"
+    else if pkgs.stdenv.hostPlatform.isAarch64 then
+      "linux/arm64"
+    else
+      "linux/amd64"
   );
   dotenv.enable = true;
 
