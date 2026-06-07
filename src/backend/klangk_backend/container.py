@@ -65,6 +65,16 @@ _VALID_MOUNT_OPTIONS = {
 }
 
 
+_allowed_mount_roots_env = util.resolve_env_secret(
+    "KLANGK_ALLOWED_MOUNT_ROOTS", ""
+)
+ALLOWED_MOUNT_ROOTS: list[str] = [
+    os.path.normpath(p)
+    for p in _allowed_mount_roots_env.split(",")
+    if p.strip()
+]
+
+
 def validate_mount_spec(spec: str) -> str | None:
     """Validate a container mount spec string.
 
@@ -85,6 +95,17 @@ def validate_mount_spec(spec: str) -> str | None:
         for opt in options.split(","):
             if opt and opt not in _VALID_MOUNT_OPTIONS:
                 return f"Invalid mount {spec!r}: unknown option {opt!r}"
+    if ALLOWED_MOUNT_ROOTS and source.startswith("/"):
+        norm = os.path.normpath(source)
+        if not any(
+            norm == root or norm.startswith(root + "/")
+            for root in ALLOWED_MOUNT_ROOTS
+        ):
+            allowed = ", ".join(ALLOWED_MOUNT_ROOTS)
+            return (
+                f"Invalid mount {spec!r}: bind mount source must be "
+                f"under an allowed root ({allowed})"
+            )
     return None
 
 
