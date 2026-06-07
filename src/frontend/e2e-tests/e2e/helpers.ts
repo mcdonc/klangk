@@ -291,15 +291,12 @@ export async function openWorkspace(
   });
 
   await loginViaUI(page, email, TEST_PASSWORD);
-  // Navigate to the workspace URL and force a full page reload.
-  // A hash-only change from the workspaces list is handled by Flutter's
-  // router internally without opening a new WebSocket, so our listener
-  // would never fire.  Setting the hash then reloading ensures a fresh
-  // page load that creates a new WebSocket connection.
-  await page.evaluate((id) => {
-    window.location.hash = `/workspace/${id}`;
-  }, workspaceId);
-  await page.reload({ waitUntil: "load" });
+  // Navigate to the workspace via goto() with the full URL including hash.
+  // Using goto() tears down the old page atomically and loads a fresh one
+  // with the hash already set. This avoids a race where setting the hash
+  // first triggers Flutter to start a container, then reload() kills that
+  // connection, and the second attempt gets a 409 container name conflict.
+  await page.goto(`/#/workspace/${workspaceId}`, { waitUntil: "load" });
   await waitForFlutter(page);
   await containerPromise;
   await terminalPromise;
