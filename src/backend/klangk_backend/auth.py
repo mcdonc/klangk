@@ -1,3 +1,4 @@
+import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 
 from . import model
 from .util import resolve_env_secret
+
+logger = logging.getLogger(__name__)
 
 # --- Rate limiting constants ---
 LOGIN_LOCKOUT_WINDOW = int(
@@ -53,11 +56,40 @@ def _should_lockout(attempt_info: dict | None) -> bool:
     )  # pragma: no cover
 
 
-SECRET_KEY = resolve_env_secret(
-    "KLANGK_JWT_SECRET", "klangk-dev-secret-change-in-production"
-)
+_INSECURE_DEFAULT_SECRET = "klangk-dev-secret-change-in-production"
+SECRET_KEY = resolve_env_secret("KLANGK_JWT_SECRET", _INSECURE_DEFAULT_SECRET)
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
+
+
+def jwt_secret_is_secure() -> bool:
+    """True if a non-empty, non-default JWT signing secret is configured."""
+    return bool(SECRET_KEY) and SECRET_KEY != _INSECURE_DEFAULT_SECRET
+
+
+def require_secure_jwt_secret() -> None:
+    """Fail closed at startup unless a strong JWT secret is configured.
+
+    With the unset/default secret, anyone can forge tokens for any user or
+    role. The insecure default is permitted only when
+    KLANGK_ALLOW_INSECURE_JWT_SECRET is truthy (local dev / tests).
+    """
+    if jwt_secret_is_secure():
+        return
+    allow = (
+        resolve_env_secret("KLANGK_ALLOW_INSECURE_JWT_SECRET", "") or ""
+    ).lower()
+    if allow in ("1", "true", "yes"):
+        logger.warning(
+            "KLANGK_JWT_SECRET is unset or the insecure default; allowed "
+            "only because KLANGK_ALLOW_INSECURE_JWT_SECRET is set. Do NOT "
+            "use this in production."
+        )
+        return
+    raise RuntimeError(
+        "KLANGK_JWT_SECRET is unset or the insecure default. Set a strong "
+        "secret (or KLANGK_ALLOW_INSECURE_JWT_SECRET=1 for local dev)."
+    )
 
 MIN_PASSWORD_LENGTH = int(
     resolve_env_secret("KLANGK_MIN_PASSWORD_LENGTH", "4")

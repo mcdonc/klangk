@@ -726,6 +726,19 @@ async def oidc_callback(
         )
     auth.validate_email(email)
 
+    # Require a verified email before trusting it to link/provision an
+    # account — otherwise an IdP user who can assert an arbitrary email could
+    # take over an existing local account (e.g. the seeded admin). Providers
+    # known to verify email out of band can opt out via trust_unverified_email.
+    if (
+        claims.get("email_verified") is not True
+        and not provider.trust_unverified_email
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Email not verified by identity provider",
+        )
+
     # Find or create user
     user = await model.get_user_by_external_id(provider_id, sub)
     if user is None:
