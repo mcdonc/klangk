@@ -20,6 +20,8 @@ import websockets
 
 from .config import CLIConfig
 
+_WS_MAX_SIZE = int(os.environ.get("KLANGK_WS_MSG_SIZE_MAX", 2**24))
+
 
 @dataclass
 class Workspace:
@@ -322,7 +324,7 @@ async def _ws_shell(
     command_override, if set, overrides the workspace default command.
     """
     async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=2**20
+        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
     ) as ws:
         # 1. Connect to workspace
         await ws.send(
@@ -518,7 +520,7 @@ async def _ws_exec(
     import base64
 
     async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=2**20
+        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
     ) as ws:
         # 1. Connect to workspace
         await ws.send(
