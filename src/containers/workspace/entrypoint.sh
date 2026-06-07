@@ -2,10 +2,22 @@
 # Minimal container entrypoint.
 set -e
 
-# With --userns=keep-id:uid=0,gid=0 the host user maps to root inside
-# the container.  The klangk user (UID 1000) is used for terminal
-# sessions (podman exec -u klangk).  Ensure its home exists and is
-# owned correctly.
+# Match the container's klangk user to the host UID/GID so files
+# created inside the container are owned by the same user that runs
+# the backend.  Skipped when --userns=keep-id handles the mapping.
+HOST_UID="${KLANGK_HOST_UID:-}"
+HOST_GID="${KLANGK_HOST_GID:-}"
+if [ -n "$HOST_UID" ] || [ -n "$HOST_GID" ]; then
+  CURRENT_UID=$(id -u klangk)
+  CURRENT_GID=$(id -g klangk)
+  if [ -n "$HOST_GID" ] && [ "$HOST_GID" != "$CURRENT_GID" ]; then
+    groupmod -g "$HOST_GID" klangk 2>/dev/null || true
+  fi
+  if [ -n "$HOST_UID" ] && [ "$HOST_UID" != "$CURRENT_UID" ]; then
+    usermod -u "$HOST_UID" klangk 2>/dev/null || true
+  fi
+fi
+
 chown klangk:klangk /home/klangk /home/klangk/work
 
 # Set up Pi agent config as the klangk user (extensions, settings, models,
