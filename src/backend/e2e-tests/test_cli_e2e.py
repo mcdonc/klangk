@@ -59,7 +59,7 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
             "--port",
             port,
             "--ws-max-size",
-            "65536",
+            "16777216",
             "--ws-ping-interval",
             "20",
             "--ws-ping-timeout",
@@ -439,6 +439,195 @@ class TestSync:
         )
         assert result.returncode == 0
         assert (dest / "remote-file.txt").read_text().strip() == "remote-data"
+
+
+class TestSyncLarge:
+    """Test syncing directories with 10+ MB of data."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def workspace(self, cli_config):
+        _run(["klangk", "create", "e2e-sync-large"], env=cli_config["env"])
+        yield
+        _run(["klangk", "rm", "e2e-sync-large"], env=cli_config["env"])
+
+    def _make_large_tree(self, root, rng, target_bytes=10 * 1024 * 1024):
+        """Create a directory tree with ~target_bytes of data."""
+        root.mkdir(parents=True, exist_ok=True)
+        total = 0
+        file_num = 0
+        # Create files across several subdirectories
+        for subdir_idx in range(5):
+            subdir = root / f"dir{subdir_idx}" / "nested"
+            subdir.mkdir(parents=True, exist_ok=True)
+            while total < target_bytes * (subdir_idx + 1) // 5:
+                size = rng.randint(50_000, 500_000)
+                data = bytes(rng.getrandbits(8) for _ in range(size))
+                (subdir / f"file{file_num}.bin").write_bytes(data)
+                total += size
+                file_num += 1
+        return total, file_num
+
+    def test_sync_large_to_container(self, cli_config, tmp_path):
+        import hashlib
+        import random
+
+        env = cli_config["env"]
+        rng = random.Random(42)
+        src = tmp_path / "large-src"
+        total_bytes, file_count = self._make_large_tree(src, rng)
+        assert total_bytes >= 10 * 1024 * 1024
+
+        # Hash every file for later comparison
+        src_hashes = {}
+        for f in sorted(src.rglob("*")):
+            if f.is_file():
+                rel = str(f.relative_to(src))
+                src_hashes[rel] = hashlib.sha256(f.read_bytes()).hexdigest()
+
+        # Sync to container
+        result = _run(
+            [
+                "klangk",
+                "sync",
+                str(src) + "/",
+                "e2e-sync-large:/home/klangk/work/large-upload/",
+            ],
+            env=env,
+            timeout=120,
+        )
+        assert result.returncode == 0
+
+        # Verify file count in container
+        verify = _run(
+            [
+                "klangk",
+                "exec",
+                "e2e-sync-large",
+                "bash",
+                "-c",
+                "find /home/klangk/work/large-upload -type f | wc -l",
+            ],
+            env=env,
+            timeout=60,
+        )
+        assert verify.returncode == 0
+        assert int(verify.stdout.strip()) == file_count
+
+        # Verify total size in container
+        verify = _run(
+            [
+                "klangk",
+                "exec",
+                "e2e-sync-large",
+                "bash",
+                "-c",
+                "du -sb /home/klangk/work/large-upload | cut -f1",
+            ],
+            env=env,
+            timeout=60,
+        )
+        assert verify.returncode == 0
+        container_size = int(verify.stdout.strip())
+        assert container_size >= 10 * 1024 * 1024
+
+        # Spot-check a few file hashes via exec
+        for rel, expected_hash in list(src_hashes.items())[:3]:
+            verify = _run(
+                [
+                    "klangk",
+                    "exec",
+                    "e2e-sync-large",
+                    "sha256sum",
+                    f"/home/klangk/work/large-upload/{rel}",
+                ],
+                env=env,
+                timeout=60,
+            )
+            assert verify.returncode == 0
+            assert expected_hash in verify.stdout
+
+    def test_sync_large_from_container(self, cli_config, tmp_path):
+        import hashlib
+
+        env = cli_config["env"]
+
+        # Create large data in the container
+        _run(
+            [
+                "klangk",
+                "exec",
+                "e2e-sync-large",
+                "bash",
+                "-c",
+                "mkdir -p /home/klangk/work/large-download && "
+                "for i in $(seq 1 25); do "
+                "dd if=/dev/urandom of=/home/klangk/work/large-download/file$i.bin "
+                "bs=1024 count=420 status=none; done",
+            ],
+            env=env,
+            timeout=60,
+        )
+
+        # Verify size in container (~10.5 MB)
+        verify = _run(
+            [
+                "klangk",
+                "exec",
+                "e2e-sync-large",
+                "bash",
+                "-c",
+                "du -sb /home/klangk/work/large-download | cut -f1",
+            ],
+            env=env,
+            timeout=60,
+        )
+        assert verify.returncode == 0
+        assert int(verify.stdout.strip()) >= 10 * 1024 * 1024
+
+        # Get hashes in container
+        verify = _run(
+            [
+                "klangk",
+                "exec",
+                "e2e-sync-large",
+                "bash",
+                "-c",
+                "sha256sum /home/klangk/work/large-download/*.bin",
+            ],
+            env=env,
+            timeout=60,
+        )
+        assert verify.returncode == 0
+        container_hashes = {}
+        for line in verify.stdout.strip().splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                h, path = parts
+                fname = path.rsplit("/", 1)[-1]
+                container_hashes[fname] = h
+
+        # Sync from container
+        dest = tmp_path / "large-dest"
+        dest.mkdir()
+
+        result = _run(
+            [
+                "klangk",
+                "sync",
+                "e2e-sync-large:/home/klangk/work/large-download/",
+                str(dest) + "/",
+            ],
+            env=env,
+            timeout=120,
+        )
+        assert result.returncode == 0
+
+        # Verify all files arrived with correct hashes
+        local_files = sorted(dest.rglob("*.bin"))
+        assert len(local_files) == 25
+        for f in local_files:
+            h = hashlib.sha256(f.read_bytes()).hexdigest()
+            assert h == container_hashes[f.name], f"Hash mismatch: {f.name}"
 
 
 class TestDefaultCommand:
