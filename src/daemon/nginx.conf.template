@@ -1,0 +1,106 @@
+# Production nginx config for the klangk daemon stack (DOCKER.md §6).
+#
+# Rendered at container start by the official nginx:alpine image's
+# `20-envsubst-on-templates.sh`.  This is a FULL nginx.conf (not a conf.d
+# server block), so the compose `nginx` service must:
+#   - mount this file at /etc/nginx/templates/nginx.conf.template
+#   - set NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx   (so it renders to
+#     /etc/nginx/nginx.conf, replacing the stock config, instead of conf.d/)
+# envsubst only replaces variables that are actually exported, so nginx's own
+# runtime vars ($http_upgrade, $scheme, regex captures $1/$2, ...) pass through
+# untouched.  Required env: KLANGK_NGINX_PORT, KLANGK_PORT, KLANGK_LLM_BASE_URL,
+# KLANGK_LLM_API_KEY.
+#
+# Lifted from scripts/nginx.sh with two changes for the compose stack:
+#   - upstreams point at the `backend` service instead of 127.0.0.1
+#     (nginx and backend are separate containers on the `internal` network)
+#   - /hosted/ proxies to backend:<port>, since the workspace-container ports
+#     are published into the backend container's network namespace by Podman.
+
+# NB: no `daemon off;` here — the official nginx image already passes
+# `-g 'daemon off;'`, and a duplicate directive is a fatal config error.
+pid /tmp/nginx.pid;
+error_log stderr;
+events { worker_connections 64; }
+http {
+  access_log /dev/stdout;
+  client_body_temp_path /tmp/nginx_client_body;
+  proxy_temp_path /tmp/nginx_proxy;
+  fastcgi_temp_path /tmp/nginx_fastcgi;
+  uwsgi_temp_path /tmp/nginx_uwsgi;
+  scgi_temp_path /tmp/nginx_scgi;
+
+  map $http_upgrade $connection_upgrade {
+    default upgrade;
+    "" close;
+  }
+
+  client_max_body_size 500m;
+
+  # Resolve upstreams at request time, not config-load. 127.0.0.11 is Docker's
+  # embedded DNS (always present under compose).  Without this, a `proxy_pass`
+  # to a hostname behind a variable (the LLM endpoint and the hosted-app
+  # `backend:$port` below) is resolved at startup, so an unresolvable/down LLM
+  # host would crash the whole front — login + UI included.  With it, those
+  # upstreams fail at request time (502) and the rest of the daemon stays up.
+  resolver 127.0.0.11 valid=10s ipv6=off;
+
+  server {
+    listen ${KLANGK_NGINX_PORT};
+
+    # Hosted app proxy: extract port from URL and proxy to the backend
+    # container (where Podman published the workspace ports).  `backend` is in
+    # a variable-bearing proxy_pass, so it resolves via the resolver above.
+    location ~ ^/hosted/[^/]+/(\d+)/(.*)$ {
+      proxy_pass http://backend:$1/$2$is_args$args;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_http_version 1.1;
+    }
+
+    # LLM proxy: forward to the real LLM endpoint with API key injected.
+    # Workspace containers hit this instead of the real endpoint, so they
+    # never see the API key. Restricted to private subnets and localhost.
+    # Variable proxy_pass (+ resolver) so a down LLM endpoint doesn't block
+    # nginx startup; the regex capture replaces the old prefix-strip behavior.
+    location ~ ^/llm-proxy/(.*)$ {
+      allow 172.16.0.0/12;
+      allow 192.168.0.0/16;
+      allow 10.0.0.0/8;
+      allow 127.0.0.1;
+      deny all;
+      # Base URL in a variable so proxy_pass defers DNS to the resolver above.
+      set $llm_base "${KLANGK_LLM_BASE_URL}";
+      proxy_pass $llm_base/$1$is_args$args;
+      proxy_set_header Authorization "Bearer ${KLANGK_LLM_API_KEY}";
+      proxy_set_header Host $proxy_host;
+      proxy_http_version 1.1;
+      proxy_set_header Connection "";
+      # SSE streaming support
+      proxy_buffering off;
+      proxy_cache off;
+      chunked_transfer_encoding on;
+    }
+
+    location / {
+      proxy_pass http://backend:${KLANGK_PORT}/;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      # Pass through X-Forwarded-* from an outer proxy, or default for direct access
+      set $fwd_proto $http_x_forwarded_proto;
+      if ($fwd_proto = "") { set $fwd_proto $scheme; }
+      proxy_set_header X-Forwarded-Proto $fwd_proto;
+      proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
+      proxy_set_header X-Forwarded-Prefix $http_x_forwarded_prefix;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      # Keep WebSocket connections alive — default 60 s would drop idle terminals.
+      proxy_read_timeout 3600s;
+      proxy_send_timeout 3600s;
+    }
+  }
+}

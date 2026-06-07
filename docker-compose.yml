@@ -1,0 +1,133 @@
+# klangk daemon stack — DOCKER.md §7.
+#
+#   cp .env.example .env   # fill in KLANGK_LLM_*, KLANGK_JWT_SECRET, admin creds
+#   docker compose up --build
+#   # then log in at  http://localhost:${KLANGK_NGINX_PORT:-8995}
+#
+# Two services on two networks: only `nginx` is published to the host; the
+# `backend` (uvicorn + rootless Podman) is reachable only via the `internal`
+# network.  The backend runs rootless Podman-in-Docker — see src/daemon/* and
+# /home/bryan/src/podman_test for the recipe each flag comes from.
+#
+# HOST PREREQUISITES for the rootless-nesting backend (same as podman_test):
+#   - the tun module:  sudo modprobe tun
+#   - unprivileged user namespaces.  Modern Debian/Ubuntu harden these off; the
+#     backend grabs `cap_add: SYS_ADMIN` below to cover that without host edits.
+#     To drop that cap instead, relax the host and persist via sysctl.d:
+#       Ubuntu 24.04+:  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+#       Debian/older:   sudo sysctl -w kernel.unprivileged_userns_clone=1
+#       Always:         sudo sysctl -w user.max_user_namespaces=15000
+
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - edge
+      - internal
+    # The only host-published port in the stack.
+    ports:
+      - "${KLANGK_NGINX_PORT:-8995}:${KLANGK_NGINX_PORT:-8995}"
+    volumes:
+      - ./src/daemon/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+    # nginx is the ONLY place KLANGK_LLM_API_KEY / KLANGK_LLM_BASE_URL live —
+    # the llm-proxy injects the key so workspace containers never see it (§10).
+    # NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx renders the full nginx.conf template
+    # to /etc/nginx/nginx.conf (not conf.d/).
+    environment:
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      KLANGK_NGINX_PORT: "${KLANGK_NGINX_PORT:-8995}"
+      KLANGK_PORT: "${KLANGK_PORT:-8997}"
+      KLANGK_LLM_BASE_URL: "${KLANGK_LLM_BASE_URL}"
+      KLANGK_LLM_API_KEY: "${KLANGK_LLM_API_KEY}"
+
+  backend:
+    build:
+      context: .
+      dockerfile: src/daemon/Dockerfile
+    image: klangk-daemon
+    restart: unless-stopped
+    # NOT on `edge`: unreachable from the host, only nginx can reach it.
+    networks:
+      - internal
+
+    # --- rootless Podman-in-Docker profile (mirrors podman_test) ---
+    # Devices passed through explicitly (NOT --privileged):
+    devices:
+      - /dev/fuse        # fuse-overlayfs storage driver
+      - /dev/net/tun     # passt/slirp4netns container networking
+    # All far weaker than `privileged: true`:
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - label=disable
+      # Clear Docker's read-only/masked /proc paths so the inner podman can set
+      # its default container sysctls (podman's unmask=ALL equivalent).  Lighter
+      # alternative: set `default_sysctls = []` in src/daemon/containers.conf and
+      # drop this line.
+      - systempaths=unconfined
+    # The one capability the rootless userns setup needs when the host kernel
+    # forbids unprivileged user namespaces (the dependable lever; see header).
+    cap_add:
+      - SYS_ADMIN
+
+    volumes:
+      # App state: SQLite DB + workspace homes (§4).
+      - ./data/klangk-data:/var/lib/klangk/data
+      # Rootless podman's image/container layers — persisted so they aren't
+      # re-fused every restart.
+      - ./data/klangk-podman-storage:/home/klangk/.local/share/containers
+      # §9/B — prebuilt workspace-image store, read-only.  Uncomment together
+      # with `additionalimagestores` in src/daemon/storage.conf once the store
+      # volume is seeded offline.
+      # - klangk-images:/var/lib/klangk-images:ro
+
+    # Healthcheck per §7: confirm the in-process engine initialises.
+    healthcheck:
+      test: ["CMD", "podman", "info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # Backend env.  KLANGK_LLM_API_KEY / _BASE_URL are deliberately ABSENT —
+    # they belong to nginx only (§10; the backend never needs the key).  Values
+    # interpolate from the root `.env`.  Add any other KLANGK_* your deployment
+    # uses (KLANGK_DNS_SERVERS, KLANGK_ALLOWED_IMAGES, KLANGK_LOGIN_*,
+    # KLANGK_DISABLE_REGISTRATION, KLANGK_IMPORT_MAX_SIZE, ...).
+    environment:
+      KLANGK_PORT: "${KLANGK_PORT:-8997}"
+      KLANGK_NGINX_PORT: "${KLANGK_NGINX_PORT:-8995}"
+      KLANGK_DATA_DIR: /var/lib/klangk/data
+      # §8 knob: how a pi container reaches the nginx front. The backend
+      # resolves this name to an IP and passes it via --add-host so passt
+      # can route workspace traffic through the backend's network namespace.
+      KLANGK_HOST_GATEWAY: "${KLANGK_HOST_GATEWAY:-nginx}"
+      KLANGK_INSTANCE_ID: "${KLANGK_INSTANCE_ID:-default}"
+      KLANGK_IMAGE_NAME: "${KLANGK_IMAGE_NAME:-klangk}"
+      # Where workspace images come from: `never` (default) = offline only
+      # (local + the §9/B additional store); `missing` = pull from a registry
+      # if absent locally; also `always`/`newer`.
+      KLANGK_IMAGE_PULL_POLICY: "${KLANGK_IMAGE_PULL_POLICY:-never}"
+      KLANGK_LLM_MODEL: "${KLANGK_LLM_MODEL:-}"
+      KLANGK_JWT_SECRET: "${KLANGK_JWT_SECRET}"
+      KLANGK_DEFAULT_USER: "${KLANGK_DEFAULT_USER:-}"
+      KLANGK_DEFAULT_PASSWORD: "${KLANGK_DEFAULT_PASSWORD:-}"
+      KLANGK_IDLE_TIMEOUT_SECONDS: "${KLANGK_IDLE_TIMEOUT_SECONDS:-1800}"
+      # SMTP (optional — for email verification / password reset).
+      KLANGK_SMTP_HOST: "${KLANGK_SMTP_HOST:-}"
+      KLANGK_SMTP_PORT: "${KLANGK_SMTP_PORT:-}"
+      KLANGK_SMTP_USER: "${KLANGK_SMTP_USER:-}"
+      KLANGK_SMTP_PASSWORD: "${KLANGK_SMTP_PASSWORD:-}"
+      KLANGK_SMTP_FROM: "${KLANGK_SMTP_FROM:-}"
+      KLANGK_SMTP_USE_TLS: "${KLANGK_SMTP_USE_TLS:-}"
+
+networks:
+  edge:
+    # Host-facing; only nginx attaches here.
+  internal:
+    # nginx <-> backend only; not reachable from the host.
+    internal: true
+

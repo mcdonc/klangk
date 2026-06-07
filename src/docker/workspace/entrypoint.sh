@@ -25,10 +25,10 @@ chown klangk:klangk /home/klangk /home/klangk/work
 # terminal sessions find everything in place.
 su -c "python3 /usr/local/bin/setup_clankers" klangk
 
-# Signal that setup is complete. Terminal sessions (docker exec) source
+# Signal that setup is complete. Terminal sessions (podman exec) source
 # /etc/bash.bashrc which waits for this file before showing a prompt.
 # /tmp is a tmpfs, so .klangk-ready is cleared on every container start.
 touch /tmp/.klangk-ready
 
-# Keep the container alive. Terminal sessions are started via docker exec.
+# Keep the container alive. Terminal sessions are started via podman exec.
 exec sleep infinity
