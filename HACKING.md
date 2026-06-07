@@ -49,6 +49,94 @@ devenv processes up --no-tui
 
 This builds the Docker image and Flutter web app on first run (via `execIfModified`), starts nginx, the FastAPI backend, and watches for file changes. Open http://localhost:8995.
 
+## Running with Docker Compose (without Nix)
+
+As an alternative to the devenv flow, the daemon (nginx + backend) ships as a
+self-contained Docker Compose stack with **no dependency on Nix**. This is the
+path for deploying/shipping. devenv stays the source of truth for local dev —
+this adds a run mode, it doesn't replace one.
+
+The stack is two services on two networks (only nginx is published):
+
+- **nginx** (`nginx:alpine`) — the only host-published service (`:8995`);
+  reverse proxy + LLM-key-injecting proxy + hosted-app proxy.
+- **backend** — uvicorn **plus rootless Podman**, which launches the per-user
+  workspace containers _inside_ the backend container (podman-in-docker).
+
+Files: [docker-compose.yml](docker-compose.yml) (repo root) and
+[src/daemon/](src/daemon/) (the daemon `Dockerfile`, `nginx.conf.template`, and
+the rootless podman config — `storage.conf`, `containers.conf`,
+`registries.conf`).
+
+### Host prerequisites (for the rootless podman-in-docker backend)
+
+```bash
+sudo modprobe tun          # pasta/slirp4netns need /dev/net/tun
+```
+
+The backend also needs unprivileged user namespaces. Modern Debian/Ubuntu
+harden these off; the compose file grabs `cap_add: SYS_ADMIN` by default to
+cover that with no host changes. To drop that capability instead, relax the
+host and persist via `/etc/sysctl.d/`:
+
+```bash
+# Ubuntu 24.04+
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+# Debian / older
+sudo sysctl -w kernel.unprivileged_userns_clone=1
+# Always
+sudo sysctl -w user.max_user_namespaces=15000
+```
+
+### Bring up the stack
+
+```bash
+cp -n .env.example .env          # same .env as the devenv flow; edit creds
+$EDITOR .env                     # KLANGK_LLM_API_KEY, KLANGK_JWT_SECRET, ...
+
+docker compose up --build        # first build is heavy (Flutter web + podman runtime)
+```
+
+Then log in at http://localhost:8995 (same default-user behavior as devenv).
+`KLANGK_LLM_API_KEY` is passed **only** to nginx — the LLM-proxy injects it so
+workspace containers never see the key.
+
+State persists in two named volumes across `docker compose down`/`up`:
+`klangk-data` (SQLite DB + workspace homes) and `klangk-podman-storage` (the
+rootless podman image/container layers).
+
+### Provide the workspace image
+
+The daemon spawns workspace containers from the **`klangk`** image, which is
+distinct from the daemon image. The backend's podman runs with `--pull=never`
+by default (airgap-friendly), so the image must be present in its store first.
+It is built locally — nothing is pushed to any registry (building only *pulls*
+the public `klangk-base`, which needs no credentials):
+
+```bash
+scripts/dockerbuild.sh             # build the klangk image locally with docker
+docker compose up -d               # stack must be running
+scripts/seed-workspace-image.sh    # docker save | podman load into the backend store
+```
+
+`seed-workspace-image.sh` loads the image into the running backend's rootless
+store, where it persists in `klangk-podman-storage`. Alternatively, on a
+network-connected host, set `KLANGK_IMAGE_PULL_POLICY=missing` to have the
+backend pull the image from a registry when it's absent locally (see the
+env-var table). For an immutable / refresh-by-volume-swap deployment, ship a
+read-only additional image store instead (hooks are stubbed in
+`src/daemon/storage.conf` + `docker-compose.yml`).
+
+### Compose vs. devenv differences
+
+- **Engine is Podman, not Docker.** The backend drives rootless Podman via the
+  CLI (`KLANGK_PODMAN_BIN`, default `podman`); set it to `docker` to run against
+  a Docker host instead.
+- **`KLANGK_HOST_GATEWAY`** controls how a workspace container reaches the nginx
+  front. It defaults to `host.containers.internal` in the daemon image (vs.
+  `host.docker.internal` in the host-process/devenv flow).
+- Workspace containers no longer get a `/var/run/docker.sock` bind.
+
 ## Running Tests
 
 ```bash
@@ -85,6 +173,9 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_DATA_DIR`               | `$DEVENV_STATE/klangk/data`          | Database, workspaces, Pi sessions                                                                                                                           |
 | `KLANGK_PLUGINS_DIR`            | `$DEVENV_STATE/klangk/plugins`       | Fetched plugins (outside repo for `execIfModified`)                                                                                                         |
 | `KLANGK_IMAGE_NAME`             | `klangk`                             | Docker image name for workspace containers                                                                                                                  |
+| `KLANGK_IMAGE_PULL_POLICY`      | `never`                              | Workspace-image pull policy (podman `--pull`): `never` (offline; local + additional store only), `missing` (pull if absent), `always`/`newer`. Invalid → `never` |
+| `KLANGK_PODMAN_BIN`             | `podman`                             | Container engine binary the backend shells out to (set to `docker` to run against a Docker host)                                                            |
+| `KLANGK_HOST_GATEWAY`           | `host.docker.internal`               | Hostname a workspace container uses to reach the nginx front (LLM-proxy + bridge); also registered via `--add-host`. The Compose daemon image defaults it to `host.containers.internal` |
 | `KLANGK_INSTANCE_ID`            | `default`                            | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup                                               |
 | `KLANGK_DNS_SERVERS`            |                                      | Comma-separated DNS server IPs for containers (e.g., `100.100.100.100,8.8.8.8` for Tailscale MagicDNS). If unset, containers use Docker's default DNS.      |
 | `KLANGK_HOSTING_HOSTNAME`       | (auto-derived)                       | Hostname for hosted app URLs. Behind a reverse proxy: uses `X-Forwarded-Host` as-is. Direct access: uses `Host` header with `KLANGK_NGINX_PORT` substituted |
@@ -227,10 +318,12 @@ src/
     e2e-tests/         # Playwright E2E tests
   docker/
     host/              # Host container (Dockerfile, entrypoint)
-    workspace/         # Workspace container (Dockerfile, base, entrypoint)
+    workspace/         # Workspace container (Dockerfile, base, entrypoint, system prompt)
+  daemon/              # daemon image + Compose stack (Dockerfile, nginx + podman config)
   bridge/              # @klangk/bridge npm package
 plugins/               # Built-in plugins (celebrate, beep, etc.)
 scripts/               # Build and utility scripts
+docker-compose.yml     # no-Nix deployment stack (nginx + backend)
 devenv.nix             # devenv configuration
 ```
 
