@@ -74,6 +74,33 @@ ALLOWED_MOUNT_ROOTS: list[str] = [
     if p.strip()
 ]
 
+_PROTECTED_PATHS = [
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+    "/run/podman/podman.sock",
+]
+
+
+def _is_named_volume(source: str) -> bool:
+    """A mount source with no '/' that doesn't start with '.' is a volume."""
+    return "/" not in source and not source.startswith(".")
+
+
+def _is_protected(source: str) -> bool:
+    """True if source is a protected host path that must never be mounted."""
+    norm = os.path.normpath(source)
+    data_dir = os.path.normpath(
+        util.resolve_env_secret(
+            "KLANGK_DATA_DIR", os.path.expanduser("~/.klangk/data")
+        )
+        or os.path.expanduser("~/.klangk/data")
+    )
+    for blocked in [*_PROTECTED_PATHS, data_dir]:
+        blocked = os.path.normpath(blocked)
+        if norm == blocked or norm.startswith(blocked + "/"):
+            return True
+    return False
+
 
 def validate_mount_spec(spec: str) -> str | None:
     """Validate a container mount spec string.
@@ -95,17 +122,20 @@ def validate_mount_spec(spec: str) -> str | None:
         for opt in options.split(","):
             if opt and opt not in _VALID_MOUNT_OPTIONS:
                 return f"Invalid mount {spec!r}: unknown option {opt!r}"
-    if ALLOWED_MOUNT_ROOTS and source.startswith("/"):
-        norm = os.path.normpath(source)
-        if not any(
-            norm == root or norm.startswith(root + "/")
-            for root in ALLOWED_MOUNT_ROOTS
-        ):
-            allowed = ", ".join(ALLOWED_MOUNT_ROOTS)
-            return (
-                f"Invalid mount {spec!r}: bind mount source must be "
-                f"under an allowed root ({allowed})"
-            )
+    if not _is_named_volume(source):
+        if _is_protected(source):
+            return f"Invalid mount {spec!r}: source is a protected host path"
+        if ALLOWED_MOUNT_ROOTS:
+            norm = os.path.normpath(source)
+            if not any(
+                norm == root or norm.startswith(root + "/")
+                for root in ALLOWED_MOUNT_ROOTS
+            ):
+                allowed = ", ".join(ALLOWED_MOUNT_ROOTS)
+                return (
+                    f"Invalid mount {spec!r}: bind mount source must be "
+                    f"under an allowed root ({allowed})"
+                )
     return None
 
 
@@ -398,11 +428,13 @@ class ContainerRegistry:
                 env_vars.append(f"{k}={v}")
 
         # Ensure named volumes in extra_mounts exist with klangk labels.
+        # Refuse to mount a volume owned by another instance.
         if extra_mounts:
             for mount_spec in extra_mounts:
                 source = mount_spec.split(":")[0]
-                if "/" not in source and not source.startswith("."):
-                    if await podman.inspect_volume(source) is None:
+                if _is_named_volume(source):
+                    info = await podman.inspect_volume(source)
+                    if info is None:
                         await podman.create_volume(
                             source,
                             {
@@ -410,6 +442,13 @@ class ContainerRegistry:
                                 "klangk.instance": INSTANCE_ID,
                             },
                         )
+                    else:
+                        labels = info.get("Labels") or {}
+                        if labels.get("klangk.instance") != INSTANCE_ID:
+                            raise ValueError(
+                                f"Volume {source!r} is not managed by this "
+                                "klangk instance"
+                            )
 
         binds = [
             f"{home_path}:/home/klangk",
