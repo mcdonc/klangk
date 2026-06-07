@@ -5,6 +5,10 @@ inputs:
   build-tasks:
     description: "Space-separated devenv tasks to run (e.g. 'klangk:docker-build klangk:flutter-build')"
     required: true
+  cache-nix:
+    description: "Enable nix store caching (default true)"
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -26,6 +30,7 @@ runs:
           /usr/local/julia* &
 
     - name: Cache Nix store
+      if: inputs.cache-nix == 'true'
       uses: nix-community/cache-nix-action@v7
       with:
         primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'devenv.nix', 'devenv.yaml') }}

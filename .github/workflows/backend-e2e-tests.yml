@@ -35,6 +35,7 @@ jobs:
         if: steps.filter.outputs.e2e == 'true'
         with:
           build-tasks: klangk:docker-build
+          cache-nix: "false"
 
       - name: Stop devenv services
         if: steps.filter.outputs.e2e == 'true'
