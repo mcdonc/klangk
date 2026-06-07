@@ -85,12 +85,76 @@ _VALID_MOUNT_OPTIONS = {
 }
 
 
+def _is_named_volume(source: str) -> bool:
+    """A mount source with no '/' that doesn't start with '.' is a volume."""
+    return "/" not in source and not source.startswith(".")
+
+
+def _allowed_mount_roots() -> list[str]:
+    """Host directory prefixes that may be bind-mounted into workspaces.
+
+    Read from KLANGK_ALLOWED_MOUNT_SOURCES (comma-separated). Empty (the
+    default) means host bind mounts are disabled entirely — only named
+    volumes are permitted.
+    """
+    raw = util.resolve_env_secret("KLANGK_ALLOWED_MOUNT_SOURCES", "") or ""
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def _protected_mount_roots() -> list[str]:
+    """Host paths that must never be bind-mounted, regardless of allowlist.
+
+    Covers the container-engine sockets (mounting one is a full host-control
+    breakout) and the klangk data directory (mounting it exposes every other
+    user's workspace home and the database — a cross-workspace break).
+    """
+    data_dir = (
+        util.resolve_env_secret(
+            "KLANGK_DATA_DIR", os.path.expanduser("~/.klangk/data")
+        )
+        or os.path.expanduser("~/.klangk/data")
+    )
+    return [
+        "/var/run/docker.sock",
+        "/run/docker.sock",
+        "/run/podman/podman.sock",
+        os.path.realpath(data_dir),
+    ]
+
+
+def _under(path: str, root: str) -> bool:
+    """True if *path* equals *root* or is nested beneath it."""
+    root = root.rstrip("/")
+    return path == root or path.startswith(root + "/")
+
+
+def _validate_bind_source(source: str) -> str | None:
+    """Validate a host bind-mount source against the block/allow lists."""
+    resolved = os.path.realpath(source)
+    for blocked in _protected_mount_roots():
+        if _under(resolved, blocked):
+            return (
+                f"Invalid mount {source!r}: source is a protected host path"
+            )
+    roots = _allowed_mount_roots()
+    if not roots:
+        return (
+            f"Invalid mount {source!r}: host bind mounts are disabled "
+            "(set KLANGK_ALLOWED_MOUNT_SOURCES to permit specific roots)"
+        )
+    if any(_under(resolved, os.path.realpath(r)) for r in roots):
+        return None
+    return f"Invalid mount {source!r}: source is outside the allowed roots"
+
+
 def validate_mount_spec(spec: str) -> str | None:
     """Validate a Docker mount spec string.
 
     Returns None if valid, or an error message string if invalid.
     Valid forms: source:dest or source:dest:options
-    The container path (dest) must be absolute.
+    The container path (dest) must be absolute. Host bind-mount sources are
+    restricted to KLANGK_ALLOWED_MOUNT_SOURCES (default: none) and may never
+    target a protected path (engine sockets, the klangk data dir).
     """
     parts = spec.split(":")
     if len(parts) < 2 or len(parts) > 3:
@@ -105,6 +169,10 @@ def validate_mount_spec(spec: str) -> str | None:
         for opt in options.split(","):
             if opt and opt not in _VALID_MOUNT_OPTIONS:
                 return f"Invalid mount {spec!r}: unknown option {opt!r}"
+    if not _is_named_volume(source):
+        bind_err = _validate_bind_source(source)
+        if bind_err:
+            return bind_err
     return None
 
 
@@ -440,9 +508,12 @@ class ContainerRegistry:
         if extra_mounts:
             for mount_spec in extra_mounts:
                 source = mount_spec.split(":")[0]
-                if "/" not in source and not source.startswith("."):
-                    # Named volume — ensure it exists with klangk labels
-                    if await podman.inspect_volume(source) is None:
+                if _is_named_volume(source):
+                    # Named volume — create it (labelled) if absent, else
+                    # refuse to mount a volume owned by another instance so a
+                    # workspace can't attach a foreign/other-tenant volume.
+                    info = await podman.inspect_volume(source)
+                    if info is None:
                         await podman.create_volume(
                             source,
                             {
@@ -450,6 +521,13 @@ class ContainerRegistry:
                                 "klangk.instance": INSTANCE_ID,
                             },
                         )
+                    else:
+                        labels = info.get("Labels") or {}
+                        if labels.get("klangk.instance") != INSTANCE_ID:
+                            raise ValueError(
+                                f"Volume {source!r} is not managed by this "
+                                "klangk instance"
+                            )
 
         binds = [
             f"{home_path}:/home/klangk",

@@ -638,7 +638,8 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 400
         assert "Invalid mount" in resp.json()["detail"]
 
-    async def test_create_with_valid_mount(self, client, user):
+    async def test_create_with_valid_mount(self, client, user, monkeypatch):
+        monkeypatch.setenv("KLANGK_ALLOWED_MOUNT_SOURCES", "/tmp")
         headers = await _auth_headers(client)
         resp = await client.post(
             "/workspaces",
@@ -646,6 +647,20 @@ class TestWorkspaceRoutes:
             json={"name": "good-mount", "mounts": ["/tmp:/mnt/tmp"]},
         )
         assert resp.status_code == 200
+
+    async def test_create_with_disallowed_bind_mount(
+        self, client, user, monkeypatch
+    ):
+        # No allowlist configured → host bind mounts are rejected.
+        monkeypatch.delenv("KLANGK_ALLOWED_MOUNT_SOURCES", raising=False)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces",
+            headers=headers,
+            json={"name": "denied-mount", "mounts": ["/tmp:/mnt/tmp"]},
+        )
+        assert resp.status_code == 400
+        assert "Invalid mount" in resp.json()["detail"]
 
     async def test_list_images(self, client, user):
         headers = await _auth_headers(client)
@@ -844,7 +859,8 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 400
         assert "Invalid mount" in resp.json()["detail"]
 
-    async def test_duplicate_workspace(self, client, user):
+    async def test_duplicate_workspace(self, client, user, monkeypatch):
+        monkeypatch.setenv("KLANGK_ALLOWED_MOUNT_SOURCES", "/tmp")
         headers = await _auth_headers(client)
         resp = await client.post(
             "/workspaces",

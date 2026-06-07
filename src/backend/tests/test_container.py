@@ -836,16 +836,61 @@ class TestStartContainerPortConflict:
 
 
 class TestValidateMountSpec:
-    def test_valid_bind_mount(self):
+    @pytest.fixture(autouse=True)
+    def _isolate_mount_env(self, monkeypatch):
+        # Default: no allowlist (host bind mounts disabled) and a stable
+        # data dir so the protected-path check is deterministic.
+        monkeypatch.delenv("KLANGK_ALLOWED_MOUNT_SOURCES", raising=False)
+        monkeypatch.setenv("KLANGK_DATA_DIR", "/srv/klangk/data")
+
+    def _allow(self, monkeypatch, *roots):
+        monkeypatch.setenv("KLANGK_ALLOWED_MOUNT_SOURCES", ",".join(roots))
+
+    def test_bind_mount_disabled_by_default(self):
+        err = container.validate_mount_spec("/host:/container")
+        assert err is not None
+        assert "disabled" in err.lower()
+
+    def test_bind_mount_allowed_when_listed(self, monkeypatch):
+        self._allow(monkeypatch, "/host")
         assert container.validate_mount_spec("/host:/container") is None
 
+    def test_bind_mount_subdir_of_allowed_root(self, monkeypatch):
+        self._allow(monkeypatch, "/host")
+        assert container.validate_mount_spec("/host/sub:/container") is None
+
+    def test_bind_mount_outside_allowed_roots(self, monkeypatch):
+        self._allow(monkeypatch, "/host")
+        err = container.validate_mount_spec("/elsewhere:/container")
+        assert err is not None
+        assert "outside the allowed roots" in err.lower()
+
+    def test_protected_socket_always_blocked(self, monkeypatch):
+        self._allow(monkeypatch, "/")  # even an all-permitting allowlist
+        err = container.validate_mount_spec(
+            "/var/run/docker.sock:/var/run/docker.sock"
+        )
+        assert err is not None
+        assert "protected" in err.lower()
+
+    def test_protected_data_dir_always_blocked(self, monkeypatch):
+        self._allow(monkeypatch, "/")
+        err = container.validate_mount_spec(
+            "/srv/klangk/data/workspaces/other:/loot"
+        )
+        assert err is not None
+        assert "protected" in err.lower()
+
     def test_valid_volume_mount(self):
+        # Named volumes are unaffected by the bind-source allowlist.
         assert container.validate_mount_spec("vol-name:/data") is None
 
-    def test_valid_with_options(self):
+    def test_valid_with_options(self, monkeypatch):
+        self._allow(monkeypatch, "/host")
         assert container.validate_mount_spec("/host:/container:ro") is None
 
-    def test_valid_with_multiple_options(self):
+    def test_valid_with_multiple_options(self, monkeypatch):
+        self._allow(monkeypatch, "/host")
         assert (
             container.validate_mount_spec("/host:/container:ro,nocopy") is None
         )
@@ -874,10 +919,12 @@ class TestValidateMountSpec:
         assert err is not None
         assert "unknown option" in err.lower()
 
-    def test_validate_mounts_list(self):
+    def test_validate_mounts_list(self, monkeypatch):
+        self._allow(monkeypatch, "/a")
         assert container.validate_mounts(["/a:/b", "vol:/c"]) is None
 
-    def test_validate_mounts_list_with_error(self):
+    def test_validate_mounts_list_with_error(self, monkeypatch):
+        self._allow(monkeypatch, "/a")
         err = container.validate_mounts(["/a:/b", "bad"])
         assert err is not None
 
@@ -900,9 +947,14 @@ class TestExtraMountsVolumeCreation:
         assert labels["klangk.instance"] == container.INSTANCE_ID
 
     async def test_existing_volume_not_recreated(self, workspace):
-        """Existing volumes are used as-is, not recreated."""
+        """Existing volumes owned by this instance are used as-is."""
         with patch_podman(
-            inspect_volume=AsyncMock(return_value={"Name": "existing"})
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "existing",
+                    "Labels": {"klangk.instance": container.INSTANCE_ID},
+                }
+            )
         ) as p:
             await container.registry.start_container(
                 workspace["id"],
@@ -911,6 +963,37 @@ class TestExtraMountsVolumeCreation:
                 extra_mounts=["existing:/data"],
             )
         p.create_volume.assert_not_awaited()
+
+    async def test_foreign_volume_rejected(self, workspace):
+        """A named volume owned by another instance is refused."""
+        with patch_podman(
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "stolen",
+                    "Labels": {"klangk.instance": "someone-else"},
+                }
+            )
+        ):
+            with pytest.raises(ValueError, match="not managed by this"):
+                await container.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    extra_mounts=["stolen:/data"],
+                )
+
+    async def test_unlabelled_volume_rejected(self, workspace):
+        """A named volume with no klangk labels is refused."""
+        with patch_podman(
+            inspect_volume=AsyncMock(return_value={"Name": "bare"})
+        ):
+            with pytest.raises(ValueError, match="not managed by this"):
+                await container.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    extra_mounts=["bare:/data"],
+                )
 
     async def test_bind_mount_not_treated_as_volume(self, workspace):
         """Bind mounts (starting with /) are not treated as volumes."""
