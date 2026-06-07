@@ -34,6 +34,13 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   StreamSubscription<Map<String, dynamic>>? _eventSub;
   void Function()? _removePasteListener;
   bool _started = false;
+  // The pty must start at the real measured grid size, not the 80x24 seed.
+  // flterm's first onResize (after the view lays out) delivers the measured
+  // size, but the backend `container_ready` event can arrive before that. Track
+  // whether we've measured so start is deferred until the true cols/rows are
+  // known; otherwise the pty is created at 80 cols until the window is resized.
+  bool _measured = false;
+  bool _startPending = false;
 
   // Raw bytes of the bundled monospace font. flterm measures cell width from
   // this font's 'M' advance; without it, FontDataResolver's asset-path guessing
@@ -66,7 +73,15 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       ..onResize = (cols, rows) {
         _cols = cols;
         _rows = rows;
+        _measured = true;
+        // Report the measured grid so the backend always tracks the real size,
+        // whether or not the pty has started yet.
         widget.wsClient.sendTerminalResize(cols, rows);
+        if (_startPending) {
+          // container_ready arrived before the first measurement; create the
+          // pty now at the real grid size instead of the 80x24 seed.
+          _startTerminal();
+        }
       };
     _outputSub = widget.wsClient.terminalOutput.listen((data) {
       _terminal.write(utf8.encode(data));
@@ -94,12 +109,21 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     return true;
   }
 
+  // Loads the bundled font's raw bytes. Overridable in tests so the
+  // "container_ready before the first measurement" path can be driven
+  // deterministically: a test holds this future pending while it emits the
+  // event, then completes it to trigger layout. Mirrors the
+  // [testBaseUrlOverride] seam used elsewhere in the frontend.
+  @visibleForTesting
+  static Future<ByteData> Function(String asset) loadFontAsset =
+      rootBundle.load;
+
   // flterm measures cell width by laying out 'M' in [_fontFamily]; if the font
   // isn't loaded yet it measures a wider fallback advance and never re-measures,
   // leaving space around every glyph. Register the family with the engine and
   // await it before the view builds, so the one measurement uses the real font.
   Future<void> _loadFont() async {
-    final data = await rootBundle.load(_fontAsset);
+    final data = await loadFontAsset(_fontAsset);
     await (FontLoader(_fontFamily)..addFont(Future.value(data))).load();
     if (mounted) setState(() => _fontData = data.buffer.asUint8List());
   }
@@ -109,13 +133,20 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     if (event == null) return;
     if (event['type'] == 'CUSTOM' && event['name'] == 'container_ready') {
       _started = false;
-      _startTerminal();
+      if (_measured) {
+        _startTerminal();
+      } else {
+        // Defer start until the first onResize delivers the measured grid
+        // size, so the pty isn't created at the 80x24 seed.
+        _startPending = true;
+      }
     }
   }
 
   void _startTerminal() {
     if (_started) return;
     _started = true;
+    _startPending = false;
     widget.wsClient.sendTerminalStart(cols: _cols, rows: _rows);
   }
 
