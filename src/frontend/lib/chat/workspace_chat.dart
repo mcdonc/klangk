@@ -30,6 +30,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   final List<Map<String, dynamic>> _messages = [];
   final _scrollController = ScrollController();
   final _textController = TextEditingController();
+  final _inputFocusNode = FocusNode(debugLabel: 'workspace-chat-input');
   StreamSubscription<Map<String, dynamic>>? _chatSub;
   int _unreadCount = 0;
   bool _isVisible = false;
@@ -43,6 +44,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     }
     _chatSub = widget.wsClient.chatMessages.listen(_onMessage);
   }
+
+  /// Focuses the message input. Called by the parent when the Chat tab is
+  /// selected so the user can type immediately without an extra click.
+  void requestFocus() => _inputFocusNode.requestFocus();
 
   /// Called by the parent when this tab becomes visible/hidden.
   void setVisible(bool visible) {
@@ -184,6 +189,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     _chatSub?.cancel();
     _scrollController.dispose();
     _textController.dispose();
+    _inputFocusNode.dispose();
     super.dispose();
   }
 
@@ -278,6 +284,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                 Expanded(
                   child: TextField(
                     controller: _textController,
+                    focusNode: _inputFocusNode,
                     style: const TextStyle(
                       color: KColors.textPrimary,
                       fontSize: 13,
