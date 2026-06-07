@@ -313,7 +313,8 @@ in
     # Use an ext4 filesystem (not ZFS) for --userns=keep-id support.
     # ZFS lacks idmapped mounts, causing storage-chown-by-maps to hang.
     _PODMAN_GRAPHROOT="''${KLANGK_PODMAN_STORAGE:-$_PODMAN_STORE/storage}"
-    mkdir -p "$_PODMAN_CONF" "$_PODMAN_STORE/run" "$_PODMAN_GRAPHROOT"
+    mkdir -p "$_PODMAN_CONF" "$_PODMAN_STORE/run" \
+      "$_PODMAN_GRAPHROOT" "$_PODMAN_GRAPHROOT/tmp"
 
     cat > "$_PODMAN_CONF/storage.conf" <<STORAGE
     [storage]
@@ -322,6 +323,15 @@ in
     runroot = "$_PODMAN_STORE/run"
     STORAGE
     export CONTAINERS_STORAGE_CONF="$_PODMAN_CONF/storage.conf"
+
+    # Stage image blob downloads inside the graphroot ("storage" sentinel)
+    # instead of the default /var/tmp, which on this host is the root fs.
+    cat > "$_PODMAN_CONF/containers.conf" <<CONTAINERS
+    [engine]
+    image_copy_tmp_dir = "storage"
+    CONTAINERS
+    export CONTAINERS_CONF="$_PODMAN_CONF/containers.conf"
+
     if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
       echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
         > "$_PODMAN_CONF/policy.json"
