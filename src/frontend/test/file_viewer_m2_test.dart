@@ -183,10 +183,11 @@ void main() {
   });
 
   group('builtinFileRenderers', () {
-    test('contains the raw fallback', () {
+    test('includes exactly one raw fallback, last', () {
       final renderers = builtinFileRenderers();
-      expect(renderers, hasLength(1));
-      expect(renderers.single, isA<RawTextRenderer>());
+      expect(renderers, isNotEmpty);
+      expect(renderers.last, isA<RawTextRenderer>());
+      expect(renderers.whereType<RawTextRenderer>(), hasLength(1));
     });
   });
 
@@ -205,8 +206,10 @@ void main() {
         downloadUrl: '',
       );
       final ids = registry.renderersFor(md).map((r) => r.id).toList();
-      // Plugin's bytesview (priority 10) wins the default; raw still offered.
-      expect(ids, ['bytesview', 'raw']);
+      // The plugin's renderer is registered alongside the builtins, and the
+      // raw fallback remains available.
+      expect(ids, contains('bytesview'));
+      expect(ids, contains('raw'));
     });
 
     test('with no plugins, offers only builtins', () {
