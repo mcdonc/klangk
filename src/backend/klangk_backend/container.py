@@ -65,7 +65,7 @@ _VALID_MOUNT_OPTIONS = {
 
 
 def validate_mount_spec(spec: str) -> str | None:
-    """Validate a Docker mount spec string.
+    """Validate a container mount spec string.
 
     Returns None if valid, or an error message string if invalid.
     Valid forms: source:dest or source:dest:options
@@ -628,7 +628,9 @@ class ContainerRegistry:
             self.cleanup_task = None
         # Skip container cleanup when running inside a container
         # (developing klangk in klangk -- don't kill our own container).
-        if os.path.exists("/.dockerenv"):
+        if os.path.exists("/.dockerenv") or os.path.exists(
+            "/run/.containerenv"
+        ):
             logger.info("Running inside container, skipping container cleanup")
             return
         tracked_ids = set(self._cid_to_wsid.keys())

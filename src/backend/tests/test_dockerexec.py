@@ -1,4 +1,4 @@
-"""Tests for dockerexec: raw docker exec without PTY."""
+"""Tests for dockerexec: raw podman exec without PTY."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch

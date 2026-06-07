@@ -245,7 +245,7 @@ class TestConstants:
         assert container.DEFAULT_PORTS_PER_WORKSPACE == 5
 
 
-# --- Docker-dependent tests (mocked) ---
+# --- Container lifecycle tests (mocked) ---
 
 
 @contextmanager
@@ -956,7 +956,7 @@ class TestStopContainer:
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
 
-    async def test_stop_docker_error(self):
+    async def test_stop_podman_error(self):
         container.registry.track_activity("cid", "ws")
 
         with patch_podman(
@@ -984,7 +984,7 @@ class TestRemoveContainer:
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
 
-    async def test_remove_docker_error(self):
+    async def test_remove_podman_error(self):
         container.registry.track_activity("cid", "ws")
 
         with patch_podman(
@@ -1044,7 +1044,7 @@ class TestShutdown:
         container.registry._cid_to_wsid.clear()
         container.registry.cleanup_task = None
 
-    async def test_shutdown_skips_in_docker(self):
+    async def test_shutdown_skips_in_container(self):
         """When running inside a container, shutdown skips cleanup."""
         container.registry.track_activity("cid", "ws")
         with patch("os.path.exists", return_value=True):
@@ -1084,16 +1084,16 @@ class TestShutdown:
         assert task.cancelled()
         assert container.registry.cleanup_task is None
 
-    async def test_shutdown_handles_docker_error(self):
+    async def test_shutdown_handles_podman_error(self):
         with patch_podman(
             list_containers=AsyncMock(
-                side_effect=OSError("Docker connection refused")
+                side_effect=OSError("podman connection refused")
             )
         ):
             await container.registry.shutdown()
         # Should not raise
 
-    async def test_shutdown_no_docker(self):
+    async def test_shutdown_no_podman(self):
         with patch_podman():
             await container.registry.shutdown()
         assert container.registry.cleanup_task is None
@@ -1400,7 +1400,7 @@ class TestAdoptOrphanedContainers:
         )
         assert "unknown" not in container.registry.states
 
-    async def test_docker_error_handled(self):
+    async def test_podman_error_handled(self):
         with patch_podman(
             list_containers=AsyncMock(
                 side_effect=podman.PodmanError(500, "fail")

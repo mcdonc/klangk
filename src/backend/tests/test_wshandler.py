@@ -535,7 +535,7 @@ class TestHandleTerminalStart:
 
         mock_session = AsyncMock()
         mock_session.start = AsyncMock(
-            side_effect=RuntimeError("docker broke")
+            side_effect=RuntimeError("podman broke")
         )
         MockTS = MagicMock(return_value=mock_session)
         with patch("klangk_backend.wshandler.TerminalSession", MockTS):

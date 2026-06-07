@@ -76,7 +76,7 @@ in
     };
     "klangk:kill-containers" = {
       exec = ''
-        if [ ! -f /.dockerenv ]; then
+        if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
           ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q \
             | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
         fi
@@ -84,7 +84,7 @@ in
     };
     "klangk:kill-port-holders" = {
       exec = ''
-        if [ ! -f /.dockerenv ]; then
+        if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
           for port in $KLANGK_PORT $KLANGK_NGINX_PORT; do
             fuser -k "$port/tcp" 2>/dev/null || true
           done
