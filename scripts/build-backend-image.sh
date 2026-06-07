@@ -2,6 +2,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
+PODMAN="${KLANGK_PODMAN_BIN:-podman}"
 
 # Auto-fetch plugins on first run
 if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plugins.lock" ]; then
@@ -26,11 +27,15 @@ done
 # Remove old containers before rebuilding so they get recreated from the new image.
 # Skip when running inside a container (developing klangk in klangk).
 if [ ! -f /.dockerenv ]; then
-  podman ps -a --filter "label=klangk.instance=${KLANGK_INSTANCE_ID}" -q | xargs -r podman rm -f
+  "$PODMAN" ps -a --filter "label=klangk.instance=${KLANGK_INSTANCE_ID}" -q | xargs -r "$PODMAN" rm -f
 fi
 
 # Build workspace image on top of the base
-podman build --signature-policy "${KLANGK_SIGNATURE_POLICY}" \
+POLICY_ARGS=()
+if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
+  POLICY_ARGS+=(--signature-policy "${KLANGK_SIGNATURE_POLICY}")
+fi
+"$PODMAN" build "${POLICY_ARGS[@]}" \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-context plugin-extensions="$STAGING/extensions" \
   --build-context plugin-tools="$STAGING/tools" \

@@ -77,7 +77,8 @@ in
     "klangk:kill-containers" = {
       exec = ''
         if [ ! -f /.dockerenv ]; then
-          podman ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q | xargs -r podman rm -f
+          ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q \
+            | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
         fi
       '';
     };
@@ -176,9 +177,9 @@ in
   '';
 
   scripts.kill-containers.exec = ''
-    podman ps -a \
+    ''${KLANGK_PODMAN_BIN:-podman} ps -a \
       --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" \
-      -q | xargs -r podman rm -f
+      -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
   '';
 
   scripts.restart.exec = ''
