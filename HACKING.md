@@ -165,7 +165,7 @@ Workspace bind mounts are validated at create and edit time. Two protections app
 - `/var/run/docker.sock`, `/run/docker.sock`, `/run/podman/podman.sock` — mounting a container engine socket grants full host control
 - `KLANGK_DATA_DIR` (and anything beneath it) — contains every user's workspace home and the database
 
-**Volume instance isolation** — named volumes (e.g., `nix-store:/nix`) are labelled with `klangk.instance` at creation time. A workspace cannot mount a volume created by a different `KLANGK_INSTANCE_ID`. This prevents cross-tenant data access on shared hosts.
+**Volume isolation** — named volumes (e.g., `nix-store:/nix`) are labelled with `klangk.instance` and `klangk.user-id` at creation time. A workspace cannot mount a volume created by a different `KLANGK_INSTANCE_ID` or a different user. This prevents both cross-tenant and cross-user data access on shared hosts.
 
 ## Branch Protection
 

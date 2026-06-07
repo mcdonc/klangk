@@ -905,20 +905,25 @@ class TestExtraMountsVolumeCreation:
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["nix-store:/nix"],
+                user_id="user-123",
             )
         p.create_volume.assert_awaited_once()
         name, labels = p.create_volume.call_args.args
         assert name == "nix-store"
         assert labels["klangk.managed"] == "true"
         assert labels["klangk.instance"] == container.INSTANCE_ID
+        assert labels["klangk.user-id"] == "user-123"
 
     async def test_existing_volume_not_recreated(self, workspace):
-        """Existing volumes owned by this instance are used as-is."""
+        """Existing volumes owned by this instance and user are used as-is."""
         with patch_podman(
             inspect_volume=AsyncMock(
                 return_value={
                     "Name": "existing",
-                    "Labels": {"klangk.instance": container.INSTANCE_ID},
+                    "Labels": {
+                        "klangk.instance": container.INSTANCE_ID,
+                        "klangk.user-id": "user-123",
+                    },
                 }
             )
         ) as p:
@@ -927,6 +932,7 @@ class TestExtraMountsVolumeCreation:
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["existing:/data"],
+                user_id="user-123",
             )
         p.create_volume.assert_not_awaited()
 
@@ -960,6 +966,49 @@ class TestExtraMountsVolumeCreation:
                     "/tmp/home",
                     extra_mounts=["bare:/data"],
                 )
+
+    async def test_cross_user_volume_rejected(self, workspace):
+        """A volume owned by another user is refused."""
+        with patch_podman(
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "private",
+                    "Labels": {
+                        "klangk.instance": container.INSTANCE_ID,
+                        "klangk.user-id": "user-other",
+                    },
+                }
+            )
+        ):
+            with pytest.raises(ValueError, match="belongs to another user"):
+                await container.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    extra_mounts=["private:/data"],
+                    user_id="user-me",
+                )
+
+    async def test_volume_without_user_label_allowed(self, workspace):
+        """A volume with no user-id label (pre-existing) is allowed."""
+        with patch_podman(
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "legacy",
+                    "Labels": {
+                        "klangk.instance": container.INSTANCE_ID,
+                    },
+                }
+            )
+        ) as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                extra_mounts=["legacy:/data"],
+                user_id="user-123",
+            )
+        p.create_volume.assert_not_awaited()
 
     async def test_bind_mount_not_treated_as_volume(self, workspace):
         """Bind mounts (starting with /) are not treated as volumes."""

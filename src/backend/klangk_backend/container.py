@@ -337,6 +337,7 @@ class ContainerRegistry:
         config_path: str | None = None,
         extra_mounts: list[str] | None = None,
         extra_env: dict[str, str] | None = None,
+        user_id: str | None = None,
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -428,26 +429,31 @@ class ContainerRegistry:
                 env_vars.append(f"{k}={v}")
 
         # Ensure named volumes in extra_mounts exist with klangk labels.
-        # Refuse to mount a volume owned by another instance.
+        # Refuse to mount a volume owned by another instance or user.
         if extra_mounts:
             for mount_spec in extra_mounts:
                 source = mount_spec.split(":")[0]
                 if _is_named_volume(source):
                     info = await podman.inspect_volume(source)
                     if info is None:
-                        await podman.create_volume(
-                            source,
-                            {
-                                "klangk.managed": "true",
-                                "klangk.instance": INSTANCE_ID,
-                            },
-                        )
+                        labels = {
+                            "klangk.managed": "true",
+                            "klangk.instance": INSTANCE_ID,
+                        }
+                        if user_id:
+                            labels["klangk.user-id"] = user_id
+                        await podman.create_volume(source, labels)
                     else:
-                        labels = info.get("Labels") or {}
-                        if labels.get("klangk.instance") != INSTANCE_ID:
+                        vol_labels = info.get("Labels") or {}
+                        if vol_labels.get("klangk.instance") != INSTANCE_ID:
                             raise ValueError(
                                 f"Volume {source!r} is not managed by this "
                                 "klangk instance"
+                            )
+                        vol_owner = vol_labels.get("klangk.user-id")
+                        if vol_owner and user_id and vol_owner != user_id:
+                            raise ValueError(
+                                f"Volume {source!r} belongs to another user"
                             )
 
         binds = [
