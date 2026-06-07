@@ -27,11 +27,33 @@ fi
 
 # Shared allow/deny rules for container-only endpoints (LLM proxy,
 # browser-delegate bridge). Restricts access to container subnets and
-# localhost — the backend also validates tokens, but rejecting at the
-# network level avoids unnecessary round-trips.
+# localhost so that only our own containers can reach the LLM API key
+# and browser-delegate bridge — the backend also validates tokens, but
+# rejecting at the network level avoids unnecessary round-trips.
+#
+# Why these ranges:
+#   172.16.0.0/12 — Docker uses 172.17.0.0/16 by default; the /12
+#                    covers the full Docker-assignable range.
+#   10.0.0.0/8    — Podman rootless networking defaults to 10.x.x.x
+#                    subnets (e.g. 10.89.0.0/24).
+#
+# Why 192.168.0.0/16 is NOT included:
+#   That range is commonly used for home/office LANs. Allowing it would
+#   let any host on the same LAN segment reach the LLM proxy and
+#   effectively use your API key. If your container runtime happens to
+#   allocate from 192.168.x.x you will need to add the specific subnet
+#   back (see mitigations below).
+#
+# Further mitigations for tighter lockdown:
+#   • Replace the broad /12 and /8 ranges with the exact container
+#     subnet, e.g.:
+#       podman network inspect klangk | jq -r '.[0].subnets[0].subnet'
+#   • Add token-based auth to the LLM proxy endpoint so that even
+#     allowed networks must present a per-session secret.
+#   • Bind nginx to localhost only and front it with a separate reverse
+#     proxy that handles external access and authentication.
 CONTAINER_ACL="
       allow 172.16.0.0/12;
-      allow 192.168.0.0/16;
       allow 10.0.0.0/8;
       allow 127.0.0.1;
       deny all;"
