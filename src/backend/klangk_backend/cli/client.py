@@ -423,7 +423,11 @@ async def _run_shell(
             if not ready:
                 continue
             try:
-                data = os.read(fd, 1)
+                # os.read runs in the executor, never on the event loop:
+                # a false-positive select (e.g. a racing reader, or a test
+                # that stubs select) must not be able to block stdout/resize/
+                # heartbeat while this read waits for a byte.
+                data = await loop.run_in_executor(None, os.read, fd, 1)
                 if not data:  # EOF on stdin
                     return
                 # If the first byte is ESC, read the rest of the escape
@@ -433,7 +437,9 @@ async def _run_shell(
                 if data == b"\x1b":
                     # Brief wait for the rest of the sequence
                     if select.select([fd], [], [], 0.05)[0]:
-                        more = os.read(fd, 32)
+                        more = await loop.run_in_executor(
+                            None, os.read, fd, 32
+                        )
                         if more:
                             data += more
             except (OSError, io.UnsupportedOperation):  # pragma: no cover
@@ -540,7 +546,10 @@ async def _ws_exec(
                 )
                 if not ready:  # pragma: no cover
                     continue
-                data = os.read(0, 65536)
+                # Offload the read so a false-positive select cannot wedge
+                # the event loop (and with it stdout_forward) on a blocking
+                # os.read. See stdin_loop in _run_shell for the same pattern.
+                data = await loop.run_in_executor(None, os.read, 0, 65536)
                 if not data:
                     await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
                     break
@@ -562,7 +571,11 @@ async def _ws_exec(
                 data = json.loads(msg)
                 if data.get("type") == "exec_output":
                     raw = base64.b64decode(data["data"])
-                    os.write(1, raw)
+                    # Offload: when the downstream consumer (e.g. rsync over
+                    # `klangk exec`) is slow, the stdout pipe fills and this
+                    # write blocks. On the event loop that would also stall
+                    # stdin_forward and the heartbeat — a sync deadlock.
+                    await loop.run_in_executor(None, os.write, 1, raw)
                 elif data.get("type") == "exec_exit":
                     exit_code = data.get("code", 0)
                     break

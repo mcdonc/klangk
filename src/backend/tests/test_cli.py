@@ -868,11 +868,22 @@ class TestRunShell:
                 pass
 
         fake_buf = BytesIO(b"")
-        fake_buf.fileno = lambda: 0
+        fake_buf.fileno = lambda: 99
         fake_stdout = CaptureWriter()
-        with patch(
-            "klangk_backend.cli.client.select.select",
-            return_value=([0], [], []),
+        # Stub os.read too: select is forced to report fd 0 ready, so without
+        # a stubbed read stdin_loop would issue a real, blocking os.read(0, 1)
+        # on the process's stdin. Under `pytest -n auto` that fd is detached
+        # (immediate EOF) and the test passes; run serially against a live tty
+        # it blocks forever. Returning b"" makes the read an explicit EOF.
+        with (
+            patch(
+                "klangk_backend.cli.client.select.select",
+                return_value=([0], [], []),
+            ),
+            patch(
+                "klangk_backend.cli.client.os.read",
+                return_value=b"",
+            ),
         ):
             task = asyncio.create_task(
                 _run_shell(ws, 80, 24, stdin=fake_buf, stdout=fake_stdout)
