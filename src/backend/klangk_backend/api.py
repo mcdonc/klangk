@@ -9,7 +9,6 @@ import posixpath
 import secrets
 import sqlite3
 import subprocess
-import tarfile
 import tempfile
 import time
 import uuid
@@ -1083,83 +1082,36 @@ async def export_workspace(
         except (OSError, ValueError, subprocess.TimeoutExpired):
             pass  # fall back to 0
 
-    # Stream the tarball as it's built — no temp file needed.
-    # tarfile writes to a queue in a background thread; the async
-    # generator reads from the queue and yields chunks to the client.
-    import queue
-    import threading
-
-    chunk_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=32)
-
-    _WRITE_BUF_SIZE = 256 * 1024  # 256 KB chunks
-
-    class _QueueWriter:
-        """File-like object that buffers writes and flushes to a queue."""
-
-        def __init__(self):
-            self._buf = bytearray()
-
-        def write(self, data):
-            self._buf.extend(data)
-            while len(self._buf) >= _WRITE_BUF_SIZE:
-                chunk_queue.put(bytes(self._buf[:_WRITE_BUF_SIZE]))
-                del self._buf[:_WRITE_BUF_SIZE]
-            return len(data)
-
-        def flush(self):
-            if self._buf:
-                chunk_queue.put(bytes(self._buf))
-                self._buf.clear()
-
-        def close(self):
-            self.flush()
-            chunk_queue.put(None)  # sentinel
-
-    def _build_tar():
-        writer = _QueueWriter()
-        try:
-            with tarfile.open(fileobj=writer, mode="w|gz") as tar:
-                # Add workspace.json
-                meta_bytes = json.dumps(metadata, indent=2).encode()
-                info = tarfile.TarInfo(name="workspace.json")
-                info.size = len(meta_bytes)
-                tar.addfile(info, io.BytesIO(meta_bytes))
-
-                # Add home directory. Symlinks whose target is an absolute path
-                # outside the workspace are stripped to avoid dangling/host
-                # references. Two kinds are kept:
-                #   - relative targets (they stay within the tree), and
-                #   - container-absolute targets under "/home/klangk" (the
-                #     bind-mount path — see container.py); these resolve once
-                #     re-mounted in a container, e.g. uv writes
-                #     ".venv/bin/python -> /home/klangk/.local/.../python".
-                # Resolving against the host home_dir (as before) wrongly
-                # stripped the latter, breaking venvs on import.
-                container_home = "/home/klangk/"
-
-                def _safe_filter(ti):
-                    if ti.issym() and os.path.isabs(ti.linkname):
-                        if not ti.linkname.startswith(container_home):
-                            return None
-                    return ti
-
-                if home_dir.exists():
-                    tar.add(str(home_dir), arcname="home", filter=_safe_filter)
-        finally:
-            writer.close()
+    # Stream the tarball using GNU tar piped to stdout. Uses the shared
+    # _build_export_tar_args (workspaces.py), same as build_workspace_archive.
+    # Symlinks are stored as symlinks (not dereferenced).
+    _CHUNK_SIZE = 256 * 1024  # 256 KB read chunks
 
     async def _stream():
-        loop = asyncio.get_event_loop()
-        thread = threading.Thread(target=_build_tar, daemon=True)
-        thread.start()
+        tmpdir = tempfile.mkdtemp()
         try:
+            # Write workspace.json to temp dir
+            meta_file = os.path.join(tmpdir, "workspace.json")
+            with open(meta_file, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            tar_args = workspaces._build_export_tar_args("-", tmpdir, home_dir)
+
+            proc = await asyncio.create_subprocess_exec(
+                *tar_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
             while True:
-                chunk = await loop.run_in_executor(None, chunk_queue.get)
-                if chunk is None:
+                chunk = await proc.stdout.read(_CHUNK_SIZE)
+                if not chunk:
                     break
                 yield chunk
+            await proc.wait()
         finally:
-            thread.join(timeout=5)
+            import shutil
+
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     safe_name = ws_name.replace("/", "_").replace("\\", "_")
     # Rough estimate: gzip typically compresses to ~20% of original

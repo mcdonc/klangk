@@ -3006,26 +3006,6 @@ class TestRmtree:
         assert "test-label" in caplog.text
 
 
-class TestFindExternalSymlinks:
-    async def test_ignores_unrelated_paths_in_output(self, temp_data_dir):
-        """Paths that can't be made relative to home_dir's parent are skipped."""
-        ws_root = ws_mod.WORKSPACES_ROOT
-        ws_root.mkdir(parents=True, exist_ok=True)
-        home_dir = ws_root / "user1" / "home" / "ws1"
-        home_dir.mkdir(parents=True)
-
-        mock_proc = AsyncMock()
-        # Return a path that isn't under home_dir's parent
-        mock_proc.communicate = AsyncMock(
-            return_value=(b"/completely/unrelated/path\n", b"")
-        )
-        mock_proc.returncode = 0
-
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await ws_mod._find_external_symlinks(home_dir)
-        assert result == []
-
-
 class TestBuildWorkspaceArchive:
     async def test_builds_importable_archive(self, temp_data_dir):
         """Archive contains workspace.json and home/ directory."""
@@ -3089,8 +3069,8 @@ class TestBuildWorkspaceArchive:
         home_dir = ws_root / "user1" / "home" / "ws1"
         home_dir.mkdir(parents=True)
         (home_dir / "good.txt").write_text("keep")
-        (home_dir / "bad_link").symlink_to("/etc/passwd")
-        (home_dir / "good_link").symlink_to("good.txt")
+        (home_dir / "external_link").symlink_to("/etc/passwd")
+        (home_dir / "relative_link").symlink_to("good.txt")
 
         metadata = {"name": "test"}
         archive_path = ws_root / "symtest.tar.gz"
@@ -3107,8 +3087,9 @@ class TestBuildWorkspaceArchive:
         )
         members = listing.stdout.strip().split("\n")
         assert any("good.txt" in m for m in members)
-        assert not any("bad_link" in m for m in members)
-        assert any("good_link" in m for m in members)
+        # All symlinks are preserved (stored as symlinks, not contents)
+        assert any("external_link" in m for m in members)
+        assert any("relative_link" in m for m in members)
 
     async def test_tar_failure_returns_false(self, temp_data_dir):
         """Returns False when tar exits non-zero."""
@@ -3796,10 +3777,10 @@ class TestWorkspaceExportImport:
         assert len(created_tmp) == 1
         assert not os.path.exists(created_tmp[0])
 
-    async def test_export_strips_external_symlinks(
+    async def test_export_preserves_all_symlinks(
         self, client, admin_user, user
     ):
-        """Symlinks pointing outside the home dir are excluded from export."""
+        """All symlinks are preserved in export (stored as links, not content)."""
         headers = await self._user_headers(client)
         resp = await client.post(
             "/workspaces", headers=headers, json={"name": "symlink-export"}
@@ -3812,9 +3793,7 @@ class TestWorkspaceExportImport:
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "real.txt").write_text("real file")
-        # Internal symlink (should be kept)
-        (home / "work" / "internal_link").symlink_to("real.txt")
-        # External symlink (should be stripped)
+        (home / "work" / "relative_link").symlink_to("real.txt")
         (home / "work" / "external_link").symlink_to("/etc/passwd")
 
         admin_headers = await self._admin_headers(client)
@@ -3829,8 +3808,118 @@ class TestWorkspaceExportImport:
         with tarfile.open(fileobj=buf, mode="r:gz") as tar:
             names = tar.getnames()
             assert any("real.txt" in n for n in names)
-            assert any("internal_link" in n for n in names)
-            assert not any("external_link" in n for n in names)
+            assert any("relative_link" in n for n in names)
+            # External symlinks preserved as symlinks (not contents)
+            assert any("external_link" in n for n in names)
+            ext = [m for m in tar.getmembers() if "external_link" in m.name]
+            assert len(ext) == 1
+            assert ext[0].issym()
+            assert ext[0].linkname == "/etc/passwd"
+
+    async def test_export_import_deep_nesting(self, client, admin_user, user):
+        """Export and import a workspace with deep directory nesting."""
+        import random
+        import tarfile
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "deep-export"}
+        )
+        ws = resp.json()
+
+        import klangk_backend.workspaces as ws_mod
+
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+
+        # Create a deep directory structure with files at various depths
+        rng = random.Random(42)
+        expected_files = {}
+        for depth in range(1, 8):
+            dir_path = home / "work"
+            for d in range(depth):
+                dir_path = dir_path / f"level{d}"
+            dir_path.mkdir(parents=True, exist_ok=True)
+
+            # Write a few files at each level
+            for i in range(3):
+                content = f"depth{depth}-file{i}-" + "x" * rng.randint(10, 500)
+                file_path = dir_path / f"file{i}.txt"
+                file_path.write_text(content)
+                rel = str(file_path.relative_to(home))
+                expected_files[rel] = content
+
+            # Add a symlink at each level
+            (dir_path / "link.txt").symlink_to("file0.txt")
+
+        # Also add some binary-ish content
+        bin_dir = home / "work" / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        bin_content = bytes(rng.getrandbits(8) for _ in range(4096))
+        (bin_dir / "data.bin").write_bytes(bin_content)
+
+        # Export
+        admin_headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 200
+        archive_bytes = resp.content
+        assert len(archive_bytes) > 0
+
+        # Verify archive structure
+        buf = io.BytesIO(archive_bytes)
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+            names = tar.getnames()
+            assert "workspace.json" in names
+            # Check deep files are present
+            for rel in expected_files:
+                assert any(rel.replace("\\", "/") in n for n in names), (
+                    f"Missing: {rel}"
+                )
+            # Check symlinks present
+            sym_members = [m for m in tar.getmembers() if m.issym()]
+            assert len(sym_members) >= 7  # one per depth level
+            # Check binary file
+            assert any("data.bin" in n for n in names)
+
+        # Import into a new workspace
+        resp = await client.post(
+            "/workspaces/import",
+            headers=headers,
+            params={"name": "deep-imported"},
+            files={
+                "file": (
+                    "archive.tar.gz",
+                    archive_bytes,
+                    "application/gzip",
+                )
+            },
+        )
+        assert resp.status_code == 200
+        imported = resp.json()
+        assert imported["name"] == "deep-imported"
+
+        # Verify all files survived
+        imported_home = ws_mod.home_path(user["id"], imported["id"])
+        for rel, content in expected_files.items():
+            file_path = imported_home / rel
+            assert file_path.exists(), f"Missing after import: {rel}"
+            assert file_path.read_text() == content
+
+        # Verify binary file
+        assert (
+            imported_home / "work" / "bin" / "data.bin"
+        ).read_bytes() == bin_content
+
+        # Verify symlinks survived as symlinks
+        for depth in range(1, 8):
+            link_path = imported_home / "work"
+            for d in range(depth):
+                link_path = link_path / f"level{d}"
+            link_path = link_path / "link.txt"
+            assert link_path.is_symlink(), f"Not a symlink: {link_path}"
+            assert os.readlink(str(link_path)) == "file0.txt"
 
     async def test_import_size_limit(self, client, user, monkeypatch):
         """Upload exceeding size limit is rejected."""

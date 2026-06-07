@@ -68,59 +68,42 @@ def workspace_metadata(ws: dict) -> dict:
     }
 
 
-async def _find_external_symlinks(home_dir: Path) -> list[str]:
-    """Use find to list symlinks under home_dir that point outside it.
+def _build_export_tar_args(
+    output: str,
+    tmpdir: str,
+    home_dir: Path | None,
+) -> list[str]:
+    """Build GNU tar arguments for workspace export.
 
-    Returns relative paths (from home_dir's parent) suitable for
-    tar --exclude arguments.
+    GNU tar stores symlinks as symlinks (not contents), so external
+    symlinks (e.g., -> /usr/bin/python3) are harmless in the archive —
+    they resolve correctly inside the container. No symlink filtering.
+
+    Args:
+        output: tar output path, or "-" for stdout.
+        tmpdir: directory containing workspace.json.
+        home_dir: workspace home directory, or None if it doesn't exist.
     """
-    # find -type l prints all symlinks; we filter in the shell by inspecting
-    # each link's *raw* target. This avoids a Python walk over potentially huge
-    # directory trees, and — crucially — avoids `realpath`, which dereferences
-    # the whole chain on the host and breaks on container-absolute targets.
-    #
-    # Symlinks inside a workspace commonly target the *container* home path
-    # ("/home/klangk", the bind-mount target — see container.py), e.g. uv writes
-    # ".venv/bin/python -> /home/klangk/.local/.../python". Those are internal,
-    # but the export runs on the host where "/home/klangk" doesn't exist, so
-    # resolving them would wrongly flag them external and strip them — breaking
-    # venvs on import. Relative symlinks (".../python3 -> python") chain through
-    # those, so they hit the same problem.
-    #
-    # A symlink is "external" (and excluded) only when its target is an absolute
-    # path NOT under the container home. Relative targets stay within the tree,
-    # and "/home/klangk/..." targets resolve correctly once re-mounted in a
-    # container, so both are kept.
-    container_home = "/home/klangk"
-    script = (
-        f'find "{home_dir}" -type l -print0 | '
-        f'while IFS= read -r -d "" link; do '
-        f'raw=$(readlink "$link"); '
-        f'case "$raw" in '
-        f'"{container_home}/"*) ;; '  # internal container-absolute: keep
-        f'/*) echo "$link" ;; '  # other absolute (host path): exclude
-        f"*) ;; "  # relative: stays in tree, keep
-        f"esac; done"
-    )
-    proc = await asyncio.create_subprocess_exec(
-        "bash",
-        "-c",
-        script,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-    if not stdout.strip():
-        return []
-    # Convert absolute paths to relative (from home_dir's parent)
-    parent = home_dir.parent
-    result = []
-    for line in stdout.decode("utf-8", errors="replace").strip().split("\n"):
-        try:
-            result.append(str(Path(line).relative_to(parent)))
-        except ValueError:
-            pass
-    return result
+    args = [
+        "tar",
+        "-czf",
+        output,
+        "-C",
+        tmpdir,
+        "workspace.json",
+    ]
+    if home_dir is not None and home_dir.exists():
+        ws_dir_name = home_dir.name
+        escaped = re.escape(ws_dir_name)
+        args.extend(
+            [
+                f"--transform=s/^{escaped}/home/",
+                "-C",
+                str(home_dir.parent),
+                ws_dir_name,
+            ]
+        )
+    return args
 
 
 async def build_workspace_archive(
@@ -129,7 +112,7 @@ async def build_workspace_archive(
     """Build a .tar.gz archive in the export/import format.
 
     The archive contains workspace.json (metadata) and home/ (the home
-    directory tree).  Symlinks pointing outside home_dir are excluded.
+    directory tree).  Symlinks are stored as symlinks (not dereferenced).
     Both home_dir and archive_path must resolve under WORKSPACES_ROOT.
     Returns True on success, False on failure.
     """
@@ -146,31 +129,7 @@ async def build_workspace_archive(
         meta_file = Path(tmpdir) / "workspace.json"
         meta_file.write_text(json.dumps(metadata, indent=2))
 
-        tar_args = [
-            "tar",
-            "-czf",
-            str(archive_path),
-            "-C",
-            tmpdir,
-            "workspace.json",
-        ]
-
-        if home_dir.exists():
-            # Exclude symlinks that point outside the home directory.
-            bad_links = await _find_external_symlinks(home_dir)
-            for link in bad_links:
-                tar_args.extend(["--exclude", link])
-
-            ws_dir_name = home_dir.name
-            escaped = re.escape(ws_dir_name)
-            tar_args.extend(
-                [
-                    f"--transform=s/^{escaped}/home/",
-                    "-C",
-                    str(home_dir.parent),
-                    ws_dir_name,
-                ]
-            )
+        tar_args = _build_export_tar_args(str(archive_path), tmpdir, home_dir)
 
         proc = await asyncio.create_subprocess_exec(
             *tar_args,
