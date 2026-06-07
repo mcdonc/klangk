@@ -39,6 +39,22 @@ jobs:
           build-tasks: klangk:build-backend-image
           cache-nix: "false"
 
+      - name: Debug subuid/podman info
+        if: steps.filter.outputs.e2e == 'true'
+        run: |
+          echo "=== whoami ==="
+          id
+          echo "=== /etc/subuid ==="
+          cat /etc/subuid || echo "no subuid"
+          echo "=== /etc/subgid ==="
+          cat /etc/subgid || echo "no subgid"
+          echo "=== newuidmap ==="
+          ls -la "$(which newuidmap 2>/dev/null)" || echo "not found"
+          echo "=== podman info (system) ==="
+          /usr/bin/podman info --format '{{.Host.IDMappings}}' 2>&1 || echo "failed"
+          echo "=== test keep-id:uid=1000 ==="
+          /usr/bin/podman run --rm --userns=keep-id:uid=1000,gid=1000 alpine id 2>&1 || echo "keep-id:uid=1000 FAILED"
+
       - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'
         run: |
