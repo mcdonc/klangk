@@ -1,4 +1,4 @@
-name: Frontend E2E Tests
+name: "E2E: Frontend Tests"
 
 on:
   workflow_dispatch:
