@@ -12,6 +12,7 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.0
   xterm: ^4.0.0
+  # XXX: This is because nix MacOS does not support Flutter 3.44 - yet.
   # flterm: vendored in libghostty as packages/flterm, patched to build on
   # Flutter 3.41 / Dart 3.11 (upstream 0.0.3 needs Dart 3.12 for private-named
   # parameters; the patch removes that usage), so no host Flutter is required --
