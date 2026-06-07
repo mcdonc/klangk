@@ -1,5 +1,6 @@
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
+import 'image_renderer.dart';
 import 'markdown_renderer.dart';
 import 'raw_text_renderer.dart';
 
@@ -8,5 +9,6 @@ import 'raw_text_renderer.dart';
 /// [RawTextRenderer] fallback is last.
 List<FileRenderer> builtinFileRenderers() => [
       MarkdownRenderer(),
+      ImageRenderer(),
       RawTextRenderer(),
     ];
