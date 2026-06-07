@@ -1,11 +1,15 @@
 #!/bin/sh
 # Minimal container entrypoint.
+#
+# With --userns=keep-id:uid=1000,gid=1000 the host user maps to
+# klangk (UID 1000) inside the container.  The entrypoint runs as
+# klangk — no root privileges needed.
 set -e
 
-chown klangk:klangk /home/klangk /home/klangk/work 2>/dev/null || true
-
-# TODO: re-enable setup_clankers once entrypoint permissions are sorted
-# su -c "python3 /usr/local/bin/setup_clankers" klangk
+# Set up Pi agent config (extensions, settings, models, system prompt,
+# Claude Code skills). Runs before the readiness signal so terminal
+# sessions find everything in place.
+python3 /usr/local/bin/setup_clankers
 
 # Signal that setup is complete. Terminal sessions (podman exec) source
 # /etc/bash.bashrc which waits for this file before showing a prompt.

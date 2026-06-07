@@ -6,8 +6,7 @@ FROM ghcr.io/mcdonc/klangk/klangk-base:latest
 RUN mkdir -p /opt/klangk/pi-agent/extensions \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:@demigodmode/pi-web-agent \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-otel-telemetry \
-    && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-mcp-extension \
-    && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install git:github.com/mcdonc/mcdonc-pi-bg
+    && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-mcp-extension
 
 # Server-side tools per plugin (from plugin-tools named build context)
 # Layout: /opt/klangk/plugin-tools/<name>/<script>

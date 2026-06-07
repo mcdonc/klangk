@@ -423,7 +423,9 @@ class ContainerRegistry:
             env=env_vars,
             init=True,
             interactive=True,
-            userns=util.resolve_env_secret("KLANGK_USERNS", "keep-id"),
+            userns=util.resolve_env_secret(
+                "KLANGK_USERNS", "keep-id:uid=1000,gid=1000"
+            ),
             pull=image_pull_policy(),
         )
 

@@ -58,10 +58,9 @@ RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 # Install @earendil-works last so its `pi` binary wins.
 RUN npm install -g @mariozechner/pi-coding-agent @earendil-works/pi-coding-agent @anthropic-ai/claude-code
 
-# Create klangk user with a default UID/GID. The entrypoint adjusts
-# this at runtime via usermod/groupmod to match the host UID/GID
-# (passed as KLANGK_HOST_UID/KLANGK_HOST_GID env vars) so that files
-# on the bind-mounted home directory are owned by the backend's user.
+# Create klangk user with a fixed UID/GID. The container runs with
+# --userns=keep-id:uid=1000,gid=1000 which maps the host user to
+# this UID, so files on bind mounts are owned by the host user.
 ARG KLANGK_UID=1000
 ARG KLANGK_GID=1000
 RUN EXISTING_USER=$(getent passwd $KLANGK_UID | cut -d: -f1) \
