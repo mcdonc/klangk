@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flterm/flterm.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/terminal/ghostty_terminal.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
@@ -165,6 +166,50 @@ void main() {
         client.sentCommands.where((c) => c.startsWith('terminal_resize')),
         isNotEmpty,
       );
+      client.close();
+    });
+
+    testWidgets(
+        'defers terminal_start until measured when container_ready arrives '
+        'before the first layout (starts at the real grid, not the 80x24 seed)',
+        (tester) async {
+      // Hold the font load pending so the view stays a placeholder and flterm
+      // never measures the grid until we choose. Without this, the async asset
+      // load can resolve during the first pump and measure the grid before
+      // container_ready is delivered, so the deferral path would never run.
+      final fontGate = Completer<ByteData>();
+      final realFont =
+          await rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf');
+      GhosttyTerminalState.loadFontAsset = (_) => fontGate.future;
+      addTearDown(() => GhosttyTerminalState.loadFontAsset = rootBundle.load);
+
+      final client = _MockWsClient();
+      await tester.pumpWidget(_build(client));
+      // The font has not loaded yet, so the view is a placeholder and flterm
+      // has not measured the grid. container_ready arrives first.
+      expect(find.byType(TerminalView), findsNothing);
+      client.emit(_containerReady());
+      await tester.pump();
+      // Start is deferred — we must not create the pty at the 80x24 seed.
+      expect(client.sentCommands.where((c) => c.startsWith('terminal_start')),
+          isEmpty);
+
+      // Font loads, the view lays out, flterm measures and fires onResize,
+      // which triggers the deferred start at the measured size.
+      fontGate.complete(realFont);
+      await tester.pumpAndSettle();
+
+      final starts = client.sentCommands
+          .where((c) => c.startsWith('terminal_start:'))
+          .toList();
+      final resizes = client.sentCommands
+          .where((c) => c.startsWith('terminal_resize:'))
+          .toList();
+      expect(starts.length, 1);
+      expect(resizes, isNotEmpty);
+      // The start carries the measured grid (same WxH as the resize), not the
+      // hardcoded 80x24 seed.
+      expect(starts.single.split(':')[1], resizes.last.split(':')[1]);
       client.close();
     });
 
