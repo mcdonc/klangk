@@ -18,10 +18,10 @@ podman build --signature-policy "${KLANGK_SIGNATURE_POLICY}" \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-arg KLANGK_UID="$(id -u)" \
   --build-arg KLANGK_GID="$(id -g)" \
-  -f src/docker/workspace/Dockerfile.base \
+  -f src/containers/workspace/Dockerfile.base \
   -t "$IMAGE:latest" \
   -t "$IMAGE:$VERSION" \
-  "$@" src/docker/workspace/
+  "$@" src/containers/workspace/
 
 echo "==> Done: $IMAGE:$VERSION"
 podman images "$IMAGE" --format "  {{.Tag}}\t{{.Size}}"

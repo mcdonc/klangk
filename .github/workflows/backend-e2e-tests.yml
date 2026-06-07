@@ -26,7 +26,7 @@ jobs:
           filters: |
             e2e:
               - 'src/backend/**'
-              - 'src/docker/workspace/**'
+              - 'src/containers/workspace/**'
               - 'devenv.nix'
               - 'devenv.yaml'
               - '.github/workflows/backend-e2e-tests.yml'
@@ -34,7 +34,7 @@ jobs:
       - uses: ./.github/actions/devenv-setup
         if: steps.filter.outputs.e2e == 'true'
         with:
-          build-tasks: klangk:docker-build
+          build-tasks: klangk:build-backend-image
           cache-nix: "false"
 
       - name: Stop devenv services

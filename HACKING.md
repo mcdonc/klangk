@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Docker daemon running
+- Podman (rootless) available
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (or run `./bootstrap`)
 
 ## Getting Started
@@ -39,7 +39,7 @@ All commands below assume you're inside the devenv shell:
 devenv shell
 ```
 
-This puts all project tools (Python, Flutter, Dart, Node, Docker CLI, etc.) on your PATH.
+This puts all project tools (Python, Flutter, Dart, Node, podman, etc.) on your PATH.
 
 ## Starting the Dev Environment
 
@@ -47,7 +47,7 @@ This puts all project tools (Python, Flutter, Dart, Node, Docker CLI, etc.) on y
 devenv processes up --no-tui
 ```
 
-This builds the Docker image and Flutter web app on first run (via `execIfModified`), starts nginx, the FastAPI backend, and watches for file changes. Open http://localhost:8995.
+This builds the workspace image and Flutter web app on first run (via `execIfModified`), starts nginx, the FastAPI backend, and watches for file changes. Open http://localhost:8995.
 
 ## Running Tests
 
@@ -58,10 +58,10 @@ test-backend
 # Frontend unit tests (Dart, flutter test, 100% coverage required)
 test-frontend
 
-# CLI E2E tests (starts real server + Docker containers)
+# CLI E2E tests (starts real server + podman containers)
 test-cli-e2e
 
-# Flutter E2E tests (Playwright, needs flutter build + docker build)
+# Flutter E2E tests (Playwright, needs flutter build + podman build)
 test-frontend-e2e
 
 # Run a specific E2E test
@@ -87,7 +87,7 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_IMAGE_NAME`             | `klangk`                             | Podman image name for workspace containers                                                                                                                                                 |
 | `KLANGK_IMAGE_PULL_POLICY`      | `never`                              | Podman `--pull` policy for workspace containers (`never`, `missing`, `always`, `newer`). Default `never` requires the image to exist locally; `missing` pulls from a registry if not found |
 | `KLANGK_INSTANCE_ID`            | `default`                            | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup                                                                              |
-| `KLANGK_DNS_SERVERS`            |                                      | Comma-separated DNS server IPs for containers (e.g., `100.100.100.100,8.8.8.8` for Tailscale MagicDNS). If unset, containers use Docker's default DNS.                                     |
+| `KLANGK_DNS_SERVERS`            |                                      | Comma-separated DNS server IPs for containers (e.g., `100.100.100.100,8.8.8.8` for Tailscale MagicDNS). If unset, containers use podman's default DNS.                                     |
 | `KLANGK_HOSTING_HOSTNAME`       | (auto-derived)                       | Hostname for hosted app URLs. Behind a reverse proxy: uses `X-Forwarded-Host` as-is. Direct access: uses `Host` header with `KLANGK_NGINX_PORT` substituted                                |
 | `KLANGK_HOSTING_PROTO`          | (from `X-Forwarded-Proto` or `http`) | Protocol for user-facing app URLs. Auto-derived from request headers if not set                                                                                                            |
 | `KLANGK_HOSTING_BASE_PATH`      | (from `X-Forwarded-Prefix` or empty) | Base path prefix for user-facing app URLs (e.g., `/klangk`). Auto-derived from nginx `X-Forwarded-Prefix` header if not set                                                                |
@@ -131,7 +131,7 @@ If the LLM provider is on a Tailscale host (e.g., a self-hosted Ollama on anothe
 
 The nginx LLM proxy uses lazy DNS resolution (so nginx can start even if the LLM host is temporarily unreachable). This means nginx sends raw DNS queries to the resolvers from `/etc/resolv.conf`. On a Tailscale host, those resolvers include MagicDNS (`100.100.100.100`), but MagicDNS only resolves tailnet names through the system resolver stack — raw UDP DNS queries from nginx don't go through Tailscale's networking, so both bare hostnames (`bizon`) and FQDNs (`bizon.tail33f8f4.ts.net`) fail to resolve.
 
-Meanwhile, `KLANGK_DNS_SERVERS=100.100.100.100,8.8.8.8` is still needed for workspace containers, because Docker configures container DNS with search domains that make MagicDNS work correctly inside containers.
+Meanwhile, `KLANGK_DNS_SERVERS=100.100.100.100,8.8.8.8` is still needed for workspace containers, because podman configures container DNS with search domains that make MagicDNS work correctly inside containers.
 
 ```bash
 # In .env on a Tailscale host:
@@ -154,12 +154,12 @@ All 4 run automatically on PRs. You can bypass as repo admin.
 
 ## Host Container
 
-The host container packages the backend, nginx proxy, and Flutter web UI into a single Docker image based on `python:3.13-slim`. It does **not** include workspace containers — those are pulled separately and managed via the Docker socket.
+The host container packages the backend, nginx proxy, and Flutter web UI into a single Docker image based on `python:3.13-slim`. It does **not** include workspace containers — those are managed separately via podman.
 
 ### Building
 
 ```bash
-dockerbuild-host
+build-host-image
 ```
 
 This builds the `klangk-host` image using the pre-built venv from devenv and the Flutter web output. The image is tagged with both `latest` and a CalVer version (e.g., `2026.06.05-abc1234`).
@@ -214,11 +214,11 @@ The `docker-host.yml` workflow builds and pushes the host image to GHCR on push 
 
 - The `--group-add` flag grants the container user access to the Docker socket. The GID must match the host's docker socket group.
 - Nginx starts automatically alongside uvicorn. If `KLANGK_LLM_BASE_URL` is not set, the LLM proxy block is omitted and nginx still serves the UI and API.
-- The workspace Docker image (`klangk`) must be available in the host's Docker daemon — the host container does not build it.
+- The workspace image (`klangk`) must be available in the podman image store — the host container does not build it.
 
 ## Build Architecture (amd64 / arm64)
 
-All `docker build` calls (`dockerbuild`, `dockerbuild-base`, `dockerbuild-host`) build for `$KLANGK_PLATFORM`, which `devenv.nix` defaults to the host architecture (`linux/arm64` on Apple Silicon, `linux/amd64` elsewhere). This means images build and run natively instead of under QEMU emulation. Override per-shell via `.env`:
+All workspace image builds (`build-backend-image`, `build-base-image`) use podman and build for `$KLANGK_PLATFORM`, which `devenv.nix` defaults to the host architecture (`linux/arm64` on Apple Silicon, `linux/amd64` elsewhere). This means images build and run natively instead of under QEMU emulation. The host container (`build-host-image`) still uses Docker. Override per-shell via `.env`:
 
 ```bash
 KLANGK_PLATFORM=linux/amd64   # force amd64 even on an arm64 host
@@ -227,7 +227,7 @@ KLANGK_PLATFORM=linux/amd64   # force amd64 even on an arm64 host
 Building the **workspace** image natively requires a **base** image with a matching variant. The base (`ghcr.io/mcdonc/klangk/klangk-base`) is published as a multi-arch manifest (amd64 + arm64) by `push-base-image`, so `pull-base-image` automatically gets the right variant for the host. If the published base lacks your arch, build it locally first:
 
 ```bash
-dockerbuild-base            # local single-arch build for $KLANGK_PLATFORM
+build-base-image            # local single-arch build for $KLANGK_PLATFORM
 ```
 
 `push-base-image` builds and pushes both arches in one step via `docker buildx` (a multi-arch manifest cannot be loaded into the local daemon). Override the published set with `KLANGK_BASE_PLATFORMS` (default `linux/amd64,linux/arm64`).
@@ -255,37 +255,37 @@ devenv.nix             # devenv configuration
 
 Inside `devenv shell`, these commands are available:
 
-| Command              | Description                           |
-| -------------------- | ------------------------------------- |
-| `test-backend`       | Run backend unit tests                |
-| `test-frontend`      | Run frontend unit tests with coverage |
-| `test-cli-e2e`       | Run CLI E2E tests                     |
-| `test-frontend-e2e`  | Run Flutter E2E tests (all browsers)  |
-| `flutterbuildweb`    | Rebuild Flutter web only              |
-| `dockerbuild`        | Rebuild workspace Docker image        |
-| `dockerbuild-base`   | Rebuild workspace base image          |
-| `dockerbuild-host`   | Build host container image            |
-| `run-host-container` | Run host container locally            |
-| `trivy-host`         | Scan host image for vulnerabilities   |
-| `update-plugins`     | Fetch plugins from plugins.yaml       |
+| Command               | Description                           |
+| --------------------- | ------------------------------------- |
+| `test-backend`        | Run backend unit tests                |
+| `test-frontend`       | Run frontend unit tests with coverage |
+| `test-cli-e2e`        | Run CLI E2E tests                     |
+| `test-frontend-e2e`   | Run Flutter E2E tests (all browsers)  |
+| `flutterbuildweb`     | Rebuild Flutter web only              |
+| `build-backend-image` | Rebuild workspace image (podman)      |
+| `build-base-image`    | Rebuild workspace base image          |
+| `build-host-image`    | Build host container image            |
+| `run-host-container`  | Run host container locally            |
+| `trivy-host`          | Scan host image for vulnerabilities   |
+| `update-plugins`      | Fetch plugins from plugins.yaml       |
 
 ## Plugin System
 
 All plugins live in `$KLANGK_PLUGINS_DIR/<name>/` directories (defaults to `.devenv/state/klangk/plugins/`). A plugin can contain:
 
-- `extension.ts` — Pi extension with `pi.registerTool()`. Copied to `src/docker/extensions/` at build time.
+- `extension.ts` — Pi extension with `pi.registerTool()`. Copied to `src/containers/extensions/` at build time.
 - `klangk/` — Optional Dart package for client-side browser actions:
   - `klangk/pubspec.yaml` — Package definition, depends on `klangk_plugin_api` (git)
   - `klangk/lib/plugin.dart` — Class extending `ToolPlugin` with action handlers
   - `klangk/lib/*.dart` — Supporting Dart files (widgets, utilities)
-- `tools/` — Server-side scripts. Everything in this subdirectory is copied to `/opt/klangk/plugin-tools/<name>/` in the Docker image.
+- `tools/` — Server-side scripts. Everything in this subdirectory is copied to `/opt/klangk/plugin-tools/<name>/` in the workspace image.
 
 A plugin needs at minimum an `extension.ts`. The `klangk/` subdirectory is only needed for client-side browser actions (e.g., celebrate, beep, authenticated fetch) that are dispatched via the browser bridge.
 
 ### Build integration
 
 - `scripts/import_dart_plugins.py` scans `$KLANGK_PLUGINS_DIR/*/klangk/` for plugin Dart packages and generates `$KLANGK_PLUGINS_DIR/.dart/` (the `klangk_plugins` package with path deps and `createAllPlugins()`)
-- `dockerbuild` stages `extension.ts` and `tools/` files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named Docker build contexts (`plugin-extensions`, `plugin-tools`)
+- `build-backend-image` stages `extension.ts` and `tools/` files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named build contexts (`plugin-extensions`, `plugin-tools`)
 - `flutterbuildweb` runs the codegen before compiling
 - `stub_dart_plugins.sh` creates a minimal stub at `$KLANGK_PLUGINS_DIR/.dart/` so `flutter pub get` works before plugins are fetched (runs automatically at devenv shell startup via `enterShell`; skips if `pubspec_overrides.yaml` already exists)
 - Both build tasks are triggered automatically by `devenv up` via `execIfModified`
@@ -579,7 +579,7 @@ klangk export my-project            # export workspace to my-project.tar.gz (adm
 klangk export my-project -o bak.tar.gz  # export to specific file
 klangk import bak.tar.gz            # import workspace from archive
 klangk import bak.tar.gz --name new-name  # import with a different name
-klangk volumes ls                   # list Docker volumes
+klangk volumes ls                   # list podman volumes
 klangk volumes create nix-store     # create a named volume
 klangk volumes rm nix-store         # delete a volume
 ```
@@ -597,7 +597,7 @@ Workspaces can be exported as `.tar.gz` archives and imported to create new work
 
 **Import**: `klangk import <archive>` uploads the archive via `POST /workspaces/import`. The server streams the upload to a temp file, extracts metadata, creates the workspace, and extracts the home directory. Invalid images or mounts from the archive are silently dropped. Use `--name` to override the workspace name from the archive.
 
-System-level packages (apt installs, etc.) are not included — those belong in custom Docker images.
+System-level packages (apt installs, etc.) are not included — those belong in custom workspace images.
 
 ## Pre-commit Hooks
 

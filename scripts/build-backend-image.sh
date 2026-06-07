@@ -34,4 +34,4 @@ podman build --signature-policy "${KLANGK_SIGNATURE_POLICY}" \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-context plugin-extensions="$STAGING/extensions" \
   --build-context plugin-tools="$STAGING/tools" \
-  -t "${KLANGK_IMAGE_NAME}" "$@" src/docker/workspace/
+  -t "${KLANGK_IMAGE_NAME}" "$@" src/containers/workspace/

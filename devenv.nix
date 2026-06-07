@@ -63,12 +63,12 @@ in
         "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
       ];
     };
-    "klangk:docker-build" = {
-      exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild.sh"'';
+    "klangk:build-backend-image" = {
+      exec = ''exec bash "$DEVENV_ROOT/scripts/build-backend-image.sh"'';
       showOutput = true;
       execIfModified = [
-        "scripts/dockerbuild.sh"
-        "src/docker/workspace/**"
+        "scripts/build-backend-image.sh"
+        "src/containers/workspace/**"
         "${config.env.KLANGK_PLUGINS_DIR}/**/*.ts"
         "${config.env.KLANGK_PLUGINS_DIR}/**/tools/**"
         "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
@@ -99,7 +99,7 @@ in
       '';
       after = [
         "klangk:flutter-build"
-        "klangk:docker-build"
+        "klangk:build-backend-image"
         "klangk:kill-containers"
         "klangk:kill-port-holders"
       ];
@@ -108,7 +108,7 @@ in
       exec = ''exec bash "$DEVENV_ROOT/scripts/nginx.sh"'';
       after = [
         "klangk:flutter-build"
-        "klangk:docker-build"
+        "klangk:build-backend-image"
         "klangk:kill-port-holders"
       ];
     };
@@ -146,13 +146,13 @@ in
   scripts.flutterbuildweb.exec = ''
     exec devenv tasks run klangk:flutter-build \
       --refresh-task-cache "$@"'';
-  scripts.dockerbuild.exec = ''
-    exec devenv tasks run klangk:docker-build \
+  scripts.build-backend-image.exec = ''
+    exec devenv tasks run klangk:build-backend-image \
       --refresh-task-cache "$@"'';
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
-  scripts.dockerbuild-base.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-base.sh" "$@"'';
-  scripts.dockerbuild-host.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-host.sh" "$@"'';
+  scripts.build-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-base-image.sh" "$@"'';
+  scripts.build-host-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-host-image.sh" "$@"'';
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
 
   scripts.run-host-container.exec = ''
@@ -190,8 +190,8 @@ in
   '';
 
   scripts.rebuild.exec = ''
-    echo "Rebuilding Docker image..."
-    dockerbuild
+    echo "Rebuilding backend image..."
+    build-backend-image
     echo "Rebuilding Flutter..."
     flutterbuildweb
     echo "==> Done"
@@ -217,7 +217,7 @@ in
 
   scripts.test-frontend-e2e.exec = ''
     cd $DEVENV_ROOT
-    devenv tasks run klangk:flutter-build klangk:docker-build
+    devenv tasks run klangk:flutter-build klangk:build-backend-image
     cd src/frontend/e2e-tests
     npm install --silent
     exec npx playwright test --reporter=list "$@"
