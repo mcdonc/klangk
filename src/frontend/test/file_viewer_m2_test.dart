@@ -48,6 +48,54 @@ class _BytesViewRenderer extends FileRenderer {
   }
 }
 
+/// A renderer that invokes the injected [RenderableFile.saveText] on tap, to
+/// exercise the panel's save path (`_saveFileText`).
+class _SaveProbeRenderer extends FileRenderer {
+  @override
+  String get id => 'probe';
+  @override
+  String get modeLabel => 'Probe';
+  @override
+  IconData get icon => Icons.save;
+  @override
+  int get priority => 20;
+  @override
+  bool canRender(RenderableFile file) => true;
+  @override
+  Widget build(BuildContext context, RenderableFile file) =>
+      _SaveProbe(file: file);
+}
+
+class _SaveProbe extends StatefulWidget {
+  const _SaveProbe({required this.file});
+  final RenderableFile file;
+  @override
+  State<_SaveProbe> createState() => _SaveProbeState();
+}
+
+class _SaveProbeState extends State<_SaveProbe> {
+  String _result = 'idle';
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        TextButton(
+          onPressed: () async {
+            try {
+              await widget.file.saveText!('NEWBODY');
+              if (mounted) setState(() => _result = 'ok');
+            } catch (_) {
+              if (mounted) setState(() => _result = 'err');
+            }
+          },
+          child: const Text('dosave'),
+        ),
+        Text(_result),
+      ],
+    );
+  }
+}
+
 /// A ToolPlugin that also contributes file renderers.
 class _BothPlugin extends ToolPlugin implements FileRendererPlugin {
   @override
@@ -400,6 +448,68 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('plain text content'), findsOneWidget);
       expect(find.byType(ChoiceChip), findsNothing); // only raw matches .txt
+      ws.close();
+    });
+  });
+
+  group('save path (_saveFileText via injected saveText)', () {
+    testWidgets('posts edited content to /files/upload on success',
+        (tester) async {
+      String? uploadPath;
+      final client = MockClient((request) async {
+        if (request.url.path.contains('/files/upload')) {
+          uploadPath = request.url.queryParameters['path'];
+          return http.Response('{"status":"uploaded"}', 200);
+        }
+        if (request.url.path.contains('/files')) {
+          return http.Response(
+            jsonEncode([
+              {'name': 'a.dart', 'path': 'work/a.dart', 'is_dir': false},
+            ]),
+            200,
+          );
+        }
+        return http.Response('nf', 404);
+      });
+      final ws = await _pumpPanel(
+        tester,
+        client: client,
+        registry: FileRendererRegistry()..register(_SaveProbeRenderer()),
+      );
+      await tester.tap(find.text('a.dart'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('dosave'));
+      await tester.pumpAndSettle();
+      expect(find.text('ok'), findsOneWidget);
+      expect(uploadPath, 'work/a.dart');
+      ws.close();
+    });
+
+    testWidgets('throws on a non-200 upload response', (tester) async {
+      final client = MockClient((request) async {
+        if (request.url.path.contains('/files/upload')) {
+          return http.Response('boom', 500);
+        }
+        if (request.url.path.contains('/files')) {
+          return http.Response(
+            jsonEncode([
+              {'name': 'a.dart', 'path': 'work/a.dart', 'is_dir': false},
+            ]),
+            200,
+          );
+        }
+        return http.Response('nf', 404);
+      });
+      final ws = await _pumpPanel(
+        tester,
+        client: client,
+        registry: FileRendererRegistry()..register(_SaveProbeRenderer()),
+      );
+      await tester.tap(find.text('a.dart'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('dosave'));
+      await tester.pumpAndSettle();
+      expect(find.text('err'), findsOneWidget);
       ws.close();
     });
   });
