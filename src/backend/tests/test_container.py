@@ -551,6 +551,226 @@ class TestStartContainer:
         assert env_dict["FOO"] == "bar"
 
 
+class TestStartContainerPortConflict:
+    """Test retry logic when a stale container holds a port."""
+
+    def setup_method(self):
+        container.registry.states.clear()
+
+    def teardown_method(self):
+        container.registry.states.clear()
+
+    async def test_port_conflict_removes_stale_and_retries(self, workspace):
+        # Pre-allocate ports so we know exactly which ones the workspace gets.
+        allocated = await model.find_and_allocate_ports(
+            workspace["id"], 5, container.PORT_RANGE_START
+        )
+        conflict_port = allocated[0]
+
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(
+                    500,
+                    f"Bind for 0.0.0.0:{conflict_port} failed: "
+                    "port is already allocated",
+                )
+
+        stale_info = {
+            "HostConfig": {
+                "PortBindings": {
+                    "8000/tcp": [{"HostPort": str(conflict_port)}]
+                }
+            }
+        }
+
+        with patch_podman(
+            start_container=AsyncMock(side_effect=start_side_effect),
+            list_containers=AsyncMock(
+                return_value=[{"Id": "stale-cid", "Labels": {}}]
+            ),
+            inspect_container=AsyncMock(return_value=stale_info),
+        ) as p:
+            cid, status = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert status == "created"
+        assert len(start_calls) == 2
+        remove_calls = [c.args[0] for c in p.remove_container.call_args_list]
+        assert "stale-cid" in remove_calls
+
+    async def test_port_conflict_skips_own_container(self, workspace):
+        allocated = await model.find_and_allocate_ports(
+            workspace["id"], 5, container.PORT_RANGE_START
+        )
+        conflict_port = allocated[0]
+
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(500, "port is already allocated")
+
+        with patch_podman(
+            start_container=AsyncMock(side_effect=start_side_effect),
+            list_containers=AsyncMock(
+                return_value=[{"Id": "new-cid", "Labels": {}}]
+            ),
+            inspect_container=AsyncMock(
+                return_value={
+                    "HostConfig": {
+                        "PortBindings": {
+                            "8000/tcp": [{"HostPort": str(conflict_port)}]
+                        }
+                    }
+                }
+            ),
+        ) as p:
+            cid, _ = await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        # Should not have tried to remove its own container
+        for call in p.remove_container.call_args_list:
+            assert call.args[0] != "new-cid"
+
+    async def test_port_conflict_skips_non_overlapping(self, workspace):
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(500, "port is already allocated")
+
+        with patch_podman(
+            start_container=AsyncMock(side_effect=start_side_effect),
+            list_containers=AsyncMock(
+                return_value=[{"Id": "other-cid", "Labels": {}}]
+            ),
+            inspect_container=AsyncMock(
+                return_value={
+                    "HostConfig": {
+                        "PortBindings": {"8000/tcp": [{"HostPort": "59999"}]}
+                    }
+                }
+            ),
+        ):
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        # other-cid doesn't hold our ports — should not be removed
+
+    async def test_port_conflict_stale_vanished(self, workspace):
+        """Stale container gone by the time we inspect it."""
+        await model.find_and_allocate_ports(
+            workspace["id"], 5, container.PORT_RANGE_START
+        )
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(500, "port is already allocated")
+
+        with patch_podman(
+            start_container=AsyncMock(side_effect=start_side_effect),
+            list_containers=AsyncMock(
+                return_value=[{"Id": "gone-cid", "Labels": {}}]
+            ),
+            inspect_container=AsyncMock(return_value=None),
+        ) as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        # gone-cid vanished — no remove attempted
+        assert not any(
+            c.args[0] == "gone-cid" for c in p.remove_container.call_args_list
+        )
+
+    async def test_port_conflict_bad_port_bindings(self, workspace):
+        """Malformed HostPort values don't crash the retry."""
+        await model.find_and_allocate_ports(
+            workspace["id"], 5, container.PORT_RANGE_START
+        )
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(500, "port is already allocated")
+
+        with patch_podman(
+            start_container=AsyncMock(side_effect=start_side_effect),
+            list_containers=AsyncMock(
+                return_value=[{"Id": "bad-cid", "Labels": {}}]
+            ),
+            inspect_container=AsyncMock(
+                return_value={
+                    "HostConfig": {
+                        "PortBindings": {
+                            "80/tcp": [{"HostPort": "not-a-number"}],
+                            "81/tcp": [{}],
+                            "82/tcp": None,
+                        }
+                    }
+                }
+            ),
+        ):
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+
+    async def test_port_conflict_remove_error_logged(self, workspace):
+        """Error removing stale container is logged, not raised."""
+        allocated = await model.find_and_allocate_ports(
+            workspace["id"], 5, container.PORT_RANGE_START
+        )
+        conflict_port = allocated[0]
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(500, "port is already allocated")
+
+        with patch_podman(
+            start_container=AsyncMock(side_effect=start_side_effect),
+            list_containers=AsyncMock(
+                return_value=[{"Id": "stuck-cid", "Labels": {}}]
+            ),
+            inspect_container=AsyncMock(
+                return_value={
+                    "HostConfig": {
+                        "PortBindings": {
+                            "8000/tcp": [{"HostPort": str(conflict_port)}]
+                        }
+                    }
+                }
+            ),
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "removal in progress")
+            ),
+        ):
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+
+    async def test_non_port_conflict_error_raised(self, workspace):
+        with (
+            patch_podman(
+                start_container=AsyncMock(
+                    side_effect=podman.PodmanError(500, "some other error")
+                ),
+            ),
+            pytest.raises(podman.PodmanError, match="some other error"),
+        ):
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+
+
 class TestValidateMountSpec:
     def test_valid_bind_mount(self):
         assert container.validate_mount_spec("/host:/container") is None

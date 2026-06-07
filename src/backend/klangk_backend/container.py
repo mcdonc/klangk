@@ -410,33 +410,82 @@ class ContainerRegistry:
         # Without the shield, a cancel landing between create and the
         # DB write orphans a running container with no container_id on
         # record.
+        create_kwargs = dict(
+            labels={
+                "klangk.managed": "true",
+                "klangk.instance": INSTANCE_ID,
+                "klangk.workspace-id": workspace_id,
+            },
+            binds=binds,
+            tmpfs={
+                "/tmp": "rw,exec,nosuid,size=2g",
+                "/run": "rw,noexec,nosuid,size=256m",
+                "/var/log": "rw,noexec,nosuid,size=256m",
+            },
+            publish=publish,
+            add_hosts=["host.containers.internal:host-gateway"],
+            dns=_container_dns_config() or None,
+            env=env_vars,
+            init=True,
+            interactive=True,
+            userns=util.resolve_env_secret("KLANGK_USERNS") or None,
+            pull=image_pull_policy(),
+        )
+
         async def _create_and_start() -> str:
             cid = await podman.create_container(
-                container_name,
-                resolved_image,
-                labels={
-                    "klangk.managed": "true",
-                    "klangk.instance": INSTANCE_ID,
-                    "klangk.workspace-id": workspace_id,
-                },
-                binds=binds,
-                tmpfs={
-                    "/tmp": "rw,exec,nosuid,size=2g",
-                    "/run": "rw,noexec,nosuid,size=256m",
-                    "/var/log": "rw,noexec,nosuid,size=256m",
-                },
-                publish=publish,
-                add_hosts=["host.containers.internal:host-gateway"],
-                dns=_container_dns_config() or None,
-                env=env_vars,
-                init=True,
-                interactive=True,
-                userns=util.resolve_env_secret("KLANGK_USERNS") or None,
-                pull=image_pull_policy(),
+                container_name, resolved_image, **create_kwargs
             )
             await model.update_workspace_container(workspace_id, cid)
             self.track_activity(cid, workspace_id)
-            await podman.start_container(cid)
+            try:
+                await podman.start_container(cid)
+            except podman.PodmanError as exc:
+                if "port is already allocated" not in exc.message:
+                    raise
+                # A stale container is holding one of our ports.
+                # Find managed containers binding conflicting ports
+                # and remove them, then retry.
+                logger.warning(
+                    "Port conflict starting %s, cleaning stale containers",
+                    container_name,
+                )
+                wanted_ports = {hp for hp, _cp in publish}
+                stale = await podman.list_containers(
+                    f"klangk.instance={INSTANCE_ID}"
+                )
+                for c in stale:
+                    stale_id = c.get("Id") or c.get("ID", "")
+                    if stale_id == cid:
+                        continue
+                    info = await podman.inspect_container(stale_id)
+                    if info is None:
+                        continue
+                    bindings = (
+                        info.get("HostConfig", {}).get("PortBindings") or {}
+                    )
+                    bound = set()
+                    for ports_list in bindings.values():
+                        for entry in ports_list or []:
+                            try:
+                                bound.add(int(entry["HostPort"]))
+                            except (KeyError, ValueError, TypeError):
+                                pass
+                    if bound & wanted_ports:
+                        try:
+                            await podman.remove_container(stale_id)
+                            logger.info(
+                                "Removed stale container %s (ports %s)",
+                                stale_id[:12],
+                                bound & wanted_ports,
+                            )
+                        except podman.PodmanError as del_exc:
+                            logger.info(
+                                "Could not remove stale container %s: %s",
+                                stale_id[:12],
+                                del_exc,
+                            )
+                await podman.start_container(cid)
             return cid
 
         container_id = await asyncio.shield(_create_and_start())
