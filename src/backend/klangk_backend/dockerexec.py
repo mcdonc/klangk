@@ -44,6 +44,7 @@ class ExecSession:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=podman.subprocess_env(),
         )
         self._read_task = asyncio.create_task(self._read_stdout())
         logger.info(

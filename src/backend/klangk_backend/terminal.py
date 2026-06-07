@@ -87,6 +87,7 @@ class ShellProcess:
                 stdout=slave_fd,
                 stderr=slave_fd,
                 start_new_session=True,
+                env=podman.subprocess_env(),
             )
         finally:
             os.close(slave_fd)
