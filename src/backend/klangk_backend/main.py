@@ -135,6 +135,9 @@ async def seed_default_user() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from . import auth
+
+    auth.require_secure_jwt_secret()
     await model.init_db()
     oidc.init_providers()
     oidc.load_group_hook()

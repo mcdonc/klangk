@@ -37,6 +37,10 @@ class OIDCProvider:
     ca_cert: str | None = None  # path to CA cert PEM for custom trust
     token_validation_pem: str | None = None  # static RSA/EC public key PEM
     logout_redirect: bool = False  # redirect to IdP logout on user logout
+    # Trust the email claim even when the IdP omits/!email_verified. Only
+    # enable for providers that are known to verify email out of band; an
+    # unverified email is otherwise an account-takeover vector.
+    trust_unverified_email: bool = False
 
 
 @dataclass
@@ -93,6 +97,9 @@ def load_config() -> list[OIDCProvider]:
                 ca_cert=ca_cert,
                 token_validation_pem=entry.get("token_validation_pem"),
                 logout_redirect=entry.get("logout_redirect", False),
+                trust_unverified_email=entry.get(
+                    "trust_unverified_email", False
+                ),
             )
         )
     return providers
