@@ -39,12 +39,6 @@ jobs:
           build-tasks: klangk:build-backend-image
           cache-nix: "false"
 
-      - name: Stop devenv services
-        if: steps.filter.outputs.e2e == 'true'
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv processes down --no-tui 2>/dev/null || true
-
       - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'
         run: |
