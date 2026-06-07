@@ -1,9 +1,9 @@
 """CLI end-to-end tests against a real Klangk server.
 
 These tests start a real uvicorn server, run klangk CLI commands as
-subprocesses, and verify behavior against real Docker containers.
+subprocesses, and verify behavior against real podman containers.
 
-Requires: Docker running, klangk image built.
+Requires: podman available, klangk image built.
 
 Run with: devenv shell -- test-cli-e2e
 """
@@ -95,7 +95,7 @@ def _stop_server(proc, data_dir, instance_id):
         proc.kill()
     result = subprocess.run(
         [
-            "docker",
+            "podman",
             "ps",
             "-a",
             "--filter",
@@ -107,7 +107,7 @@ def _stop_server(proc, data_dir, instance_id):
     )
     if result.stdout.strip():
         subprocess.run(
-            ["docker", "rm", "-f", *result.stdout.strip().split()],
+            ["podman", "rm", "-f", *result.stdout.strip().split()],
             capture_output=True,
         )
     shutil.rmtree(data_dir, ignore_errors=True)
@@ -1054,3 +1054,58 @@ class TestExportImport:
             _run(["klangk", "rm", "export-symlink-imported"], env=env)
         finally:
             _run(["klangk", "rm", "export-symlink"], env=env)
+
+
+class TestContainerReplace:
+    """Verify podman --replace handles stale/crashed containers."""
+
+    def test_exec_after_external_stop(self, cli_config):
+        """Kill a workspace container externally, then exec again.
+
+        The backend's ``podman create --replace`` must replace the
+        stopped container so the next exec succeeds.
+        """
+        env = cli_config["env"]
+        _run(["klangk", "create", "e2e-replace"], env=env)
+        try:
+            # Start the container via exec
+            result = _run(
+                ["klangk", "exec", "e2e-replace", "echo", "first"],
+                env=env,
+                timeout=60,
+            )
+            assert result.returncode == 0
+            assert "first" in result.stdout
+
+            # Kill the container externally (simulates crash)
+            ps = subprocess.run(
+                [
+                    "podman",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    "label=klangk.instance=cli-e2e",
+                    "--filter",
+                    "label=klangk.workspace-id",
+                    "--format",
+                    "{{.ID}}",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            for cid in ps.stdout.strip().splitlines():
+                subprocess.run(
+                    ["podman", "stop", "-t", "0", cid],
+                    capture_output=True,
+                )
+
+            # Exec again — --replace should create a fresh container
+            result = _run(
+                ["klangk", "exec", "e2e-replace", "echo", "second"],
+                env=env,
+                timeout=60,
+            )
+            assert result.returncode == 0
+            assert "second" in result.stdout
+        finally:
+            _run(["klangk", "rm", "e2e-replace"], env=env)

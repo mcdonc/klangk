@@ -1,4 +1,4 @@
-"""Raw exec session: docker exec subprocess without PTY for piped commands."""
+"""Raw exec session: podman exec subprocess without PTY for piped commands."""
 
 import asyncio
 import logging
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExecSession:
-    """Manages a docker exec session with raw stdin/stdout pipes (no PTY)."""
+    """Manages a podman exec session with raw stdin/stdout pipes (no PTY)."""
 
     def __init__(self, container_id: str):
         self.container_id = container_id
@@ -23,9 +23,11 @@ class ExecSession:
         self._returncode: int | None = None
 
     async def start(self, command: list[str]) -> None:
-        """Start a command via docker exec with piped stdin/stdout."""
+        """Start a command via podman exec with piped stdin/stdout."""
+        from . import podman
+
         exec_cmd = [
-            "docker",
+            podman.PODMAN_BIN,
             "exec",
             "-i",
             "-u",

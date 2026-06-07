@@ -139,7 +139,7 @@ def server():
             pass
     result = subprocess.run(
         [
-            "docker",
+            "podman",
             "ps",
             "-a",
             "--filter",
@@ -151,7 +151,7 @@ def server():
     )
     if result.stdout.strip():
         subprocess.run(
-            ["docker", "rm", "-f", *result.stdout.strip().split()],
+            ["podman", "rm", "-f", *result.stdout.strip().split()],
             capture_output=True,
         )
     shutil.rmtree(data_dir, ignore_errors=True)

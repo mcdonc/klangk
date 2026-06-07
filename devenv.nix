@@ -41,6 +41,7 @@ in
     gzip
     gnutar
     nginx
+    podman
     sqlite.bin
     rsync
   ];
@@ -76,7 +77,7 @@ in
     "klangk:kill-containers" = {
       exec = ''
         if [ ! -f /.dockerenv ]; then
-          docker ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q | xargs -r docker rm -f
+          podman ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q | xargs -r podman rm -f
         fi
       '';
     };
@@ -171,9 +172,9 @@ in
   '';
 
   scripts.kill-containers.exec = ''
-    docker ps -a \
+    podman ps -a \
       --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" \
-      -q | xargs -r docker rm -f
+      -q | xargs -r podman rm -f
   '';
 
   scripts.restart.exec = ''

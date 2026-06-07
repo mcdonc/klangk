@@ -91,7 +91,7 @@ def _stop_server(proc, data_dir, instance_id):
         proc.kill()
     result = subprocess.run(
         [
-            "docker",
+            "podman",
             "ps",
             "-a",
             "--filter",
@@ -103,7 +103,7 @@ def _stop_server(proc, data_dir, instance_id):
     )
     if result.stdout.strip():
         subprocess.run(
-            ["docker", "rm", "-f", *result.stdout.strip().split()],
+            ["podman", "rm", "-f", *result.stdout.strip().split()],
             capture_output=True,
         )
     shutil.rmtree(data_dir, ignore_errors=True)

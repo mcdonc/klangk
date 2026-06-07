@@ -566,7 +566,7 @@ class TestHandleTerminalStart:
             with pytest.raises(asyncio.CancelledError):
                 await task
 
-        # session.stop() must be called to avoid leaking the aiodocker client
+        # session.stop() must be called to clean up the PTY subprocess
         mock_session.stop.assert_awaited_once()
         container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)

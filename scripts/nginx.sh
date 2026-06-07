@@ -26,7 +26,7 @@ else
 fi
 
 # Shared allow/deny rules for container-only endpoints (LLM proxy,
-# browser-delegate bridge). Restricts access to Docker subnets and
+# browser-delegate bridge). Restricts access to container subnets and
 # localhost — the backend also validates tokens, but rejecting at the
 # network level avoids unnecessary round-trips.
 CONTAINER_ACL="

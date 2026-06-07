@@ -26,7 +26,7 @@ done
 # Remove old containers before rebuilding so they get recreated from the new image.
 # Skip when running inside a container (developing klangk in klangk).
 if [ ! -f /.dockerenv ]; then
-  docker ps -a --filter "label=klangk.instance=${KLANGK_INSTANCE_ID}" -q | xargs -r docker rm -f
+  podman ps -a --filter "label=klangk.instance=${KLANGK_INSTANCE_ID}" -q | xargs -r podman rm -f
 fi
 
 # Build workspace image on top of the base
