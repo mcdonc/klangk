@@ -200,6 +200,49 @@ export function vp(page: Page) {
   return page.viewportSize() || { width: 1280, height: 720 };
 }
 
+/** Seed a file into a workspace via the files API. `content` may be a string
+ *  (text files) or a Buffer (binary — images, pdfs). `path` is workspace-
+ *  relative (e.g. "work/readme.md"). The upload is synchronous, so the file is
+ *  immediately listable/readable when this resolves. */
+export async function seedFile(
+  request: APIRequestContext,
+  workspaceId: string,
+  path: string,
+  content: string | Buffer,
+  headers: Record<string, string>,
+  mimeType = "application/octet-stream",
+) {
+  const name = path.split("/").pop()!;
+  const buffer = typeof content === "string" ? Buffer.from(content) : content;
+  const resp = await request.post(
+    `${API_BASE}/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(path)}`,
+    { headers, multipart: { file: { name, mimeType, buffer } } },
+  );
+  if (!resp.ok()) {
+    throw new Error(
+      `seedFile ${path} failed: ${resp.status()} ${await resp.text()}`,
+    );
+  }
+}
+
+/** Tap the Files tab in the workspace IDE (owner has 5 tabs: Terminal, Files,
+ *  Chat, Sharing, Settings; the tab bar sits at y~76). */
+export async function openFilesTab(page: Page) {
+  const { width } = vp(page);
+  const tabWidth = width / 5;
+  await flutterClick(page, tabWidth + tabWidth / 2, 76);
+  await page.waitForTimeout(500);
+}
+
+/** Tap a file row in the file list by its 0-based index. Rows are dense
+ *  ListTiles (~48px) starting below the path bar (~y 96 at 1280x720). */
+export async function clickFileRow(page: Page, index: number) {
+  const rowY = 110 + index * 48;
+  const { width } = vp(page);
+  await flutterClick(page, width / 2, rowY);
+  await page.waitForTimeout(600);
+}
+
 /** Click the terminal area, wait for it to be interactive, then type a command and press Enter. */
 export async function terminalType(
   page: Page,

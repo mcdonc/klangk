@@ -75,5 +75,13 @@ export default defineConfig({
       dependencies: ["firefox"],
       use: webkitUse,
     },
+    {
+      // File Viewers specs run on chromium only (canvas rendering + download
+      // round-trips don't need the cross-browser matrix). Run with
+      // `--project=file-viewers`.
+      name: "file-viewers",
+      testMatch: "file-viewers/*.spec.ts",
+      use: chromiumUse,
+    },
   ],
 });
