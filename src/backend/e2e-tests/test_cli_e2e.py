@@ -937,3 +937,120 @@ class TestExportImport:
 
         # Clean up
         _run(["klangk", "rm", "export-restored"], env=env)
+
+    def test_export_import_round_trip_with_symlinks(
+        self, server, cli_config, tmp_path
+    ):
+        """Symlinks survive an export→import round-trip intact."""
+        env = cli_config["env"]
+
+        result = _run(["klangk", "create", "export-symlink"], env=env)
+        assert result.returncode == 0
+
+        try:
+            # Find home dir on host
+            from pathlib import Path
+
+            import httpx
+
+            resp = httpx.post(
+                f"{server['url']}/auth/login",
+                json={"email": "test@example.com", "password": "testpass"},
+            )
+            token = resp.json()["access_token"]
+            headers = {"Authorization": f"Bearer {token}"}
+            resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+            ws = [w for w in resp.json() if w["name"] == "export-symlink"][0]
+            ws_id = ws["id"]
+            ws_root = Path(server["data_dir"]) / "workspaces"
+            user_dirs = [d for d in ws_root.iterdir() if d.is_dir()]
+            assert len(user_dirs) >= 1
+            home_dir = user_dirs[0] / "home" / ws_id
+
+            # Create files and symlinks
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (home_dir / "real.txt").write_text("original content")
+            (home_dir / "relative_link").symlink_to("real.txt")
+            (home_dir / "external_link").symlink_to("/etc/hostname")
+            (home_dir / "container_link").symlink_to(
+                "/home/klangk/.local/bin/test"
+            )
+
+            # Export
+            archive = tmp_path / "symlink-roundtrip.tar.gz"
+            result = _run(
+                ["klangk", "export", "export-symlink", "-o", str(archive)],
+                env=env,
+                timeout=60,
+            )
+            assert result.returncode == 0, result.stderr or result.stdout
+
+            # Verify archive has all symlinks
+            import tarfile
+
+            with tarfile.open(archive, "r:gz") as tar:
+                names = tar.getnames()
+                assert any("real.txt" in n for n in names)
+                assert any("relative_link" in n for n in names)
+                assert any("external_link" in n for n in names)
+                assert any("container_link" in n for n in names)
+
+                # Verify they are stored as symlinks, not regular files
+                for link_name in [
+                    "relative_link",
+                    "external_link",
+                    "container_link",
+                ]:
+                    members = [
+                        m for m in tar.getmembers() if link_name in m.name
+                    ]
+                    assert len(members) == 1, f"{link_name} not found"
+                    assert members[0].issym(), f"{link_name} not a symlink"
+
+            # Delete original and import
+            _run(["klangk", "rm", "export-symlink"], env=env)
+
+            result = _run(
+                [
+                    "klangk",
+                    "import",
+                    str(archive),
+                    "--name",
+                    "export-symlink-imported",
+                ],
+                env=env,
+                timeout=60,
+            )
+            assert result.returncode == 0, result.stderr or result.stdout
+
+            # Find the imported workspace's home dir
+            resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+            imported = [
+                w
+                for w in resp.json()
+                if w["name"] == "export-symlink-imported"
+            ][0]
+            imported_home = user_dirs[0] / "home" / imported["id"]
+
+            # Verify files and symlinks survived
+            assert (
+                imported_home / "real.txt"
+            ).read_text() == "original content"
+            assert (imported_home / "relative_link").is_symlink()
+            assert (
+                os.readlink(str(imported_home / "relative_link")) == "real.txt"
+            )
+            assert (imported_home / "external_link").is_symlink()
+            assert (
+                os.readlink(str(imported_home / "external_link"))
+                == "/etc/hostname"
+            )
+            assert (imported_home / "container_link").is_symlink()
+            assert (
+                os.readlink(str(imported_home / "container_link"))
+                == "/home/klangk/.local/bin/test"
+            )
+
+            _run(["klangk", "rm", "export-symlink-imported"], env=env)
+        finally:
+            _run(["klangk", "rm", "export-symlink"], env=env)
