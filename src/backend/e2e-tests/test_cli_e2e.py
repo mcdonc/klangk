@@ -10,7 +10,6 @@ Run with: devenv shell -- test-cli-e2e
 
 import os
 import shutil
-import signal
 import subprocess
 import tempfile
 import time
@@ -88,11 +87,11 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
 
 def _stop_server(proc, data_dir, instance_id):
     """Stop a server, clean up containers and data."""
-    proc.send_signal(signal.SIGTERM)
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
         proc.kill()
+        proc.wait(timeout=5)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
     result = subprocess.run(
         [
             "podman",

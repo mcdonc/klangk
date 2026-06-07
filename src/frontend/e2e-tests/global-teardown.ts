@@ -51,18 +51,25 @@ async function globalTeardown() {
   }
 
   // Remove any containers that survived shutdown (including stopped ones holding ports)
+  const podman = process.env.KLANGK_PODMAN_BIN || "podman";
+  // Strip LD_LIBRARY_PATH so system podman on CI doesn't load nix's glibc
+  const podmanEnv = { ...process.env };
+  delete podmanEnv.LD_LIBRARY_PATH;
   try {
     const ids = execSync(
-      'docker ps -a --filter "label=klangk.managed=true" --filter "label=klangk.instance=e2e-test" -q',
+      `${podman} ps -a --filter "label=klangk.managed=true" --filter "label=klangk.instance=e2e-test" -q`,
+      { env: podmanEnv },
     )
       .toString()
       .trim();
     if (ids) {
-      execSync(`docker rm -f ${ids.split("\n").join(" ")}`);
+      execSync(`${podman} rm -f ${ids.split("\n").join(" ")}`, {
+        env: podmanEnv,
+      });
       console.log("Removed leftover klangk containers");
     }
   } catch {
-    // Docker not available or no containers
+    // podman not available or no containers
   }
 
   // Print backend log location
@@ -71,17 +78,17 @@ async function globalTeardown() {
     console.log(`Backend log: ${logPath}`);
   }
 
-  // Clean up temp data directory. On CI, Docker containers create root-owned
+  // Clean up temp data directory. On CI, containers may create root-owned
   // files in bind-mounted workspace dirs, so rmSync fails with EACCES.
-  // Use a Docker container to remove them first.
+  // Use a container to remove them first.
   const dataDir = process.env.KLANGK_E2E_DATA_DIR;
   if (dataDir) {
     console.log(`Cleaning up ${dataDir}`);
     try {
       if (process.env.CI) {
         execSync(
-          `docker run --rm -v "${dataDir}:/cleanup" alpine rm -rf /cleanup/*`,
-          { stdio: "ignore", timeout: 10_000 },
+          `${podman} run --rm -v "${dataDir}:/cleanup" alpine rm -rf /cleanup/*`,
+          { stdio: "ignore", timeout: 10_000, env: podmanEnv },
         );
       }
       rmSync(dataDir, { recursive: true, force: true });

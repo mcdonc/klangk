@@ -7,7 +7,7 @@ without disrupting others.
 Each test creates its own workspace to avoid shared container
 state between tests.
 
-Requires: Docker running, klangk image built.
+Requires: podman available, klangk image built.
 
 Run with: devenv shell -- test-cli-e2e
 """
@@ -15,7 +15,6 @@ Run with: devenv shell -- test-cli-e2e
 import asyncio
 import json
 import os
-import signal
 import shutil
 import subprocess
 import sys
@@ -29,52 +28,17 @@ import websockets
 
 @pytest.fixture(scope="module")
 def server():
-    """Start a real Klangk server (with nginx LLM proxy) for the test module."""
+    """Start a real Klangk server for the test module.
+
+    No LLM or nginx needed — these tests only exercise WebSocket event
+    fanout (container ready, exec output routing), not LLM interactions.
+    """
     data_dir = tempfile.mkdtemp(prefix="klangk-fanout-e2e-")
     port = "18996"
-    nginx_port = "18994"
-    project_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-
-    # Start nginx as an LLM proxy so containers can reach the LLM.
-    nginx_proc = None
-    nginx_log = os.path.join(data_dir, "nginx.log")
-    if os.environ.get("KLANGK_LLM_BASE_URL"):
-        log_fd = open(nginx_log, "w")
-        nginx_proc = subprocess.Popen(
-            [os.path.join(project_root, "scripts", "nginx.sh")],
-            env={
-                **os.environ,
-                "DEVENV_STATE": data_dir,
-                "KLANGK_NGINX_PORT": nginx_port,
-                "KLANGK_PORT": port,
-            },
-            stdout=log_fd,
-            stderr=log_fd,
-        )
-        # Wait for nginx LLM proxy to be reachable
-        for _ in range(10):
-            try:
-                resp = httpx.get(
-                    f"http://localhost:{nginx_port}/llm-proxy/models",
-                    timeout=2,
-                )
-                if resp.status_code == 200:
-                    break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            nginx_proc.kill()
-            log_content = (
-                open(nginx_log).read() if os.path.exists(nginx_log) else ""
-            )
-            raise RuntimeError(
-                f"Nginx LLM proxy not reachable on port {nginx_port}:\n{log_content}"
-            )
 
     env = {
         **os.environ,
         "KLANGK_PORT": port,
-        "KLANGK_NGINX_PORT": nginx_port,
         "KLANGK_DATA_DIR": data_dir,
         "KLANGK_JWT_SECRET": "fanout-e2e-secret",
         "KLANGK_DEFAULT_USER": "test@example.com",
@@ -84,6 +48,10 @@ def server():
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         "KLANGK_PORT_RANGE_START": "9100",
         "LOGFIRE_TOKEN": "",
+        # Clear LLM vars so .env values don't leak in
+        "KLANGK_LLM_BASE_URL": "",
+        "KLANGK_LLM_API_KEY": "",
+        "KLANGK_LLM_MODEL": "",
     }
     proc = subprocess.Popen(
         [
@@ -116,27 +84,21 @@ def server():
     yield {
         "url": base_url,
         "port": port,
-        "nginx_port": nginx_port,
         "data_dir": data_dir,
         "proc": proc,
     }
 
-    proc.send_signal(signal.SIGTERM)
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
         proc.kill()
+        proc.wait(timeout=5)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
     if proc.stdout:
         server_log = proc.stdout.read().decode("utf-8", errors="replace")
         if server_log.strip():
             sys.stderr.write(
                 f"\n=== Fanout server log ===\n{server_log}\n===\n"
             )
-    if nginx_proc:
-        try:
-            nginx_proc.kill()
-        except OSError:
-            pass
     result = subprocess.run(
         [
             "podman",
@@ -191,11 +153,14 @@ def create_workspace(server, auth):
     workspace_id = resp.json()["id"]
 
     def cleanup():
-        httpx.delete(
-            f"{url}/workspaces/{workspace_id}",
-            headers=auth["headers"],
-            timeout=10,
-        )
+        try:
+            httpx.delete(
+                f"{url}/workspaces/{workspace_id}",
+                headers=auth["headers"],
+                timeout=30,
+            )
+        except httpx.ReadTimeout:
+            pass  # container cleanup may take a while
 
     return workspace_id, cleanup
 
@@ -258,8 +223,10 @@ class TestEventFanout:
                         and event.get("name") == "container_ready"
                     )
 
-                msgs1 = await recv_until(ws1, is_container_ready, timeout=10)
-                msgs2 = await recv_until(ws2, is_container_ready, timeout=10)
+                msgs1, msgs2 = await asyncio.gather(
+                    recv_until(ws1, is_container_ready, timeout=30),
+                    recv_until(ws2, is_container_ready, timeout=30),
+                )
 
                 all_msgs = msgs1 + msgs2
                 assert any(is_container_ready(m) for m in all_msgs)
