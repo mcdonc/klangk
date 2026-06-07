@@ -535,7 +535,7 @@ class TestHandleTerminalStart:
 
         mock_session = AsyncMock()
         mock_session.start = AsyncMock(
-            side_effect=RuntimeError("docker broke")
+            side_effect=RuntimeError("podman broke")
         )
         MockTS = MagicMock(return_value=mock_session)
         with patch("klangk_backend.wshandler.TerminalSession", MockTS):
@@ -566,7 +566,7 @@ class TestHandleTerminalStart:
             with pytest.raises(asyncio.CancelledError):
                 await task
 
-        # session.stop() must be called to avoid leaking the aiodocker client
+        # session.stop() must be called to clean up the PTY subprocess
         mock_session.stop.assert_awaited_once()
         container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)

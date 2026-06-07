@@ -5,10 +5,10 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/docker/host/**"
+      - "src/containers/host/**"
       - "src/backend/klangk_backend/**"
       - "src/frontend/lib/**"
-      - "scripts/dockerbuild-host.sh"
+      - "scripts/build-host-image.sh"
       - "scripts/nginx.sh"
       - ".github/workflows/docker-host.yml"
 
@@ -33,7 +33,7 @@ jobs:
       - name: Build host image
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- dockerbuild-host
+          devenv shell -- build-host-image
 
       - name: Tag and push to GHCR
         run: |

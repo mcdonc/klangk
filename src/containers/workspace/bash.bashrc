@@ -30,7 +30,7 @@ alias ls='ls --color=auto'
 alias grep='grep --color=auto'
 
 # Determine which command to exec into (if any).
-# KLANGK_CMD_OVERRIDE (set per-session via docker exec -e) takes priority.
+# KLANGK_CMD_OVERRIDE (set per-session via podman exec -e) takes priority.
 # Otherwise fall back to the workspace default from the config mount.
 # KLANGK_CMD_STARTED guard prevents infinite recursion if the command is bash.
 if [ -z "$KLANGK_CMD_STARTED" ]; then

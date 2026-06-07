@@ -1,4 +1,4 @@
-name: Frontend E2E Tests
+name: "E2E: Frontend Tests"
 
 on:
   workflow_dispatch:
@@ -30,6 +30,8 @@ jobs:
       KLANGK_DEFAULT_USER: admin@plope.com
       KLANGK_DEFAULT_PASSWORD: admin
       KLANGK_TEST_MODE: "1"
+      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
+      KLANGK_PODMAN_BIN: /usr/bin/podman
     steps:
       - uses: actions/checkout@v6
 
@@ -40,7 +42,7 @@ jobs:
             e2e:
               - 'src/backend/**'
               - 'src/frontend/**'
-              - 'src/docker/workspace/**'
+              - 'src/containers/workspace/**'
               - 'plugins/**'
               - 'devenv.nix'
               - 'devenv.yaml'
@@ -49,7 +51,8 @@ jobs:
       - uses: ./.github/actions/devenv-setup
         if: steps.filter.outputs.e2e == 'true'
         with:
-          build-tasks: klangk:docker-build klangk:flutter-build
+          build-tasks: klangk:build-backend-image klangk:flutter-build
+          cache-nix: "false"
 
       - name: Run E2E tests
         if: steps.filter.outputs.e2e == 'true'

@@ -165,7 +165,7 @@ def list_workspaces(
 def create(
     name: str = typer.Argument(..., help="Workspace name"),
     image: str | None = typer.Option(
-        None, "--image", help="Docker image to use (see `klangk images`)"
+        None, "--image", help="Container image to use (see `klangk images`)"
     ),
     mount: list[str] | None = typer.Option(
         None,
@@ -743,7 +743,7 @@ def sync(
 
 @app.command()
 def images() -> None:
-    """List available Docker images for workspaces."""
+    """List available container images for workspaces."""
     _require_auth()
     try:
         data = _client().list_images()
@@ -759,7 +759,7 @@ def images() -> None:
 
 vol_app = typer.Typer(
     name="volumes",
-    help="Manage Docker volumes for workspaces.",
+    help="Manage container volumes for workspaces.",
     rich_markup_mode="rich",
 )
 app.add_typer(vol_app, name="volumes")
@@ -814,7 +814,7 @@ def list_invitations() -> None:
 def volumes_list(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
-    """List klangk-managed Docker volumes."""
+    """List klangk-managed container volumes."""
     _require_auth()
     client = _client()
     resp = client.get("/volumes")
@@ -841,7 +841,7 @@ def volumes_list(
 def volumes_create(
     name: str = typer.Argument(..., help="Volume name"),
 ) -> None:
-    """Create a named Docker volume."""
+    """Create a named container volume."""
     _require_auth()
     client = _client()
     resp = client.post("/volumes", json={"name": name})
@@ -857,7 +857,7 @@ def volumes_create(
 def volumes_rm(
     name: str = typer.Argument(..., help="Volume name"),
 ) -> None:
-    """Delete a named Docker volume."""
+    """Delete a named container volume."""
     _require_auth()
     client = _client()
     resp = client.delete(f"/volumes/{name}")

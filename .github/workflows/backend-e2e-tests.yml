@@ -1,4 +1,4 @@
-name: Backend E2E Tests
+name: "E2E: Backend Tests"
 
 on:
   workflow_dispatch:
@@ -17,6 +17,8 @@ jobs:
       KLANGK_LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       KLANGK_LLM_BASE_URL: https://ollama.com/v1
       KLANGK_LLM_MODEL: gemma4:31b
+      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
+      KLANGK_PODMAN_BIN: /usr/bin/podman
     steps:
       - uses: actions/checkout@v6
 
@@ -26,7 +28,7 @@ jobs:
           filters: |
             e2e:
               - 'src/backend/**'
-              - 'src/docker/workspace/**'
+              - 'src/containers/workspace/**'
               - 'devenv.nix'
               - 'devenv.yaml'
               - '.github/workflows/backend-e2e-tests.yml'
@@ -34,13 +36,8 @@ jobs:
       - uses: ./.github/actions/devenv-setup
         if: steps.filter.outputs.e2e == 'true'
         with:
-          build-tasks: klangk:docker-build
-
-      - name: Stop devenv services
-        if: steps.filter.outputs.e2e == 'true'
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv processes down --no-tui 2>/dev/null || true
+          build-tasks: klangk:build-backend-image
+          cache-nix: "false"
 
       - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'

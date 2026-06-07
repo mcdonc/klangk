@@ -85,7 +85,7 @@ async def init_db() -> None:
                 name TEXT NOT NULL,
                 container_id TEXT,
                 num_ports INTEGER NOT NULL DEFAULT 5,  -- see container.DEFAULT_PORTS_PER_WORKSPACE
-                image TEXT,  -- custom Docker image; NULL means use default
+                image TEXT,  -- custom container image; NULL means use default
                 default_command TEXT,  -- auto-run in terminal on connect
                 mounts TEXT,  -- JSON array of host:container mount specs
                 env TEXT,  -- JSON dict of custom environment variables

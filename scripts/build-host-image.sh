@@ -5,7 +5,7 @@
 # Requires: devenv shell (for venv), flutter build web (for frontend).
 #
 # Usage:
-#   bash scripts/dockerbuild-host.sh
+#   bash scripts/build-host-image.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -21,7 +21,7 @@ echo "Building $IMAGE $VERSION ..."
 
 docker build \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
-  -f src/docker/host/Dockerfile \
+  -f src/containers/host/Dockerfile \
   --build-arg "KLANGK_BUILD_VERSION=$VERSION" \
   --build-arg "KLANGK_BUILD_COMMIT=$COMMIT" \
   --build-arg "KLANGK_BUILD_TIMESTAMP=$TIMESTAMP" \

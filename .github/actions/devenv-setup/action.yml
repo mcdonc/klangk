@@ -3,8 +3,12 @@ description: Bootstrap nix/devenv, build Docker image, and start services
 
 inputs:
   build-tasks:
-    description: "Space-separated devenv tasks to run (e.g. 'klangk:docker-build klangk:flutter-build')"
+    description: "Space-separated devenv tasks to run (e.g. 'klangk:build-backend-image klangk:flutter-build')"
     required: true
+  cache-nix:
+    description: "Enable nix store caching (default true)"
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -26,6 +30,7 @@ runs:
           /usr/local/julia* &
 
     - name: Cache Nix store
+      if: inputs.cache-nix == 'true'
       uses: nix-community/cache-nix-action@v7
       with:
         primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'devenv.nix', 'devenv.yaml') }}
@@ -47,9 +52,3 @@ runs:
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
         devenv tasks run ${{ inputs.build-tasks }}
-
-    - name: Start services
-      shell: bash
-      run: |
-        . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-        devenv processes up -d

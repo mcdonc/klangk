@@ -326,10 +326,20 @@ export async function createAndOpenWorkspace(
   return { workspaceId, email, token, headers, cleanup };
 }
 
+/** Environment for podman subprocesses: strips LD_LIBRARY_PATH so
+ *  the nix-installed binary uses RPATH and system binaries don't
+ *  pick up nix's glibc. */
+function podmanEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.LD_LIBRARY_PATH;
+  return env;
+}
+
 export function dockerContainersForWorkspace(workspaceId: string): string[] {
+  const podman = process.env.KLANGK_PODMAN_BIN || "podman";
   const output = execSync(
-    `docker ps --filter "label=klangk.workspace-id=${workspaceId}" --format "{{.ID}}"`,
-    { encoding: "utf-8" },
+    `${podman} ps --filter "label=klangk.workspace-id=${workspaceId}" --format "{{.ID}}"`,
+    { encoding: "utf-8", env: podmanEnv() },
   );
   return output.trim().split("\n").filter(Boolean);
 }

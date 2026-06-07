@@ -8,7 +8,6 @@ Run with: devenv shell -- test-cli-e2e test_api_e2e.py
 
 import os
 import shutil
-import signal
 import subprocess
 import tempfile
 import time
@@ -60,7 +59,7 @@ def _start_server(data_dir, port, instance_id):
             "--port",
             port,
             "--ws-max-size",
-            "65536",
+            "16777216",
         ],
         cwd=os.path.join(os.path.dirname(__file__), ".."),
         env=env,
@@ -84,14 +83,14 @@ def _start_server(data_dir, port, instance_id):
 
 def _stop_server(proc, data_dir, instance_id):
     """Stop a server and clean up."""
-    proc.send_signal(signal.SIGTERM)
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
         proc.kill()
+        proc.wait(timeout=5)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
     result = subprocess.run(
         [
-            "docker",
+            "podman",
             "ps",
             "-a",
             "--filter",
@@ -103,7 +102,7 @@ def _stop_server(proc, data_dir, instance_id):
     )
     if result.stdout.strip():
         subprocess.run(
-            ["docker", "rm", "-f", *result.stdout.strip().split()],
+            ["podman", "rm", "-f", *result.stdout.strip().split()],
             capture_output=True,
         )
     shutil.rmtree(data_dir, ignore_errors=True)

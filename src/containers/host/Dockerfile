@@ -38,8 +38,8 @@ COPY --chown=klangk:klangk src/frontend/build/web /home/klangk/src/frontend/buil
 
 # Startup scripts and config
 COPY --chown=klangk:klangk scripts/nginx.sh /home/klangk/bin/nginx
-COPY --chown=klangk:klangk src/docker/host/entrypoint.sh /home/klangk/bin/entrypoint
-COPY --chown=klangk:klangk src/docker/host/supervisord.conf /home/klangk/etc/supervisord.conf
+COPY --chown=klangk:klangk src/containers/host/entrypoint.sh /home/klangk/bin/entrypoint
+COPY --chown=klangk:klangk src/containers/host/supervisord.conf /home/klangk/etc/supervisord.conf
 
 # Version file (injected at build time via --build-arg)
 ARG KLANGK_BUILD_VERSION=unknown

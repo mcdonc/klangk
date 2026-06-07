@@ -9,7 +9,7 @@ let
     python3 -m uvicorn klangk_backend.main:app \
        --host 0.0.0.0 \
        --port $KLANGK_PORT \
-       --ws-max-size 65536 \
+       --ws-max-size ''${KLANGK_WS_MSG_SIZE_MAX:-16777216} \
        --ws-ping-interval 20 \
        --ws-ping-timeout 20'';
 in
@@ -41,6 +41,7 @@ in
     gzip
     gnutar
     nginx
+    podman
     sqlite.bin
     rsync
   ];
@@ -62,12 +63,12 @@ in
         "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
       ];
     };
-    "klangk:docker-build" = {
-      exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild.sh"'';
+    "klangk:build-backend-image" = {
+      exec = ''exec bash "$DEVENV_ROOT/scripts/build-backend-image.sh"'';
       showOutput = true;
       execIfModified = [
-        "scripts/dockerbuild.sh"
-        "src/docker/workspace/**"
+        "scripts/build-backend-image.sh"
+        "src/containers/workspace/**"
         "${config.env.KLANGK_PLUGINS_DIR}/**/*.ts"
         "${config.env.KLANGK_PLUGINS_DIR}/**/tools/**"
         "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
@@ -75,14 +76,15 @@ in
     };
     "klangk:kill-containers" = {
       exec = ''
-        if [ ! -f /.dockerenv ]; then
-          docker ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q | xargs -r docker rm -f
+        if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
+          ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q \
+            | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
         fi
       '';
     };
     "klangk:kill-port-holders" = {
       exec = ''
-        if [ ! -f /.dockerenv ]; then
+        if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
           for port in $KLANGK_PORT $KLANGK_NGINX_PORT; do
             fuser -k "$port/tcp" 2>/dev/null || true
           done
@@ -98,7 +100,7 @@ in
       '';
       after = [
         "klangk:flutter-build"
-        "klangk:docker-build"
+        "klangk:build-backend-image"
         "klangk:kill-containers"
         "klangk:kill-port-holders"
       ];
@@ -107,7 +109,7 @@ in
       exec = ''exec bash "$DEVENV_ROOT/scripts/nginx.sh"'';
       after = [
         "klangk:flutter-build"
-        "klangk:docker-build"
+        "klangk:build-backend-image"
         "klangk:kill-port-holders"
       ];
     };
@@ -127,6 +129,10 @@ in
     config.devenv.root + "/.devenv/state/klangk/plugins"
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
+  # Rootless podman from nix has no default policy.json; generated in
+  # enterShell, scripts reference it via this env var + --signature-policy.
+  env.KLANGK_SIGNATURE_POLICY =
+    config.devenv.state + "/klangk/podman/policy.json";
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
   # Docker build platform for klangk images. Defaults to the host
   # architecture so arm64 machines build/run natively instead of under
@@ -138,16 +144,12 @@ in
   );
   dotenv.enable = true;
 
-  scripts.flutterbuildweb.exec = ''
-    exec devenv tasks run klangk:flutter-build \
-      --refresh-task-cache "$@"'';
-  scripts.dockerbuild.exec = ''
-    exec devenv tasks run klangk:docker-build \
-      --refresh-task-cache "$@"'';
+  scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
+  scripts.build-backend-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-backend-image.sh" "$@"'';
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
-  scripts.dockerbuild-base.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-base.sh" "$@"'';
-  scripts.dockerbuild-host.exec = ''exec bash "$DEVENV_ROOT/scripts/dockerbuild-host.sh" "$@"'';
+  scripts.build-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-base-image.sh" "$@"'';
+  scripts.build-host-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-host-image.sh" "$@"'';
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
 
   scripts.run-host-container.exec = ''
@@ -171,9 +173,9 @@ in
   '';
 
   scripts.kill-containers.exec = ''
-    docker ps -a \
+    ''${KLANGK_PODMAN_BIN:-podman} ps -a \
       --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" \
-      -q | xargs -r docker rm -f
+      -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
   '';
 
   scripts.restart.exec = ''
@@ -185,8 +187,8 @@ in
   '';
 
   scripts.rebuild.exec = ''
-    echo "Rebuilding Docker image..."
-    dockerbuild
+    echo "Rebuilding backend image..."
+    build-backend-image
     echo "Rebuilding Flutter..."
     flutterbuildweb
     echo "==> Done"
@@ -212,7 +214,7 @@ in
 
   scripts.test-frontend-e2e.exec = ''
     cd $DEVENV_ROOT
-    devenv tasks run klangk:flutter-build klangk:docker-build
+    devenv tasks run klangk:flutter-build klangk:build-backend-image
     cd src/frontend/e2e-tests
     npm install --silent
     exec npx playwright test --reporter=list "$@"
@@ -302,6 +304,28 @@ in
 
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
+
+    # Podman config lives outside the storage directory so
+    # `podman system reset` doesn't delete it.
+    _PODMAN_CONF="$DEVENV_STATE/klangk/podman"
+    _PODMAN_STORE="$DEVENV_STATE/klangk/containers"
+    # KLANGK_PODMAN_STORAGE: custom path for podman image storage.
+    # Use an ext4 filesystem (not ZFS) for --userns=keep-id support.
+    # ZFS lacks idmapped mounts, causing storage-chown-by-maps to hang.
+    _PODMAN_GRAPHROOT="''${KLANGK_PODMAN_STORAGE:-$_PODMAN_STORE/storage}"
+    mkdir -p "$_PODMAN_CONF" "$_PODMAN_STORE/run" "$_PODMAN_GRAPHROOT"
+
+    cat > "$_PODMAN_CONF/storage.conf" <<STORAGE
+    [storage]
+    driver = "overlay"
+    graphroot = "$_PODMAN_GRAPHROOT"
+    runroot = "$_PODMAN_STORE/run"
+    STORAGE
+    export CONTAINERS_STORAGE_CONF="$_PODMAN_CONF/storage.conf"
+    if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
+      echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
+        > "$_PODMAN_CONF/policy.json"
+    fi
 
     # Ensure klangk_plugins stub exists so flutter pub get works
     # before plugins are fetched (first-time checkout / CI)

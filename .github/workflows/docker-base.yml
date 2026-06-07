@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/docker/workspace/Dockerfile.base"
+      - "src/containers/workspace/Dockerfile.base"
       - ".github/workflows/docker-base.yml"
 
 jobs:
@@ -29,10 +29,10 @@ jobs:
           docker build --platform linux/amd64 \
             --build-arg KLANGK_UID=1000 \
             --build-arg KLANGK_GID=1000 \
-            -f src/docker/workspace/Dockerfile.base \
+            -f src/containers/workspace/Dockerfile.base \
             -t "$REPO:latest" \
             -t "$REPO:$VERSION" \
-            src/docker/workspace/
+            src/containers/workspace/
 
       - name: Push base image
         run: |

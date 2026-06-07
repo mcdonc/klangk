@@ -5,7 +5,7 @@
 # manifest list so that amd64 (CI) and arm64 (Apple Silicon) machines
 # each pull a native base image. A multi-arch build cannot be loaded
 # into the local Docker engine, so it is built and pushed in one step
-# via buildx; use dockerbuild-base.sh for a local single-arch build.
+# via buildx; use build-base-image.sh for a local single-arch build.
 #
 # Override the published architectures with KLANGK_BASE_PLATFORMS,
 # e.g. KLANGK_BASE_PLATFORMS=linux/amd64 to publish amd64 only.
@@ -39,10 +39,10 @@ docker buildx build \
   --platform "$PLATFORMS" \
   --build-arg KLANGK_UID="$(id -u)" \
   --build-arg KLANGK_GID="$(id -g)" \
-  -f src/docker/workspace/Dockerfile.base \
+  -f src/containers/workspace/Dockerfile.base \
   -t "$IMAGE:latest" \
   -t "$IMAGE:$VERSION" \
   --push \
-  "$@" src/docker/workspace/
+  "$@" src/containers/workspace/
 
 echo "==> Done: $IMAGE:$VERSION ($PLATFORMS)"
