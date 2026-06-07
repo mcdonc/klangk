@@ -233,6 +233,25 @@ in
   scripts.test-frontend.exec = ''
     cd $DEVENV_ROOT/src/frontend
     rm -rf coverage
+
+    # macOS only: flutter compiles the objective_c native FFI (a transitive
+    # dep via the flterm/libghostty terminal stack) during `flutter test`.
+    # dart's native_toolchain_c resolves the macOS SDK by running
+    # `xcrun --sdk macosx --show-sdk-path`. The first xcrun on PATH is the
+    # nix `xcbuild` shim, which only resolves the SDK when DEVELOPER_DIR is
+    # set -- but flutter strips DEVELOPER_DIR from the native-assets hook, so
+    # that xcrun fails and its error string is fed to clang as -isysroot,
+    # producing "'Foundation/Foundation.h' file not found".
+    #
+    # Fix: prepend scripts/xcrun-shim (which delegates to the system
+    # /usr/bin/xcrun) to PATH. The system xcrun resolves the SDK via
+    # xcode-select state with no env at all (returns the system MacOSX SDK,
+    # which includes the frameworks); the nix clang-wrapper compiles
+    # objective-c against that SDK fine.
+    if [ "$(uname -s)" = "Darwin" ] && [ -x /usr/bin/xcrun ]; then
+      export PATH="$DEVENV_ROOT/scripts/xcrun-shim:$PATH"
+    fi
+
     flutter test --coverage "$@"
     test_exit=$?
     cov_exit=0
