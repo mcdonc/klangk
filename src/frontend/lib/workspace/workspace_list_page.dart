@@ -519,9 +519,14 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   final i = e.key;
                   final ws = e.value;
                   final wsMembers = _workspaceMembers[ws['id'] as String] ?? [];
-                  return Container(
-                    color:
-                        i.isEven ? Colors.white.withValues(alpha: 0.03) : null,
+                  // Material (not a plain ColoredBox/Container color) so the
+                  // ListTile paints its background and ink splashes on this
+                  // surface; Flutter 3.44+ asserts when a ListTile's nearest
+                  // ancestor with a background is a ColoredBox.
+                  return Material(
+                    color: i.isEven
+                        ? Colors.white.withValues(alpha: 0.03)
+                        : Colors.transparent,
                     child: ListTile(
                       leading: const Icon(Icons.terminal,
                           size: 20, color: KColors.accentGreen),
@@ -599,10 +604,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     ],
                   ),
                 ),
-                ..._sharedWorkspaces.asMap().entries.map((e) => Container(
+                ..._sharedWorkspaces.asMap().entries.map((e) => Material(
                       color: e.key.isEven
                           ? Colors.white.withValues(alpha: 0.03)
-                          : null,
+                          : Colors.transparent,
                       child: ListTile(
                         leading: const Icon(Icons.terminal,
                             size: 20, color: KColors.accentBlue),
