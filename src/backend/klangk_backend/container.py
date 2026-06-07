@@ -353,11 +353,6 @@ class ContainerRegistry:
         ]
         env_vars.append(f"KLANGK_PORT_MAPPINGS={','.join(mappings)}")
         env_vars.append(f"KLANGK_WORKSPACE_ID={workspace_id}")
-        # Pass host UID/GID so the entrypoint can match the klangk user
-        # to the host user (skipped when --userns handles the mapping).
-        if not util.resolve_env_secret("KLANGK_USERNS"):
-            env_vars.append(f"KLANGK_HOST_UID={os.getuid()}")
-            env_vars.append(f"KLANGK_HOST_GID={os.getgid()}")
         env_vars.append(
             f"KLANGK_BRIDGE_URL=http://host.containers.internal:{nginx_port}"
         )
@@ -428,7 +423,7 @@ class ContainerRegistry:
             env=env_vars,
             init=True,
             interactive=True,
-            userns=util.resolve_env_secret("KLANGK_USERNS") or None,
+            userns=util.resolve_env_secret("KLANGK_USERNS", "keep-id"),
             pull=image_pull_policy(),
         )
 
