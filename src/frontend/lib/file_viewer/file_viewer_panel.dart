@@ -128,6 +128,24 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     return response.bodyBytes;
   }
 
+  /// Persists [content] to [path] via the `/files/upload` endpoint (which
+  /// overwrites). Injected into [RenderableFile.saveText] so editor renderers
+  /// can save edits.
+  Future<void> _saveFileText(String path, String content) async {
+    final name =
+        path.contains('/') ? path.substring(path.lastIndexOf('/') + 1) : path;
+    final uri = Uri.parse(
+        '$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(path)}');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_headers)
+      ..files
+          .add(http.MultipartFile.fromString('file', content, filename: name));
+    final response = await _client.send(request);
+    if (response.statusCode != 200) {
+      throw Exception('Save failed: ${response.statusCode}');
+    }
+  }
+
   /// Builds the registry's view of [path] with loaders bound to this panel's
   /// http client.
   RenderableFile _renderableFor(String path) {
@@ -143,6 +161,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       readBytes: () => _readFileBytes(path),
       downloadUrl:
           '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
+      saveText: (content) => _saveFileText(path, content),
     );
   }
 

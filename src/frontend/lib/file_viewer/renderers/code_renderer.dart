@@ -40,6 +40,10 @@ const _languageByExtension = {
 String languageForExtension(String extension) =>
     _languageByExtension[extension] ?? 'plaintext';
 
+/// Whether [extension] is a code file type (handled by the code view/editor).
+bool isCodeExtension(String extension) =>
+    _languageByExtension.containsKey(extension);
+
 /// Read-only, syntax-highlighted view for code files via `flutter_highlight`.
 class CodeRenderer extends FileRenderer {
   @override
@@ -55,8 +59,7 @@ class CodeRenderer extends FileRenderer {
   int get priority => 10;
 
   @override
-  bool canRender(RenderableFile file) =>
-      _languageByExtension.containsKey(file.extension);
+  bool canRender(RenderableFile file) => isCodeExtension(file.extension);
 
   @override
   Widget build(BuildContext context, RenderableFile file) =>
