@@ -598,29 +598,23 @@ class TestRequireSecureJwtSecret:
         auth.require_secure_jwt_secret()  # no raise
 
     def test_default_secret_is_insecure(self, monkeypatch):
-        monkeypatch.setattr(
-            auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET
-        )
+        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
         assert auth.jwt_secret_is_secure() is False
 
-    def test_default_secret_blocks_startup(self, monkeypatch):
-        monkeypatch.setattr(
-            auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET
-        )
-        monkeypatch.delenv("KLANGK_ALLOW_INSECURE_JWT_SECRET", raising=False)
+    def test_default_secret_warns(self, monkeypatch):
+        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
+        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
+        auth.require_secure_jwt_secret()  # warns but does not raise
+
+    def test_default_secret_blocks_with_prevent(self, monkeypatch):
+        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
+        monkeypatch.setenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", "1")
         with pytest.raises(RuntimeError, match="KLANGK_JWT_SECRET"):
             auth.require_secure_jwt_secret()
 
-    def test_empty_secret_blocks_startup(self, monkeypatch):
+    def test_empty_secret_blocks_with_prevent(self, monkeypatch):
         monkeypatch.setattr(auth, "SECRET_KEY", "")
-        monkeypatch.delenv("KLANGK_ALLOW_INSECURE_JWT_SECRET", raising=False)
+        monkeypatch.setenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", "1")
         assert auth.jwt_secret_is_secure() is False
         with pytest.raises(RuntimeError):
             auth.require_secure_jwt_secret()
-
-    def test_insecure_allowed_with_optin(self, monkeypatch):
-        monkeypatch.setattr(
-            auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET
-        )
-        monkeypatch.setenv("KLANGK_ALLOW_INSECURE_JWT_SECRET", "1")
-        auth.require_secure_jwt_secret()  # no raise

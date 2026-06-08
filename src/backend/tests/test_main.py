@@ -58,9 +58,7 @@ class TestLifespan:
     async def test_lifespan_starts_and_stops(self, db, monkeypatch):
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        # Tests run with the insecure default JWT secret; allow it explicitly
-        # so the startup guard doesn't abort lifespan.
-        monkeypatch.setenv("KLANGK_ALLOW_INSECURE_JWT_SECRET", "1")
+        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
         with (
             patch.object(

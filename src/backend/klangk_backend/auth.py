@@ -68,28 +68,27 @@ def jwt_secret_is_secure() -> bool:
 
 
 def require_secure_jwt_secret() -> None:
-    """Fail closed at startup unless a strong JWT secret is configured.
+    """Warn or fail at startup if the JWT secret is insecure.
 
-    With the unset/default secret, anyone can forge tokens for any user or
-    role. The insecure default is permitted only when
-    KLANGK_ALLOW_INSECURE_JWT_SECRET is truthy (local dev / tests).
+    With the unset/default secret, anyone can forge tokens for any user.
+    When KLANGK_PREVENT_INSECURE_JWT_SECRET is truthy, startup fails.
+    Otherwise a warning is logged.
     """
     if jwt_secret_is_secure():
         return
-    allow = (
-        resolve_env_secret("KLANGK_ALLOW_INSECURE_JWT_SECRET", "") or ""
+    prevent = (
+        resolve_env_secret("KLANGK_PREVENT_INSECURE_JWT_SECRET", "") or ""
     ).lower()
-    if allow in ("1", "true", "yes"):
-        logger.warning(
-            "KLANGK_JWT_SECRET is unset or the insecure default; allowed "
-            "only because KLANGK_ALLOW_INSECURE_JWT_SECRET is set. Do NOT "
-            "use this in production."
+    if prevent in ("1", "true", "yes"):
+        raise RuntimeError(
+            "KLANGK_JWT_SECRET is unset or the insecure default. Set a "
+            "strong secret or remove KLANGK_PREVENT_INSECURE_JWT_SECRET."
         )
-        return
-    raise RuntimeError(
-        "KLANGK_JWT_SECRET is unset or the insecure default. Set a strong "
-        "secret (or KLANGK_ALLOW_INSECURE_JWT_SECRET=1 for local dev)."
+    logger.warning(
+        "KLANGK_JWT_SECRET is unset or the insecure default. Set "
+        "KLANGK_PREVENT_INSECURE_JWT_SECRET=1 in production."
     )
+
 
 MIN_PASSWORD_LENGTH = int(
     resolve_env_secret("KLANGK_MIN_PASSWORD_LENGTH", "4")
