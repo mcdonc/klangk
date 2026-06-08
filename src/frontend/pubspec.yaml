@@ -21,7 +21,7 @@ dependencies:
   flterm:
     git:
       url: https://github.com/runyaga/libghostty.git
-      ref: main
+      ref: "0.0.3.1"
       path: packages/flterm
   libghostty: ^0.0.9
   google_fonts: ^8.1.0
