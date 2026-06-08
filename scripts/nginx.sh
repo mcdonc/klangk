@@ -48,9 +48,12 @@ fi
 #     proxy that handles external access and authentication.
 PODMAN_BIN="${KLANGK_PODMAN_BIN:-podman}"
 
+_explicit_override=false
 if [ -n "${KLANGK_CONTAINER_SUBNETS:-}" ]; then
   # Explicit override — use exactly what the operator specified.
+  # 127.0.0.1 is NOT added implicitly; include it in the list if needed.
   IFS=',' read -ra _subnets <<<"$KLANGK_CONTAINER_SUBNETS"
+  _explicit_override=true
 else
   # Auto-detect from the default podman/docker network.
   _subnets=()
@@ -73,9 +76,12 @@ if [ ${#_subnets[@]} -gt 0 ]; then
   for cidr in "${_subnets[@]}"; do
     CONTAINER_ACL+="      allow ${cidr};"$'\n'
   done
-  CONTAINER_ACL+="      allow 127.0.0.1;"$'\n'
+  if [ "$_explicit_override" = false ]; then
+    # Auto-detected: also allow localhost (backend runs there).
+    CONTAINER_ACL+="      allow 127.0.0.1;"$'\n'
+  fi
   CONTAINER_ACL+="      deny all;"
-  echo "nginx container ACL: detected subnets: ${_subnets[*]}" >&2
+  echo "nginx container ACL: subnets: ${_subnets[*]}${_explicit_override:+ (explicit)}" >&2
 else
   # Fallback: broad RFC1918 ranges covering typical container subnets.
   # 192.168.0.0/16 is intentionally excluded — it is the most common
