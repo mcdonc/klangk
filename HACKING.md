@@ -5,18 +5,6 @@
 - Podman (rootless) available
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (or run `./bootstrap`)
 
-### macOS
-
-On macOS, podman runs inside a Linux VM. Install it via Homebrew and start the VM before using Klangk:
-
-```bash
-brew install podman
-podman machine init    # one-time setup
-podman machine start   # run before each dev session
-```
-
-The devenv shell provides its own `podman` binary, but it delegates to the running VM. If `podman machine` is not running, container operations will fail.
-
 ## Getting Started
 
 ```bash
