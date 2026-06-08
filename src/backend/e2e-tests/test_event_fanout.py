@@ -41,6 +41,7 @@ def server():
         "KLANGK_PORT": port,
         "KLANGK_DATA_DIR": data_dir,
         "KLANGK_JWT_SECRET": "fanout-e2e-secret",
+        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",

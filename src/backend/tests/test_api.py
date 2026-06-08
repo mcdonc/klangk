@@ -4619,6 +4619,7 @@ class TestOIDCCallback:
         default_claims = {
             "sub": "oidc-sub-123",
             "email": "oidcuser@example.com",
+            "email_verified": True,
         }
         if claims:
             default_claims.update(claims)
@@ -4779,6 +4780,7 @@ class TestOIDCCallback:
                 return_value={
                     "sub": "cli-sub",
                     "email": "cli@example.com",
+                    "email_verified": True,
                 }
             ),
         )
@@ -4947,6 +4949,49 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 502
         assert "missing" in resp.json()["detail"].lower()
+
+    async def test_callback_unverified_email_rejected(
+        self, client, monkeypatch, db
+    ):
+        """An unverified email claim is refused (account-takeover guard)."""
+        _, cookie_data = await self._setup_callback(
+            client,
+            monkeypatch,
+            db,
+            claims={"email_verified": False},
+        )
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+        assert "not verified" in resp.json()["detail"].lower()
+        # No account was provisioned from the unverified claim.
+        assert await model.get_user_by_email("oidcuser@example.com") is None
+
+    async def test_callback_unverified_email_trusted_provider(
+        self, client, monkeypatch, db
+    ):
+        """trust_unverified_email lets a trusted IdP skip the check."""
+        provider, cookie_data = await self._setup_callback(
+            client,
+            monkeypatch,
+            db,
+            claims={"email_verified": False},
+        )
+        provider.trust_unverified_email = True
+        resp = await client.get(
+            "/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert (
+            await model.get_user_by_email("oidcuser@example.com") is not None
+        )
 
     async def test_callback_unknown_provider(self, client, monkeypatch, db):
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)

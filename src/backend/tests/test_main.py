@@ -58,6 +58,7 @@ class TestLifespan:
     async def test_lifespan_starts_and_stops(self, db, monkeypatch):
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
         with (
             patch.object(

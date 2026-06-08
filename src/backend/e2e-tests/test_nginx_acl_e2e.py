@@ -171,6 +171,7 @@ class TestNginxAclEnforcement:
             "KLANGK_PORT": backend_port,
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_JWT_SECRET": "nginx-acl-test-secret",
+            "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
             "KLANGK_DEFAULT_USER": "test@example.com",
             "KLANGK_DEFAULT_PASSWORD": "testpass",
             "KLANGK_TEST_MODE": "1",

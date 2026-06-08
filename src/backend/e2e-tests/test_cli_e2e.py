@@ -41,6 +41,7 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         "KLANGK_PORT": port,
         "KLANGK_DATA_DIR": data_dir,
         "KLANGK_JWT_SECRET": "cli-e2e-test-secret",
+        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",

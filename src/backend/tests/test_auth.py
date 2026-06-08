@@ -589,3 +589,32 @@ class TestInvitationsEnabled:
     def test_disabled(self, monkeypatch):
         monkeypatch.setenv("KLANGK_DISABLE_INVITES", "true")
         assert auth.invitations_enabled() is False
+
+
+class TestRequireSecureJwtSecret:
+    def test_secure_secret_passes(self, monkeypatch):
+        monkeypatch.setattr(auth, "SECRET_KEY", "a-real-strong-secret")
+        assert auth.jwt_secret_is_secure() is True
+        auth.require_secure_jwt_secret()  # no raise
+
+    def test_default_secret_is_insecure(self, monkeypatch):
+        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
+        assert auth.jwt_secret_is_secure() is False
+
+    def test_default_secret_warns(self, monkeypatch):
+        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
+        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
+        auth.require_secure_jwt_secret()  # warns but does not raise
+
+    def test_default_secret_blocks_with_prevent(self, monkeypatch):
+        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
+        monkeypatch.setenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", "1")
+        with pytest.raises(RuntimeError, match="KLANGK_JWT_SECRET"):
+            auth.require_secure_jwt_secret()
+
+    def test_empty_secret_blocks_with_prevent(self, monkeypatch):
+        monkeypatch.setattr(auth, "SECRET_KEY", "")
+        monkeypatch.setenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", "1")
+        assert auth.jwt_secret_is_secure() is False
+        with pytest.raises(RuntimeError):
+            auth.require_secure_jwt_secret()
