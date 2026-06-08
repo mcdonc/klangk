@@ -490,6 +490,8 @@ Async hooks are also supported (`async def`).
 - If the hook raises an exception, it's logged and group sync is skipped (user still logs in)
 - If `KLANGK_GROUP_MAPPING_HOOK` is not set, no group sync occurs
 
+**Security note:** The hook is entirely responsible for auditing, logging, and hardening of group sync operations. There is no default hook and no default mappings — the hook is written by the deploying organization (or their consultants), and it is their responsibility to give IdP claims as much or as little trust as appropriate. There is no declarative aspect to its operation; the hook is arbitrary Python code with full control over which groups are returned.
+
 **Built-in example hook:**
 
 An example hook is included at `klangk_backend.oidc.example_admin_hook` that maps the `realm_access.roles` claim containing `klangk-admin` to the `admin` group. Use it as a starting point:
