@@ -558,5 +558,92 @@ void main() {
       client.disconnectWorkspace();
       expect(client.workspaceMembers, isEmpty);
     });
+
+    test('presence_list populates presenceUsers', () async {
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {'user_id': 'u1', 'user_email': 'alice@test.com'},
+          {'user_id': 'u2', 'user_email': 'bob@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.presenceUsers.length, 2);
+      expect(client.presenceUsers[0]['user_email'], 'alice@test.com');
+    });
+
+    test('presence_join adds user', () async {
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {'user_id': 'u1', 'user_email': 'alice@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+
+      channel.serverSend({
+        'type': 'presence_join',
+        'user_id': 'u2',
+        'user_email': 'bob@test.com',
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.presenceUsers.length, 2);
+      expect(client.presenceUsers.any((u) => u['user_id'] == 'u2'), isTrue);
+    });
+
+    test('presence_join ignores duplicate', () async {
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {'user_id': 'u1', 'user_email': 'alice@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+
+      channel.serverSend({
+        'type': 'presence_join',
+        'user_id': 'u1',
+        'user_email': 'alice@test.com',
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.presenceUsers.length, 1);
+    });
+
+    test('presence_leave removes user', () async {
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {'user_id': 'u1', 'user_email': 'alice@test.com'},
+          {'user_id': 'u2', 'user_email': 'bob@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+
+      channel.serverSend({
+        'type': 'presence_leave',
+        'user_id': 'u1',
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.presenceUsers.length, 1);
+      expect(client.presenceUsers[0]['user_id'], 'u2');
+    });
+
+    test('disconnectWorkspace clears presenceUsers', () async {
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {'user_id': 'u1', 'user_email': 'alice@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.presenceUsers.length, 1);
+
+      client.disconnectWorkspace();
+      expect(client.presenceUsers, isEmpty);
+    });
   });
 }

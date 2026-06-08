@@ -2190,6 +2190,57 @@ test.describe("Klangk E2E", () => {
     });
   });
 
+  test("presence_list includes logged-in user on connect", async ({
+    browser,
+    request,
+  }) => {
+    const email = `presence-${Date.now()}@test.example.com`;
+    const { headers } = await registerUser(request, email);
+
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers,
+      data: { name: `e2e-presence-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspaceId = (await wsResp.json()).id;
+
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+
+    const presenceMessages: string[] = [];
+    page.on("websocket", (ws) => {
+      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+        const text = frame.payload.toString();
+        if (text.includes("presence_list")) {
+          presenceMessages.push(text);
+        }
+      });
+    });
+
+    await openWorkspace(page, email, workspaceId, {
+      waitForTerminal: true,
+    });
+
+    // Wait for presence_list to arrive
+    await page.waitForTimeout(2000);
+
+    expect(presenceMessages.length).toBeGreaterThan(0);
+    const presenceList = JSON.parse(
+      presenceMessages[presenceMessages.length - 1],
+    );
+    expect(presenceList.type).toBe("presence_list");
+    expect(presenceList.users.length).toBeGreaterThan(0);
+    const emails = presenceList.users.map(
+      (u: { user_email: string }) => u.user_email,
+    );
+    expect(emails).toContain(email);
+
+    await ctx.close();
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers,
+    });
+  });
+
   test("container recreated on page refresh", async ({ page, request }) => {
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,

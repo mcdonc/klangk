@@ -70,6 +70,9 @@ class WsClient extends ChangeNotifier {
   /// Workspace members for @mention autocomplete.
   List<Map<String, dynamic>> workspaceMembers = [];
 
+  /// Users currently connected to the workspace.
+  List<Map<String, dynamic>> presenceUsers = [];
+
   /// Chat messages (individual and history) from the backend.
   Stream<Map<String, dynamic>> get chatMessages => _chatController.stream;
 
@@ -160,6 +163,26 @@ class WsClient extends ChangeNotifier {
             final members = json['members'] as List? ?? [];
             workspaceMembers = members.cast<Map<String, dynamic>>();
             notifyListeners();
+          } else if (type == 'presence_list') {
+            final users = json['users'] as List? ?? [];
+            presenceUsers = users.cast<Map<String, dynamic>>();
+            notifyListeners();
+          } else if (type == 'presence_join') {
+            final uid = json['user_id'] as String?;
+            if (uid != null && !presenceUsers.any((u) => u['user_id'] == uid)) {
+              presenceUsers = [
+                ...presenceUsers,
+                {'user_id': uid, 'user_email': json['user_email']},
+              ];
+              notifyListeners();
+            }
+          } else if (type == 'presence_leave') {
+            final uid = json['user_id'] as String?;
+            if (uid != null) {
+              presenceUsers =
+                  presenceUsers.where((u) => u['user_id'] != uid).toList();
+              notifyListeners();
+            }
           } else if (type == 'event') {
             _customEventController.add(json);
           }
@@ -214,6 +237,7 @@ class WsClient extends ChangeNotifier {
     _currentWorkspaceId = null;
     chatHistory.clear();
     workspaceMembers = [];
+    presenceUsers = [];
     notifyListeners();
   }
 

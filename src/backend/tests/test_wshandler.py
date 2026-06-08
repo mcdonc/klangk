@@ -2598,6 +2598,192 @@ class TestChatSend:
         assert user["id"] in member_ids
 
 
+class TestPresence:
+    async def test_presence_list_on_connect(self, user):
+        """Joining user receives presence_list with current users."""
+        workspace = await _create_workspace_with_acl(user["id"], "pres-ws")
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        wshandler.state.connections[sock] = conn
+
+        async def fake_start(wid, ws_obj):
+            conn.container_id = "cid"
+            session = wshandler.state.get_or_create_session(wid)
+            await session.add_subscriber(sock, "cid")
+
+        try:
+            with (
+                patch.object(
+                    Connection,
+                    "start_workspace_container",
+                    side_effect=fake_start,
+                ),
+                patch.object(
+                    container.registry,
+                    "get_workspace_ports",
+                    return_value=[],
+                ),
+            ):
+                await conn.handle_workspace_connect(
+                    {"workspaceId": workspace["id"]}
+                )
+
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            plist = [c for c in calls if c.get("type") == "presence_list"]
+            assert len(plist) == 1
+            assert any(u["user_id"] == user["id"] for u in plist[0]["users"])
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock, None)
+
+    async def test_presence_join_broadcast(self, user):
+        """Existing subscribers receive presence_join when someone connects."""
+        from klangk_backend import model
+
+        workspace = await _create_workspace_with_acl(
+            user["id"], "pres-join-ws"
+        )
+
+        # First user connects
+        sock1 = _mock_sock()
+        conn1 = _base_conn(user=user, ws=sock1)
+
+        session = wshandler.state.get_or_create_session(workspace["id"])
+        session.subscribers.add(sock1)
+        wshandler.state.connections[sock1] = conn1
+        conn1.workspace_id = workspace["id"]
+
+        # Second user connects
+        other = await model.create_user(
+            "other@test.com", "hash", verified=True
+        )
+        await model.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            1,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        sock2 = _mock_sock()
+        conn2 = _base_conn(
+            user={"id": other["id"], "email": "other@test.com"}, ws=sock2
+        )
+        wshandler.state.connections[sock2] = conn2
+
+        async def fake_start(wid, ws_obj):
+            conn2.container_id = "cid"
+            session = wshandler.state.get_or_create_session(wid)
+            await session.add_subscriber(sock2, "cid")
+
+        try:
+            with (
+                patch.object(
+                    Connection,
+                    "start_workspace_container",
+                    side_effect=fake_start,
+                ),
+                patch.object(
+                    container.registry,
+                    "get_workspace_ports",
+                    return_value=[],
+                ),
+            ):
+                await conn2.handle_workspace_connect(
+                    {"workspaceId": workspace["id"]}
+                )
+
+            # sock1 should have received presence_join for other user
+            calls1 = [c[0][0] for c in sock1.send_json.call_args_list]
+            joins = [c for c in calls1 if c.get("type") == "presence_join"]
+            assert len(joins) == 1
+            assert joins[0]["user_id"] == other["id"]
+            assert joins[0]["user_email"] == "other@test.com"
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock1, None)
+            wshandler.state.connections.pop(sock2, None)
+
+    async def test_presence_leave_broadcast(self, user):
+        """Remaining subscribers receive presence_leave on disconnect."""
+        from klangk_backend import model
+
+        workspace = await _create_workspace_with_acl(user["id"], "pres-lv-ws")
+
+        sock1 = _mock_sock()
+        sock2 = _mock_sock()
+        conn1 = _base_conn(user=user, ws=sock1)
+        other = await model.create_user("lv@test.com", "hash", verified=True)
+        conn2 = _base_conn(
+            user={"id": other["id"], "email": "lv@test.com"}, ws=sock2
+        )
+        conn1.workspace_id = workspace["id"]
+        conn2.workspace_id = workspace["id"]
+
+        session = WorkspaceSession(workspace["id"])
+        session.subscribers.add(sock1)
+        session.subscribers.add(sock2)
+        wshandler.state.sessions[workspace["id"]] = session
+        wshandler.state.connections[sock1] = conn1
+        wshandler.state.connections[sock2] = conn2
+
+        try:
+            # conn2 disconnects
+            await conn2.cleanup()
+
+            calls1 = [c[0][0] for c in sock1.send_json.call_args_list]
+            leaves = [c for c in calls1 if c.get("type") == "presence_leave"]
+            assert len(leaves) == 1
+            assert leaves[0]["user_id"] == other["id"]
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock1, None)
+            wshandler.state.connections.pop(sock2, None)
+
+    async def test_presence_leave_multi_tab(self, user):
+        """No presence_leave if user has another connection in workspace."""
+        from klangk_backend import model
+
+        workspace = await _create_workspace_with_acl(user["id"], "pres-mt-ws")
+
+        sock1 = _mock_sock()
+        sock2 = _mock_sock()
+        sock3 = _mock_sock()
+        # sock1 and sock2 are same user, sock3 is another user
+        conn1 = _base_conn(user=user, ws=sock1)
+        conn2 = _base_conn(user=user, ws=sock2)
+        other = await model.create_user("mt@test.com", "hash", verified=True)
+        conn3 = _base_conn(
+            user={"id": other["id"], "email": "mt@test.com"}, ws=sock3
+        )
+        conn1.workspace_id = workspace["id"]
+        conn2.workspace_id = workspace["id"]
+        conn3.workspace_id = workspace["id"]
+
+        session = WorkspaceSession(workspace["id"])
+        session.subscribers.add(sock1)
+        session.subscribers.add(sock2)
+        session.subscribers.add(sock3)
+        wshandler.state.sessions[workspace["id"]] = session
+        wshandler.state.connections[sock1] = conn1
+        wshandler.state.connections[sock2] = conn2
+        wshandler.state.connections[sock3] = conn3
+
+        try:
+            # sock1 disconnects, but sock2 (same user) remains
+            await conn1.cleanup()
+
+            calls3 = [c[0][0] for c in sock3.send_json.call_args_list]
+            leaves = [c for c in calls3 if c.get("type") == "presence_leave"]
+            assert len(leaves) == 0
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock1, None)
+            wshandler.state.connections.pop(sock2, None)
+            wshandler.state.connections.pop(sock3, None)
+
+
 class TestChatDelete:
     async def test_chat_delete_broadcasts_update(self, user):
         from klangk_backend import model

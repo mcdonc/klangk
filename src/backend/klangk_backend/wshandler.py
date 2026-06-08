@@ -479,6 +479,23 @@ class WebSocketState:
 state = WebSocketState()
 
 
+def _get_presence_list(workspace_id: str) -> list[dict]:
+    """Return deduplicated list of users connected to a workspace."""
+    session = state.get_session(workspace_id)
+    if not session:
+        return []
+    seen: set[str] = set()
+    users: list[dict] = []
+    for sock in session.subscribers:
+        conn = state.connections.get(sock)
+        if conn and conn.user["id"] not in seen:
+            seen.add(conn.user["id"])
+            users.append(
+                {"user_id": conn.user["id"], "user_email": conn.user["email"]}
+            )
+    return users
+
+
 class Connection:
     """Per-WebSocket connection state and command handlers."""
 
@@ -619,6 +636,20 @@ class Connection:
         if owner and not any(m["id"] == owner["id"] for m in members):
             members.append({"id": owner["id"], "email": owner["email"]})
         self.sock.send_json({"type": "workspace_members", "members": members})
+
+        # Send presence list to joining user and broadcast join to others
+        presence = _get_presence_list(workspace_id)
+        self.sock.send_json({"type": "presence_list", "users": presence})
+        session = state.get_session(workspace_id)
+        if session:
+            join_msg = {
+                "type": "presence_join",
+                "user_id": self.user["id"],
+                "user_email": self.user["email"],
+            }
+            for sock in list(session.subscribers):
+                if sock is not self.sock:
+                    sock.send_json(join_msg)
 
         # Store status for when frontend sends ui_ready
         self.pending_status_msg = status_msg
@@ -949,7 +980,22 @@ class Connection:
         session = state.get_session(workspace_id) if workspace_id else None
         if session:
             empty = await session.remove_subscriber(self.sock)
-            if empty:
+            if not empty:
+                # Broadcast presence_leave if user has no other connections
+                still_connected = any(
+                    state.connections.get(s) is not None
+                    and state.connections[s].user["id"] == self.user["id"]
+                    for s in session.subscribers
+                )
+                if not still_connected:
+                    session.broadcast(
+                        {
+                            "type": "presence_leave",
+                            "user_id": self.user["id"],
+                            "user_email": self.user["email"],
+                        }
+                    )
+            else:
                 # Lock is released by remove_subscriber, so use the
                 # lock-acquiring version.
                 await state.remove_session(workspace_id)
