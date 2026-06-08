@@ -26,37 +26,67 @@ else
 fi
 
 # Shared allow/deny rules for container-only endpoints (LLM proxy,
-# browser-delegate bridge). Restricts access to container subnets and
-# localhost so that only our own containers can reach the LLM API key
-# and browser-delegate bridge — the backend also validates tokens, but
-# rejecting at the network level avoids unnecessary round-trips.
+# browser-delegate bridge). Restricts access to the actual container
+# subnet(s) and localhost so that only our own containers can reach the
+# LLM API key and browser-delegate bridge — the backend also validates
+# tokens, but rejecting at the network level avoids unnecessary
+# round-trips.
 #
-# Why these ranges:
-#   172.16.0.0/12 — Docker uses 172.17.0.0/16 by default; the /12
-#                    covers the full Docker-assignable range.
-#   10.0.0.0/8    — Podman rootless networking defaults to 10.x.x.x
-#                    subnets (e.g. 10.89.0.0/24).
+# We auto-detect the container subnet by inspecting the default podman
+# network. This is much tighter than allowing broad RFC1918 ranges
+# (which would let any LAN peer use the LLM API key). If detection
+# fails we fall back to 172.16.0.0/12 + 10.0.0.0/8 which cover the
+# typical Docker/Podman defaults.
 #
-# Why 192.168.0.0/16 is NOT included:
-#   That range is commonly used for home/office LANs. Allowing it would
-#   let any host on the same LAN segment reach the LLM proxy and
-#   effectively use your API key. If your container runtime happens to
-#   allocate from 192.168.x.x you will need to add the specific subnet
-#   back (see mitigations below).
+# Override: set KLANGK_CONTAINER_SUBNETS (comma-separated CIDRs) to
+# bypass auto-detection entirely.
 #
-# Further mitigations for tighter lockdown:
-#   • Replace the broad /12 and /8 ranges with the exact container
-#     subnet, e.g.:
-#       podman network inspect klangk | jq -r '.[0].subnets[0].subnet'
+# Further mitigations for even tighter lockdown:
 #   • Add token-based auth to the LLM proxy endpoint so that even
 #     allowed networks must present a per-session secret.
 #   • Bind nginx to localhost only and front it with a separate reverse
 #     proxy that handles external access and authentication.
-CONTAINER_ACL="
+PODMAN_BIN="${KLANGK_PODMAN_BIN:-podman}"
+
+if [ -n "${KLANGK_CONTAINER_SUBNETS:-}" ]; then
+  # Explicit override — use exactly what the operator specified.
+  IFS=',' read -ra _subnets <<<"$KLANGK_CONTAINER_SUBNETS"
+else
+  # Auto-detect from the default podman/docker network.
+  _subnets=()
+  if _raw=$("$PODMAN_BIN" network inspect podman 2>/dev/null); then
+    while IFS= read -r cidr; do
+      [ -n "$cidr" ] && _subnets+=("$cidr")
+    done < <(echo "$_raw" | jq -r '.[0].subnets[].subnet' 2>/dev/null)
+  fi
+  # Docker fallback: try `docker network inspect bridge`.
+  if [ ${#_subnets[@]} -eq 0 ] && command -v docker &>/dev/null; then
+    while IFS= read -r cidr; do
+      [ -n "$cidr" ] && _subnets+=("$cidr")
+    done < <(docker network inspect bridge 2>/dev/null |
+      jq -r '.[0].IPAM.Config[].Subnet' 2>/dev/null)
+  fi
+fi
+
+if [ ${#_subnets[@]} -gt 0 ]; then
+  CONTAINER_ACL=$'\n'
+  for cidr in "${_subnets[@]}"; do
+    CONTAINER_ACL+="      allow ${cidr};"$'\n'
+  done
+  CONTAINER_ACL+="      allow 127.0.0.1;"$'\n'
+  CONTAINER_ACL+="      deny all;"
+  echo "nginx container ACL: detected subnets: ${_subnets[*]}" >&2
+else
+  # Fallback: broad RFC1918 ranges covering typical container subnets.
+  # 192.168.0.0/16 is intentionally excluded — it is the most common
+  # LAN range and allowing it would expose the LLM proxy to LAN peers.
+  CONTAINER_ACL="
       allow 172.16.0.0/12;
       allow 10.0.0.0/8;
       allow 127.0.0.1;
       deny all;"
+  echo "nginx container ACL: subnet detection failed, using fallback RFC1918 ranges" >&2
+fi
 
 # LLM proxy block: only included if KLANGK_LLM_BASE_URL is configured.
 # Containers hit this instead of the real endpoint, so they never see the
