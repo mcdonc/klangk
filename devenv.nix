@@ -69,13 +69,6 @@ in
     "klangk:build-backend-image" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/build-backend-image.sh"'';
       showOutput = true;
-      execIfModified = [
-        "scripts/build-backend-image.sh"
-        "src/containers/workspace/**"
-        "${config.env.KLANGK_PLUGINS_DIR}/**/*.ts"
-        "${config.env.KLANGK_PLUGINS_DIR}/**/tools/**"
-        "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
-      ];
     };
     "klangk:kill-containers" = {
       exec = ''
