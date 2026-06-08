@@ -514,5 +514,49 @@ void main() {
     test('chatMessages stream is broadcast', () {
       expect(client.chatMessages.isBroadcast, isTrue);
     });
+
+    test('workspace_members populates workspaceMembers', () async {
+      channel.serverSend({
+        'type': 'workspace_members',
+        'members': [
+          {'id': 'u1', 'email': 'alice@test.com'},
+          {'id': 'u2', 'email': 'bob@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.workspaceMembers.length, 2);
+      expect(client.workspaceMembers[0]['email'], 'alice@test.com');
+      expect(client.workspaceMembers[1]['email'], 'bob@test.com');
+    });
+
+    test('workspace_members notifies listeners', () async {
+      bool notified = false;
+      client.addListener(() => notified = true);
+
+      channel.serverSend({
+        'type': 'workspace_members',
+        'members': [
+          {'id': 'u1', 'email': 'alice@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(notified, isTrue);
+    });
+
+    test('disconnectWorkspace clears workspaceMembers', () async {
+      channel.serverSend({
+        'type': 'workspace_members',
+        'members': [
+          {'id': 'u1', 'email': 'alice@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.workspaceMembers.length, 1);
+
+      client.disconnectWorkspace();
+      expect(client.workspaceMembers, isEmpty);
+    });
   });
 }

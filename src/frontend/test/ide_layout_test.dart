@@ -50,6 +50,38 @@ void main() {
       ));
       expect(find.text('Y'), findsOneWidget);
     });
+
+    testWidgets('badgeHighlight shows @ prefix', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SkeuoTab(
+            label: 'Chat',
+            icon: Icons.chat,
+            isSelected: false,
+            badge: 3,
+            badgeHighlight: true,
+            onTap: () {},
+          ),
+        ),
+      ));
+      expect(find.text('@3'), findsOneWidget);
+    });
+
+    testWidgets('badgeHighlight with 99+ shows @99+', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SkeuoTab(
+            label: 'Chat',
+            icon: Icons.chat,
+            isSelected: false,
+            badge: 150,
+            badgeHighlight: true,
+            onTap: () {},
+          ),
+        ),
+      ));
+      expect(find.text('@99+'), findsOneWidget);
+    });
   });
 
   Widget buildLayout({
