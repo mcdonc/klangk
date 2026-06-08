@@ -6,6 +6,7 @@ import 'image_renderer.dart';
 import 'markdown_renderer.dart';
 import 'pdf_renderer.dart';
 import 'raw_text_renderer.dart';
+import 'video_renderer.dart';
 
 /// The built-in file renderers, in registration order. Richer renderers come
 /// first (higher priority wins the default slot); the always-available
@@ -16,5 +17,6 @@ List<FileRenderer> builtinFileRenderers() => [
       CodeRenderer(),
       CodeEditorRenderer(),
       PdfRenderer(),
+      VideoRenderer(),
       RawTextRenderer(),
     ];
