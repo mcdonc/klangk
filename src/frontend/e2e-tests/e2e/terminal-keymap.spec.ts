@@ -64,7 +64,9 @@ test.describe("terminal keymap (web)", () => {
       await terminalType(page, "seq 1 500 > /home/klangk/work/big.txt");
       await page.waitForTimeout(500);
       await terminalType(page, "less /home/klangk/work/big.txt");
-      await page.waitForTimeout(1000);
+      // Give less time to open and switch to the alternate screen before we
+      // send paging keys — 1s is flaky under CI load.
+      await page.waitForTimeout(2500);
 
       const n = sent.length;
       await page.keyboard.press("PageDown");
@@ -198,7 +200,9 @@ test.describe("terminal keymap (web)", () => {
       await terminalType(page, "seq 1 500 > /home/klangk/work/big.txt");
       await page.waitForTimeout(500);
       await terminalType(page, "less /home/klangk/work/big.txt");
-      await page.waitForTimeout(1000);
+      // Give less time to open and switch to the alternate screen before we
+      // send paging keys — 1s is flaky under CI load.
+      await page.waitForTimeout(2500);
       await focusTerminal(page);
 
       let n = sent.length;
