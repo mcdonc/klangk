@@ -44,6 +44,11 @@ dependencies:
   code_forge_web: ^2.10.0
   pdfrx: ^2.4.3
   video_player: ^2.9.0
+  flutter_riverpod: ^2.4.9
+  sheetifye:
+    git:
+      url: https://github.com/runyaga/sheetifye.git
+      ref: klangk-compat
 
 dev_dependencies:
   flutter_test:
