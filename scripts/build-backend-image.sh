@@ -4,6 +4,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 PODMAN="${KLANGK_PODMAN_BIN:-podman}"
 
+STAMP="$DEVENV_STATE/klangk/.backend-image-hash"
+
+# Compute a hash of all files that affect the workspace image.
+CURRENT_HASH=$(find \
+  scripts/build-backend-image.sh \
+  src/containers/workspace/ \
+  "$KLANGK_PLUGINS_DIR" \
+  -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+
+# Skip rebuild if the image exists and the hash hasn't changed.
+if "$PODMAN" image exists "${KLANGK_IMAGE_NAME}" 2>/dev/null && [ -f "$STAMP" ]; then
+  OLD_HASH=$(cat "$STAMP" 2>/dev/null || true)
+  if [ "$CURRENT_HASH" = "$OLD_HASH" ]; then
+    echo "Image ${KLANGK_IMAGE_NAME} is up to date, skipping build."
+    exit 0
+  fi
+fi
+
 # Auto-fetch plugins on first run
 if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plugins.lock" ]; then
   echo "No plugins.lock found, running update-plugins..."
@@ -40,3 +58,5 @@ fi
   --build-context plugin-extensions="$STAGING/extensions" \
   --build-context plugin-tools="$STAGING/tools" \
   -t "${KLANGK_IMAGE_NAME}" "$@" src/containers/workspace/
+
+echo "$CURRENT_HASH" >"$STAMP"

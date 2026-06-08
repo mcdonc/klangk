@@ -69,13 +69,6 @@ in
     "klangk:build-backend-image" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/build-backend-image.sh"'';
       showOutput = true;
-      execIfModified = [
-        "scripts/build-backend-image.sh"
-        "src/containers/workspace/**"
-        "${config.env.KLANGK_PLUGINS_DIR}/**/*.ts"
-        "${config.env.KLANGK_PLUGINS_DIR}/**/tools/**"
-        "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
-      ];
     };
     "klangk:kill-containers" = {
       exec = ''
@@ -338,6 +331,18 @@ in
     if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
       echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
         > "$_PODMAN_CONF/policy.json"
+    fi
+
+    # On macOS, podman requires a VM; init and start it if needed.
+    if [ "$(uname)" = "Darwin" ]; then
+      if ! podman machine list --format '{{.Name}}' 2>/dev/null | grep -q .; then
+        echo "Initializing podman machine..."
+        podman machine init
+      fi
+      if ! podman machine info 2>/dev/null | grep -q "Running"; then
+        echo "Starting podman machine..."
+        podman machine start || true
+      fi
     fi
 
     # Ensure klangk_plugins stub exists so flutter pub get works
