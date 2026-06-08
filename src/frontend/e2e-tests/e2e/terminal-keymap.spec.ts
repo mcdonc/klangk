@@ -122,4 +122,128 @@ test.describe("terminal keymap (web)", () => {
       await cleanup();
     }
   });
+
+  test("mouse wheel up on the shell scrolls the buffer, not the PTY", async ({
+    page,
+    request,
+  }) => {
+    const sent = captureTerminalInput(page);
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "km-wheel",
+      {
+        waitForTerminal: true,
+      },
+    );
+    try {
+      await terminalType(page, "seq 1 500"); // fill scrollback
+      await page.waitForTimeout(500);
+      await focusTerminal(page);
+      const { width, height } = vp(page);
+      await page.mouse.move(width / 2, height / 2);
+      const n = sent.length;
+      await page.mouse.wheel(0, -600); // wheel up over the primary screen
+      await page.waitForTimeout(750);
+      expect(sent.length).toBe(n); // primary scrollback is local; nothing to PTY
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("typing after scrolling up still reaches the PTY", async ({
+    page,
+    request,
+  }) => {
+    // The view snaps back to the live row on input — that is visual (asserted in
+    // the Dart widget tests). Over the wire we can confirm the flow is intact:
+    // after scrolling the buffer up, a typed character still gets to the PTY.
+    const sent = captureTerminalInput(page);
+    const { cleanup } = await createAndOpenWorkspace(page, request, "km-snap", {
+      waitForTerminal: true,
+    });
+    try {
+      await terminalType(page, "seq 1 500");
+      await page.waitForTimeout(500);
+      await focusTerminal(page);
+      await page.keyboard.press("Shift+PageUp"); // scroll up (no PTY)
+      await page.waitForTimeout(500);
+      const n = sent.length;
+      await page.keyboard.press("x"); // a real keystroke
+      await page.waitForTimeout(750);
+      expect(sent.length).toBeGreaterThan(n); // the character reached the PTY
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("Shift+PageUp/PageDown page the app on the alternate screen (less)", async ({
+    page,
+    request,
+  }) => {
+    // On the alt screen there is no scrollback; the page keys must reach the
+    // running app (via flterm handleScroll) instead of being a no-op — this is
+    // what makes Shift+PgUp/PgDn work inside pi / vim / less.
+    const sent = captureTerminalInput(page);
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "km-altpg",
+      {
+        waitForTerminal: true,
+      },
+    );
+    try {
+      await terminalType(page, "seq 1 500 > /home/klangk/work/big.txt");
+      await page.waitForTimeout(500);
+      await terminalType(page, "less /home/klangk/work/big.txt");
+      await page.waitForTimeout(1000);
+      await focusTerminal(page);
+
+      let n = sent.length;
+      await page.keyboard.press("Shift+PageUp");
+      await page.waitForTimeout(750);
+      expect(sent.length).toBeGreaterThan(n); // paged the app, not a no-op
+
+      n = sent.length;
+      await page.keyboard.press("Shift+PageDown");
+      await page.waitForTimeout(750);
+      expect(sent.length).toBeGreaterThan(n);
+
+      await page.keyboard.press("q"); // quit less
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("mouse wheel on the alternate screen (less) scrolls the app", async ({
+    page,
+    request,
+  }) => {
+    const sent = captureTerminalInput(page);
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "km-altwh",
+      {
+        waitForTerminal: true,
+      },
+    );
+    try {
+      await terminalType(page, "seq 1 500 > /home/klangk/work/big.txt");
+      await page.waitForTimeout(500);
+      await terminalType(page, "less /home/klangk/work/big.txt");
+      await page.waitForTimeout(1000);
+      const { width, height } = vp(page);
+      await page.mouse.move(width / 2, height / 2);
+      const n = sent.length;
+      await page.mouse.wheel(0, 300); // wheel down inside less
+      await page.waitForTimeout(750);
+      expect(sent.length).toBeGreaterThan(n); // less received the scroll
+
+      await page.keyboard.press("q"); // quit less
+    } finally {
+      await cleanup();
+    }
+  });
 });
