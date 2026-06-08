@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flterm/flterm.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -54,6 +55,24 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   static const _fontAsset = 'assets/fonts/JetBrainsMono-Regular.ttf';
   Uint8List? _fontData;
 
+  // Per-platform keymap seam. `kIsWeb` is a const that can't be flipped in VM
+  // tests, so the web-specific branches read this instead; tests set it and
+  // reset in tearDown. Mirrors the [loadFontAsset]/`testBaseUrlOverride` seams.
+  @visibleForTesting
+  static bool isWebOverride = kIsWeb;
+
+  // Terminal font size (logical px). Stateful so native Ctrl +/-/0 can zoom the
+  // font in-app. On web the browser owns Ctrl +/-/0 zoom, so the zoom shortcuts
+  // are not bound there and this stays at the default.
+  static const double _defaultFontSize = 16;
+  static const double _minFontSize = 8;
+  static const double _maxFontSize = 40;
+  static const double _zoomStep = 2;
+  double _fontSize = _defaultFontSize;
+
+  @visibleForTesting
+  double get fontSize => _fontSize;
+
   // Cell dimensions, captured from the controller's resize callback (flterm
   // has no viewWidth/viewHeight getter the way xterm did). Seeded to 80x24
   // until the first resize fires.
@@ -64,12 +83,10 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   void initState() {
     super.initState();
     _terminal = TerminalController()
-      // coverage:ignore-start
       ..onOutput = (bytes) {
         widget.wsClient
             .sendTerminalInput(utf8.decode(bytes, allowMalformed: true));
       }
-      // coverage:ignore-end
       ..onResize = (cols, rows) {
         _cols = cols;
         _rows = rows;
@@ -121,20 +138,75 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   @visibleForTesting
   TerminalScrollController get scrollController => _scrollController;
 
+  @visibleForTesting
+  bool get hasFocus => _focusNode.hasFocus;
+
   // Scrollback is only meaningful on the primary screen. On the alt screen
   // (vim, less) we want PgUp/PgDn to pass through to the PTY untouched.
   bool _canScrollScrollback() =>
       _scrollController.hasClients &&
       _scrollController.activeScreen == TerminalScreen.primary;
 
-  // Jump one viewport — same step xterm.dart's keytab used for scrollPageUp/
-  // scrollPageDown. Direction: -1 = up (toward older scrollback, lower pixels
-  // per flterm's terminal_renderer.dart); +1 = down toward the live row.
+  // Scroll one viewport, driving the position exactly like a mouse wheel
+  // (a relative [ScrollPosition.pointerScroll] delta) rather than a [jumpTo]
+  // to an absolute target. flterm's scrollback is a hybrid model — pixel
+  // deltas are translated to line scrolls of the libghostty buffer and the
+  // position recenters — so an absolute jumpTo clamped to maxScrollExtent
+  // gets "stuck" after the first page, whereas a relative wheel-style delta
+  // keeps paging through the whole buffer.
+  // Direction: -1 = up (older scrollback), +1 = down (toward the live row).
   void _scrollByPage(int direction) {
     final pos = _scrollController.position;
-    final target = (pos.pixels + pos.viewportDimension * direction)
-        .clamp(0.0, pos.maxScrollExtent);
-    _scrollController.jumpTo(target);
+    pos.pointerScroll(pos.viewportDimension * direction);
+  }
+
+  // True when a plain PageUp/PageDown should be handed to the browser rather
+  // than the terminal: only on web, and only on the primary screen (the shell).
+  // On the alternate screen (vim/less/htop) the program needs PgUp/PgDn, and on
+  // native there is no browser to hand them to.
+  bool _passPlainPageKeyToBrowser() =>
+      isWebOverride &&
+      _scrollController.hasClients &&
+      _scrollController.activeScreen == TerminalScreen.primary;
+
+  // flterm bypass predicate: returning true makes flterm leave the key for
+  // outer handlers / the browser instead of encoding it for the PTY. We only
+  // bypass unmodified PageUp/PageDown on the primary screen on web. Shift+PgUp/
+  // PgDn is intercepted earlier by [_scrollShortcuts] and never reaches here.
+  bool _bypassKey(KeyEvent event, TerminalScreen screen) {
+    if (!isWebOverride || screen != TerminalScreen.primary) return false;
+    final hw = HardwareKeyboard.instance;
+    if (hw.isShiftPressed ||
+        hw.isControlPressed ||
+        hw.isAltPressed ||
+        hw.isMetaPressed) {
+      return false;
+    }
+    final k = event.logicalKey;
+    return k == LogicalKeyboardKey.pageUp || k == LogicalKeyboardKey.pageDown;
+  }
+
+  // Native-only font zoom (Ctrl +/-/0). On web these shortcuts are not bound,
+  // so the browser's own zoom handles them.
+  void _zoomBy(double delta) {
+    setState(() => _fontSize =
+        (_fontSize + delta).clamp(_minFontSize, _maxFontSize).toDouble());
+  }
+
+  void _zoomReset() => setState(() => _fontSize = _defaultFontSize);
+
+  // Cache the theme so a stable instance is returned across rebuilds; flterm
+  // compares `theme != oldWidget.theme` and would otherwise re-measure cell
+  // metrics on every parent rebuild (disrupting focus/layout). Rebuilt only
+  // when the font size actually changes (native zoom).
+  TerminalTheme? _cachedTheme;
+  double? _cachedThemeFontSize;
+  TerminalTheme get _theme {
+    if (_cachedTheme == null || _cachedThemeFontSize != _fontSize) {
+      _cachedTheme = _buildTheme(_fontSize);
+      _cachedThemeFontSize = _fontSize;
+    }
+    return _cachedTheme!;
   }
 
   // flterm measures cell width by laying out 'M' in [_fontFamily]; if the font
@@ -144,7 +216,16 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   Future<void> _loadFont() async {
     final data = await loadFontAsset(_fontAsset);
     await (FontLoader(_fontFamily)..addFont(Future.value(data))).load();
-    if (mounted) setState(() => _fontData = data.buffer.asUint8List());
+    if (!mounted) return;
+    setState(() => _fontData = data.buffer.asUint8List());
+    // The real TerminalView (and its FocusNode) only mount now that the font
+    // is loaded. If focus was requested before this point, re-apply it after
+    // the frame so the shell is focused on first open without an extra click.
+    if (_focusRequested) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
+    }
   }
 
   void _handleEvent(Map<String, dynamic> msg) {
@@ -169,7 +250,15 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     widget.wsClient.sendTerminalStart(cols: _cols, rows: _rows);
   }
 
+  // True once focus has been requested for this terminal. The view renders a
+  // placeholder while the bundled font loads (see [build]), so its FocusNode
+  // isn't attached yet and an early requestFocus() (e.g. the tab-select focus
+  // fired from initState) would be lost. We remember the request and re-apply
+  // it once the font loads and the real [TerminalView] mounts.
+  bool _focusRequested = false;
+
   void requestFocus() {
+    _focusRequested = true;
     _focusNode.requestFocus();
   }
 
@@ -212,13 +301,38 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       // key propagates to the textarea and the browser pastes natively.
       actions: <Type, Action<Intent>>{
         DoNothingIntent: DoNothingAction(consumesKey: false),
-        _ScrollPageUpIntent: _ConditionalAction<_ScrollPageUpIntent>(
-          isEnabledFn: _canScrollScrollback,
-          onInvokeFn: () => _scrollByPage(-1),
+        // Shift+PgUp/PgDn are the terminal's own scrollback shortcuts, so they
+        // must ALWAYS be consumed here — never leak to the browser (which would
+        // scroll the page) or to the PTY. The action is always enabled and
+        // returns null (handled); it scrolls only when scrollback is actually
+        // available (primary screen with clients), otherwise it's a no-op.
+        _ScrollPageUpIntent: CallbackAction<_ScrollPageUpIntent>(
+          onInvoke: (_) {
+            if (_canScrollScrollback()) _scrollByPage(-1);
+            return null;
+          },
         ),
-        _ScrollPageDownIntent: _ConditionalAction<_ScrollPageDownIntent>(
-          isEnabledFn: _canScrollScrollback,
-          onInvokeFn: () => _scrollByPage(1),
+        _ScrollPageDownIntent: CallbackAction<_ScrollPageDownIntent>(
+          onInvoke: (_) {
+            if (_canScrollScrollback()) _scrollByPage(1);
+            return null;
+          },
+        ),
+        // Swallow WidgetsApp's default PageUp/PageDown -> ScrollIntent in the
+        // terminal subtree when we want the browser to handle them (web +
+        // primary screen). Without this, returning ignored from flterm's
+        // bypassKey would let the default ScrollAction scroll the scrollback
+        // instead of letting the key reach the browser. Disabled otherwise, so
+        // it falls through to the default ScrollAction (wheel, etc. unaffected).
+        ScrollIntent: _SwallowPageScrollAction(_passPlainPageKeyToBrowser),
+        _ZoomInIntent: CallbackAction<_ZoomInIntent>(
+          onInvoke: (_) => _zoomBy(_zoomStep),
+        ),
+        _ZoomOutIntent: CallbackAction<_ZoomOutIntent>(
+          onInvoke: (_) => _zoomBy(-_zoomStep),
+        ),
+        _ZoomResetIntent: CallbackAction<_ZoomResetIntent>(
+          onInvoke: (_) => _zoomReset(),
         ),
       },
       child: Listener(
@@ -252,14 +366,23 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           scrollController: _scrollController,
           autofocus: false,
           padding: EdgeInsets.zero,
+          // Let plain PgUp/PgDn on the primary screen reach the browser on web
+          // (see [_bypassKey]); on the alt screen and on native they go to the
+          // PTY as usual.
+          bypassKey: _bypassKey,
           // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
           // Clipboard.getData, which fails on Firefox). These override flterm's
           // platform defaults, so paste flows solely through the native
           // `paste` event in [installPasteListener] — one path, no double-paste.
           //
           // Adds Shift+PgUp/PgDn scrollback shortcuts that xterm.dart used to
-          // provide for free — see [_scrollShortcuts].
-          shortcuts: const {..._disableFltermPaste, ..._scrollShortcuts},
+          // provide for free — see [_scrollShortcuts]. Native-only Ctrl +/-/0
+          // font zoom is added via [_zoomShortcuts]; on web the browser zooms.
+          shortcuts: {
+            ..._disableFltermPaste,
+            ..._scrollShortcuts,
+            if (!isWebOverride) ..._zoomShortcuts,
+          },
           // Keep mouse selection (drag/word/line/long-press) but drop the
           // keyboard select-all gesture, so Ctrl+A falls through to the shell
           // (readline beginning-of-line / tmux prefix) instead of selecting the
@@ -310,52 +433,80 @@ const Map<ShortcutActivator, Intent> _scrollShortcuts = {
       _ScrollPageDownIntent(),
 };
 
-/// Action that runs [onInvokeFn] only when [isEnabledFn] returns true; when
-/// disabled the activator falls through to the next handler — flterm's normal
-/// key dispatch — which is how we let PgUp reach vim/less on the alt screen.
-class _ConditionalAction<T extends Intent> extends Action<T> {
-  _ConditionalAction({required this.isEnabledFn, required this.onInvokeFn});
-
-  final ValueGetter<bool> isEnabledFn;
-  final VoidCallback onInvokeFn;
-
-  @override
-  Object? invoke(T intent) {
-    onInvokeFn();
-    return null;
-  }
-
-  @override
-  bool isEnabled(T intent) => isEnabledFn();
+/// Native-only font zoom. Bound only when not on web; on web the browser's own
+/// Ctrl +/-/0 zoom handles these (flterm reports them ignored, so the browser
+/// default fires). Both `=`/`+` and the numpad keys are accepted so Ctrl++
+/// (shift+equal) and numpad zoom work too.
+class _ZoomInIntent extends Intent {
+  const _ZoomInIntent();
 }
 
-/// klangk's terminal palette (matches the xterm `ContainerTerminal` theme).
-final TerminalTheme _theme = TerminalTheme(
-  fontSize: 16,
-  fontFamily: 'JetBrains Mono',
-  palette: ColorPalette(
-    background: const Color(0xFF0D1117),
-    foreground: const Color(0xFFC5C8C6),
-    ansiColors: const [
-      Color(0xFF0D1117), // black
-      Color(0xFFCC6666), // red
-      Color(0xFFB5BD68), // green
-      Color(0xFFF0C674), // yellow
-      Color(0xFF81A2BE), // blue
-      Color(0xFFB294BB), // magenta
-      Color(0xFF8ABEB7), // cyan
-      Color(0xFFC5C8C6), // white
-      Color(0xFF666666), // bright black
-      Color(0xFFD54E53), // bright red
-      Color(0xFFB9CA4A), // bright green
-      Color(0xFFE7C547), // bright yellow
-      Color(0xFF7AA6DA), // bright blue
-      Color(0xFFC397D8), // bright magenta
-      Color(0xFF70C0B1), // bright cyan
-      Color(0xFFEAEAEA), // bright white
-    ],
-  ),
-  cursor: const CursorTheme(color: DynamicColor.fixed(Color(0xFF5B8C5A))),
-  selection:
-      const SelectionTheme(background: DynamicColor.fixed(Color(0x405B8C5A))),
-);
+class _ZoomOutIntent extends Intent {
+  const _ZoomOutIntent();
+}
+
+class _ZoomResetIntent extends Intent {
+  const _ZoomResetIntent();
+}
+
+const Map<ShortcutActivator, Intent> _zoomShortcuts = {
+  SingleActivator(LogicalKeyboardKey.equal, control: true): _ZoomInIntent(),
+  SingleActivator(LogicalKeyboardKey.equal, control: true, shift: true):
+      _ZoomInIntent(),
+  SingleActivator(LogicalKeyboardKey.numpadAdd, control: true): _ZoomInIntent(),
+  SingleActivator(LogicalKeyboardKey.minus, control: true): _ZoomOutIntent(),
+  SingleActivator(LogicalKeyboardKey.numpadSubtract, control: true):
+      _ZoomOutIntent(),
+  SingleActivator(LogicalKeyboardKey.digit0, control: true): _ZoomResetIntent(),
+};
+
+/// Swallows WidgetsApp's default `PageUp/PageDown -> ScrollIntent` inside the
+/// terminal subtree when [enabledFn] is true (web + primary screen), so the key
+/// is not consumed by Flutter and reaches the browser's own page scroll. When
+/// disabled — or for non-page scrolls (arrows, wheel) — it reports itself
+/// disabled and the lookup falls through to the default [ScrollAction].
+class _SwallowPageScrollAction extends Action<ScrollIntent> {
+  _SwallowPageScrollAction(this.enabledFn);
+
+  final bool Function() enabledFn;
+
+  @override
+  bool isEnabled(ScrollIntent intent) =>
+      enabledFn() && intent.type == ScrollIncrementType.page;
+
+  @override
+  Object? invoke(ScrollIntent intent) => null;
+}
+
+/// klangk's terminal theme at the given [fontSize] (palette matches the xterm
+/// `ContainerTerminal` theme). Built per-render so native font zoom can vary
+/// the size; flterm re-measures cell metrics when `theme.fontSize` changes.
+TerminalTheme _buildTheme(double fontSize) => TerminalTheme(
+      fontSize: fontSize,
+      fontFamily: 'JetBrains Mono',
+      palette: ColorPalette(
+        background: const Color(0xFF0D1117),
+        foreground: const Color(0xFFC5C8C6),
+        ansiColors: const [
+          Color(0xFF0D1117), // black
+          Color(0xFFCC6666), // red
+          Color(0xFFB5BD68), // green
+          Color(0xFFF0C674), // yellow
+          Color(0xFF81A2BE), // blue
+          Color(0xFFB294BB), // magenta
+          Color(0xFF8ABEB7), // cyan
+          Color(0xFFC5C8C6), // white
+          Color(0xFF666666), // bright black
+          Color(0xFFD54E53), // bright red
+          Color(0xFFB9CA4A), // bright green
+          Color(0xFFE7C547), // bright yellow
+          Color(0xFF7AA6DA), // bright blue
+          Color(0xFFC397D8), // bright magenta
+          Color(0xFF70C0B1), // bright cyan
+          Color(0xFFEAEAEA), // bright white
+        ],
+      ),
+      cursor: const CursorTheme(color: DynamicColor.fixed(Color(0xFF5B8C5A))),
+      selection: const SelectionTheme(
+          background: DynamicColor.fixed(Color(0x405B8C5A))),
+    );

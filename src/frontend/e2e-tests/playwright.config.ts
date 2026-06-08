@@ -60,18 +60,18 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testMatch: "klangk.spec.ts",
+      testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
       use: chromiumUse,
     },
     {
       name: "firefox",
-      testMatch: "klangk.spec.ts",
+      testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
       dependencies: ["chromium"],
       use: firefoxUse,
     },
     {
       name: "webkit",
-      testMatch: "klangk.spec.ts",
+      testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
       dependencies: ["firefox"],
       use: webkitUse,
     },

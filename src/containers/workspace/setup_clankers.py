@@ -139,7 +139,11 @@ def merge_models_json():
         "baseUrl": proxy_url,
         "api": "openai-completions",
         "apiKey": "proxy",
-        "models": [{"id": model, "input": ["text", "image"]}],
+        # Only advertise a model when one is configured. Pi's schema rejects an
+        # empty id ("must not have fewer than 1 characters"), so when
+        # KLANGK_LLM_MODEL is unset we write an empty model list instead of an
+        # invalid placeholder — Pi then just reports "no models available".
+        "models": [{"id": model, "input": ["text", "image"]}] if model else [],
     }
 
     models_path.write_text(json.dumps(models, indent=2))
