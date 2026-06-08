@@ -340,6 +340,18 @@ in
         > "$_PODMAN_CONF/policy.json"
     fi
 
+    # On macOS, podman requires a VM; init and start it if needed.
+    if [ "$(uname)" = "Darwin" ]; then
+      if ! podman machine list --format '{{.Name}}' 2>/dev/null | grep -q .; then
+        echo "Initializing podman machine..."
+        podman machine init
+      fi
+      if ! podman machine info 2>/dev/null | grep -q "Running"; then
+        echo "Starting podman machine..."
+        podman machine start || true
+      fi
+    fi
+
     # Ensure klangk_plugins stub exists so flutter pub get works
     # before plugins are fetched (first-time checkout / CI)
     bash "$DEVENV_ROOT/scripts/stub_dart_plugins.sh"
