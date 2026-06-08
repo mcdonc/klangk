@@ -1315,6 +1315,109 @@ class TestAllowedMountRoots:
         )
 
 
+class TestVolumeUserIsolation:
+    """Verify that a user cannot mount another user's volume."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def two_user_server(self, tmp_path_factory):
+        import httpx
+
+        data_dir = tempfile.mkdtemp(prefix="klangk-vol-iso-")
+        proc, base_url = _start_server(
+            data_dir,
+            "18999",
+            "vol-iso-e2e",
+        )
+
+        # Register a second user via the API
+        httpx.post(
+            f"{base_url}/auth/register",
+            json={
+                "email": "user2@example.com",
+                "password": "testpass2",
+            },
+        )
+
+        # Set up CLI configs for both users
+        for attr, email, password in [
+            ("_env_a", "test@example.com", "testpass"),
+            ("_env_b", "user2@example.com", "testpass2"),
+        ]:
+            config_dir = tmp_path_factory.mktemp(f"klangk-vol-iso-{attr}")
+            env = {**os.environ, "HOME": str(config_dir)}
+            (config_dir / ".config" / "klangk").mkdir(parents=True)
+            _run(
+                [
+                    "klangk",
+                    "login",
+                    email,
+                    "--server",
+                    base_url,
+                    "--password-file",
+                    "-",
+                ],
+                input=f"{password}\n",
+                env=env,
+            )
+            setattr(self.__class__, attr, env)
+
+        self.__class__._base_url = base_url
+        yield
+        _stop_server(proc, data_dir, "vol-iso-e2e")
+
+    def test_cross_user_volume_rejected(self):
+        env_a = self._env_a
+        env_b = self._env_b
+
+        # User A creates workspace with a named volume
+        _run(
+            [
+                "klangk",
+                "create",
+                "ws-a",
+                "--mount",
+                "shared-vol:/data",
+            ],
+            env=env_a,
+        )
+        try:
+            # User A execs to trigger container start (creates the volume)
+            result = _run(
+                ["klangk", "exec", "ws-a", "echo", "ok"],
+                env=env_a,
+                timeout=60,
+            )
+            assert result.returncode == 0
+
+            # User B creates workspace with the same volume
+            _run(
+                [
+                    "klangk",
+                    "create",
+                    "ws-b",
+                    "--mount",
+                    "shared-vol:/data",
+                ],
+                env=env_b,
+            )
+            try:
+                # User B execs — should fail because the volume belongs to A
+                result = _run(
+                    ["klangk", "exec", "ws-b", "echo", "stolen"],
+                    env=env_b,
+                    timeout=60,
+                )
+                assert result.returncode != 0
+            finally:
+                _run(["klangk", "rm", "ws-b"], env=env_b)
+        finally:
+            _run(["klangk", "rm", "ws-a"], env=env_a)
+            subprocess.run(
+                ["podman", "volume", "rm", "shared-vol"],
+                capture_output=True,
+            )
+
+
 class TestContainerReplace:
     """Verify podman --replace handles stale/crashed containers."""
 

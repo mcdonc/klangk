@@ -99,7 +99,7 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_IMAGE_NAME`             | `klangk`                             | Podman image name for workspace containers                                                                                                                                                 |
 | `KLANGK_IMAGE_PULL_POLICY`      | `never`                              | Podman `--pull` policy for workspace containers (`never`, `missing`, `always`, `newer`). Default `never` requires the image to exist locally; `missing` pulls from a registry if not found |
 | `KLANGK_PODMAN_STORAGE`         |                                      | Custom path for podman image storage (graphroot). Set to a path on ext4 (not ZFS) for `--userns=keep-id` support. ZFS lacks idmapped mounts, causing slow container startup.               |
-| `KLANGK_ALLOWED_MOUNT_ROOTS`    |                                      | Comma-separated list of allowed host path prefixes for bind mounts (e.g., `/home,/data`). If unset, all bind mount paths are allowed.                                                      |
+| `KLANGK_ALLOWED_MOUNT_ROOTS`    |                                      | Comma-separated list of allowed host path prefixes for bind mounts (e.g., `/home,/data`). If unset, all bind mount paths are allowed. Protected paths are always blocked (see below).      |
 | `KLANGK_INSTANCE_ID`            | `default`                            | Instance identifier for multi-instance deployments on the same host — isolates containers, names, and cleanup                                                                              |
 | `KLANGK_DNS_SERVERS`            |                                      | Comma-separated DNS server IPs for containers (e.g., `100.100.100.100,8.8.8.8` for Tailscale MagicDNS). If unset, containers use podman's default DNS.                                     |
 | `KLANGK_HOSTING_HOSTNAME`       | (auto-derived)                       | Hostname for hosted app URLs. Behind a reverse proxy: uses `X-Forwarded-Host` as-is. Direct access: uses `Host` header with `KLANGK_NGINX_PORT` substituted                                |
@@ -155,6 +155,17 @@ KLANGK_DNS_SERVERS=100.100.100.100,8.8.8.8            # for containers (works fi
 ```
 
 Tailscale IPs are stable and don't change, so using the IP directly is safe.
+
+### Mount Security
+
+Workspace bind mounts are validated at create and edit time. Two protections apply regardless of `KLANGK_ALLOWED_MOUNT_ROOTS`:
+
+**Protected paths** — the following host paths are always blocked, even if they fall under an allowed root:
+
+- `/var/run/docker.sock`, `/run/docker.sock`, `/run/podman/podman.sock` — mounting a container engine socket grants full host control
+- `KLANGK_DATA_DIR` (and anything beneath it) — contains every user's workspace home and the database
+
+**Volume isolation** — named volumes (e.g., `nix-store:/nix`) are labelled with `klangk.instance` and `klangk.user-id` at creation time. A workspace cannot mount a volume created by a different `KLANGK_INSTANCE_ID` or a different user. This prevents both cross-tenant and cross-user data access on shared hosts.
 
 ## Branch Protection
 

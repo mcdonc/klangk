@@ -861,6 +861,40 @@ class TestAllowedMountRoots:
         assert err is not None
 
 
+class TestProtectedPaths:
+    def test_docker_socket_blocked(self, monkeypatch):
+        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/"])
+        err = container.validate_mount_spec(
+            "/var/run/docker.sock:/var/run/docker.sock"
+        )
+        assert err is not None
+        assert "protected" in err.lower()
+
+    def test_podman_socket_blocked(self, monkeypatch):
+        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/"])
+        err = container.validate_mount_spec(
+            "/run/podman/podman.sock:/run/podman/podman.sock"
+        )
+        assert err is not None
+        assert "protected" in err.lower()
+
+    def test_data_dir_blocked(self, monkeypatch):
+        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/"])
+        monkeypatch.setenv("KLANGK_DATA_DIR", "/srv/klangk/data")
+        err = container.validate_mount_spec(
+            "/srv/klangk/data/workspaces:/loot"
+        )
+        assert err is not None
+        assert "protected" in err.lower()
+
+    def test_protected_blocked_even_without_allowlist(self):
+        err = container.validate_mount_spec(
+            "/var/run/docker.sock:/var/run/docker.sock"
+        )
+        assert err is not None
+        assert "protected" in err.lower()
+
+
 class TestExtraMountsVolumeCreation:
     async def test_auto_creates_named_volume(self, workspace):
         """Named volumes (no leading /) are auto-created with klangk labels."""
@@ -871,23 +905,108 @@ class TestExtraMountsVolumeCreation:
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["nix-store:/nix"],
+                user_id="user-123",
             )
         p.create_volume.assert_awaited_once()
         name, labels = p.create_volume.call_args.args
         assert name == "nix-store"
         assert labels["klangk.managed"] == "true"
         assert labels["klangk.instance"] == container.INSTANCE_ID
+        assert labels["klangk.user-id"] == "user-123"
 
     async def test_existing_volume_not_recreated(self, workspace):
-        """Existing volumes are used as-is, not recreated."""
+        """Existing volumes owned by this instance and user are used as-is."""
         with patch_podman(
-            inspect_volume=AsyncMock(return_value={"Name": "existing"})
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "existing",
+                    "Labels": {
+                        "klangk.instance": container.INSTANCE_ID,
+                        "klangk.user-id": "user-123",
+                    },
+                }
+            )
         ) as p:
             await container.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 extra_mounts=["existing:/data"],
+                user_id="user-123",
+            )
+        p.create_volume.assert_not_awaited()
+
+    async def test_foreign_volume_rejected(self, workspace):
+        """A named volume owned by another instance is refused."""
+        with patch_podman(
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "stolen",
+                    "Labels": {"klangk.instance": "someone-else"},
+                }
+            )
+        ):
+            with pytest.raises(ValueError, match="not managed by this"):
+                await container.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    extra_mounts=["stolen:/data"],
+                )
+
+    async def test_unlabelled_volume_rejected(self, workspace):
+        """A named volume with no klangk labels is refused."""
+        with patch_podman(
+            inspect_volume=AsyncMock(return_value={"Name": "bare"})
+        ):
+            with pytest.raises(ValueError, match="not managed by this"):
+                await container.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    extra_mounts=["bare:/data"],
+                )
+
+    async def test_cross_user_volume_rejected(self, workspace):
+        """A volume owned by another user is refused."""
+        with patch_podman(
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "private",
+                    "Labels": {
+                        "klangk.instance": container.INSTANCE_ID,
+                        "klangk.user-id": "user-other",
+                    },
+                }
+            )
+        ):
+            with pytest.raises(ValueError, match="belongs to another user"):
+                await container.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    extra_mounts=["private:/data"],
+                    user_id="user-me",
+                )
+
+    async def test_volume_without_user_label_allowed(self, workspace):
+        """A volume with no user-id label (pre-existing) is allowed."""
+        with patch_podman(
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "legacy",
+                    "Labels": {
+                        "klangk.instance": container.INSTANCE_ID,
+                    },
+                }
+            )
+        ) as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                extra_mounts=["legacy:/data"],
+                user_id="user-123",
             )
         p.create_volume.assert_not_awaited()
 

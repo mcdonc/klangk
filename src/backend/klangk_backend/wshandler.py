@@ -531,6 +531,7 @@ class Connection:
             config_path=cfg_path,
             extra_mounts=workspace.get("mounts"),
             extra_env=workspace.get("env"),
+            user_id=self.user["id"],
         )
         self.container_status = container_status
         self.workspace_id = workspace_id
