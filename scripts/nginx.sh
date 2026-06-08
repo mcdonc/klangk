@@ -41,11 +41,7 @@ fi
 # bypass auto-detection entirely. 127.0.0.1 is NOT added implicitly
 # with an explicit override; include it in the list if needed.
 #
-# Further mitigations for even tighter lockdown:
-#   • Add token-based auth to the LLM proxy endpoint so that even
-#     allowed networks must present a per-session secret.
-#   • Bind nginx to localhost only and front it with a separate reverse
-#     proxy that handles external access and authentication.
+
 _explicit_override=false
 if [ -n "${KLANGK_CONTAINER_SUBNETS:-}" ]; then
   # Explicit override — use exactly what the operator specified.
