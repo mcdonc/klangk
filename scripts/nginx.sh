@@ -26,28 +26,26 @@ else
 fi
 
 # Shared allow/deny rules for container-only endpoints (LLM proxy,
-# browser-delegate bridge). Restricts access to the actual container
-# subnet(s) and localhost so that only our own containers can reach the
-# LLM API key and browser-delegate bridge — the backend also validates
-# tokens, but rejecting at the network level avoids unnecessary
-# round-trips.
+# browser-delegate bridge). Restricts access so that only our own
+# containers can reach the LLM API key and browser-delegate bridge.
+# The backend also validates tokens, but rejecting at the network
+# level avoids unnecessary round-trips.
 #
-# We auto-detect the container subnet by inspecting the default podman
-# network. This is much tighter than allowing broad RFC1918 ranges
-# (which would let any LAN peer use the LLM API key). If detection
-# fails we fall back to 172.16.0.0/12 + 10.0.0.0/8 which cover the
-# typical Docker/Podman defaults.
+# Podman uses pasta networking (rootless default): containers share
+# the host's network via userspace NAT, so traffic to
+# host.containers.internal arrives from the host's own IP (e.g.,
+# 192.168.1.112), not from a virtual bridge subnet. We auto-detect
+# the host's IPv4 addresses and allow those.
 #
 # Override: set KLANGK_CONTAINER_SUBNETS (comma-separated CIDRs) to
-# bypass auto-detection entirely.
+# bypass auto-detection entirely. 127.0.0.1 is NOT added implicitly
+# with an explicit override; include it in the list if needed.
 #
 # Further mitigations for even tighter lockdown:
 #   • Add token-based auth to the LLM proxy endpoint so that even
 #     allowed networks must present a per-session secret.
 #   • Bind nginx to localhost only and front it with a separate reverse
 #     proxy that handles external access and authentication.
-PODMAN_BIN="${KLANGK_PODMAN_BIN:-podman}"
-
 _explicit_override=false
 if [ -n "${KLANGK_CONTAINER_SUBNETS:-}" ]; then
   # Explicit override — use exactly what the operator specified.
@@ -55,20 +53,15 @@ if [ -n "${KLANGK_CONTAINER_SUBNETS:-}" ]; then
   IFS=',' read -ra _subnets <<<"$KLANGK_CONTAINER_SUBNETS"
   _explicit_override=true
 else
-  # Auto-detect from the default podman/docker network.
+  # Auto-detect: podman uses pasta networking (rootless default), so
+  # containers share the host's network via userspace NAT. Traffic to
+  # host.containers.internal arrives from the host's own IP (e.g.,
+  # 192.168.1.112), not from a virtual bridge subnet. We allow the
+  # host's own IPv4 addresses.
   _subnets=()
-  if _raw=$("$PODMAN_BIN" network inspect podman 2>/dev/null); then
-    while IFS= read -r cidr; do
-      [ -n "$cidr" ] && _subnets+=("$cidr")
-    done < <(echo "$_raw" | jq -r '.[0].subnets[].subnet' 2>/dev/null)
-  fi
-  # Docker fallback: try `docker network inspect bridge`.
-  if [ ${#_subnets[@]} -eq 0 ] && command -v docker &>/dev/null; then
-    while IFS= read -r cidr; do
-      [ -n "$cidr" ] && _subnets+=("$cidr")
-    done < <(docker network inspect bridge 2>/dev/null |
-      jq -r '.[0].IPAM.Config[].Subnet' 2>/dev/null)
-  fi
+  while IFS= read -r addr; do
+    [ -n "$addr" ] && _subnets+=("$addr")
+  done < <(ip -4 addr show 2>/dev/null | awk '/inet /{sub(/\/.*/, "", $2); print $2}')
 fi
 
 if [ ${#_subnets[@]} -gt 0 ]; then
@@ -76,12 +69,8 @@ if [ ${#_subnets[@]} -gt 0 ]; then
   for cidr in "${_subnets[@]}"; do
     CONTAINER_ACL+="      allow ${cidr};"$'\n'
   done
-  if [ "$_explicit_override" = false ]; then
-    # Auto-detected: also allow localhost (backend runs there).
-    CONTAINER_ACL+="      allow 127.0.0.1;"$'\n'
-  fi
   CONTAINER_ACL+="      deny all;"
-  echo "nginx container ACL: subnets: ${_subnets[*]}${_explicit_override:+ (explicit)}" >&2
+  echo "nginx container ACL: ${_subnets[*]}${_explicit_override:+ (explicit)}" >&2
 else
   # Fallback: broad RFC1918 ranges covering typical container subnets.
   # 192.168.0.0/16 is intentionally excluded — it is the most common

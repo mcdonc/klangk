@@ -44,8 +44,6 @@ def _run_nginx_sh(env_overrides, tmpdir):
         "DEVENV_STATE": tmpdir,
         "KLANGK_NGINX_PORT": "19999",
         "KLANGK_PORT": "19998",
-        # Provide a fake podman that always fails so we test the fallback.
-        "KLANGK_PODMAN_BIN": "/bin/false",
         **env_overrides,
     }
     # We only need the generated config, not a running nginx. Run the
@@ -95,28 +93,18 @@ class TestNginxAclConfig:
         assert "allow 10.0.0.0/8;" not in conf
         assert "allow 192.168.0.0/16;" not in conf
 
-    def test_fallback_ranges(self, tmp_path):
-        """When detection fails and no override, fallback ranges are used."""
-        # Keep bash/jq on PATH but hide docker so the fallback triggers.
-        path_dirs = [
-            d
-            for d in os.environ["PATH"].split(":")
-            if not os.path.isfile(os.path.join(d, "docker"))
-        ]
+    def test_auto_detect_host_ips(self, tmp_path):
+        """Without override, host IPv4 addresses are auto-detected."""
         conf = _run_nginx_sh(
-            {
-                # No KLANGK_CONTAINER_SUBNETS, podman is /bin/false,
-                # docker not on PATH → fallback.
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "PATH": ":".join(path_dirs),
-            },
+            {"KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434"},
             str(tmp_path),
         )
-        assert "allow 172.16.0.0/12;" in conf
-        assert "allow 10.0.0.0/8;" in conf
+        # 127.0.0.1 is always a host IP, so it must appear.
         assert "allow 127.0.0.1;" in conf
         assert "deny all;" in conf
-        # 192.168 should never appear.
+        # Broad RFC1918 ranges should NOT appear (those are fallback only).
+        assert "allow 172.16.0.0/12;" not in conf
+        assert "allow 10.0.0.0/8;" not in conf
         assert "allow 192.168.0.0/16;" not in conf
 
     def test_no_llm_block_without_url(self, tmp_path):
@@ -237,7 +225,6 @@ class TestNginxAclEnforcement:
             # It won't actually be reached since the ACL denies us.
             "KLANGK_LLM_BASE_URL": f"http://127.0.0.1:{backend_port}",
             "KLANGK_LLM_API_KEY": "fake-key",
-            "KLANGK_PODMAN_BIN": "/bin/false",
         }
         nginx_proc = subprocess.Popen(
             ["bash", NGINX_SH],
