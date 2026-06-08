@@ -35,8 +35,11 @@ reach the browser.
 - **`flterm bypassKey`** (`packages/flterm/.../terminal_view.dart`,
   `runyaga/libghostty`): a predicate checked _before_ encoding. Returns true →
   flterm reports `ignored` and the key keeps bubbling. klangk's `_bypassKey`
-  (`lib/terminal/ghostty_terminal.dart`) uses it to release **plain PgUp/PgDn on
-  web's primary screen** so the browser scrolls the page.
+  (`lib/terminal/ghostty_terminal.dart`) uses it for two cases: (1) the
+  **page-scroll combos** (`Shift+PgUp/PgDn`, `Cmd+PgUp/PgDn`) on any screen, so
+  the scroll Shortcut runs even when the app enabled a keyboard protocol (pi's
+  Kitty mode) that would otherwise have flterm encode them; and (2) **plain
+  PgUp/PgDn on web's primary screen**, so the browser scrolls the page.
 - **`_SwallowPageScrollAction`** (same file): once flterm ignores PgUp/PgDn, the
   `WidgetsApp` `ScrollIntent` would otherwise scroll the scrollback. This action
   is enabled only on web+primary and swallows the page `ScrollIntent` so the key
@@ -64,6 +67,10 @@ reach the browser.
   (`zoomShortcutsFor`).
 - **`Cmd+T/W/F/N`** (macOS) — browser.
 - **`Ctrl+W/F/C`** — terminal control codes (readline), both platforms.
+- **Typing** — snaps a scrolled-up primary screen back to the live row
+  (`_snapToBottomOnInput`, standard terminal UX). Only real keystrokes do this,
+  not the page-scroll keys or the automatic PTY replies libghostty emits while
+  parsing server output (guarded by `_writingServerOutput`).
 
 The alt-screen vs primary-screen distinction comes from
 `TerminalScrollController.activeScreen`.
@@ -91,7 +98,8 @@ the alternate screen (vim/less).
 
 ## Changing a binding
 
-- Scrollback / zoom shortcut maps: `_scrollShortcuts`, `_zoomShortcuts`.
+- Page-scroll / zoom shortcut maps: `scrollShortcutsFor`, `zoomShortcutsFor`
+  (built per-platform from `defaultTargetPlatform`).
 - What's released to the browser on web: `_bypassKey` (per-key) +
   `_passPlainPageKeyToBrowser` (the web+primary gate, shared with the swallow
   action).
