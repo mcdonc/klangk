@@ -85,10 +85,19 @@ test.describe("terminal keymap (web)", () => {
     }
   });
 
-  test("Ctrl +/- are left for the browser, not sent to the PTY", async ({
+  test("the browser zoom combo is left for the browser, not sent to the PTY", async ({
     page,
     request,
+    browserName,
   }) => {
+    // The app's zoom modifier follows the platform Flutter detects: Cmd on
+    // macOS, Ctrl elsewhere. WebKit always reports macOS (Safari UA), and
+    // Chromium/Firefox follow the host OS — so pick the modifier accordingly,
+    // matching what the app leaves for the browser.
+    const zoomMod =
+      browserName === "webkit" || process.platform === "darwin"
+        ? "Meta"
+        : "Control";
     const sent = captureTerminalInput(page);
     const { cleanup } = await createAndOpenWorkspace(page, request, "km-zoom", {
       waitForTerminal: true,
@@ -96,8 +105,8 @@ test.describe("terminal keymap (web)", () => {
     try {
       await focusTerminal(page);
       const n = sent.length;
-      await page.keyboard.press("Control+Equal");
-      await page.keyboard.press("Control+Minus");
+      await page.keyboard.press(`${zoomMod}+Equal`);
+      await page.keyboard.press(`${zoomMod}+Minus`);
       await page.waitForTimeout(750);
       expect(sent.length).toBe(n); // browser owns zoom; terminal didn't eat it
     } finally {
