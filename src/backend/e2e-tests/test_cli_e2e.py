@@ -1418,6 +1418,56 @@ class TestVolumeUserIsolation:
                 capture_output=True,
             )
 
+    def test_volumes_ls_only_own(self):
+        """Each user only sees their own volumes via 'volumes ls'."""
+        env_a = self._env_a
+        env_b = self._env_b
+
+        # User A creates a volume
+        result = _run(["klangk", "volumes", "create", "vol-a"], env=env_a)
+        assert result.returncode == 0
+        try:
+            # User B creates a volume
+            result = _run(["klangk", "volumes", "create", "vol-b"], env=env_b)
+            assert result.returncode == 0
+            try:
+                # User A should see vol-a but not vol-b
+                result = _run(
+                    ["klangk", "volumes", "ls", "--plain"], env=env_a
+                )
+                assert "vol-a" in result.stdout
+                assert "vol-b" not in result.stdout
+
+                # User B should see vol-b but not vol-a
+                result = _run(
+                    ["klangk", "volumes", "ls", "--plain"], env=env_b
+                )
+                assert "vol-b" in result.stdout
+                assert "vol-a" not in result.stdout
+            finally:
+                _run(["klangk", "volumes", "rm", "vol-b"], env=env_b)
+        finally:
+            _run(["klangk", "volumes", "rm", "vol-a"], env=env_a)
+
+    def test_volumes_rm_other_user_rejected(self):
+        """A user cannot delete another user's volume."""
+        env_a = self._env_a
+        env_b = self._env_b
+
+        # User A creates a volume
+        result = _run(
+            ["klangk", "volumes", "create", "vol-private"], env=env_a
+        )
+        assert result.returncode == 0
+        try:
+            # User B tries to delete it — should fail
+            result = _run(
+                ["klangk", "volumes", "rm", "vol-private"], env=env_b
+            )
+            assert result.returncode != 0
+        finally:
+            _run(["klangk", "volumes", "rm", "vol-private"], env=env_a)
+
 
 class TestContainerReplace:
     """Verify podman --replace handles stale/crashed containers."""

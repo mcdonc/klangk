@@ -862,6 +862,9 @@ def volumes_rm(
     client = _client()
     resp = client.delete(f"/volumes/{name}")
     client._check_auth(resp)
+    if resp.status_code == 403:
+        _err.print(f"[red]Permission denied:[/red] {name}")
+        raise typer.Exit(code=1)
     if resp.status_code == 404:
         _err.print(f"[red]Volume not found:[/red] {name}")
         raise typer.Exit(code=1)
