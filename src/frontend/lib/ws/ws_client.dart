@@ -67,6 +67,9 @@ class WsClient extends ChangeNotifier {
   /// Buffered chat history — populated from chat_history and chat_message.
   final List<Map<String, dynamic>> chatHistory = [];
 
+  /// Workspace members for @mention autocomplete.
+  List<Map<String, dynamic>> workspaceMembers = [];
+
   /// Chat messages (individual and history) from the backend.
   Stream<Map<String, dynamic>> get chatMessages => _chatController.stream;
 
@@ -153,6 +156,10 @@ class WsClient extends ChangeNotifier {
             }
           } else if (type == 'chat_updated') {
             _chatController.add(json);
+          } else if (type == 'workspace_members') {
+            final members = json['members'] as List? ?? [];
+            workspaceMembers = members.cast<Map<String, dynamic>>();
+            notifyListeners();
           } else if (type == 'event') {
             _customEventController.add(json);
           }
@@ -206,6 +213,7 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
     chatHistory.clear();
+    workspaceMembers = [];
     notifyListeners();
   }
 

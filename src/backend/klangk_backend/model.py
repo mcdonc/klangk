@@ -1,4 +1,5 @@
 import json
+import re
 import socket
 from contextlib import asynccontextmanager
 
@@ -144,6 +145,18 @@ async def init_db() -> None:
                 message TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS chat_mentions (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chat_mentions_user
+            ON chat_mentions(user_id, workspace_id)
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS login_attempts (
@@ -1316,6 +1329,52 @@ async def clear_login_attempts(email: str) -> None:
 
 # Chat messages
 
+_MENTION_RE = re.compile(r"@(\S+)")
+
+
+async def parse_mentions(
+    db: aiosqlite.Connection, message: str, workspace_id: str
+) -> list[str]:
+    """Extract @email mentions from message text and resolve to user IDs.
+
+    Returns a deduplicated list of user IDs for emails that belong to
+    workspace members (including the owner).
+    """
+    candidates = _MENTION_RE.findall(message)
+    if not candidates:
+        return []
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for c in candidates:
+        low = c.lower()
+        if low not in seen:
+            seen.add(low)
+            unique.append(low)
+
+    placeholders = ",".join("?" for _ in unique)
+    cursor = await db.execute(
+        "SELECT DISTINCT u.id, LOWER(u.email) AS email FROM users u"
+        " JOIN acl_entries ae ON ae.user_id = u.id"
+        " WHERE LOWER(u.email) IN (" + placeholders + ")"
+        "   AND ae.resource = ?"
+        "   AND ae.principal_type = ? AND ae.action = ?"
+        " UNION"
+        " SELECT w.user_id AS id, LOWER(u2.email) AS email"
+        " FROM workspaces w JOIN users u2 ON u2.id = w.user_id"
+        " WHERE w.id = ? AND LOWER(u2.email) IN (" + placeholders + ")",
+        (
+            *unique,
+            f"/workspaces/{workspace_id}",
+            PRINCIPAL_USER,
+            ACTION_ALLOW,
+            workspace_id,
+            *unique,
+        ),
+    )
+    rows = await cursor.fetchall()
+    return [row["id"] for row in rows]
+
 
 async def add_chat_message(
     workspace_id: str, user_id: str, user_email: str, message: str
@@ -1329,6 +1388,13 @@ async def add_chat_message(
             " VALUES (?, ?, ?, ?, ?)",
             (msg_id, workspace_id, user_id, user_email, message),
         )
+        mentioned_user_ids = await parse_mentions(db, message, workspace_id)
+        for uid in mentioned_user_ids:
+            await db.execute(
+                "INSERT INTO chat_mentions (id, message_id, user_id, workspace_id)"
+                " VALUES (?, ?, ?, ?)",
+                (str(uuid.uuid4()), msg_id, uid, workspace_id),
+            )
         await db.commit()
         cursor = await db.execute(
             "SELECT created_at FROM chat_messages WHERE id = ?", (msg_id,)
@@ -1341,6 +1407,7 @@ async def add_chat_message(
             "user_email": user_email,
             "message": message,
             "created_at": row["created_at"],
+            "mentions": mentioned_user_ids,
         }
     finally:
         await db.close()
@@ -1376,8 +1443,7 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
             (workspace_id, limit),
         )
         rows = await cursor.fetchall()
-        # Return in chronological order (oldest first)
-        return list(
+        messages = list(
             reversed(
                 [
                     {
@@ -1392,6 +1458,23 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
                 ]
             )
         )
+        if messages:
+            msg_ids = [m["id"] for m in messages]
+            placeholders = ",".join("?" for _ in msg_ids)
+            cursor = await db.execute(
+                "SELECT message_id, user_id FROM chat_mentions"
+                " WHERE message_id IN (" + placeholders + ")",
+                msg_ids,
+            )
+            mention_rows = await cursor.fetchall()
+            mentions_by_msg: dict[str, list[str]] = {}
+            for mr in mention_rows:
+                mentions_by_msg.setdefault(mr["message_id"], []).append(
+                    mr["user_id"]
+                )
+            for m in messages:
+                m["mentions"] = mentions_by_msg.get(m["id"], [])
+        return messages
     finally:
         await db.close()
 

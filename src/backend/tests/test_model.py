@@ -518,6 +518,7 @@ class TestChatMessages:
         assert msg["message"] == "hello"
         assert "id" in msg
         assert "created_at" in msg
+        assert msg["mentions"] == []
 
     async def test_get_chat_messages(self, workspace, user):
         await model.add_chat_message(
@@ -530,6 +531,8 @@ class TestChatMessages:
         assert len(msgs) == 2
         assert msgs[0]["message"] == "first"
         assert msgs[1]["message"] == "second"
+        assert msgs[0]["mentions"] == []
+        assert msgs[1]["mentions"] == []
 
     async def test_get_chat_messages_limit(self, workspace, user):
         for i in range(5):
@@ -567,6 +570,110 @@ class TestChatMessages:
         assert not deleted
         msgs = await model.get_chat_messages(workspace["id"])
         assert msgs[0]["message"] == "mine"
+
+
+class TestChatMentions:
+    async def test_mention_workspace_owner(self, workspace, user):
+        """@mentioning the workspace owner resolves to their user ID."""
+        msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            user["email"],
+            f"hello @{user['email']}",
+        )
+        assert msg["mentions"] == [user["id"]]
+
+    async def test_mention_workspace_member(self, workspace, user):
+        """@mentioning a workspace member (via ACL) resolves."""
+        member = await model.create_user(
+            "member@test.com", "hash", verified=True
+        )
+        await model.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=member["id"],
+        )
+        msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            user["email"],
+            "hey @member@test.com check this",
+        )
+        assert msg["mentions"] == [member["id"]]
+
+    async def test_mention_non_member_ignored(self, workspace, user):
+        """@mentioning someone not in the workspace produces no mentions."""
+        await model.create_user("outsider@test.com", "hash", verified=True)
+        msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            user["email"],
+            "hey @outsider@test.com",
+        )
+        assert msg["mentions"] == []
+
+    async def test_mention_multiple_users(self, workspace, user):
+        """Multiple @mentions in one message resolve correctly."""
+        member = await model.create_user("m@test.com", "hash", verified=True)
+        await model.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=member["id"],
+        )
+        msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            user["email"],
+            f"@{user['email']} and @m@test.com",
+        )
+        assert set(msg["mentions"]) == {user["id"], member["id"]}
+
+    async def test_mention_deduplication(self, workspace, user):
+        """Duplicate @mentions produce only one entry."""
+        msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            user["email"],
+            f"@{user['email']} @{user['email']}",
+        )
+        assert msg["mentions"] == [user["id"]]
+
+    async def test_mentions_in_history(self, workspace, user):
+        """get_chat_messages includes mentions from the DB."""
+        await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            user["email"],
+            f"hello @{user['email']}",
+        )
+        msgs = await model.get_chat_messages(workspace["id"])
+        assert len(msgs) == 1
+        assert msgs[0]["mentions"] == [user["id"]]
+
+    async def test_mentions_cascade_with_message(self, workspace, user):
+        """Deleting a workspace cascades to chat_mentions."""
+        await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            user["email"],
+            f"@{user['email']}",
+        )
+        await model.delete_workspace(workspace["id"], user["id"])
+        msgs = await model.get_chat_messages(workspace["id"])
+        assert msgs == []
+
+    async def test_no_mention_pattern(self, workspace, user):
+        """Messages without @ produce empty mentions."""
+        msg = await model.add_chat_message(
+            workspace["id"], user["id"], user["email"], "just plain text"
+        )
+        assert msg["mentions"] == []
 
 
 class TestInvitations:

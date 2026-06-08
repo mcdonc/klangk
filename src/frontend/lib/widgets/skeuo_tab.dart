@@ -7,6 +7,7 @@ class SkeuoTab extends StatelessWidget {
   final IconData icon;
   final bool isSelected;
   final int? badge;
+  final bool badgeHighlight;
   final VoidCallback onTap;
 
   const SkeuoTab({
@@ -15,6 +16,7 @@ class SkeuoTab extends StatelessWidget {
     required this.icon,
     required this.isSelected,
     this.badge,
+    this.badgeHighlight = false,
     required this.onTap,
   });
 
@@ -52,11 +54,15 @@ class SkeuoTab extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                   decoration: BoxDecoration(
-                    color: KColors.accentRed,
+                    color: badgeHighlight
+                        ? KColors.accentAmber
+                        : KColors.accentRed,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    badge! > 99 ? '99+' : badge.toString(),
+                    badgeHighlight
+                        ? '@${badge! > 99 ? '99+' : badge.toString()}'
+                        : (badge! > 99 ? '99+' : badge.toString()),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10,
