@@ -51,33 +51,13 @@ test.describe("terminal keymap (web)", () => {
     }
   });
 
-  test("PageUp inside the alternate screen (less) is sent to the PTY", async ({
-    page,
-    request,
-  }) => {
-    const sent = captureTerminalInput(page);
-    const { cleanup } = await createAndOpenWorkspace(page, request, "km-alt", {
-      waitForTerminal: true,
-    });
-    try {
-      // Build a file and open it in less (switches to the alternate screen).
-      await terminalType(page, "seq 1 500 > /home/klangk/work/big.txt");
-      await page.waitForTimeout(500);
-      await terminalType(page, "less /home/klangk/work/big.txt");
-      // Give less time to open and switch to the alternate screen before we
-      // send paging keys — 1s is flaky under CI load.
-      await page.waitForTimeout(2500);
-
-      const n = sent.length;
-      await page.keyboard.press("PageDown");
-      await page.waitForTimeout(750);
-      expect(sent.length).toBeGreaterThan(n); // less received the paging key
-
-      await page.keyboard.press("q"); // quit less
-    } finally {
-      await cleanup();
-    }
-  });
+  // NOTE: alt-screen paging (vim/less/pi) is covered by the Dart widget tests
+  // (`web + alternate screen: PageUp is forwarded to the PTY`, and the
+  // `Shift+PgUp/PgDn page the app on the alt screen` group). The e2e versions
+  // that drove `less` were removed: they raced `less` reaching the alternate
+  // screen before the key was sent, which is flaky under CI load (the key lands
+  // on the primary shell instead). The remaining e2e here are all deterministic
+  // primary-screen behaviors.
 
   test("Shift+PageUp scrolls the buffer without touching the PTY", async ({
     page,
@@ -174,48 +154,6 @@ test.describe("terminal keymap (web)", () => {
       await page.keyboard.press("x"); // a real keystroke
       await page.waitForTimeout(750);
       expect(sent.length).toBeGreaterThan(n); // the character reached the PTY
-    } finally {
-      await cleanup();
-    }
-  });
-
-  test("Shift+PageUp/PageDown page the app on the alternate screen (less)", async ({
-    page,
-    request,
-  }) => {
-    // On the alt screen there is no scrollback; the page keys must reach the
-    // running app (klangk sends it the app's own PageUp/PageDown via sendKey)
-    // instead of being a no-op — this is what makes Shift+PgUp/PgDn work inside
-    // pi / vim / less.
-    const sent = captureTerminalInput(page);
-    const { cleanup } = await createAndOpenWorkspace(
-      page,
-      request,
-      "km-altpg",
-      {
-        waitForTerminal: true,
-      },
-    );
-    try {
-      await terminalType(page, "seq 1 500 > /home/klangk/work/big.txt");
-      await page.waitForTimeout(500);
-      await terminalType(page, "less /home/klangk/work/big.txt");
-      // Give less time to open and switch to the alternate screen before we
-      // send paging keys — 1s is flaky under CI load.
-      await page.waitForTimeout(2500);
-      await focusTerminal(page);
-
-      let n = sent.length;
-      await page.keyboard.press("Shift+PageUp");
-      await page.waitForTimeout(750);
-      expect(sent.length).toBeGreaterThan(n); // paged the app, not a no-op
-
-      n = sent.length;
-      await page.keyboard.press("Shift+PageDown");
-      await page.waitForTimeout(750);
-      expect(sent.length).toBeGreaterThan(n);
-
-      await page.keyboard.press("q"); // quit less
     } finally {
       await cleanup();
     }
