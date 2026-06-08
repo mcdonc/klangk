@@ -82,7 +82,14 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   @override
   void initState() {
     super.initState();
-    _terminal = TerminalController()
+    // scrollToBottom: never — the terminal must not auto-snap to the bottom on
+    // every keystroke (flterm's default .onKeystroke). That snap was undoing
+    // Shift+PgUp the instant a key/IME-commit fired, so a single page-up jumped
+    // straight back to the live row. Following live output while at the bottom
+    // still works via flterm's stick-to-bottom layout; scrolled-up stays put.
+    _terminal = TerminalController(
+      config: const TerminalConfig(scrollToBottom: ScrollToBottom.never),
+    )
       ..onOutput = (bytes) {
         widget.wsClient
             .sendTerminalInput(utf8.decode(bytes, allowMalformed: true));
