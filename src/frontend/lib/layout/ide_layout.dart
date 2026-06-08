@@ -15,6 +15,7 @@ class IdeLayout extends StatefulWidget {
   final Widget? sharing;
   final Widget? debug;
   final int chatUnread;
+  final bool chatMentioned;
   final GlobalKey<GhosttyTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
   final GlobalKey<WorkspaceChatState>? chatKey;
@@ -28,6 +29,7 @@ class IdeLayout extends StatefulWidget {
     this.sharing,
     this.debug,
     this.chatUnread = 0,
+    this.chatMentioned = false,
     this.terminalKey,
     this.fileViewerKey,
     this.chatKey,
@@ -123,6 +125,7 @@ class _IdeLayoutState extends State<IdeLayout> {
         icon: Icons.chat_outlined,
         isSelected: _selectedIndex == chatIndex,
         badge: widget.chatUnread > 0 ? widget.chatUnread : null,
+        badgeHighlight: widget.chatMentioned,
         onTap: () => _selectTab(chatIndex),
       ));
       content.add(Container(

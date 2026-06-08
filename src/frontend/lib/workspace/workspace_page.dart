@@ -38,6 +38,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String? _error;
   String _workspaceName = '';
   int _chatUnread = 0;
+  bool _chatMentioned = false;
   bool _containerStopped = false;
   bool _restarting = false;
   bool _disconnected = false;
@@ -275,9 +276,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
                     onUnreadChanged: (count) {
                       if (mounted) setState(() => _chatUnread = count);
                     },
+                    onMentionChanged: (mentioned) {
+                      if (mounted) setState(() => _chatMentioned = mentioned);
+                    },
                   )
                 : null,
             chatUnread: _chatUnread,
+            chatMentioned: _chatMentioned,
             settings: _hasPerm('edit')
                 ? WorkspaceSettingsPanel(
                     workspaceId: widget.workspaceId,

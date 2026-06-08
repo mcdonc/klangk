@@ -2074,6 +2074,122 @@ test.describe("Klangk E2E", () => {
     });
   });
 
+  test("workspace_members broadcast on member add and chat @mention", async ({
+    browser,
+    request,
+  }) => {
+    const ownerEmail = `mention-owner-${Date.now()}@test.example.com`;
+    const memberEmail = `mention-member-${Date.now()}@test.example.com`;
+    const lateEmail = `mention-late-${Date.now()}@test.example.com`;
+    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+    await registerUser(request, memberEmail);
+    await registerUser(request, lateEmail);
+
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers: ownerHeaders,
+      data: { name: `e2e-mention-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspaceId = (await wsResp.json()).id;
+
+    // Share with first member
+    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+      headers: ownerHeaders,
+      data: { email: memberEmail },
+    });
+
+    // Capture WS on owner page to send commands
+    const wsCaptureScript = `(() => {
+      const Orig = window.WebSocket;
+      window.WebSocket = function(...args) {
+        const ws = new Orig(...args);
+        window.__klangkWs = ws;
+        return ws;
+      };
+      window.WebSocket.prototype = Orig.prototype;
+      window.WebSocket.CONNECTING = Orig.CONNECTING;
+      window.WebSocket.OPEN = Orig.OPEN;
+      window.WebSocket.CLOSING = Orig.CLOSING;
+      window.WebSocket.CLOSED = Orig.CLOSED;
+    })()`;
+
+    const ctx1 = await browser.newContext();
+    await ctx1.addInitScript(wsCaptureScript);
+    const page1 = await ctx1.newPage();
+
+    // Collect workspace_members and chat_message on owner page
+    const ownerWsMessages: string[] = [];
+    const ownerChatMessages: string[] = [];
+    page1.on("websocket", (ws) => {
+      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+        const text = frame.payload.toString();
+        if (text.includes("workspace_members")) {
+          ownerWsMessages.push(text);
+        }
+        if (text.includes("chat_message")) {
+          ownerChatMessages.push(text);
+        }
+      });
+    });
+
+    await openWorkspace(page1, ownerEmail, workspaceId, {
+      waitForTerminal: true,
+    });
+
+    // Initial workspace_members should have been received on connect
+    expect(ownerWsMessages.length).toBeGreaterThan(0);
+    const initial = JSON.parse(ownerWsMessages[ownerWsMessages.length - 1]);
+    expect(initial.type).toBe("workspace_members");
+    const initialEmails = initial.members.map(
+      (m: { email: string }) => m.email,
+    );
+    expect(initialEmails).toContain(memberEmail);
+    expect(initialEmails).toContain(ownerEmail);
+
+    // Now add a late member while owner is connected
+    const countBefore = ownerWsMessages.length;
+    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+      headers: ownerHeaders,
+      data: { email: lateEmail },
+    });
+
+    // Wait for the broadcast
+    await page1.waitForTimeout(2000);
+    expect(ownerWsMessages.length).toBeGreaterThan(countBefore);
+    const updated = JSON.parse(ownerWsMessages[ownerWsMessages.length - 1]);
+    const updatedEmails = updated.members.map(
+      (m: { email: string }) => m.email,
+    );
+    expect(updatedEmails).toContain(lateEmail);
+
+    // Send a chat message with @mention and verify mentions field
+    await page1.evaluate((email: string) => {
+      const ws = (window as any).__klangkWs;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            cmd: "chat_send",
+            message: `hey @${email} check this`,
+          }),
+        );
+      }
+    }, memberEmail);
+
+    await page1.waitForTimeout(2000);
+
+    expect(ownerChatMessages.length).toBeGreaterThan(0);
+    const chatMsg = JSON.parse(ownerChatMessages[0]);
+    expect(chatMsg.type).toBe("chat_message");
+    expect(chatMsg.message).toContain(`@${memberEmail}`);
+    expect(chatMsg.mentions).toBeDefined();
+    expect(chatMsg.mentions.length).toBeGreaterThan(0);
+
+    await ctx1.close();
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers: ownerHeaders,
+    });
+  });
+
   test("container recreated on page refresh", async ({ page, request }) => {
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,

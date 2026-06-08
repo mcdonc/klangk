@@ -613,6 +613,13 @@ class Connection:
                 {"type": "chat_history", "messages": chat_history}
             )
 
+        # Send workspace members for @mention autocomplete
+        members = await model.get_workspace_members(workspace_id)
+        owner = await model.get_user_by_id(workspace.get("user_id", ""))
+        if owner and not any(m["id"] == owner["id"] for m in members):
+            members.append({"id": owner["id"], "email": owner["email"]})
+        self.sock.send_json({"type": "workspace_members", "members": members})
+
         # Store status for when frontend sends ui_ready
         self.pending_status_msg = status_msg
         logger.info(

@@ -1303,6 +1303,20 @@ async def _check_workspace_share(request: Request, user: dict) -> str:
     return f"/workspaces/{workspace_id}"
 
 
+async def _broadcast_workspace_members(workspace_id: str) -> None:
+    """Push updated workspace members to all connected subscribers."""
+    session = wshandler.state.get_session(workspace_id)
+    if not session:
+        return
+    members = await model.get_workspace_members(workspace_id)
+    workspace = await model.get_workspace(workspace_id)
+    if workspace:
+        owner = await model.get_user_by_id(workspace.get("user_id", ""))
+        if owner and not any(m["id"] == owner["id"] for m in members):
+            members.append({"id": owner["id"], "email": owner["email"]})
+    session.broadcast({"type": "workspace_members", "members": members})
+
+
 @router.get("/workspaces/{workspace_id}/members")
 async def get_workspace_members(
     workspace_id: str,
@@ -1365,6 +1379,7 @@ async def add_workspace_member(
         PRINCIPAL_USER,
         user_id=target["id"],
     )
+    await _broadcast_workspace_members(workspace_id)
     return {
         "status": "shared",
         "user_id": target["id"],
@@ -1392,6 +1407,7 @@ async def remove_workspace_member(
     for i, entry in enumerate(remaining):
         entry["position"] = i
     await model.replace_acl_entries(resource, remaining)
+    await _broadcast_workspace_members(workspace_id)
     return {"status": "removed"}
 
 

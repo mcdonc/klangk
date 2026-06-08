@@ -15,10 +15,14 @@ class WorkspaceChat extends StatefulWidget {
   /// Called when the unread message count changes.
   final ValueChanged<int>? onUnreadChanged;
 
+  /// Called when mention-while-hidden state changes.
+  final ValueChanged<bool>? onMentionChanged;
+
   const WorkspaceChat({
     super.key,
     required this.wsClient,
     this.onUnreadChanged,
+    this.onMentionChanged,
   });
 
   @override
@@ -34,6 +38,12 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   StreamSubscription<Map<String, dynamic>>? _chatSub;
   int _unreadCount = 0;
   bool _isVisible = false;
+  bool _hasMention = false;
+
+  // Autocomplete state
+  OverlayEntry? _autocompleteOverlay;
+  String _mentionQuery = '';
+  final _inputKey = GlobalKey();
 
   @override
   void initState() {
@@ -43,6 +53,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       _messages.addAll(widget.wsClient.chatHistory);
     }
     _chatSub = widget.wsClient.chatMessages.listen(_onMessage);
+    _textController.addListener(_onTextChanged);
   }
 
   /// Focuses the message input. Called by the parent when the Chat tab is
@@ -54,7 +65,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     _isVisible = visible;
     if (visible && _unreadCount > 0) {
       _unreadCount = 0;
+      _hasMention = false;
       widget.onUnreadChanged?.call(0);
+      widget.onMentionChanged?.call(false);
     }
   }
 
@@ -82,6 +95,15 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     if (!_isVisible) {
       _unreadCount++;
       widget.onUnreadChanged?.call(_unreadCount);
+
+      final mentions = msg['mentions'] as List?;
+      if (mentions != null && !_hasMention) {
+        final currentUserId = context.read<AuthService>().userId;
+        if (mentions.contains(currentUserId)) {
+          _hasMention = true;
+          widget.onMentionChanged?.call(true);
+        }
+      }
     }
 
     // Auto-scroll to bottom after frame renders
@@ -95,6 +117,113 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       }
     });
   }
+
+  // --- Autocomplete ---
+
+  void _onTextChanged() {
+    final text = _textController.text;
+    final cursor = _textController.selection.baseOffset;
+    if (cursor < 0 || cursor > text.length) {
+      _hideAutocomplete();
+      return;
+    }
+    // Find the @ that starts the current mention token
+    final before = text.substring(0, cursor);
+    final atIdx = before.lastIndexOf('@');
+    if (atIdx < 0 ||
+        (atIdx > 0 && before[atIdx - 1] != ' ' && before[atIdx - 1] != '\n')) {
+      _hideAutocomplete();
+      return;
+    }
+    final query = before.substring(atIdx + 1);
+    if (query.contains(' ') || query.contains('\n')) {
+      _hideAutocomplete();
+      return;
+    }
+    _mentionQuery = query.toLowerCase();
+    _showAutocomplete();
+  }
+
+  void _showAutocomplete() {
+    final members = widget.wsClient.workspaceMembers;
+    final filtered = members.where((m) {
+      final email = (m['email'] as String? ?? '').toLowerCase();
+      return email.contains(_mentionQuery);
+    }).toList();
+    if (filtered.isEmpty) {
+      _hideAutocomplete();
+      return;
+    }
+    _autocompleteOverlay?.remove();
+    _autocompleteOverlay = OverlayEntry(builder: (context) {
+      final renderBox =
+          _inputKey.currentContext?.findRenderObject() as RenderBox?;
+      if (renderBox == null) return const SizedBox.shrink();
+      final offset = renderBox.localToGlobal(Offset.zero);
+      final maxItems = filtered.length > 5 ? 5 : filtered.length;
+      final height = maxItems * 36.0;
+      return Positioned(
+        left: offset.dx,
+        top: offset.dy - height - 4,
+        width: renderBox.size.width,
+        child: Material(
+          elevation: 4,
+          color: KColors.bgSurface,
+          borderRadius: BorderRadius.circular(6),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: height),
+            child: ListView.builder(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              itemCount: filtered.length > 5 ? 5 : filtered.length,
+              itemBuilder: (ctx, i) {
+                final email = filtered[i]['email'] as String? ?? '';
+                return InkWell(
+                  onTap: () => _insertMention(email),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Text(
+                      email,
+                      style: const TextStyle(
+                        color: KColors.textPrimary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+    });
+    Overlay.of(context).insert(_autocompleteOverlay!);
+  }
+
+  void _hideAutocomplete() {
+    _autocompleteOverlay?.remove();
+    _autocompleteOverlay = null;
+  }
+
+  void _insertMention(String email) {
+    final text = _textController.text;
+    final cursor = _textController.selection.baseOffset;
+    final before = text.substring(0, cursor);
+    final atIdx = before.lastIndexOf('@');
+    final after = text.substring(cursor);
+    final newText = '${text.substring(0, atIdx)}@$email $after';
+    _textController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(
+        offset: atIdx + email.length + 2, // @email + space
+      ),
+    );
+    _hideAutocomplete();
+    _inputFocusNode.requestFocus();
+  }
+
+  // --- Message rendering ---
 
   static String _formatTime(String raw) {
     if (raw.isEmpty) return '';
@@ -125,9 +254,15 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   static Color _colorForEmail(String email) => KColors.colorForString(email);
 
   static final _urlRegex = RegExp(r'https?://[^\s<>"{}|\\^`\[\]]+');
+  static final _mentionRegex = RegExp(r'@(\S+)');
 
-  /// Build TextSpans for a message, turning URLs into clickable links.
-  List<TextSpan> _buildMessageSpans(String text, bool isDeleted) {
+  /// Build TextSpans for a message, turning URLs into clickable links
+  /// and @mentions into highlighted spans.
+  List<TextSpan> _buildMessageSpans(
+    String text,
+    bool isDeleted,
+    String? currentUserEmail,
+  ) {
     final style = TextStyle(
       color: isDeleted ? KColors.textMuted : KColors.textPrimary,
       fontSize: 13,
@@ -138,25 +273,54 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       return [TextSpan(text: text, style: style)];
     }
 
+    // Collect all matches (URLs and mentions) sorted by position
+    final matches = <_SpanMatch>[];
+    for (final m in _urlRegex.allMatches(text)) {
+      matches.add(_SpanMatch(m.start, m.end, _SpanType.url, m.group(0)!));
+    }
+    for (final m in _mentionRegex.allMatches(text)) {
+      // Skip if overlapping with a URL
+      final overlaps = matches.any((u) => m.start < u.end && m.end > u.start);
+      if (!overlaps) {
+        matches.add(_SpanMatch(m.start, m.end, _SpanType.mention, m.group(0)!));
+      }
+    }
+    matches.sort((a, b) => a.start.compareTo(b.start));
+
     final spans = <TextSpan>[];
     int lastEnd = 0;
-    for (final match in _urlRegex.allMatches(text)) {
+    for (final match in matches) {
       if (match.start > lastEnd) {
         spans.add(TextSpan(
           text: text.substring(lastEnd, match.start),
           style: style,
         ));
       }
-      final url = match.group(0)!;
-      spans.add(TextSpan(
-        text: url,
-        style: style.copyWith(
-          color: KColors.accentBlue,
-          decoration: TextDecoration.underline,
-        ),
-        recognizer: TapGestureRecognizer()
-          ..onTap = () => openUrl(url), // coverage:ignore-line
-      ));
+      if (match.type == _SpanType.url) {
+        spans.add(TextSpan(
+          text: match.text,
+          style: style.copyWith(
+            color: KColors.accentBlue,
+            decoration: TextDecoration.underline,
+          ),
+          recognizer: TapGestureRecognizer()
+            ..onTap = () => openUrl(match.text), // coverage:ignore-line
+        ));
+      } else {
+        // Mention
+        final mentionEmail = match.text.substring(1); // strip @
+        final isSelf = currentUserEmail != null &&
+            mentionEmail.toLowerCase() == currentUserEmail.toLowerCase();
+        spans.add(TextSpan(
+          text: match.text,
+          style: style.copyWith(
+            color: KColors.accentBlue,
+            fontWeight: FontWeight.bold,
+            backgroundColor:
+                isSelf ? KColors.accentBlue.withValues(alpha: 0.15) : null,
+          ),
+        ));
+      }
       lastEnd = match.end;
     }
     if (lastEnd < text.length) {
@@ -176,6 +340,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   void _sendMessage() {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
+    _hideAutocomplete();
     widget.wsClient.sendChatMessage(text);
     _textController.clear();
   }
@@ -186,8 +351,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   @override
   void dispose() {
+    _hideAutocomplete();
     _chatSub?.cancel();
     _scrollController.dispose();
+    _textController.removeListener(_onTextChanged);
     _textController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
@@ -195,7 +362,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   @override
   Widget build(BuildContext context) {
-    final currentUserId = context.read<AuthService>().userId;
+    final auth = context.read<AuthService>();
+    final currentUserId = auth.userId;
+    final currentUserEmail = auth.email;
 
     return Container(
       color: KColors.bgCanvas,
@@ -240,7 +409,11 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                                         fontSize: 13,
                                       ),
                                     ),
-                                    ..._buildMessageSpans(text, isDeleted),
+                                    ..._buildMessageSpans(
+                                      text,
+                                      isDeleted,
+                                      currentUserEmail,
+                                    ),
                                   ],
                                 ),
                               ),
@@ -273,6 +446,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                   ),
           ),
           Container(
+            key: _inputKey,
             decoration: const BoxDecoration(
               border: Border(
                 top: BorderSide(color: KColors.borderDefault),
@@ -312,4 +486,14 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       ),
     );
   }
+}
+
+enum _SpanType { url, mention }
+
+class _SpanMatch {
+  final int start;
+  final int end;
+  final _SpanType type;
+  final String text;
+  _SpanMatch(this.start, this.end, this.type, this.text);
 }
