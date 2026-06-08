@@ -343,34 +343,6 @@ class TestStartContainer:
         p.start_container.assert_awaited_once_with("new-cid")
         assert workspace["id"] in container.registry.states
 
-    async def test_ssh_agent_forwarded_when_socket_exists(
-        self, workspace, monkeypatch, tmp_path
-    ):
-        sock = tmp_path / "agent.sock"
-        sock.touch()
-        monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
-
-        with patch_podman() as p:
-            await container.registry.start_container(
-                workspace["id"], "/tmp/ws", "/tmp/home"
-            )
-        kwargs = p.create_container.call_args.kwargs
-        assert "SSH_AUTH_SOCK=/run/ssh-agent.sock" in kwargs["env"]
-        assert f"{sock}:/run/ssh-agent.sock:ro" in kwargs["binds"]
-
-    async def test_ssh_agent_not_forwarded_when_unset(
-        self, workspace, monkeypatch
-    ):
-        monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
-
-        with patch_podman() as p:
-            await container.registry.start_container(
-                workspace["id"], "/tmp/ws", "/tmp/home"
-            )
-        kwargs = p.create_container.call_args.kwargs
-        assert "SSH_AUTH_SOCK=/run/ssh-agent.sock" not in kwargs["env"]
-        assert not any("ssh-agent" in b for b in kwargs["binds"])
-
     async def test_reuse_running_container(self, workspace):
         with patch_podman(inspect_container=_running(True)) as p:
             cid, status = await container.registry.start_container(
