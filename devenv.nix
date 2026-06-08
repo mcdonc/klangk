@@ -32,19 +32,22 @@ in
     directory = "./src/backend";
   };
 
-  packages = with pkgs; [
-    bash # explicit bash for shell scripts (CI /bin/sh may be dash)
-    coreutils # GNU du (macOS BSD du lacks -b)
-    docker-client
-    flutter
-    git # "error: Failed to find git" during devenv:git-hooks:install
-    gzip
-    gnutar
-    nginx
-    podman
-    sqlite.bin
-    rsync
-  ];
+  packages =
+    with pkgs;
+    [
+      bash # explicit bash for shell scripts (CI /bin/sh may be dash)
+      coreutils # GNU du (macOS BSD du lacks -b)
+      docker-client
+      flutter
+      git # "error: Failed to find git" during devenv:git-hooks:install
+      gzip
+      gnutar
+      nginx
+      podman
+      sqlite.bin
+      rsync
+    ]
+    ++ (if pkgs.stdenv.isDarwin then [ iproute2mac ] else [ iproute2 ]);
 
   env.PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
   env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
