@@ -26,15 +26,58 @@ else
 fi
 
 # Shared allow/deny rules for container-only endpoints (LLM proxy,
-# browser-delegate bridge). Restricts access to container subnets and
-# localhost — the backend also validates tokens, but rejecting at the
-# network level avoids unnecessary round-trips.
-CONTAINER_ACL="
+# browser-delegate bridge). Restricts access so that only our own
+# containers can reach the LLM API key and browser-delegate bridge.
+# The backend also validates tokens, but rejecting at the network
+# level avoids unnecessary round-trips.
+#
+# Podman uses pasta networking (rootless default): containers share
+# the host's network via userspace NAT, so traffic to
+# host.containers.internal arrives from the host's own IP (e.g.,
+# 192.168.1.112), not from a virtual bridge subnet. We auto-detect
+# the host's IPv4 addresses and allow those.
+#
+# Override: set KLANGK_CONTAINER_SUBNETS (comma-separated CIDRs) to
+# bypass auto-detection entirely. 127.0.0.1 is NOT added implicitly
+# with an explicit override; include it in the list if needed.
+#
+
+_explicit_override=false
+if [ -n "${KLANGK_CONTAINER_SUBNETS:-}" ]; then
+  # Explicit override — use exactly what the operator specified.
+  # 127.0.0.1 is NOT added implicitly; include it in the list if needed.
+  IFS=',' read -ra _subnets <<<"$KLANGK_CONTAINER_SUBNETS"
+  _explicit_override=true
+else
+  # Auto-detect: podman uses pasta networking (rootless default), so
+  # containers share the host's network via userspace NAT. Traffic to
+  # host.containers.internal arrives from the host's own IP (e.g.,
+  # 192.168.1.112), not from a virtual bridge subnet. We allow the
+  # host's own IPv4 addresses.
+  _subnets=()
+  while IFS= read -r addr; do
+    [ -n "$addr" ] && _subnets+=("$addr")
+  done < <(ip -4 addr show 2>/dev/null | awk '/inet /{sub(/\/.*/, "", $2); print $2}')
+fi
+
+if [ ${#_subnets[@]} -gt 0 ]; then
+  CONTAINER_ACL=$'\n'
+  for cidr in "${_subnets[@]}"; do
+    CONTAINER_ACL+="      allow ${cidr};"$'\n'
+  done
+  CONTAINER_ACL+="      deny all;"
+  echo "nginx container ACL: ${_subnets[*]}${_explicit_override:+ (explicit)}" >&2
+else
+  # Fallback: broad RFC1918 ranges covering typical container subnets.
+  # 192.168.0.0/16 is intentionally excluded — it is the most common
+  # LAN range and allowing it would expose the LLM proxy to LAN peers.
+  CONTAINER_ACL="
       allow 172.16.0.0/12;
-      allow 192.168.0.0/16;
       allow 10.0.0.0/8;
       allow 127.0.0.1;
       deny all;"
+  echo "nginx container ACL: subnet detection failed, using fallback RFC1918 ranges" >&2
+fi
 
 # LLM proxy block: only included if KLANGK_LLM_BASE_URL is configured.
 # Containers hit this instead of the real endpoint, so they never see the
