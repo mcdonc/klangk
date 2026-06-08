@@ -1,10 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flterm/flterm.dart' hide Key;
-// flterm's Key (libghostty key enum) collides with Flutter's widget Key, so
-// reach it under a prefix for the one place we send a key to the PTY directly.
-import 'package:flterm/flterm.dart' as flterm show Key;
+import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
@@ -186,16 +183,18 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   //     [ScrollPosition.pointerScroll] of one viewport — exactly what a mouse
   //     wheel does — rather than a [jumpTo] to an absolute target (which gets
   //     "stuck" after the first page in flterm's hybrid scrollback model).
-  //   - Alternate (vim/less/pi): there is no terminal scrollback, and the alt
-  //     scroll position has a zero extent so pointerScroll is a no-op there.
-  //     Instead send the app its own PageUp/PageDown key — the exact thing plain
-  //     PgUp/PgDn does on the alt screen — so the app pages its own view (and
-  //     keeps it there; no snap back to the bottom).
+  //   - Alternate (vim/less/pi): there is no terminal scrollback, so hand the
+  //     app a page of MOUSE-WHEEL scroll via flterm's handleScroll — the exact
+  //     events the mouse wheel produces. For a mouse-tracking app like pi that
+  //     both scrolls its view AND pauses its auto-follow (so a streaming
+  //     transcript stays where it was paged), matching the wheel; plain or
+  //     encoded page keys don't trigger that mode. ([_bypassKey] releases these
+  //     combos to us on the alt screen so flterm doesn't encode them first under
+  //     the app's keyboard protocol, e.g. pi's Kitty mode.)
   void _scrollByPage(int direction) {
     if (!_scrollController.hasClients) return;
     if (_scrollController.activeScreen == TerminalScreen.alternate) {
-      _terminal
-          .sendKey(direction < 0 ? flterm.Key.pageUp : flterm.Key.pageDown);
+      _terminal.handleScroll(direction * _rows);
     } else {
       final pos = _scrollController.position;
       pos.pointerScroll(pos.viewportDimension * direction);
@@ -230,11 +229,17 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       _scrollController.activeScreen == TerminalScreen.primary;
 
   // flterm bypass predicate: returning true makes flterm leave the key for
-  // outer handlers / the browser instead of encoding it for the PTY. We only
-  // bypass unmodified PageUp/PageDown on the primary screen on web. The
-  // page-scroll combos (Shift+PgUp/PgDn, Cmd+PgUp/PgDn) are intercepted earlier
-  // by [scrollShortcutsFor] and never reach here.
+  // outer handlers / the browser instead of encoding it for the PTY.
   bool _bypassKey(KeyEvent event, TerminalScreen screen) {
+    // Page-scroll combos (Shift+PgUp/PgDn, Cmd+PgUp/PgDn on macOS): always
+    // release them to our Shortcuts (scrollShortcutsFor -> _scrollByPage) so the
+    // scroll action fires. An app that turns on a modern keyboard protocol
+    // (e.g. pi's Kitty mode — pi runs on the *primary* screen) otherwise makes
+    // flterm encode these as key sequences the app ignores, swallowing the
+    // shortcut. Harmless for plain shells (which don't encode them anyway).
+    // Applies on web and native — it's about which handler runs, not the
+    // browser. Our Shortcut consumes the key, so it never leaks to the browser.
+    if (isPageScrollKey(event)) return true;
     if (!isWebOverride) return false;
     // Browser zoom (Cmd +/-/0 on macOS, Ctrl +/-/0 elsewhere): leave the key
     // for the browser so its native zoom fires. flterm reports bypassed keys as
@@ -252,6 +257,20 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     }
     final k = event.logicalKey;
     return k == LogicalKeyboardKey.pageUp || k == LogicalKeyboardKey.pageDown;
+  }
+
+  // The page-scroll combos, matching [scrollShortcutsFor]: PageUp/PageDown with
+  // Shift (every platform) or with Cmd on macOS. Used by [_bypassKey] to release
+  // them to our Shortcuts on the alternate screen.
+  @visibleForTesting
+  static bool isPageScrollKey(KeyEvent event) {
+    final k = event.logicalKey;
+    if (k != LogicalKeyboardKey.pageUp && k != LogicalKeyboardKey.pageDown) {
+      return false;
+    }
+    final hw = HardwareKeyboard.instance;
+    if (hw.isShiftPressed) return true;
+    return hw.isMetaPressed && defaultTargetPlatform == TargetPlatform.macOS;
   }
 
   // The zoom modifier is Cmd on macOS, Ctrl elsewhere — matching each

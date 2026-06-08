@@ -207,9 +207,10 @@ void main() {
       await _pumpReady(tester, client, key);
       await switchToAltScreen(tester, client, key);
 
-      // No terminal scrollback on the alt screen; _scrollByPage sends the app
-      // its own PageUp/PageDown key (the same thing plain PgUp/PgDn does there)
-      // so the app pages its own view, with no snap back to the bottom.
+      // No terminal scrollback on the alt screen; _scrollByPage hands the app a
+      // page of mouse-wheel scroll (flterm handleScroll), which reaches the PTY.
+      // _bypassKey releases the combo to our shortcut so flterm doesn't encode
+      // it first under the app's keyboard protocol.
       client.sentInput.clear();
       await _sendKey(tester, LogicalKeyboardKey.pageUp,
           modifier: LogicalKeyboardKey.shift);
@@ -307,6 +308,48 @@ void main() {
       expect(linux.keys, isNot(contains(cmdUp)),
           reason: 'Cmd+PgUp is not bound off macOS');
       expect(linux.keys, isNot(contains(cmdDown)));
+    });
+
+    testWidgets('isPageScrollKey: Shift everywhere, Cmd only on macOS', (
+      tester,
+    ) async {
+      await tester.pumpWidget(const SizedBox());
+      KeyEvent ev(LogicalKeyboardKey k) => KeyDownEvent(
+            physicalKey: PhysicalKeyboardKey.pageUp,
+            logicalKey: k,
+            timeStamp: Duration.zero,
+          );
+
+      // No modifier -> not a page-scroll combo (plain PgUp routes elsewhere).
+      expect(
+          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageUp)),
+          isFalse);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shift);
+      expect(
+          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageUp)),
+          isTrue);
+      expect(
+          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageDown)),
+          isTrue);
+      expect(GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.keyA)),
+          isFalse,
+          reason: 'only PageUp/PageDown qualify');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
+
+      // Cmd qualifies on macOS only.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      expect(
+          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageUp)),
+          isTrue);
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      expect(
+          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageUp)),
+          isFalse,
+          reason: 'Cmd is not the page-scroll modifier off macOS');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
+      debugDefaultTargetPlatformOverride = null;
     });
   });
 

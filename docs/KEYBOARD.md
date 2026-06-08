@@ -46,13 +46,15 @@ reach the browser.
 
 - **`Shift+PgUp/PgDn`** (all platforms) and **`Cmd+PgUp/PgDn`** (macOS) — page
   one screen at a time; always consumed (`scrollShortcutsFor` → `_scrollByPage`).
-  On the **primary screen** they page the terminal scrollback via a one-viewport
-  `pointerScroll` (the same relative delta the mouse wheel uses). On the
-  **alternate screen** (vim/less/pi) there is no scrollback — and that scroll
-  position has a zero extent, so `pointerScroll` is a no-op there — so
-  `_scrollByPage` instead sends the app its own `PageUp`/`PageDown`
-  (`TerminalController.sendKey`), exactly what plain `PgUp`/`PgDn` does on the
-  alt screen, letting the app page its own view with no snap back to the bottom.
+  [`_bypassKey`] releases these combos to our Shortcut even when the running app
+  has turned on a modern keyboard protocol (e.g. pi's Kitty mode), which would
+  otherwise make flterm encode them as key sequences the app ignores. On the
+  **primary screen** (shells, and `pi`, which runs inline on the primary screen)
+  they page the terminal scrollback via a one-viewport `pointerScroll` — the
+  same relative delta the mouse wheel uses — which holds during streaming. On
+  the **alternate screen** (vim/less/htop) there is no terminal scrollback, so
+  `_scrollByPage` hands the app a page of mouse-wheel scroll
+  (`TerminalController.handleScroll`) instead.
 - **`PgUp/PgDn`, alt screen** (vim/less/htop) — plain (unmodified) go to the PTY
   (web and native).
 - **`PgUp/PgDn`, primary screen** (shell) — web: pass through to the browser
@@ -66,23 +68,26 @@ reach the browser.
 The alt-screen vs primary-screen distinction comes from
 `TerminalScrollController.activeScreen`.
 
-### Alternate-screen apps (e.g. `pi`)
+### `pi` (a primary-screen app with the Kitty keyboard protocol)
 
-`pi` (the default workspace agent) is a **full-screen TUI on the alternate
-screen** with mouse tracking on, so it owns the viewport and keeps its own
-scroll history — the terminal scrollback is empty while it runs. Scrolling it
-means handing scroll events to the app, exactly as the mouse wheel does:
+`pi` (the default workspace agent) renders **inline on the primary screen** — a
+scrolling transcript with a pinned input box — so its history lands in the
+terminal scrollback, exactly like a shell's. But pi turns on the **Kitty
+keyboard protocol**, under which libghostty would encode `Shift+PgUp` (and
+`Cmd+PgUp`) as a key sequence and send it to pi, which ignores it — so without a
+bypass the scroll shortcut never fires (the symptom: the page key does nothing,
+or the view snaps back as pi streams). [`_bypassKey`] returns true for the
+page-scroll combos so flterm leaves them for our Shortcut, and `_scrollByPage`
+pages the scrollback with `pointerScroll` — which holds during streaming.
 
-- **`Shift+PgUp/PgDn` (and `Cmd+PgUp/PgDn` on macOS) page pi's view**, because on
-  the alternate screen `_scrollByPage` sends pi its own `PageUp`/`PageDown` — the
-  same thing plain `PgUp`/`PgDn` does there — so pi pages its own transcript and
-  the view stays where it was paged.
+- **`Shift+PgUp/PgDn` (and `Cmd+PgUp/PgDn` on macOS) page pi's transcript** via
+  the terminal scrollback, and stay put.
 - **Plain `PgUp/PgDn` on web go to the browser**, not pi. (On the alternate
   screen, `vim`/`less`/`htop` get plain `PgUp/PgDn` over the PTY.)
 
 So `_scrollByPage` branches on `activeScreen`: `pointerScroll` the Flutter
-scrollback on the primary screen, and `sendKey(PageUp/PageDown)` to the app on
-the alternate screen.
+scrollback on the primary screen (shells and pi), and `handleScroll` the app on
+the alternate screen (vim/less).
 
 ## Changing a binding
 
