@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flterm/flterm.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -79,6 +80,11 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   int _cols = 80;
   int _rows = 24;
 
+  // True only while inside [_terminal.write] (processing server output). Lets
+  // [onOutput] tell a user keystroke (snap to bottom) apart from an automatic
+  // PTY reply libghostty emits while parsing that output (don't snap).
+  bool _writingServerOutput = false;
+
   @override
   void initState() {
     super.initState();
@@ -93,6 +99,15 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       ..onOutput = (bytes) {
         widget.wsClient
             .sendTerminalInput(utf8.decode(bytes, allowMalformed: true));
+        // Standard terminal UX: typing jumps back to the live prompt. onOutput
+        // also fires for automatic PTY replies libghostty generates while
+        // parsing server output (cursor-position/device-status reports) — those
+        // must NOT snap, or a scrolled-up view is yanked back the instant a
+        // shell/pi query arrives. [_writingServerOutput] is true only inside
+        // [_terminal.write], so it tells a user keystroke apart from an
+        // auto-reply. Shift+PgUp/PgDn never reach here (consumed by
+        // [_scrollShortcuts]), so deliberate scrollback is unaffected either way.
+        if (!_writingServerOutput) _snapToBottomOnInput();
       }
       ..onResize = (cols, rows) {
         _cols = cols;
@@ -108,7 +123,12 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         }
       };
     _outputSub = widget.wsClient.terminalOutput.listen((data) {
-      _terminal.write(utf8.encode(data));
+      _writingServerOutput = true;
+      try {
+        _terminal.write(utf8.encode(data));
+      } finally {
+        _writingServerOutput = false;
+      }
     });
     _eventSub = widget.wsClient.customEvents.listen(_handleEvent);
     // Paste arrives via the browser's native `paste` event (works on Firefox
@@ -167,6 +187,19 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     pos.pointerScroll(pos.viewportDimension * direction);
   }
 
+  // Jump to the live row when the user types. With scrollToBottom.never (so
+  // Shift+PgUp scrollback holds), real input no longer auto-follows, so we do
+  // it here. Reaching maxScrollExtent re-engages flterm's stick-to-bottom (its
+  // _onScroll recompute), so subsequent output keeps following. No-op when
+  // already at the bottom or before the viewport has clients.
+  void _snapToBottomOnInput() {
+    if (!_scrollController.hasClients) return;
+    final pos = _scrollController.position;
+    if (pos.pixels < pos.maxScrollExtent) {
+      pos.jumpTo(pos.maxScrollExtent);
+    }
+  }
+
   // True when a plain PageUp/PageDown should be handed to the browser rather
   // than the terminal: only on web, and only on the primary screen (the shell).
   // On the alternate screen (vim/less/htop) the program needs PgUp/PgDn, and on
@@ -181,7 +214,14 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   // bypass unmodified PageUp/PageDown on the primary screen on web. Shift+PgUp/
   // PgDn is intercepted earlier by [_scrollShortcuts] and never reaches here.
   bool _bypassKey(KeyEvent event, TerminalScreen screen) {
-    if (!isWebOverride || screen != TerminalScreen.primary) return false;
+    if (!isWebOverride) return false;
+    // Browser zoom (Cmd +/-/0 on macOS, Ctrl +/-/0 elsewhere): leave the key
+    // for the browser so its native zoom fires. flterm reports bypassed keys as
+    // KeyEventResult.ignored, so Flutter does not preventDefault and the browser
+    // zooms. This applies on any screen — zoom is a browser-chrome action, not a
+    // terminal one — and is why Cmd+= was previously swallowed on macOS web.
+    if (isBrowserZoomKey(event)) return true;
+    if (screen != TerminalScreen.primary) return false;
     final hw = HardwareKeyboard.instance;
     if (hw.isShiftPressed ||
         hw.isControlPressed ||
@@ -191,6 +231,37 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     }
     final k = event.logicalKey;
     return k == LogicalKeyboardKey.pageUp || k == LogicalKeyboardKey.pageDown;
+  }
+
+  // The zoom modifier is Cmd on macOS, Ctrl elsewhere — matching each
+  // platform's browser and native-app convention. Single source of truth for
+  // both the web passthrough ([_isBrowserZoomKey]) and the native font-zoom
+  // shortcuts ([_zoomShortcutsFor]).
+  static bool _usesMetaForZoom(TargetPlatform platform) =>
+      platform == TargetPlatform.macOS;
+
+  // True for the browser's zoom combos: the +/-/0 keys (and numpad variants)
+  // with the platform zoom modifier held and no conflicting modifier. Shift is
+  // allowed so Cmd/Ctrl + '+' (shift+equal) zooms in too.
+  //
+  // Public + @visibleForTesting: the bypass's real effect (the browser handling
+  // its own zoom because Flutter doesn't preventDefault) is only observable in a
+  // real browser, so the platform/modifier logic is verified against this pure
+  // predicate directly rather than through widget behavior.
+  @visibleForTesting
+  static bool isBrowserZoomKey(KeyEvent event) {
+    final hw = HardwareKeyboard.instance;
+    final usesMeta = _usesMetaForZoom(defaultTargetPlatform);
+    final zoomModifier = usesMeta ? hw.isMetaPressed : hw.isControlPressed;
+    final conflictModifier = usesMeta ? hw.isControlPressed : hw.isMetaPressed;
+    if (!zoomModifier || conflictModifier || hw.isAltPressed) return false;
+    final k = event.logicalKey;
+    return k == LogicalKeyboardKey.equal ||
+        k == LogicalKeyboardKey.minus ||
+        k == LogicalKeyboardKey.digit0 ||
+        k == LogicalKeyboardKey.numpadAdd ||
+        k == LogicalKeyboardKey.numpadSubtract ||
+        k == LogicalKeyboardKey.numpad0;
   }
 
   // Native-only font zoom (Ctrl +/-/0). On web these shortcuts are not bound,
@@ -373,9 +444,9 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           scrollController: _scrollController,
           autofocus: false,
           padding: EdgeInsets.zero,
-          // Let plain PgUp/PgDn on the primary screen reach the browser on web
-          // (see [_bypassKey]); on the alt screen and on native they go to the
-          // PTY as usual.
+          // On web, let plain PgUp/PgDn on the primary screen and the browser
+          // zoom combos (Cmd/Ctrl +/-/0) reach the browser (see [_bypassKey]);
+          // on the alt screen and on native they go to the PTY as usual.
           bypassKey: _bypassKey,
           // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
           // Clipboard.getData, which fails on Firefox). These override flterm's
@@ -388,7 +459,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           shortcuts: {
             ..._disableFltermPaste,
             ..._scrollShortcuts,
-            if (!isWebOverride) ..._zoomShortcuts,
+            if (!isWebOverride) ...zoomShortcutsFor(defaultTargetPlatform),
           },
           // Keep mouse selection (drag/word/line/long-press) but drop the
           // keyboard select-all gesture, so Ctrl+A falls through to the shell
@@ -441,9 +512,10 @@ const Map<ShortcutActivator, Intent> _scrollShortcuts = {
 };
 
 /// Native-only font zoom. Bound only when not on web; on web the browser's own
-/// Ctrl +/-/0 zoom handles these (flterm reports them ignored, so the browser
-/// default fires). Both `=`/`+` and the numpad keys are accepted so Ctrl++
-/// (shift+equal) and numpad zoom work too.
+/// zoom handles these (flterm reports them ignored via [_bypassKey], so the
+/// browser default fires). The modifier matches the platform: Cmd on macOS,
+/// Ctrl elsewhere. Both `=`/`+` and the numpad keys are accepted so
+/// modifier + `+` (shift+equal) and numpad zoom work too.
 class _ZoomInIntent extends Intent {
   const _ZoomInIntent();
 }
@@ -456,16 +528,27 @@ class _ZoomResetIntent extends Intent {
   const _ZoomResetIntent();
 }
 
-const Map<ShortcutActivator, Intent> _zoomShortcuts = {
-  SingleActivator(LogicalKeyboardKey.equal, control: true): _ZoomInIntent(),
-  SingleActivator(LogicalKeyboardKey.equal, control: true, shift: true):
-      _ZoomInIntent(),
-  SingleActivator(LogicalKeyboardKey.numpadAdd, control: true): _ZoomInIntent(),
-  SingleActivator(LogicalKeyboardKey.minus, control: true): _ZoomOutIntent(),
-  SingleActivator(LogicalKeyboardKey.numpadSubtract, control: true):
-      _ZoomOutIntent(),
-  SingleActivator(LogicalKeyboardKey.digit0, control: true): _ZoomResetIntent(),
-};
+/// Builds the native font-zoom shortcuts with the [platform]'s zoom modifier
+/// (Cmd on macOS, Ctrl elsewhere — see [GhosttyTerminalState._usesMetaForZoom]).
+@visibleForTesting
+Map<ShortcutActivator, Intent> zoomShortcutsFor(TargetPlatform platform) {
+  final meta = GhosttyTerminalState._usesMetaForZoom(platform);
+  final ctrl = !meta;
+  return {
+    SingleActivator(LogicalKeyboardKey.equal, meta: meta, control: ctrl):
+        const _ZoomInIntent(),
+    SingleActivator(LogicalKeyboardKey.equal,
+        meta: meta, control: ctrl, shift: true): const _ZoomInIntent(),
+    SingleActivator(LogicalKeyboardKey.numpadAdd, meta: meta, control: ctrl):
+        const _ZoomInIntent(),
+    SingleActivator(LogicalKeyboardKey.minus, meta: meta, control: ctrl):
+        const _ZoomOutIntent(),
+    SingleActivator(LogicalKeyboardKey.numpadSubtract,
+        meta: meta, control: ctrl): const _ZoomOutIntent(),
+    SingleActivator(LogicalKeyboardKey.digit0, meta: meta, control: ctrl):
+        const _ZoomResetIntent(),
+  };
+}
 
 /// Swallows WidgetsApp's default `PageUp/PageDown -> ScrollIntent` inside the
 /// terminal subtree when [enabledFn] is true (web + primary screen), so the key
