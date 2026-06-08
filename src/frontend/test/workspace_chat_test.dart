@@ -821,5 +821,76 @@ void main() {
       expect(foundUrl, isTrue);
       expect(foundMention, isTrue);
     });
+
+    testWidgets('presence bar shows connected users', (tester) async {
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com'},
+        {'user_id': 'u2', 'user_email': 'bob@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat());
+
+      expect(find.text('Online '), findsOneWidget);
+      // Initials rendered in CircleAvatars
+      expect(find.text('A'), findsOneWidget);
+      expect(find.text('B'), findsOneWidget);
+    });
+
+    testWidgets('presence bar hidden when no users', (tester) async {
+      client.presenceUsers = [];
+
+      await tester.pumpWidget(buildChat());
+
+      expect(find.text('Online '), findsNothing);
+    });
+
+    testWidgets('presence bar updates on join', (tester) async {
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat());
+      expect(find.text('A'), findsOneWidget);
+
+      // Simulate a presence_join via WsClient
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com'},
+        {'user_id': 'u2', 'user_email': 'bob@test.com'},
+      ];
+      client.notifyListeners();
+      await tester.pump();
+
+      expect(find.text('B'), findsOneWidget);
+    });
+
+    testWidgets('self user shown with outline style', (tester) async {
+      final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
+          '.' +
+          base64Url
+              .encode(utf8.encode('{"sub":"my-uid","email":"me@test.com"}')) +
+          '.sig';
+      SharedPreferences.setMockInitialValues({'klangk_jwt': fakeJwt});
+      final auth = AuthService();
+      await tester.runAsync(() => Future.delayed(Duration.zero));
+
+      client.presenceUsers = [
+        {'user_id': 'my-uid', 'user_email': 'me@test.com'},
+        {'user_id': 'other', 'user_email': 'other@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat(authService: auth));
+
+      // Both users should be rendered
+      expect(find.text('M'), findsOneWidget);
+      expect(find.text('O'), findsOneWidget);
+
+      // Self avatar should have transparent background (outline style)
+      final avatars =
+          tester.widgetList<CircleAvatar>(find.byType(CircleAvatar));
+      final selfAvatar = avatars.firstWhere(
+        (a) => a.backgroundColor == Colors.transparent,
+      );
+      expect(selfAvatar, isNotNull);
+    });
   });
 }

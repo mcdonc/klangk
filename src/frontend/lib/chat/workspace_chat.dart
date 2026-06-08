@@ -54,6 +54,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     }
     _chatSub = widget.wsClient.chatMessages.listen(_onMessage);
     _textController.addListener(_onTextChanged);
+    widget.wsClient.addListener(_onPresenceChanged);
   }
 
   /// Focuses the message input. Called by the parent when the Chat tab is
@@ -349,8 +350,78 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     widget.wsClient.sendChatDelete(messageId);
   }
 
+  void _onPresenceChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildPresenceBar(String? currentUserId) {
+    final users = widget.wsClient.presenceUsers;
+    if (users.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: KColors.borderDefault)),
+      ),
+      child: Row(
+        children: [
+          const Text(
+            'Online ',
+            style: TextStyle(color: KColors.textMuted, fontSize: 11),
+          ),
+          ...users.map((u) {
+            final email = u['user_email'] as String? ?? '';
+            final uid = u['user_id'] as String?;
+            final isSelf = uid == currentUserId;
+            final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
+            return Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Tooltip(
+                message: email,
+                child: CircleAvatar(
+                  radius: 10,
+                  backgroundColor:
+                      isSelf ? Colors.transparent : _colorForEmail(email),
+                  foregroundColor:
+                      isSelf ? _colorForEmail(email) : Colors.white,
+                  child: isSelf
+                      ? DecoratedBox(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: _colorForEmail(email),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: Center(
+                            child: Text(
+                              initial,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: _colorForEmail(email),
+                              ),
+                            ),
+                          ),
+                        )
+                      : Text(
+                          initial,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    widget.wsClient.removeListener(_onPresenceChanged);
     _hideAutocomplete();
     _chatSub?.cancel();
     _scrollController.dispose();
@@ -370,6 +441,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       color: KColors.bgCanvas,
       child: Column(
         children: [
+          _buildPresenceBar(currentUserId),
           Expanded(
             child: _messages.isEmpty
                 ? const Center(
