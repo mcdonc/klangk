@@ -105,8 +105,8 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         // must NOT snap, or a scrolled-up view is yanked back the instant a
         // shell/pi query arrives. [_writingServerOutput] is true only inside
         // [_terminal.write], so it tells a user keystroke apart from an
-        // auto-reply. Shift+PgUp/PgDn never reach here (consumed by
-        // [_scrollShortcuts]), so deliberate scrollback is unaffected either way.
+        // auto-reply. Page-scroll keys never reach here (consumed by
+        // [scrollShortcutsFor]), so deliberate scrollback is unaffected either way.
         if (!_writingServerOutput) _snapToBottomOnInput();
       }
       ..onResize = (cols, rows) {
@@ -168,12 +168,6 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   @visibleForTesting
   bool get hasFocus => _focusNode.hasFocus;
 
-  // Scrollback is only meaningful on the primary screen. On the alt screen
-  // (vim, less) we want PgUp/PgDn to pass through to the PTY untouched.
-  bool _canScrollScrollback() =>
-      _scrollController.hasClients &&
-      _scrollController.activeScreen == TerminalScreen.primary;
-
   // Scroll one viewport, driving the position exactly like a mouse wheel
   // (a relative [ScrollPosition.pointerScroll] delta) rather than a [jumpTo]
   // to an absolute target. flterm's scrollback is a hybrid model — pixel
@@ -181,10 +175,24 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   // position recenters — so an absolute jumpTo clamped to maxScrollExtent
   // gets "stuck" after the first page, whereas a relative wheel-style delta
   // keeps paging through the whole buffer.
-  // Direction: -1 = up (older scrollback), +1 = down (toward the live row).
+  //
+  // Pages each screen the right way:
+  //   - Primary (shell): drive the Flutter scrollback with a relative
+  //     pointerScroll of one viewport (the alternate-screen scroll position has
+  //     a zero extent, so pointerScroll there is a no-op — hence the split).
+  //   - Alternate (vim/less/pi): there is no scrollback; hand a page of scroll
+  //     to flterm's handleScroll, which emits the wheel (or cursor-key) events
+  //     the focused app expects — the same path the mouse wheel uses — so the
+  //     app pages its own view. One grid of rows => exactly one page.
+  // Direction: -1 = up (older history), +1 = down (toward the live row).
   void _scrollByPage(int direction) {
-    final pos = _scrollController.position;
-    pos.pointerScroll(pos.viewportDimension * direction);
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.activeScreen == TerminalScreen.alternate) {
+      _terminal.handleScroll(direction * _rows);
+    } else {
+      final pos = _scrollController.position;
+      pos.pointerScroll(pos.viewportDimension * direction);
+    }
   }
 
   // Jump to the live row when the user types. With scrollToBottom.never (so
@@ -192,8 +200,13 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   // it here. Reaching maxScrollExtent re-engages flterm's stick-to-bottom (its
   // _onScroll recompute), so subsequent output keeps following. No-op when
   // already at the bottom or before the viewport has clients.
+  //
+  // Primary screen only: the alternate screen (vim/less/pi) has no scrollback,
+  // and flterm gives it an unbounded (infinite) scroll extent, so jumping to
+  // maxScrollExtent there would be both meaningless and invalid.
   void _snapToBottomOnInput() {
     if (!_scrollController.hasClients) return;
+    if (_scrollController.activeScreen != TerminalScreen.primary) return;
     final pos = _scrollController.position;
     if (pos.pixels < pos.maxScrollExtent) {
       pos.jumpTo(pos.maxScrollExtent);
@@ -211,8 +224,9 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
 
   // flterm bypass predicate: returning true makes flterm leave the key for
   // outer handlers / the browser instead of encoding it for the PTY. We only
-  // bypass unmodified PageUp/PageDown on the primary screen on web. Shift+PgUp/
-  // PgDn is intercepted earlier by [_scrollShortcuts] and never reaches here.
+  // bypass unmodified PageUp/PageDown on the primary screen on web. The
+  // page-scroll combos (Shift+PgUp/PgDn, Cmd+PgUp/PgDn) are intercepted earlier
+  // by [scrollShortcutsFor] and never reach here.
   bool _bypassKey(KeyEvent event, TerminalScreen screen) {
     if (!isWebOverride) return false;
     // Browser zoom (Cmd +/-/0 on macOS, Ctrl +/-/0 elsewhere): leave the key
@@ -379,20 +393,22 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       // key propagates to the textarea and the browser pastes natively.
       actions: <Type, Action<Intent>>{
         DoNothingIntent: DoNothingAction(consumesKey: false),
-        // Shift+PgUp/PgDn are the terminal's own scrollback shortcuts, so they
-        // must ALWAYS be consumed here — never leak to the browser (which would
-        // scroll the page) or to the PTY. The action is always enabled and
-        // returns null (handled); it scrolls only when scrollback is actually
-        // available (primary screen with clients), otherwise it's a no-op.
+        // Page-scroll shortcuts (Shift+PgUp/PgDn everywhere, Cmd+PgUp/PgDn on
+        // macOS) are the terminal's own, so they must ALWAYS be consumed here —
+        // never leak to the browser (which would scroll the page) or fall back
+        // to the PTY as a raw key. The action is always enabled and returns null
+        // (handled); [_scrollByPage] pages the scrollback on the primary screen
+        // and pages the running app (vim/less/pi) on the alternate screen, and
+        // is a no-op only when the view has no clients yet.
         _ScrollPageUpIntent: CallbackAction<_ScrollPageUpIntent>(
           onInvoke: (_) {
-            if (_canScrollScrollback()) _scrollByPage(-1);
+            _scrollByPage(-1);
             return null;
           },
         ),
         _ScrollPageDownIntent: CallbackAction<_ScrollPageDownIntent>(
           onInvoke: (_) {
-            if (_canScrollScrollback()) _scrollByPage(1);
+            _scrollByPage(1);
             return null;
           },
         ),
@@ -453,12 +469,13 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           // platform defaults, so paste flows solely through the native
           // `paste` event in [installPasteListener] — one path, no double-paste.
           //
-          // Adds Shift+PgUp/PgDn scrollback shortcuts that xterm.dart used to
-          // provide for free — see [_scrollShortcuts]. Native-only Ctrl +/-/0
-          // font zoom is added via [_zoomShortcuts]; on web the browser zooms.
+          // Adds the page-scroll shortcuts xterm.dart used to provide for free
+          // (Shift+PgUp/PgDn everywhere, Cmd+PgUp/PgDn on macOS) — see
+          // [scrollShortcutsFor]. Native-only font zoom is added via
+          // [zoomShortcutsFor]; on web the browser zooms.
           shortcuts: {
             ..._disableFltermPaste,
-            ..._scrollShortcuts,
+            ...scrollShortcutsFor(defaultTargetPlatform),
             if (!isWebOverride) ...zoomShortcutsFor(defaultTargetPlatform),
           },
           // Keep mouse selection (drag/word/line/long-press) but drop the
@@ -491,11 +508,11 @@ const Map<ShortcutActivator, Intent> _disableFltermPaste = {
       DoNothingIntent(),
 };
 
-/// Shift+PgUp / Shift+PgDn scroll the terminal view through the primary
-/// scrollback. xterm.dart bound these natively (`keytab_default.dart`); flterm
-/// does not, so we wire them at the app layer. On the alt screen the actions
-/// disable themselves and the keys fall through to the PTY — matches
-/// xterm.dart's `-AppScreen` semantics so vim/less still see PgUp/PgDn.
+/// Page-scroll shortcuts: Shift+PgUp/PgDn page the terminal a viewport at a
+/// time. xterm.dart bound these natively (`keytab_default.dart`); flterm does
+/// not, so we wire them at the app layer. They page the scrollback on the
+/// primary screen and page the running app (vim/less/pi) on the alternate
+/// screen — see [GhosttyTerminalState._scrollByPage].
 class _ScrollPageUpIntent extends Intent {
   const _ScrollPageUpIntent();
 }
@@ -504,12 +521,24 @@ class _ScrollPageDownIntent extends Intent {
   const _ScrollPageDownIntent();
 }
 
-const Map<ShortcutActivator, Intent> _scrollShortcuts = {
-  SingleActivator(LogicalKeyboardKey.pageUp, shift: true):
-      _ScrollPageUpIntent(),
-  SingleActivator(LogicalKeyboardKey.pageDown, shift: true):
-      _ScrollPageDownIntent(),
-};
+/// Builds the page-scroll shortcuts for [platform]. Shift+PgUp/PgDn is the
+/// cross-platform standard and is bound everywhere (including Linux/Windows);
+/// macOS additionally binds Cmd+PgUp/PgDn, matching the platform convention.
+@visibleForTesting
+Map<ShortcutActivator, Intent> scrollShortcutsFor(TargetPlatform platform) {
+  return {
+    const SingleActivator(LogicalKeyboardKey.pageUp, shift: true):
+        const _ScrollPageUpIntent(),
+    const SingleActivator(LogicalKeyboardKey.pageDown, shift: true):
+        const _ScrollPageDownIntent(),
+    if (platform == TargetPlatform.macOS) ...{
+      const SingleActivator(LogicalKeyboardKey.pageUp, meta: true):
+          const _ScrollPageUpIntent(),
+      const SingleActivator(LogicalKeyboardKey.pageDown, meta: true):
+          const _ScrollPageDownIntent(),
+    },
+  };
+}
 
 /// Native-only font zoom. Bound only when not on web; on web the browser's own
 /// zoom handles these (flterm reports them ignored via [_bypassKey], so the

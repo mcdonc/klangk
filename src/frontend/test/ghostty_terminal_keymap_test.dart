@@ -186,6 +186,109 @@ void main() {
     });
   });
 
+  group('page-scroll keys', () {
+    Future<void> switchToAltScreen(
+      WidgetTester tester,
+      _MockWsClient client,
+      GlobalKey<GhosttyTerminalState> key,
+    ) async {
+      client.emitTerminal('\x1b[?1049h');
+      await tester.pumpAndSettle();
+      expect(key.currentState!.scrollController.activeScreen,
+          TerminalScreen.alternate);
+    }
+
+    testWidgets('Shift+PgUp/PgDn page the running app on the alt screen', (
+      tester,
+    ) async {
+      GhosttyTerminalState.isWebOverride = true;
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+      await switchToAltScreen(tester, client, key);
+
+      // Previously a consumed no-op on the alt screen; now it pages the app —
+      // pointerScroll drives flterm's handleScroll, which sends a page of
+      // scroll (cursor keys, since the test PTY has no mouse tracking) to pi.
+      client.sentInput.clear();
+      await _sendKey(tester, LogicalKeyboardKey.pageUp,
+          modifier: LogicalKeyboardKey.shift);
+      await tester.pumpAndSettle();
+      expect(client.sentInput, isNotEmpty,
+          reason: 'Shift+PgUp on the alt screen scrolls the app via the PTY');
+
+      client.sentInput.clear();
+      await _sendKey(tester, LogicalKeyboardKey.pageDown,
+          modifier: LogicalKeyboardKey.shift);
+      await tester.pumpAndSettle();
+      expect(client.sentInput, isNotEmpty,
+          reason: 'Shift+PgDn on the alt screen scrolls the app via the PTY');
+      client.close();
+    });
+
+    testWidgets('macOS Cmd+PgUp pages the scrollback on the primary screen', (
+      tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      GhosttyTerminalState.isWebOverride = true;
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+      await _fillPrimary(tester, client);
+      final scroll = key.currentState!.scrollController;
+      expect(scroll.position.maxScrollExtent, greaterThan(0));
+      final before = scroll.position.pixels;
+
+      await _sendKey(tester, LogicalKeyboardKey.pageUp,
+          modifier: LogicalKeyboardKey.meta);
+      await tester.pumpAndSettle();
+      expect(scroll.position.pixels, lessThan(before),
+          reason: 'Cmd+PgUp pages the scrollback up on macOS');
+      debugDefaultTargetPlatformOverride = null;
+      client.close();
+    });
+
+    testWidgets('macOS Cmd+PgUp pages the app on the alt screen', (
+      tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      GhosttyTerminalState.isWebOverride = true;
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+      await switchToAltScreen(tester, client, key);
+
+      client.sentInput.clear();
+      await _sendKey(tester, LogicalKeyboardKey.pageUp,
+          modifier: LogicalKeyboardKey.meta);
+      await tester.pumpAndSettle();
+      expect(client.sentInput, isNotEmpty,
+          reason: 'Cmd+PgUp on the alt screen scrolls the app on macOS');
+      debugDefaultTargetPlatformOverride = null;
+      client.close();
+    });
+
+    test('scrollShortcutsFor binds Shift everywhere and Cmd only on macOS', () {
+      const shiftUp = SingleActivator(LogicalKeyboardKey.pageUp, shift: true);
+      const shiftDown =
+          SingleActivator(LogicalKeyboardKey.pageDown, shift: true);
+      const cmdUp = SingleActivator(LogicalKeyboardKey.pageUp, meta: true);
+      const cmdDown = SingleActivator(LogicalKeyboardKey.pageDown, meta: true);
+
+      final mac = scrollShortcutsFor(TargetPlatform.macOS);
+      expect(mac.keys, containsAll(<ShortcutActivator>[shiftUp, shiftDown]));
+      expect(mac.keys, containsAll(<ShortcutActivator>[cmdUp, cmdDown]),
+          reason: 'macOS also binds Cmd+PgUp/PgDn');
+
+      final linux = scrollShortcutsFor(TargetPlatform.linux);
+      expect(linux.keys, containsAll(<ShortcutActivator>[shiftUp, shiftDown]),
+          reason: 'Shift+PgUp/PgDn is bound on Linux (and every platform)');
+      expect(linux.keys, isNot(contains(cmdUp)),
+          reason: 'Cmd+PgUp is not bound off macOS');
+      expect(linux.keys, isNot(contains(cmdDown)));
+    });
+  });
+
   group('font zoom', () {
     testWidgets('native: Ctrl +/-/0 zoom and reset, with clamping', (
       tester,

@@ -12,7 +12,8 @@ A keydown flows browser → Flutter engine → focus tree, innermost first:
    via libghostty and sends it over the websocket as `terminal_input`. Returns
    `handled` when it consumes the key.
 2. **`TerminalShortcutScope` `Shortcuts`** — copy/paste/clear, plus klangk's
-   `Shift+PgUp/PgDn` scrollback (`_scrollShortcuts`).
+   page-scroll keys (`Shift+PgUp/PgDn` everywhere, `Cmd+PgUp/PgDn` on macOS —
+   `scrollShortcutsFor`).
 3. **primary `Focus`** (the focused node).
 4. …bubbles up to **`WidgetsApp`'s default `Shortcuts`**, which binds
    `PageUp/PageDown → ScrollIntent`.
@@ -43,34 +44,43 @@ reach the browser.
 
 ## Per-platform behavior
 
-- **`Shift+PgUp/PgDn`** — scroll the scrollback (web and native), via a
-  mouse-wheel-style `pointerScroll`; always consumed.
-- **`PgUp/PgDn`, alt screen** (vim/less/htop) — go to the PTY (web and native).
+- **`Shift+PgUp/PgDn`** (all platforms) and **`Cmd+PgUp/PgDn`** (macOS) — page
+  one screen at a time; always consumed (`scrollShortcutsFor` → `_scrollByPage`).
+  On the **primary screen** they page the terminal scrollback (mouse-wheel-style
+  `pointerScroll`). On the **alternate screen** (vim/less/pi) there is no
+  scrollback, so they page the running app via `TerminalController.handleScroll`
+  — the same wheel/cursor-key path the mouse wheel uses. One grid of rows per
+  press ⇒ exactly one page.
+- **`PgUp/PgDn`, alt screen** (vim/less/htop) — plain (unmodified) go to the PTY
+  (web and native).
 - **`PgUp/PgDn`, primary screen** (shell) — web: pass through to the browser
   (page scroll); native: go to the PTY.
-- **`Ctrl +/-/0`** — web: browser zoom; native: zoom the terminal font
-  (`_zoomShortcuts`).
+- **`Ctrl +/-/0`** (`Cmd +/-/0` on macOS) — web: browser zoom (the page-zoom
+  combo is left for the browser); native: zoom the terminal font
+  (`zoomShortcutsFor`).
 - **`Cmd+T/W/F/N`** (macOS) — browser.
 - **`Ctrl+W/F/C`** — terminal control codes (readline), both platforms.
 
 The alt-screen vs primary-screen distinction comes from
 `TerminalScrollController.activeScreen`.
 
-### Primary-screen apps (e.g. `pi`)
+### Alternate-screen apps (e.g. `pi`)
 
-`pi` (the default workspace agent) renders **inline on the primary screen** — a
-scrolling transcript with a pinned input box — and does **not** switch to the
-alternate screen. It also doesn't bind PageUp/PageDown (its keys are `escape`,
-`ctrl+c/d`, `ctrl+o`, `/`, `!`). Two consequences fall out of the design:
+`pi` (the default workspace agent) is a **full-screen TUI on the alternate
+screen** with mouse tracking on, so it owns the viewport and keeps its own
+scroll history — the terminal scrollback is empty while it runs. Scrolling it
+means handing scroll events to the app, exactly as the mouse wheel does:
 
-- **`Shift+PgUp/PgDn` scrolls back through pi's output**, because pi's transcript
-  lands in the terminal's scrollback — this is the intended way to review it.
-- **Plain `PgUp/PgDn` on web go to the browser**, not pi — correct, since pi
-  doesn't want them. (On the alternate screen, `vim`/`less`/`htop` _do_ get them.)
+- **`Shift+PgUp/PgDn` (and `Cmd+PgUp/PgDn` on macOS) page pi's view**, because on
+  the alternate screen `_scrollByPage` calls `TerminalController.handleScroll`,
+  which sends a page of wheel events (pi tracks the mouse) — or cursor keys for a
+  pager like `less` — to the PTY.
+- **Plain `PgUp/PgDn` on web go to the browser**, not pi. (On the alternate
+  screen, `vim`/`less`/`htop` get plain `PgUp/PgDn` over the PTY.)
 
-So a primary-screen TUI that relies on terminal scrollback works as-is; an
-alt-screen TUI gets plain PgUp/PgDn for its own paging. Neither needs special
-casing beyond the `activeScreen` check.
+So the page-scroll keys work on both screens through one `activeScreen` check in
+`_scrollByPage`: `pointerScroll` the Flutter scrollback on the primary screen,
+`handleScroll` the app on the alternate screen.
 
 ## Changing a binding
 
