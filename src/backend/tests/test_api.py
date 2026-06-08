@@ -1715,12 +1715,13 @@ class TestBrowserBridge:
 # --- Volume routes ---
 
 
-def _managed_volume():
+def _managed_volume(user_id="test-user"):
     """An inspect_volume result owned by this klangk instance."""
     return {
         "Labels": {
             "klangk.managed": "true",
             "klangk.instance": container.INSTANCE_ID,
+            "klangk.user-id": user_id,
         }
     }
 
@@ -1734,10 +1735,21 @@ class TestVolumeRoutes:
             AsyncMock(
                 return_value=[
                     {
-                        "Name": "test-vol",
+                        "Name": "my-vol",
                         "CreatedAt": "2026-01-01T00:00:00Z",
-                        "Labels": {"klangk.instance": container.INSTANCE_ID},
-                    }
+                        "Labels": {
+                            "klangk.instance": container.INSTANCE_ID,
+                            "klangk.user-id": user["id"],
+                        },
+                    },
+                    {
+                        "Name": "other-vol",
+                        "CreatedAt": "2026-01-01T00:00:00Z",
+                        "Labels": {
+                            "klangk.instance": container.INSTANCE_ID,
+                            "klangk.user-id": "someone-else",
+                        },
+                    },
                 ]
             ),
         ):
@@ -1745,24 +1757,18 @@ class TestVolumeRoutes:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1
-        assert data[0]["name"] == "test-vol"
+        assert data[0]["name"] == "my-vol"
 
     async def test_create_volume(self, client, user):
         headers = await _auth_headers(client)
+        mock_create = AsyncMock(
+            return_value={"Name": "new-vol", "CreatedAt": "2026-01-01"}
+        )
         with (
             patch.object(
                 podman, "inspect_volume", AsyncMock(return_value=None)
             ),
-            patch.object(
-                podman,
-                "create_volume",
-                AsyncMock(
-                    return_value={
-                        "Name": "new-vol",
-                        "CreatedAt": "2026-01-01",
-                    }
-                ),
-            ),
+            patch.object(podman, "create_volume", mock_create),
         ):
             resp = await client.post(
                 "/volumes",
@@ -1771,6 +1777,8 @@ class TestVolumeRoutes:
             )
         assert resp.status_code == 200
         assert resp.json()["name"] == "new-vol"
+        _, labels = mock_create.call_args.args
+        assert labels["klangk.user-id"] == user["id"]
 
     async def test_create_duplicate_volume(self, client, user):
         headers = await _auth_headers(client)
@@ -1811,7 +1819,7 @@ class TestVolumeRoutes:
             patch.object(
                 podman,
                 "inspect_volume",
-                AsyncMock(return_value=_managed_volume()),
+                AsyncMock(return_value=_managed_volume(user["id"])),
             ),
             patch.object(podman, "remove_volume", AsyncMock()),
         ):
@@ -1836,6 +1844,16 @@ class TestVolumeRoutes:
             resp = await client.delete("/volumes/foreign", headers=headers)
         assert resp.status_code == 404
 
+    async def test_delete_volume_wrong_user(self, client, user):
+        headers = await _auth_headers(client)
+        with patch.object(
+            podman,
+            "inspect_volume",
+            AsyncMock(return_value=_managed_volume("someone-else")),
+        ):
+            resp = await client.delete("/volumes/other", headers=headers)
+        assert resp.status_code == 403
+
     async def test_delete_volume_remove_not_found(self, client, user):
         """Volume vanishes between inspect and remove -> 404."""
         headers = await _auth_headers(client)
@@ -1843,7 +1861,7 @@ class TestVolumeRoutes:
             patch.object(
                 podman,
                 "inspect_volume",
-                AsyncMock(return_value=_managed_volume()),
+                AsyncMock(return_value=_managed_volume(user["id"])),
             ),
             patch.object(
                 podman,
@@ -1860,7 +1878,7 @@ class TestVolumeRoutes:
             patch.object(
                 podman,
                 "inspect_volume",
-                AsyncMock(return_value=_managed_volume()),
+                AsyncMock(return_value=_managed_volume(user["id"])),
             ),
             patch.object(
                 podman,
@@ -1877,7 +1895,7 @@ class TestVolumeRoutes:
             patch.object(
                 podman,
                 "inspect_volume",
-                AsyncMock(return_value=_managed_volume()),
+                AsyncMock(return_value=_managed_volume(user["id"])),
             ),
             patch.object(
                 podman,

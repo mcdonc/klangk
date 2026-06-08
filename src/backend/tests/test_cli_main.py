@@ -1434,6 +1434,19 @@ class TestVolumes:
         result = runner.invoke(main.app, ["volumes", "rm", "busy"])
         assert result.exit_code == 1
 
+    def test_volumes_rm_permission_denied(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        client = MagicMock()
+        client.delete.return_value = MagicMock(status_code=403)
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["volumes", "rm", "not-mine"])
+        assert result.exit_code == 1
+
 
 class TestExportImportCLI:
     def test_export_success(self, logged_in_cfg, monkeypatch, tmp_path):

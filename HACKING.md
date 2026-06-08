@@ -608,9 +608,9 @@ klangk export my-project            # export workspace to my-project.tar.gz (adm
 klangk export my-project -o bak.tar.gz  # export to specific file
 klangk import bak.tar.gz            # import workspace from archive
 klangk import bak.tar.gz --name new-name  # import with a different name
-klangk volumes ls                   # list podman volumes
-klangk volumes create nix-store     # create a named volume
-klangk volumes rm nix-store         # delete a volume
+klangk volumes ls                   # list your podman volumes
+klangk volumes create nix-store     # create a named volume (owned by you)
+klangk volumes rm nix-store         # delete a volume (must be yours)
 ```
 
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.

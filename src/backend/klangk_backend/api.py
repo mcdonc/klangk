@@ -814,18 +814,20 @@ async def list_images(_user: dict = Depends(auth.get_current_user)):
 
 
 @router.get("/volumes")
-async def list_volumes(_user: dict = Depends(auth.get_current_user)):
+async def list_volumes(user: dict = Depends(auth.get_current_user)):
     from . import podman
 
     volumes = await podman.list_volumes(
         f"klangk.instance={container.INSTANCE_ID}"
     )
+    uid = user["id"]
     return [
         {
             "name": v["Name"],
             "created": v.get("CreatedAt", ""),
         }
         for v in volumes
+        if (v.get("Labels") or {}).get("klangk.user-id") == uid
     ]
 
 
@@ -836,7 +838,7 @@ class CreateVolumeRequest(BaseModel):
 @router.post("/volumes")
 async def create_volume(
     body: CreateVolumeRequest,
-    _user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(auth.get_current_user),
 ):
     from . import podman
 
@@ -849,6 +851,7 @@ async def create_volume(
         {
             "klangk.managed": "true",
             "klangk.instance": container.INSTANCE_ID,
+            "klangk.user-id": user["id"],
         },
     )
     return {"name": info["Name"], "created": info.get("CreatedAt", "")}
@@ -856,7 +859,7 @@ async def create_volume(
 
 @router.delete("/volumes/{name}")
 async def delete_volume(
-    name: str, _user: dict = Depends(auth.get_current_user)
+    name: str, user: dict = Depends(auth.get_current_user)
 ):
     from . import podman
 
@@ -868,6 +871,11 @@ async def delete_volume(
         raise HTTPException(
             status_code=404,
             detail="Volume not managed by this Klangk instance",
+        )
+    if labels.get("klangk.user-id") != user["id"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Volume belongs to another user",
         )
     try:
         await podman.remove_volume(name)
