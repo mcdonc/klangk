@@ -198,7 +198,7 @@ void main() {
           TerminalScreen.alternate);
     }
 
-    testWidgets('Shift+PgUp/PgDn page the running app on the alt screen', (
+    testWidgets('Shift+PgUp/PgDn page the app on the alt screen', (
       tester,
     ) async {
       GhosttyTerminalState.isWebOverride = true;
@@ -207,22 +207,42 @@ void main() {
       await _pumpReady(tester, client, key);
       await switchToAltScreen(tester, client, key);
 
-      // Previously a consumed no-op on the alt screen; now it pages the app —
-      // pointerScroll drives flterm's handleScroll, which sends a page of
-      // scroll (cursor keys, since the test PTY has no mouse tracking) to pi.
+      // No terminal scrollback on the alt screen; _scrollByPage sends the app
+      // its own PageUp/PageDown key (the same thing plain PgUp/PgDn does there)
+      // so the app pages its own view, with no snap back to the bottom.
       client.sentInput.clear();
       await _sendKey(tester, LogicalKeyboardKey.pageUp,
           modifier: LogicalKeyboardKey.shift);
       await tester.pumpAndSettle();
       expect(client.sentInput, isNotEmpty,
-          reason: 'Shift+PgUp on the alt screen scrolls the app via the PTY');
+          reason: 'Shift+PgUp on the alt screen pages the app via the PTY');
 
       client.sentInput.clear();
       await _sendKey(tester, LogicalKeyboardKey.pageDown,
           modifier: LogicalKeyboardKey.shift);
       await tester.pumpAndSettle();
       expect(client.sentInput, isNotEmpty,
-          reason: 'Shift+PgDn on the alt screen scrolls the app via the PTY');
+          reason: 'Shift+PgDn on the alt screen pages the app via the PTY');
+      client.close();
+    });
+
+    testWidgets('macOS Cmd+PgUp pages the app on the alt screen', (
+      tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      GhosttyTerminalState.isWebOverride = true;
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+      await switchToAltScreen(tester, client, key);
+
+      client.sentInput.clear();
+      await _sendKey(tester, LogicalKeyboardKey.pageUp,
+          modifier: LogicalKeyboardKey.meta);
+      await tester.pumpAndSettle();
+      expect(client.sentInput, isNotEmpty,
+          reason: 'Cmd+PgUp on the alt screen pages the app on macOS');
+      debugDefaultTargetPlatformOverride = null;
       client.close();
     });
 
@@ -248,23 +268,24 @@ void main() {
       client.close();
     });
 
-    testWidgets('macOS Cmd+PgUp pages the app on the alt screen', (
+    testWidgets('alt screen: typing reaches the PTY and does not snap', (
       tester,
     ) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       GhosttyTerminalState.isWebOverride = true;
       final client = _MockWsClient();
       final key = GlobalKey<GhosttyTerminalState>();
       await _pumpReady(tester, client, key);
       await switchToAltScreen(tester, client, key);
 
+      // Typing fires onOutput -> _snapToBottomOnInput, which must early-return
+      // on the alt screen: there is no scrollback, and the alt scroll position
+      // has an unbounded extent, so a jumpToBottom would be invalid. The key
+      // still reaches the PTY and nothing throws.
       client.sentInput.clear();
-      await _sendKey(tester, LogicalKeyboardKey.pageUp,
-          modifier: LogicalKeyboardKey.meta);
+      await _sendKey(tester, LogicalKeyboardKey.keyA);
       await tester.pumpAndSettle();
       expect(client.sentInput, isNotEmpty,
-          reason: 'Cmd+PgUp on the alt screen scrolls the app on macOS');
-      debugDefaultTargetPlatformOverride = null;
+          reason: 'the keystroke is encoded to the PTY on the alt screen');
       client.close();
     });
 

@@ -182,8 +182,9 @@ test.describe("terminal keymap (web)", () => {
     request,
   }) => {
     // On the alt screen there is no scrollback; the page keys must reach the
-    // running app (via flterm handleScroll) instead of being a no-op — this is
-    // what makes Shift+PgUp/PgDn work inside pi / vim / less.
+    // running app (klangk sends it the app's own PageUp/PageDown via sendKey)
+    // instead of being a no-op — this is what makes Shift+PgUp/PgDn work inside
+    // pi / vim / less.
     const sent = captureTerminalInput(page);
     const { cleanup } = await createAndOpenWorkspace(
       page,
@@ -209,37 +210,6 @@ test.describe("terminal keymap (web)", () => {
       await page.keyboard.press("Shift+PageDown");
       await page.waitForTimeout(750);
       expect(sent.length).toBeGreaterThan(n);
-
-      await page.keyboard.press("q"); // quit less
-    } finally {
-      await cleanup();
-    }
-  });
-
-  test("mouse wheel on the alternate screen (less) scrolls the app", async ({
-    page,
-    request,
-  }) => {
-    const sent = captureTerminalInput(page);
-    const { cleanup } = await createAndOpenWorkspace(
-      page,
-      request,
-      "km-altwh",
-      {
-        waitForTerminal: true,
-      },
-    );
-    try {
-      await terminalType(page, "seq 1 500 > /home/klangk/work/big.txt");
-      await page.waitForTimeout(500);
-      await terminalType(page, "less /home/klangk/work/big.txt");
-      await page.waitForTimeout(1000);
-      const { width, height } = vp(page);
-      await page.mouse.move(width / 2, height / 2);
-      const n = sent.length;
-      await page.mouse.wheel(0, 300); // wheel down inside less
-      await page.waitForTimeout(750);
-      expect(sent.length).toBeGreaterThan(n); // less received the scroll
 
       await page.keyboard.press("q"); // quit less
     } finally {

@@ -46,11 +46,13 @@ reach the browser.
 
 - **`Shift+PgUp/PgDn`** (all platforms) and **`Cmd+PgUp/PgDn`** (macOS) — page
   one screen at a time; always consumed (`scrollShortcutsFor` → `_scrollByPage`).
-  On the **primary screen** they page the terminal scrollback (mouse-wheel-style
-  `pointerScroll`). On the **alternate screen** (vim/less/pi) there is no
-  scrollback, so they page the running app via `TerminalController.handleScroll`
-  — the same wheel/cursor-key path the mouse wheel uses. One grid of rows per
-  press ⇒ exactly one page.
+  On the **primary screen** they page the terminal scrollback via a one-viewport
+  `pointerScroll` (the same relative delta the mouse wheel uses). On the
+  **alternate screen** (vim/less/pi) there is no scrollback — and that scroll
+  position has a zero extent, so `pointerScroll` is a no-op there — so
+  `_scrollByPage` instead sends the app its own `PageUp`/`PageDown`
+  (`TerminalController.sendKey`), exactly what plain `PgUp`/`PgDn` does on the
+  alt screen, letting the app page its own view with no snap back to the bottom.
 - **`PgUp/PgDn`, alt screen** (vim/less/htop) — plain (unmodified) go to the PTY
   (web and native).
 - **`PgUp/PgDn`, primary screen** (shell) — web: pass through to the browser
@@ -72,15 +74,15 @@ scroll history — the terminal scrollback is empty while it runs. Scrolling it
 means handing scroll events to the app, exactly as the mouse wheel does:
 
 - **`Shift+PgUp/PgDn` (and `Cmd+PgUp/PgDn` on macOS) page pi's view**, because on
-  the alternate screen `_scrollByPage` calls `TerminalController.handleScroll`,
-  which sends a page of wheel events (pi tracks the mouse) — or cursor keys for a
-  pager like `less` — to the PTY.
+  the alternate screen `_scrollByPage` sends pi its own `PageUp`/`PageDown` — the
+  same thing plain `PgUp`/`PgDn` does there — so pi pages its own transcript and
+  the view stays where it was paged.
 - **Plain `PgUp/PgDn` on web go to the browser**, not pi. (On the alternate
   screen, `vim`/`less`/`htop` get plain `PgUp/PgDn` over the PTY.)
 
-So the page-scroll keys work on both screens through one `activeScreen` check in
-`_scrollByPage`: `pointerScroll` the Flutter scrollback on the primary screen,
-`handleScroll` the app on the alternate screen.
+So `_scrollByPage` branches on `activeScreen`: `pointerScroll` the Flutter
+scrollback on the primary screen, and `sendKey(PageUp/PageDown)` to the app on
+the alternate screen.
 
 ## Changing a binding
 

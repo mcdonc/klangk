@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flterm/flterm.dart';
+import 'package:flterm/flterm.dart' hide Key;
+// flterm's Key (libghostty key enum) collides with Flutter's widget Key, so
+// reach it under a prefix for the one place we send a key to the PTY directly.
+import 'package:flterm/flterm.dart' as flterm show Key;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
@@ -176,19 +179,23 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   // gets "stuck" after the first page, whereas a relative wheel-style delta
   // keeps paging through the whole buffer.
   //
-  // Pages each screen the right way:
-  //   - Primary (shell): drive the Flutter scrollback with a relative
-  //     pointerScroll of one viewport (the alternate-screen scroll position has
-  //     a zero extent, so pointerScroll there is a no-op — hence the split).
-  //   - Alternate (vim/less/pi): there is no scrollback; hand a page of scroll
-  //     to flterm's handleScroll, which emits the wheel (or cursor-key) events
-  //     the focused app expects — the same path the mouse wheel uses — so the
-  //     app pages its own view. One grid of rows => exactly one page.
-  // Direction: -1 = up (older history), +1 = down (toward the live row).
+  // Pages each screen the right way. Direction: -1 = up (older history),
+  // +1 = down (toward the live row).
+  //
+  //   - Primary (shell): page the terminal scrollback with a relative
+  //     [ScrollPosition.pointerScroll] of one viewport — exactly what a mouse
+  //     wheel does — rather than a [jumpTo] to an absolute target (which gets
+  //     "stuck" after the first page in flterm's hybrid scrollback model).
+  //   - Alternate (vim/less/pi): there is no terminal scrollback, and the alt
+  //     scroll position has a zero extent so pointerScroll is a no-op there.
+  //     Instead send the app its own PageUp/PageDown key — the exact thing plain
+  //     PgUp/PgDn does on the alt screen — so the app pages its own view (and
+  //     keeps it there; no snap back to the bottom).
   void _scrollByPage(int direction) {
     if (!_scrollController.hasClients) return;
     if (_scrollController.activeScreen == TerminalScreen.alternate) {
-      _terminal.handleScroll(direction * _rows);
+      _terminal
+          .sendKey(direction < 0 ? flterm.Key.pageUp : flterm.Key.pageDown);
     } else {
       final pos = _scrollController.position;
       pos.pointerScroll(pos.viewportDimension * direction);
