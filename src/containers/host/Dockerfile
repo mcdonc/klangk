@@ -2,18 +2,28 @@ FROM python:3.13-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \
+      catatonit \
       coreutils \
+      fuse-overlayfs \
       gzip \
       nginx \
+      passt \
+      podman \
       rsync \
       sqlite3 \
       supervisor \
       tar \
+      uidmap \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user matching devenv convention (uid 1000)
+# subuid/subgid: skip uid/gid 1000 (klangk itself) to avoid overlap
 RUN groupadd -g 1000 klangk && \
-    useradd -u 1000 -g klangk -m -d /home/klangk -s /bin/bash klangk
+    useradd -u 1000 -g klangk -m -d /home/klangk -s /bin/bash klangk && \
+    echo 'klangk:1:999' > /etc/subuid && \
+    echo 'klangk:1001:64536' >> /etc/subuid && \
+    echo 'klangk:1:999' > /etc/subgid && \
+    echo 'klangk:1001:64536' >> /etc/subgid
 
 # ---- venv stage: copy pre-built venv and fix shebangs ----
 FROM base AS venv
@@ -53,6 +63,14 @@ RUN printf '{"version":"%s","commit":"%s","built_at":"%s"}\n' \
 
 # Data directory (volume mount point)
 RUN mkdir -p /home/klangk/data && chown klangk:klangk /home/klangk/data
+
+# Rootless podman storage (fuse-overlayfs)
+RUN mkdir -p /home/klangk/.local/share/containers && \
+    chown -R klangk:klangk /home/klangk/.local && \
+    mkdir -p /run/user/1000 && chown klangk:klangk /run/user/1000
+COPY --chown=klangk:klangk src/containers/host/storage.conf /home/klangk/.config/containers/storage.conf
+COPY --chown=klangk:klangk src/containers/host/containers.conf /home/klangk/.config/containers/containers.conf
+VOLUME /home/klangk/.local/share/containers
 
 # Nginx needs writable temp dirs
 RUN mkdir -p /tmp/nginx_client_body /tmp/nginx_proxy \
