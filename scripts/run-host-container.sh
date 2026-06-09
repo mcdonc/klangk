@@ -6,6 +6,8 @@
 #
 # Usage:
 #   bash scripts/run-host-container.sh [extra docker-run flags...]
+#
+# Set KLANGK_HOST_IMAGE to override the image (default: klangk-host).
 set -euo pipefail
 
 ENVFILE=$(mktemp)
@@ -29,4 +31,4 @@ exec docker run --name klangk-host-run \
   --security-opt systempaths=unconfined \
   --env-file "$ENVFILE" \
   "$@" \
-  klangk-host
+  "${KLANGK_HOST_IMAGE:-klangk-host}"
