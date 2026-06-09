@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-workspace-image klangk:flutter-build
+
+      - name: Backend tests
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- test-backend
+
+      - name: Frontend tests
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- test-frontend
+
+  build-and-release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      packages: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/devenv-setup
+
+      - name: Build host image
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- build-host-image
+
+      - name: Generate version
+        id: version
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          CALVER="$(date -u +%Y.%m.%d)"
+          VERSION="v${CALVER}-${COMMIT}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Tag and push images to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Push host image
+          HOST_REPO="ghcr.io/${{ github.repository }}/klangk-host"
+          docker tag klangk-host "$HOST_REPO:latest"
+          docker tag klangk-host "$HOST_REPO:$VERSION"
+          docker push "$HOST_REPO:latest"
+          docker push "$HOST_REPO:$VERSION"
+
+          # Push workspace image
+          WS_REPO="ghcr.io/${{ github.repository }}/klangk-workspace"
+          devenv shell -- podman login ghcr.io -u ${{ github.actor }} --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
+          devenv shell -- podman tag klangk-workspace "$WS_REPO:latest"
+          devenv shell -- podman tag klangk-workspace "$WS_REPO:$VERSION"
+          devenv shell -- podman push "$WS_REPO:latest"
+          devenv shell -- podman push "$WS_REPO:$VERSION"
+
+      - name: Create git tag
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+
+      - name: Create GitHub Release
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
