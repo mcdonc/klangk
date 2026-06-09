@@ -1,0 +1,15 @@
+# Scripts and container entrypoints/configs run inside Linux containers, so
+# they MUST stay LF even on Windows checkouts (core.autocrlf=true). Without
+# this they get CRLF and fail with `set: pipefail: invalid option name` or a
+# bad-interpreter \r in the shebang.
+#
+# Existing checkouts won't change until renormalized:  git add --renormalize .
+*.sh            text eol=lf
+*.bashrc        text eol=lf
+*.bash          text eol=lf
+entrypoint      text eol=lf
+**/entrypoint.sh text eol=lf
+*.conf          text eol=lf
+nginx.conf.template text eol=lf
+Dockerfile*     text eol=lf
+Containerfile*  text eol=lf

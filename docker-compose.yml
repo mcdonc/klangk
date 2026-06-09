@@ -1,0 +1,84 @@
+# klangk daemon — single-container compose path (ADDITIVE to devenv).
+#
+#   cp -n .env.example .env     # fill in KLANGK_LLM_*, KLANGK_JWT_SECRET, admin creds
+#   docker compose build        # docker == podman shim on this host
+#   docker compose up -d
+#   scripts/compose-seed-workspace.sh   # build + load the workspace image
+#   # then log in at  http://localhost:8995
+#
+# This does NOT change the devenv flow: `devenv up` still runs uvicorn + nginx
+# as host processes using the host's own podman. This stack packages that SAME
+# runtime (the existing entrypoint.sh / supervisord.conf / scripts/nginx.sh)
+# into one container and adds a rootless Podman engine so it can also spawn the
+# pi/workspace containers — no Docker socket, no second service. Keeping nginx,
+# uvicorn, and the podman-published workspace ports in ONE network namespace is
+# what lets nginx.sh's `127.0.0.1:<port>` hosted-app proxy and the
+# `host.containers.internal` workspace->nginx hop work UNCHANGED from devenv.
+#
+# HOST PREREQUISITES (the engine's Linux VM — here the podman-machine WSL2 VM):
+#   - the tun module loaded (Fedora CoreOS has it; otherwise `modprobe tun`)
+#   - unprivileged user namespaces permitted (enabled on Fedora CoreOS). On a
+#     hardened host where newuidmap EPERMs, the `cap_add: SYS_ADMIN` below is
+#     the dependable lever; it is kept on by default and is harmless otherwise.
+
+services:
+  klangk:
+    build:
+      # The daemon image lives at the repo-root ./Dockerfile (the engine's
+      # default name). podman-compose on Windows doesn't reliably forward a
+      # `dockerfile:` sub-path to the Linux engine, so we rely on the default
+      # name + context root. (COPY paths inside are relative to this context.)
+      context: .
+    image: klangk-daemon
+    restart: unless-stopped
+
+    # Only nginx's port is published. nginx fronts the API, the UI, the LLM
+    # proxy, and the hosted-app proxy, so 8997 (uvicorn) need not be exposed.
+    ports:
+      - "${KLANGK_NGINX_PORT:-8995}:8995"
+      # - "${KLANGK_PORT:-8997}:8997"   # uncomment for direct uvicorn access
+
+    # LLM creds + secrets + optional SMTP/OIDC come from .env. The image already
+    # sets KLANGK_DATA_DIR / KLANGK_STATE_DIR / ports, so those need not be in .env.
+    env_file:
+      - .env
+    environment:
+      # Workspace-image pull policy: `never` (default) = offline, image must be
+      # in the rootless store (see scripts/compose-seed-workspace.sh); `missing`
+      # = pull from a registry if absent locally.
+      KLANGK_IMAGE_PULL_POLICY: "${KLANGK_IMAGE_PULL_POLICY:-never}"
+
+    # --- rootless Podman-in-a-container profile ---
+    # Devices passed through explicitly (NOT privileged):
+    devices:
+      - /dev/fuse        # fuse-overlayfs storage driver
+      - /dev/net/tun     # passt/slirp4netns container networking
+    # The one capability the rootless userns setup needs when the host kernel
+    # forbids unprivileged user namespaces. Still nothing like privileged: no
+    # extra devices, no other capabilities. (The masked-/proc/sys problem is
+    # handled in-image via `default_sysctls = []` in containers.conf, so no
+    # engine-specific systempaths/unmask flag is needed here.)
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - label=disable
+
+    volumes:
+      # App state: SQLite DB + workspace home dirs (bind-mounted into the pi
+      # containers by the in-container podman, which shares this filesystem).
+      - klangk-data:/home/klangk/data
+      # Rootless podman's image/container layers — persisted so the seeded
+      # workspace image and pulled layers survive restarts.
+      - klangk-podman-storage:/home/klangk/.local/share/containers
+
+    healthcheck:
+      # Confirms the in-process rootless engine initialises.
+      test: ["CMD", "podman", "info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  klangk-data:
+  klangk-podman-storage:
