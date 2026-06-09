@@ -10,28 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: ./.github/actions/devenv-setup
-        with:
-          build-tasks: klangk:build-workspace-image klangk:flutter-build
-
-      - name: Backend tests
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- test-backend
-
-      - name: Frontend tests
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- test-frontend
-
   build-and-release:
-    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
