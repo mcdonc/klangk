@@ -567,113 +567,124 @@ class TestExampleAdminHook:
         assert result == {"admin"}
 
 
-class TestLoadGroupHook:
+class TestLoadLoginHook:
     def test_no_hook_when_not_set(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_GROUP_MAPPING_HOOK", raising=False)
-        oidc.load_group_hook()
-        assert oidc._group_hook is None
+        monkeypatch.delenv("KLANGK_OIDC_LOGIN_HOOK", raising=False)
+        oidc.load_login_hook()
+        assert oidc._login_hook is None
 
     def test_custom_hook_loaded(self, monkeypatch):
-        # Use a known stdlib function as the hook
-        monkeypatch.setenv("KLANGK_GROUP_MAPPING_HOOK", "os.path.exists")
-        oidc.load_group_hook()
-        assert oidc._group_hook is os.path.exists
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "os.path.exists")
+        oidc.load_login_hook()
+        assert oidc._login_hook is os.path.exists
 
     def test_bad_format_no_dot(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_GROUP_MAPPING_HOOK", "nofunc")
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "nofunc")
         with pytest.raises(RuntimeError, match="module.path.func_name"):
-            oidc.load_group_hook()
+            oidc.load_login_hook()
 
     def test_bad_module(self, monkeypatch):
-        monkeypatch.setenv(
-            "KLANGK_GROUP_MAPPING_HOOK", "nonexistent_module.func"
-        )
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "nonexistent_module.func")
         with pytest.raises(ModuleNotFoundError):
-            oidc.load_group_hook()
+            oidc.load_login_hook()
 
     def test_bad_function(self, monkeypatch):
-        monkeypatch.setenv(
-            "KLANGK_GROUP_MAPPING_HOOK", "os.nonexistent_func_xyz"
-        )
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "os.nonexistent_func_xyz")
         with pytest.raises(AttributeError):
-            oidc.load_group_hook()
+            oidc.load_login_hook()
 
     def test_not_callable(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_GROUP_MAPPING_HOOK", "os.sep")
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "os.sep")
         with pytest.raises(RuntimeError, match="not callable"):
-            oidc.load_group_hook()
+            oidc.load_login_hook()
 
 
-class TestCallGroupHook:
+class TestCallLoginHook:
     async def test_no_hook_returns_none(self):
-        oidc._group_hook = None
-        result = await oidc.call_group_hook(
+        oidc._login_hook = None
+        result = await oidc.call_login_hook(
             _provider(), {}, "x@example.com", {}
         )
         assert result is None
 
-    async def test_sync_hook(self):
+    async def test_hook_returns_groups(self):
         def hook(provider, claims, email, tokens):
             return {"admin", "devs"}
 
-        oidc._group_hook = hook
-        oidc._group_hook_is_async = False
-        result = await oidc.call_group_hook(
+        oidc._login_hook = hook
+        oidc._login_hook_is_async = False
+        result = await oidc.call_login_hook(
             _provider(), {}, "x@example.com", {}
         )
         assert result == {"admin", "devs"}
 
-    async def test_async_hook(self):
+    async def test_hook_returns_none(self):
+        def hook(provider, claims, email, tokens):
+            return None
+
+        oidc._login_hook = hook
+        oidc._login_hook_is_async = False
+        result = await oidc.call_login_hook(
+            _provider(), {}, "x@example.com", {}
+        )
+        assert result is None
+
+    async def test_async_hook_returns_groups(self):
         async def hook(provider, claims, email, tokens):
             return {"editors"}
 
-        oidc._group_hook = hook
-        oidc._group_hook_is_async = True
-        result = await oidc.call_group_hook(
+        oidc._login_hook = hook
+        oidc._login_hook_is_async = True
+        result = await oidc.call_login_hook(
             _provider(), {}, "x@example.com", {}
         )
         assert result == {"editors"}
 
-    async def test_hook_exception_returns_none(self):
+    async def test_hook_raises_rejects_login(self):
         def hook(provider, claims, email, tokens):
-            raise ValueError("broken")
+            raise ValueError("denied")
 
-        oidc._group_hook = hook
-        oidc._group_hook_is_async = False
-        result = await oidc.call_group_hook(
-            _provider(), {}, "x@example.com", {}
+        oidc._login_hook = hook
+        oidc._login_hook_is_async = False
+        with pytest.raises(ValueError, match="denied"):
+            await oidc.call_login_hook(_provider(), {}, "x@example.com", {})
+
+    async def test_async_hook_raises_rejects_login(self):
+        async def hook(provider, claims, email, tokens):
+            raise ValueError("async denied")
+
+        oidc._login_hook = hook
+        oidc._login_hook_is_async = True
+        with pytest.raises(ValueError, match="async denied"):
+            await oidc.call_login_hook(_provider(), {}, "x@example.com", {})
+
+    async def test_example_require_verified_email_rejects(self):
+        oidc._login_hook = oidc.example_require_verified_email
+        oidc._login_hook_is_async = False
+        with pytest.raises(ValueError, match="not verified"):
+            await oidc.call_login_hook(
+                _provider(), {"email_verified": False}, "a@b.com", {}
+            )
+
+    async def test_example_require_verified_email_allows(self):
+        oidc._login_hook = oidc.example_require_verified_email
+        oidc._login_hook_is_async = False
+        result = await oidc.call_login_hook(
+            _provider(), {"email_verified": True}, "a@b.com", {}
         )
         assert result is None
 
 
 class TestSyncOidcGroups:
-    async def test_no_hook_does_nothing(self, db):
-        oidc._group_hook = None
-        from klangk_backend import model
-
-        user = await model.create_user("sync@example.com", "hash")
-        await oidc.sync_oidc_groups(
-            user["id"], _provider(), {}, "sync@example.com", {}
-        )
-        assert await model.get_user_group_ids(user["id"]) == []
-
     async def test_creates_groups_and_adds_memberships(self, db):
-        def hook(provider, claims, email, tokens):
-            return {"new-group-a", "new-group-b"}
-
-        oidc._group_hook = hook
-        oidc._group_hook_is_async = False
         from klangk_backend import model
 
         user = await model.create_user("sync2@example.com", "hash")
-        await oidc.sync_oidc_groups(
-            user["id"], _provider(), {}, "sync2@example.com", {}
-        )
+        await oidc.sync_oidc_groups(user["id"], {"new-group-a", "new-group-b"})
         groups = await model.get_user_groups(user["id"])
         names = {g["name"] for g in groups}
         assert "new-group-a" in names
         assert "new-group-b" in names
-        # Verify source is oidc_sync
         sync_ids = await model.get_user_oidc_sync_group_ids(user["id"])
         assert len(sync_ids) == 2
 
@@ -681,18 +692,10 @@ class TestSyncOidcGroups:
         from klangk_backend import model
 
         user = await model.create_user("sync3@example.com", "hash")
-        # Pre-create group and add oidc_sync membership
         group = await model.create_group("old-group")
         await model.add_user_to_group(user["id"], group["id"], "oidc_sync")
 
-        def hook(provider, claims, email, tokens):
-            return set()  # no groups
-
-        oidc._group_hook = hook
-        oidc._group_hook_is_async = False
-        await oidc.sync_oidc_groups(
-            user["id"], _provider(), {}, "sync3@example.com", {}
-        )
+        await oidc.sync_oidc_groups(user["id"], set())
         assert await model.get_user_oidc_sync_group_ids(user["id"]) == []
 
     async def test_preserves_manual_memberships(self, db):
@@ -702,33 +705,6 @@ class TestSyncOidcGroups:
         group = await model.create_group("manual-group")
         await model.add_user_to_group(user["id"], group["id"], "manual")
 
-        def hook(provider, claims, email, tokens):
-            return set()  # hook returns nothing
-
-        oidc._group_hook = hook
-        oidc._group_hook_is_async = False
-        await oidc.sync_oidc_groups(
-            user["id"], _provider(), {}, "sync4@example.com", {}
-        )
-        # Manual membership untouched
+        await oidc.sync_oidc_groups(user["id"], set())
         all_ids = await model.get_user_group_ids(user["id"])
         assert group["id"] in all_ids
-
-    async def test_hook_error_preserves_existing(self, db):
-        from klangk_backend import model
-
-        user = await model.create_user("sync5@example.com", "hash")
-        group = await model.create_group("keep-group")
-        await model.add_user_to_group(user["id"], group["id"], "oidc_sync")
-
-        def hook(provider, claims, email, tokens):
-            raise RuntimeError("broken")
-
-        oidc._group_hook = hook
-        oidc._group_hook_is_async = False
-        await oidc.sync_oidc_groups(
-            user["id"], _provider(), {}, "sync5@example.com", {}
-        )
-        # Membership unchanged because hook errored
-        sync_ids = await model.get_user_oidc_sync_group_ids(user["id"])
-        assert group["id"] in sync_ids

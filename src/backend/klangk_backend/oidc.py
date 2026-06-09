@@ -37,10 +37,6 @@ class OIDCProvider:
     ca_cert: str | None = None  # path to CA cert PEM for custom trust
     token_validation_pem: str | None = None  # static RSA/EC public key PEM
     logout_redirect: bool = False  # redirect to IdP logout on user logout
-    # Trust the email claim even when the IdP omits/!email_verified. Only
-    # enable for providers that are known to verify email out of band; an
-    # unverified email is otherwise an account-takeover vector.
-    trust_unverified_email: bool = False
 
 
 @dataclass
@@ -97,9 +93,6 @@ def load_config() -> list[OIDCProvider]:
                 ca_cert=ca_cert,
                 token_validation_pem=entry.get("token_validation_pem"),
                 logout_redirect=entry.get("logout_redirect", False),
-                trust_unverified_email=entry.get(
-                    "trust_unverified_email", False
-                ),
             )
         )
     return providers
@@ -317,10 +310,10 @@ async def build_logout_url(
     return f"{endpoint}?{urlencode(params)}"
 
 
-# --- Group mapping hook ---
+# --- OIDC login hook ---
 
-_group_hook: Callable | None = None
-_group_hook_is_async: bool = False
+_login_hook: Callable | None = None
+_login_hook_is_async: bool = False
 
 
 def example_admin_hook(
@@ -331,7 +324,7 @@ def example_admin_hook(
 ) -> set[str]:
     """Example hook: map a Keycloak realm role to the admin group.
 
-    To use: KLANGK_GROUP_MAPPING_HOOK=klangk_backend.oidc.example_admin_hook
+    To use: KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_admin_hook
 
     Customize the claim_path and claim_value for your IdP.
     """
@@ -351,22 +344,50 @@ def example_admin_hook(
     return set()
 
 
-def load_group_hook() -> None:
-    """Load the group mapping hook from KLANGK_GROUP_MAPPING_HOOK env var.
+def example_require_verified_email(
+    provider: OIDCProvider,  # noqa: ARG001
+    claims: dict,
+    email: str,  # noqa: ARG001
+    tokens: dict,  # noqa: ARG001
+) -> None:
+    """Example hook: reject logins where email_verified is not true.
+
+    To use: KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_require_verified_email
+
+    Raise an exception to reject the login. The exception message is
+    returned as the HTTP 403 detail.  Return None to allow the login
+    without group sync, or return a set of group names to sync.
+    """
+    if claims.get("email_verified") is not True:
+        raise ValueError("Email not verified by identity provider")
+
+
+def load_login_hook() -> None:
+    """Load the OIDC login hook from KLANGK_OIDC_LOGIN_HOOK.
 
     Format: ``module.path.func_name`` (last dot separates function).
-    If not set, no group sync is performed on OIDC login.
+
+    The hook is called after ID token validation and before user
+    provisioning.  It combines login validation and group mapping:
+
+    - **Raise** any exception → login rejected (HTTP 403, message
+      from the exception).
+    - **Return** ``None`` → login allowed, no group sync.
+    - **Return** a ``set[str]`` of group names → login allowed,
+      memberships synced to those groups.
+
+    If not set, all OIDC logins are accepted with no group sync.
     """
-    global _group_hook, _group_hook_is_async
-    raw = os.environ.get("KLANGK_GROUP_MAPPING_HOOK")
+    global _login_hook, _login_hook_is_async
+    raw = os.environ.get("KLANGK_OIDC_LOGIN_HOOK")
     if not raw:
-        _group_hook = None
-        _group_hook_is_async = False
+        _login_hook = None
+        _login_hook_is_async = False
         return
     dot = raw.rfind(".")
     if dot <= 0:
         raise RuntimeError(
-            f"KLANGK_GROUP_MAPPING_HOOK must be module.path.func_name, "
+            f"KLANGK_OIDC_LOGIN_HOOK must be module.path.func_name, "
             f"got: {raw!r}"
         )
     module_path = raw[:dot]
@@ -374,51 +395,45 @@ def load_group_hook() -> None:
     mod = importlib.import_module(module_path)
     hook = getattr(mod, func_name)
     if not callable(hook):
-        raise RuntimeError(
-            f"KLANGK_GROUP_MAPPING_HOOK: {raw!r} is not callable"
-        )
-    _group_hook = hook
-    _group_hook_is_async = asyncio.iscoroutinefunction(hook)
-    logger.info("OIDC group mapping hook loaded: %s", raw)
+        raise RuntimeError(f"KLANGK_OIDC_LOGIN_HOOK: {raw!r} is not callable")
+    _login_hook = hook
+    _login_hook_is_async = asyncio.iscoroutinefunction(hook)
+    logger.info("OIDC login hook loaded: %s", raw)
 
 
-async def call_group_hook(
+async def call_login_hook(
     provider: OIDCProvider,
     claims: dict,
     email: str,
     tokens: dict,
 ) -> set[str] | None:
-    """Call the group mapping hook. Returns None on error."""
-    if _group_hook is None:
+    """Call the OIDC login hook.
+
+    Returns group names to sync, or None if no groups.
+    Raises the hook's exception if login is rejected.
+    If no hook is configured, returns None (login allowed, no sync).
+    """
+    if _login_hook is None:
         return None
-    try:
-        if _group_hook_is_async:
-            result = await _group_hook(provider, claims, email, tokens)
-        else:
-            result = _group_hook(provider, claims, email, tokens)
-        return set(result)
-    except Exception:
-        logger.exception("Group mapping hook failed")
+    if _login_hook_is_async:
+        result = await _login_hook(provider, claims, email, tokens)
+    else:
+        result = _login_hook(provider, claims, email, tokens)
+    if result is None:
         return None
+    return set(result)
 
 
 async def sync_oidc_groups(
     user_id: str,
-    provider: OIDCProvider,
-    claims: dict,
-    email: str,
-    tokens: dict,
+    groups: set[str],
 ) -> None:
-    """Sync group memberships based on the group mapping hook."""
+    """Sync group memberships from the login hook result."""
     from . import model
-
-    desired_names = await call_group_hook(provider, claims, email, tokens)
-    if desired_names is None:
-        return
 
     # Resolve group names to IDs, auto-creating missing groups
     desired_ids: set[str] = set()
-    for name in desired_names:
+    for name in groups:
         group = await model.get_group_by_name(name)
         if group is None:
             group = await model.create_group(name)
@@ -435,8 +450,8 @@ async def sync_oidc_groups(
 
 def clear_caches() -> None:
     """Clear all caches (for testing)."""
-    global _group_hook, _group_hook_is_async
+    global _login_hook, _login_hook_is_async
     _discovery_cache.clear()
     _jwks_cache.clear()
-    _group_hook = None
-    _group_hook_is_async = False
+    _login_hook = None
+    _login_hook_is_async = False

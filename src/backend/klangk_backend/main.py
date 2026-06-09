@@ -140,7 +140,7 @@ async def lifespan(app: FastAPI):
     auth.require_secure_jwt_secret()
     await model.init_db()
     oidc.init_providers()
-    oidc.load_group_hook()
+    oidc.load_login_hook()
     await seed_default_user()
     from . import wshandler
 

@@ -724,18 +724,19 @@ async def oidc_callback(
         )
     auth.validate_email(email)
 
-    # Require a verified email before trusting it to link/provision an
-    # account — otherwise an IdP user who can assert an arbitrary email could
-    # take over an existing local account (e.g. the seeded admin). Providers
-    # known to verify email out of band can opt out via trust_unverified_email.
-    if (
-        claims.get("email_verified") is not True
-        and not provider.trust_unverified_email
-    ):
+    # Call the OIDC login hook (if configured). The hook can:
+    # - raise an exception to reject the login (HTTP 403)
+    # - return None to allow the login without group sync
+    # - return a set of group names to allow login and sync groups
+    try:
+        hook_groups = await oidc.call_login_hook(
+            provider, claims, email, tokens
+        )
+    except Exception as exc:
         raise HTTPException(
             status_code=403,
-            detail="Email not verified by identity provider",
-        )
+            detail=str(exc),
+        ) from None
 
     # Find or create user
     user = await model.get_user_by_external_id(provider_id, sub)
@@ -756,8 +757,9 @@ async def oidc_callback(
                 external_id=sub,
             )
 
-    # Sync group memberships from OIDC hook
-    await oidc.sync_oidc_groups(user["id"], provider, claims, email, tokens)
+    # Sync group memberships if the hook returned group names
+    if hook_groups is not None:
+        await oidc.sync_oidc_groups(user["id"], hook_groups)
 
     # Issue Klangk JWT
     access_token = auth.create_token(user["id"], email)
