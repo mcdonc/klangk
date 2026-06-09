@@ -2,10 +2,10 @@
 
 ![Klangk Web Coding Agent](docs/screenshot.png)
 
-A container orchestration system powered by Docker, which specializes in sandboxing AI tasks using [Pi](https://pi.dev) and any OpenAI-compatible LLM provider.
+A container orchestration system powered by Podman, which specializes in sandboxing AI tasks.
 
 Klangk gives its users isolated coding environments (aka "workspaces") using
-Docker containers. Within each workspace, any task can be run, but special
+containers. Within each workspace, any task can be run, but special
 consideration is given to LLM-focused tasks. Coding harnesses like `pi` and
 `claude` are made available in each workspace.
 
@@ -13,7 +13,6 @@ consideration is given to LLM-focused tasks. Coding harnesses like `pi` and
 
 ### Prerequisites
 
-- Docker daemon running
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (or run `./bootstrap` to install both)
 - An OpenAI-compatible LLM provider (e.g., [Ollama Cloud](https://ollama.com) or self-hosted Ollama or LiteLLM instance)
 
@@ -32,8 +31,7 @@ $EDITOR .env
 # Install Nix and devenv (if not already installed)
 ./bootstrap
 
-# Start the app (builds Docker image and Flutter web on first run)
-# Make sure Docker is running before this step
+# Start the app
 devenv processes up --no-tui
 ```
 
