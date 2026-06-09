@@ -162,8 +162,8 @@ Workspace bind mounts are validated at create and edit time. Two protections app
 
 - `test-backend`
 - `test-frontend`
-- `test-cli-e2e`
-- `test-flutter-e2e`
+- `test-backend-e2e`
+- `test-frontend-e2e`
 
 All 4 run automatically on PRs. You can bypass as repo admin.
 
@@ -336,20 +336,6 @@ plugins:
 - Workspace files: `workspaces/<user-id>/home/<workspace-id>/work/` (inside the `/home/klangk` bind mount)
 - Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/klangk` — dotfiles, bash history, Pi sessions)
 - Database persists across restarts and rebuilds
-
-## SSH Agent Forwarding
-
-If you have an SSH agent running on the host (`ssh-agent` or 1Password/Secretive), Klangk automatically forwards it into workspace containers. This means `git clone`, `git push`, and `ssh` work inside containers without copying your private keys — the keys never leave the host.
-
-```bash
-# On the host, add your key to the agent (if not already)
-ssh-add ~/.ssh/id_ed25519
-
-# Inside a container, git/ssh just works
-git clone git@github.com:yourorg/private-repo.git
-```
-
-For extra security, use `ssh-add -c` to require confirmation on the host for each SSH operation, preventing malicious code from silently using your key.
 
 ## OIDC Configuration
 
