@@ -193,7 +193,7 @@ docker run -d \
   klangk-host
 ```
 
-Open http://localhost:8995. On first startup the embedded workspace image is automatically loaded into podman.
+Replace `/your/data/path` with a directory on your host where Klangk data will be stored. Open http://localhost:8995. On first startup the embedded workspace image is automatically loaded into podman.
 
 The five Docker flags are required for rootless podman to create workspace containers inside the host container. They grant mount capabilities (`SYS_ADMIN`), FUSE filesystem access (`/dev/fuse`), pasta networking (`/dev/net/tun`), and remove default restrictions on syscalls and `/proc` that block nested container creation.
 
@@ -201,13 +201,6 @@ Data is stored in `/home/klangk/data` inside the container. To persist across re
 
 ```bash
 docker run -d -v klangk-data:/home/klangk/data ...
-```
-
-Inside devenv, `run-host-container` handles the flags and passes through `KLANGK_*` env vars automatically:
-
-```bash
-run-host-container        # foreground (Ctrl-C to stop)
-run-host-container -d     # detached
 ```
 
 ### Building locally
