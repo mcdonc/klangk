@@ -84,7 +84,7 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_PORT`                        | `8997`                               | Backend (FastAPI/uvicorn) port — proxied through nginx, not accessed directly                                                                                                              |
 | `KLANGK_DATA_DIR`                    | `$DEVENV_STATE/klangk/data`          | Database, workspaces, Pi sessions                                                                                                                                                          |
 | `KLANGK_PLUGINS_DIR`                 | `$DEVENV_STATE/klangk/plugins`       | Fetched plugins (outside repo for `execIfModified`)                                                                                                                                        |
-| `KLANGK_IMAGE_NAME`                  | `klangk`                             | Podman image name for workspace containers                                                                                                                                                 |
+| `KLANGK_IMAGE_NAME`                  | `klangk-workspace`                   | Podman image name for workspace containers                                                                                                                                                 |
 | `KLANGK_IMAGE_PULL_POLICY`           | `never`                              | Podman `--pull` policy for workspace containers (`never`, `missing`, `always`, `newer`). Default `never` requires the image to exist locally; `missing` pulls from a registry if not found |
 | `KLANGK_PODMAN_STORAGE`              |                                      | Custom path for podman image storage (graphroot). Set to a path on ext4 (not ZFS) for `--userns=keep-id` support. ZFS lacks idmapped mounts, causing slow container startup.               |
 | `KLANGK_ALLOWED_MOUNT_ROOTS`         |                                      | Comma-separated list of allowed host path prefixes for bind mounts (e.g., `/home,/data`). If unset, all bind mount paths are allowed. Protected paths are always blocked (see below).      |
@@ -255,7 +255,7 @@ src/
   frontend/            # Flutter web app
     test/              # Frontend unit tests
     e2e-tests/         # Playwright E2E tests
-  docker/
+  containers/
     host/              # Host container (Dockerfile, entrypoint)
     workspace/         # Workspace container (Dockerfile, base, entrypoint)
   bridge/              # @klangk/bridge npm package
