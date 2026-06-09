@@ -58,17 +58,13 @@ RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 # Install @earendil-works last so its `pi` binary wins.
 RUN npm install -g @mariozechner/pi-coding-agent @earendil-works/pi-coding-agent @anthropic-ai/claude-code
 
-# Create klangk user with a fixed UID/GID. The container runs with
+# Create klangk user with fixed UID/GID 1000. The container runs with
 # --userns=keep-id:uid=1000,gid=1000 which maps the host user to
 # this UID, so files on bind mounts are owned by the host user.
-ARG KLANGK_UID=1000
-ARG KLANGK_GID=1000
-RUN EXISTING_USER=$(getent passwd $KLANGK_UID | cut -d: -f1) \
+RUN EXISTING_USER=$(getent passwd 1000 | cut -d: -f1) \
     && [ -n "$EXISTING_USER" ] && userdel "$EXISTING_USER" || true \
-    && EXISTING_GROUP=$(getent group $KLANGK_GID | cut -d: -f1) \
-    && [ -n "$EXISTING_GROUP" ] && groupdel "$EXISTING_GROUP" 2>/dev/null || true \
-    && groupadd -g $KLANGK_GID klangk 2>/dev/null || true \
-    && useradd -u $KLANGK_UID -g $KLANGK_GID -m -d /home/klangk -s /bin/sh klangk
+    && groupadd -g 1000 klangk \
+    && useradd -u 1000 -g 1000 -m -d /home/klangk -s /bin/sh klangk
 
 # Make /bin/sh point to bash so Pi's bash tool supports bashisms (source, etc.)
 RUN ln -sf /bin/bash /bin/sh

@@ -37,8 +37,6 @@ echo "==> Building and pushing $IMAGE ($PLATFORMS) version $VERSION"
 docker buildx build \
   --builder "$BUILDER" \
   --platform "$PLATFORMS" \
-  --build-arg KLANGK_UID="$(id -u)" \
-  --build-arg KLANGK_GID="$(id -g)" \
   -f src/containers/workspace/Dockerfile.base \
   -t "$IMAGE:latest" \
   -t "$IMAGE:$VERSION" \
