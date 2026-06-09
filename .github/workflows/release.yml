@@ -1,7 +1,9 @@
 name: Release
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 concurrency:
   group: release
@@ -37,8 +39,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - uses: ./.github/actions/devenv-setup
 
@@ -47,20 +47,11 @@ jobs:
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           devenv shell -- build-host-image
 
-      - name: Generate version
-        id: version
-        run: |
-          COMMIT=$(git rev-parse --short HEAD)
-          CALVER="$(date -u +%Y.%m.%d)"
-          VERSION="v${CALVER}-${COMMIT}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION"
-
-      - name: Tag and push images to GHCR
+      - name: Push images to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${GITHUB_REF_NAME}"
 
           # Push host image
           HOST_REPO="ghcr.io/${{ github.repository }}/klangk-host"
@@ -77,17 +68,10 @@ jobs:
           devenv shell -- podman push "$WS_REPO:latest"
           devenv shell -- podman push "$WS_REPO:$VERSION"
 
-      - name: Create git tag
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          git tag "$VERSION"
-          git push origin "$VERSION"
-
       - name: Create GitHub Release
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          gh release create "$VERSION" \
-            --title "$VERSION" \
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
             --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
