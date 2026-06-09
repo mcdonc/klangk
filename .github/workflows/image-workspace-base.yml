@@ -1,4 +1,4 @@
-name: Build Base Image
+name: Build Workspace Base Image
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - "src/containers/workspace/Dockerfile.base"
-      - ".github/workflows/docker-base.yml"
+      - ".github/workflows/image-workspace-base.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
