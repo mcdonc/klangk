@@ -190,10 +190,10 @@ docker run -d \
   -e KLANGK_DEFAULT_USER=admin@example.com \
   -e KLANGK_DEFAULT_PASSWORD=admin \
   -e KLANGK_JWT_SECRET=change-me \
-  klangk-host
+  ghcr.io/mcdonc/klangk/klangk-host
 ```
 
-Replace `/your/data/path` with a directory on your host where Klangk data will be stored. Open http://localhost:8995. On first startup the embedded workspace image is automatically loaded into podman.
+Open http://localhost:8995. On first startup the embedded workspace image is automatically loaded into podman.
 
 The five Docker flags are required for rootless podman to create workspace containers inside the host container. They grant mount capabilities (`SYS_ADMIN`), FUSE filesystem access (`/dev/fuse`), pasta networking (`/dev/net/tun`), and remove default restrictions on syscalls and `/proc` that block nested container creation.
 
