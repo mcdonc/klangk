@@ -851,7 +851,7 @@ class TestWorkspaceRoutes:
             "/workspaces",
             json={
                 "name": "src-ws",
-                "image": "klangk",
+                "image": "klangk-workspace",
                 "default_command": "pi",
                 "mounts": ["/tmp:/mnt/tmp"],
                 "env": {"FOO": "bar"},
@@ -867,7 +867,7 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "dup-ws"
-        assert data["image"] == "klangk"
+        assert data["image"] == "klangk-workspace"
         assert data["default_command"] == "pi"
         assert data["mounts"] == ["/tmp:/mnt/tmp"]
         assert data["env"] == {"FOO": "bar"}
@@ -4720,8 +4720,8 @@ class TestOIDCCallback:
                 return {"admin", "power-users"}
             return {"users"}
 
-        monkeypatch.setattr(api.oidc, "_group_hook", test_hook)
-        monkeypatch.setattr(api.oidc, "_group_hook_is_async", False)
+        monkeypatch.setattr(api.oidc, "_login_hook", test_hook)
+        monkeypatch.setattr(api.oidc, "_login_hook_is_async", False)
 
         _, cookie_data = await self._setup_callback(
             client,
