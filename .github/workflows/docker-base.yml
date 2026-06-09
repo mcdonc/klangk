@@ -1,4 +1,4 @@
-name: Build Base Docker Image
+name: Build Base Image
 
 on:
   workflow_dispatch:
@@ -7,6 +7,10 @@ on:
     paths:
       - "src/containers/workspace/Dockerfile.base"
       - ".github/workflows/docker-base.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

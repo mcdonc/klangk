@@ -25,10 +25,22 @@ if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
 fi
 
 # Export workspace image so it can be embedded in the host image.
+# Use local podman image if available, otherwise pull from GHCR via docker.
 WORKSPACE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/klangk-workspace-XXXXXX")
 trap 'rm -rf "$WORKSPACE_DIR"' EXIT
-echo "Exporting workspace image $WORKSPACE_IMAGE ..."
-"$PODMAN" save "${POLICY_ARGS[@]}" -o "$WORKSPACE_DIR/workspace.tar" "$WORKSPACE_IMAGE"
+if "$PODMAN" image exists "$WORKSPACE_IMAGE" 2>/dev/null; then
+  echo "Exporting workspace image $WORKSPACE_IMAGE from podman ..."
+  "$PODMAN" save "${POLICY_ARGS[@]}" -o "$WORKSPACE_DIR/workspace.tar" "$WORKSPACE_IMAGE"
+elif [ -n "${KLANGK_WORKSPACE_REGISTRY:-}" ]; then
+  echo "Pulling workspace image from $KLANGK_WORKSPACE_REGISTRY ..."
+  docker pull "$KLANGK_WORKSPACE_REGISTRY"
+  docker save -o "$WORKSPACE_DIR/workspace.tar" "$KLANGK_WORKSPACE_REGISTRY"
+else
+  echo "ERROR: workspace image '$WORKSPACE_IMAGE' not found in podman"
+  echo "  Build it first: devenv shell -- build-backend-image"
+  echo "  Or set KLANGK_WORKSPACE_REGISTRY to pull from a registry"
+  exit 1
+fi
 
 echo "Building $IMAGE $VERSION ..."
 

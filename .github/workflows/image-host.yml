@@ -1,4 +1,4 @@
-name: Build Host Docker Image
+name: Build Host Image
 
 on:
   workflow_dispatch:
@@ -6,20 +6,29 @@ on:
     branches: [main]
     paths:
       - "src/containers/host/**"
+      - "src/containers/workspace/**"
       - "src/backend/klangk_backend/**"
       - "src/frontend/lib/**"
       - "scripts/build-host-image.sh"
+      - "scripts/build-backend-image.sh"
       - "scripts/nginx.sh"
-      - ".github/workflows/docker-host.yml"
+      - ".github/workflows/image-host.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  workspace:
+    uses: ./.github/workflows/image-workspace.yml
+    permissions:
+      packages: write
+      contents: read
+
   build:
+    needs: workspace
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       packages: write
       contents: read
@@ -30,14 +39,15 @@ jobs:
         with:
           build-tasks: klangk:flutter-build
 
-      - name: Build host image
+      - name: Build host image (pulls workspace image from GHCR)
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- build-host-image
-
-      - name: Tag and push to GHCR
-        run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          KLANGK_WORKSPACE_REGISTRY="ghcr.io/${{ github.repository }}/klangk:latest" \
+            devenv shell -- build-host-image
+
+      - name: Push host image to GHCR
+        run: |
           COMMIT=$(git rev-parse --short HEAD)
           CALVER="$(date -u +%Y.%m.%d)"
           VERSION="${CALVER}-${COMMIT}"

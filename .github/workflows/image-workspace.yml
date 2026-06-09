@@ -1,0 +1,42 @@
+name: Build Workspace Image
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches: [main]
+    paths:
+      - "src/containers/workspace/**"
+      - "scripts/build-backend-image.sh"
+      - ".github/workflows/image-workspace.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-backend-image
+
+      - name: Push workspace image to GHCR
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          echo "${{ secrets.GITHUB_TOKEN }}" | devenv shell -- podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          COMMIT=$(git rev-parse --short HEAD)
+          CALVER="$(date -u +%Y.%m.%d)"
+          VERSION="${CALVER}-${COMMIT}"
+          REPO="ghcr.io/${{ github.repository }}/klangk"
+          devenv shell -- podman tag klangk "$REPO:latest"
+          devenv shell -- podman tag klangk "$REPO:$VERSION"
+          devenv shell -- podman push "$REPO:latest"
+          devenv shell -- podman push "$REPO:$VERSION"
