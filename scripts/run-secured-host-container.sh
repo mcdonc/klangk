@@ -23,11 +23,9 @@ exec docker run --name klangk-host-secured \
   -p "${KLANGK_PORT}:${KLANGK_PORT}" \
   -p "${KLANGK_NGINX_PORT}:${KLANGK_NGINX_PORT}" \
   --cap-add SYS_ADMIN \
-  --cap-add MKNOD \
   --device /dev/fuse \
   --device /dev/net/tun \
   --security-opt seccomp=unconfined \
-  --security-opt label=disable \
   --security-opt systempaths=unconfined \
   --env-file "$ENVFILE" \
   "$@" \
