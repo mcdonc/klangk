@@ -884,6 +884,10 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
+    test.skip(
+      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      "requires local podman access",
+    );
     const email = `lifecycle-${Date.now()}@test.example.com`;
     const { token, headers } = await registerUser(request, email);
     const { workspaceId, cleanup } = await createWorkspace(
@@ -1035,6 +1039,10 @@ test.describe("Klangk E2E", () => {
     page,
     request,
   }) => {
+    test.skip(
+      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      "requires local podman access",
+    );
     const email = `host-home-${Date.now()}@test.example.com`;
     const { token, headers } = await registerUser(request, email);
     const { workspaceId, cleanup } = await createWorkspace(
@@ -1099,6 +1107,10 @@ test.describe("Klangk E2E", () => {
   });
 
   test("container stops after idle timeout", async ({ page, request }) => {
+    test.skip(
+      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      "requires local podman access",
+    );
     // Check if test mode is enabled
     const getResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
     if (!getResp.ok()) {
@@ -1776,6 +1788,10 @@ test.describe("Klangk E2E", () => {
     browser,
     request,
   }) => {
+    test.skip(
+      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      "requires local podman access",
+    );
     // Check if test mode is enabled (bridge-tokens endpoint needs it)
     const testCheck = await request.get(`${API_BASE}/api/test/idle-timeout`);
     if (!testCheck.ok()) {
@@ -2242,6 +2258,10 @@ test.describe("Klangk E2E", () => {
   });
 
   test("container recreated on page refresh", async ({ page, request }) => {
+    test.skip(
+      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      "requires local podman access",
+    );
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
       request,

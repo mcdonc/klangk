@@ -1,4 +1,4 @@
-FROM ghcr.io/mcdonc/klangk/klangk-base:latest
+FROM ghcr.io/mcdonc/klangk/klangk-workspace-base:latest
 
 # Install npm-based Pi extensions globally via pi install.
 # This layer is expensive (~30s) and rarely changes, so it goes first.

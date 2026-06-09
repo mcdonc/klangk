@@ -2,13 +2,18 @@ FROM python:3.13-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \
+      catatonit \
       coreutils \
+      fuse-overlayfs \
       gzip \
       nginx \
+      passt \
+      podman \
       rsync \
       sqlite3 \
       supervisor \
       tar \
+      uidmap \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user matching devenv convention (uid 1000)
@@ -54,6 +59,12 @@ RUN printf '{"version":"%s","commit":"%s","built_at":"%s"}\n' \
 # Data directory (volume mount point)
 RUN mkdir -p /home/klangk/data && chown klangk:klangk /home/klangk/data
 
+# Rootless podman: fuse-overlayfs for storage on overlayfs-backed filesystems
+COPY --chown=klangk:klangk src/containers/host/storage.conf /home/klangk/.config/containers/storage.conf
+
+# Embedded workspace image — loaded into podman on first startup
+COPY --from=workspace-image --chown=klangk:klangk workspace.tar /home/klangk/workspace.tar
+
 # Nginx needs writable temp dirs
 RUN mkdir -p /tmp/nginx_client_body /tmp/nginx_proxy \
              /tmp/nginx_fastcgi /tmp/nginx_uwsgi /tmp/nginx_scgi && \
@@ -69,7 +80,7 @@ ENV KLANGK_PORT=8997
 ENV KLANGK_NGINX_PORT=8995
 ENV KLANGK_DATA_DIR=/home/klangk/data
 ENV KLANGK_PLUGINS_DIR=/home/klangk/plugins
-ENV KLANGK_IMAGE_NAME=klangk
+ENV KLANGK_IMAGE_NAME=klangk-workspace
 ENV KLANGK_INSTANCE_ID=default
 ENV KLANGK_VERSION_FILE=/home/klangk/version.json
 # Used by nginx.sh to write nginx.conf at runtime

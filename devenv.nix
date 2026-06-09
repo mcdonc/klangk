@@ -124,7 +124,7 @@ in
   env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (
     config.devenv.root + "/.devenv/state/klangk/plugins"
   );
-  env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
+  env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
   # Rootless podman from nix (Linux) has no default policy.json; it is
   # generated in enterShell and scripts pass it via --signature-policy.
   # On macOS podman runs in *remote* mode against the VM, which has its own
@@ -136,11 +136,20 @@ in
     else
       config.devenv.state + "/klangk/podman/policy.json"
   );
+  # Tell podman where to find the signature policy globally (not just via
+  # --signature-policy flags in build scripts). Fixes `podman save`, `podman
+  # run`, etc. which only check default paths.
+  env.CONTAINERS_SIGNATURE_POLICY = lib.mkOverride 1500 (
+    if pkgs.stdenv.hostPlatform.isDarwin then
+      ""
+    else
+      config.devenv.state + "/klangk/podman/policy.json"
+  );
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
   # emulation. On macOS, pin to linux/amd64: the published GHCR base
-  # (klangk-base:latest) is amd64-only, so an arm64 default would mismatch
+  # (klangk-workspace-base:latest) is amd64-only, so an arm64 default would mismatch
   # (containers run in the podman VM, emulated when needed). Override in .env
   # to force a specific arch; native arm64 needs an arm64 base variant (see
   # push-base-image).
@@ -162,25 +171,7 @@ in
   scripts.build-host-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-host-image.sh" "$@"'';
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
 
-  scripts.run-host-container.exec = ''
-    DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-    ENVFILE=$(mktemp)
-    trap 'rm -f "$ENVFILE"' EXIT
-    env | grep '^KLANGK_' \
-      | grep -v '^KLANGK_DATA_DIR=' \
-      | grep -v '^KLANGK_PLUGINS_DIR=' \
-      | grep -v '^KLANGK_VERSION_FILE=' \
-      > "$ENVFILE"
-    docker rm -f klangk-host-run 2>/dev/null || true
-    exec docker run --name klangk-host-run \
-      -p "''${KLANGK_PORT}:''${KLANGK_PORT}" \
-      -p "''${KLANGK_NGINX_PORT}:''${KLANGK_NGINX_PORT}" \
-      -v /var/run/docker.sock:/var/run/docker.sock \
-      --group-add "$DOCKER_GID" \
-      --env-file "$ENVFILE" \
-      "$@" \
-      klangk-host
-  '';
+  scripts.run-host-container.exec = ''exec bash "$DEVENV_ROOT/scripts/run-host-container.sh" "$@"'';
 
   scripts.kill-containers.exec = ''
     ''${KLANGK_PODMAN_BIN:-podman} ps -a \
