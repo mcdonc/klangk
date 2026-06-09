@@ -17,6 +17,19 @@ VERSION="${CALVER}-${COMMIT}"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 IMAGE="${KLANGK_HOST_IMAGE:-klangk-host}"
 
+WORKSPACE_IMAGE="${KLANGK_IMAGE_NAME:-klangk}"
+PODMAN="${KLANGK_PODMAN_BIN:-podman}"
+POLICY_ARGS=()
+if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
+  POLICY_ARGS+=(--signature-policy "${KLANGK_SIGNATURE_POLICY}")
+fi
+
+# Export workspace image so it can be embedded in the host image.
+WORKSPACE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/klangk-workspace-XXXXXX")
+trap 'rm -rf "$WORKSPACE_DIR"' EXIT
+echo "Exporting workspace image $WORKSPACE_IMAGE ..."
+"$PODMAN" save "${POLICY_ARGS[@]}" -o "$WORKSPACE_DIR/workspace.tar" "$WORKSPACE_IMAGE"
+
 echo "Building $IMAGE $VERSION ..."
 
 docker build \
@@ -26,6 +39,7 @@ docker build \
   --build-arg "KLANGK_BUILD_COMMIT=$COMMIT" \
   --build-arg "KLANGK_BUILD_TIMESTAMP=$TIMESTAMP" \
   --build-context "hostvenv=$DEVENV_STATE/venv" \
+  --build-context "workspace-image=$WORKSPACE_DIR" \
   -t "$IMAGE:latest" \
   -t "$IMAGE:$VERSION" \
   "$@" \

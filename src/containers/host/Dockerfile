@@ -62,6 +62,9 @@ RUN mkdir -p /home/klangk/data && chown klangk:klangk /home/klangk/data
 # Rootless podman: fuse-overlayfs for storage on overlayfs-backed filesystems
 COPY --chown=klangk:klangk src/containers/host/storage.conf /home/klangk/.config/containers/storage.conf
 
+# Embedded workspace image — loaded into podman on first startup
+COPY --from=workspace-image --chown=klangk:klangk workspace.tar /home/klangk/workspace.tar
+
 # Nginx needs writable temp dirs
 RUN mkdir -p /tmp/nginx_client_body /tmp/nginx_proxy \
              /tmp/nginx_fastcgi /tmp/nginx_uwsgi /tmp/nginx_scgi && \
