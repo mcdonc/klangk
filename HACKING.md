@@ -212,6 +212,10 @@ build-host-image
 
 This builds everything from source: Flutter web, workspace image (podman), then the host image (Docker). Tagged with `latest` and a CalVer version (e.g., `2026.06.09-abc1234`). The version is baked into `/home/klangk/version.json` and served at `GET /version`.
 
+### Custom image with plugins
+
+To build a host image with plugins baked in, see [klangk-host-with-plugins](https://github.com/mcdonc/klangk-host-with-plugins) for an example. It clones klangk at a given ref, fetches plugins, rebuilds the Flutter web frontend and workspace image with plugin support, then layers the results on top of the released host image.
+
 ### Scanning
 
 ```bash
