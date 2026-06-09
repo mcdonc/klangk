@@ -49,6 +49,9 @@ if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
 fi
 
 # Build workspace image on top of the base
+COMMIT="$(git rev-parse --short HEAD)"
+CALVER="$(date -u +%Y.%m.%d)"
+VERSION="${CALVER}-${COMMIT}"
 POLICY_ARGS=()
 if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
   POLICY_ARGS+=(--signature-policy "${KLANGK_SIGNATURE_POLICY}")
@@ -58,6 +61,8 @@ fi
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-context plugin-extensions="$STAGING/extensions" \
   --build-context plugin-tools="$STAGING/tools" \
-  -t "${KLANGK_IMAGE_NAME}" "$@" src/containers/workspace/
+  -t "${KLANGK_IMAGE_NAME}:latest" \
+  -t "${KLANGK_IMAGE_NAME}:${VERSION}" \
+  "$@" src/containers/workspace/
 
 echo "$CURRENT_HASH" >"$STAMP"
