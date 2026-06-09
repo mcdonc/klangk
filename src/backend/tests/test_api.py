@@ -18,6 +18,7 @@ from klangk_backend import (
     auth,
     container,
     model,
+    oidc,
     podman,
     workspaces as ws_mod,
     wshandler,
@@ -5000,16 +5001,20 @@ class TestOIDCCallback:
         assert resp.status_code == 502
         assert "missing" in resp.json()["detail"].lower()
 
-    async def test_callback_unverified_email_rejected(
-        self, client, monkeypatch, db
-    ):
-        """An unverified email claim is refused (account-takeover guard)."""
+    async def test_callback_login_hook_rejects(self, client, monkeypatch, db):
+        """A login validation hook can reject an OIDC login."""
         _, cookie_data = await self._setup_callback(
             client,
             monkeypatch,
             db,
             claims={"email_verified": False},
         )
+        monkeypatch.setattr(
+            oidc,
+            "_login_hook",
+            oidc.example_require_verified_email,
+        )
+        monkeypatch.setattr(oidc, "_login_hook_is_async", False)
         resp = await client.get(
             "/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
@@ -5018,20 +5023,19 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 403
         assert "not verified" in resp.json()["detail"].lower()
-        # No account was provisioned from the unverified claim.
         assert await model.get_user_by_email("oidcuser@example.com") is None
 
-    async def test_callback_unverified_email_trusted_provider(
+    async def test_callback_no_login_hook_allows_unverified(
         self, client, monkeypatch, db
     ):
-        """trust_unverified_email lets a trusted IdP skip the check."""
-        provider, cookie_data = await self._setup_callback(
+        """Without a login hook, unverified emails are accepted."""
+        _, cookie_data = await self._setup_callback(
             client,
             monkeypatch,
             db,
             claims={"email_verified": False},
         )
-        provider.trust_unverified_email = True
+        monkeypatch.setattr(oidc, "_login_hook", None)
         resp = await client.get(
             "/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
