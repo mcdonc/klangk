@@ -172,7 +172,6 @@ in
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
 
   scripts.run-host-container.exec = ''exec bash "$DEVENV_ROOT/scripts/run-host-container.sh" "$@"'';
-  scripts.run-secured-host-container.exec = ''exec bash "$DEVENV_ROOT/scripts/run-secured-host-container.sh" "$@"'';
 
   scripts.kill-containers.exec = ''
     ''${KLANGK_PODMAN_BIN:-podman} ps -a \

@@ -21,7 +21,11 @@ docker rm -f klangk-host-run 2>/dev/null || true
 exec docker run --name klangk-host-run \
   -p "${KLANGK_PORT}:${KLANGK_PORT}" \
   -p "${KLANGK_NGINX_PORT}:${KLANGK_NGINX_PORT}" \
-  --privileged \
+  --cap-add SYS_ADMIN \
+  --device /dev/fuse \
+  --device /dev/net/tun \
+  --security-opt seccomp=unconfined \
+  --security-opt systempaths=unconfined \
   --env-file "$ENVFILE" \
   "$@" \
   klangk-host
