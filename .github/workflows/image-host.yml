@@ -2,18 +2,6 @@ name: Build Host Image
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "src/containers/host/**"
-      - "src/containers/workspace/**"
-      - "src/backend/klangk_backend/**"
-      - "src/frontend/lib/**"
-      - "scripts/build-host-image.sh"
-      - "scripts/build-backend-image.sh"
-      - "scripts/flutterbuildweb.sh"
-      - "scripts/nginx.sh"
-      - ".github/workflows/image-host.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

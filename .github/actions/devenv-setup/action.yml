@@ -3,7 +3,7 @@ description: Bootstrap nix/devenv, build Docker image, and start services
 
 inputs:
   build-tasks:
-    description: "Space-separated devenv tasks to run (e.g. 'klangk:build-backend-image klangk:flutter-build'). Empty to skip."
+    description: "Space-separated devenv tasks to run (e.g. 'klangk:build-workspace-image klangk:flutter-build'). Empty to skip."
     required: false
     default: ""
   cache-nix:

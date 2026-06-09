@@ -233,7 +233,7 @@ The `docker-host.yml` workflow builds and pushes the host image to GHCR on push 
 
 ## Build Architecture (amd64 / arm64)
 
-All workspace image builds (`build-backend-image`, `build-base-image`) use podman and build for `$KLANGK_PLATFORM`, which `devenv.nix` defaults to the host architecture (`linux/arm64` on Apple Silicon, `linux/amd64` elsewhere). This means images build and run natively instead of under QEMU emulation. The host container (`build-host-image`) still uses Docker. Override per-shell via `.env`:
+All workspace image builds (`build-workspace-image`, `build-base-image`) use podman and build for `$KLANGK_PLATFORM`, which `devenv.nix` defaults to the host architecture (`linux/arm64` on Apple Silicon, `linux/amd64` elsewhere). This means images build and run natively instead of under QEMU emulation. The host container (`build-host-image`) still uses Docker. Override per-shell via `.env`:
 
 ```bash
 KLANGK_PLATFORM=linux/amd64   # force amd64 even on an arm64 host
@@ -270,19 +270,19 @@ devenv.nix             # devenv configuration
 
 Inside `devenv shell`, these commands are available:
 
-| Command               | Description                           |
-| --------------------- | ------------------------------------- |
-| `test-backend`        | Run backend unit tests                |
-| `test-frontend`       | Run frontend unit tests with coverage |
-| `test-cli-e2e`        | Run CLI E2E tests                     |
-| `test-frontend-e2e`   | Run Flutter E2E tests (all browsers)  |
-| `flutterbuildweb`     | Rebuild Flutter web only              |
-| `build-backend-image` | Rebuild workspace image (podman)      |
-| `build-base-image`    | Rebuild workspace base image          |
-| `build-host-image`    | Build host container image            |
-| `run-host-container`  | Run host container locally            |
-| `trivy-host`          | Scan host image for vulnerabilities   |
-| `update-plugins`      | Fetch plugins from plugins.yaml       |
+| Command                 | Description                           |
+| ----------------------- | ------------------------------------- |
+| `test-backend`          | Run backend unit tests                |
+| `test-frontend`         | Run frontend unit tests with coverage |
+| `test-cli-e2e`          | Run CLI E2E tests                     |
+| `test-frontend-e2e`     | Run Flutter E2E tests (all browsers)  |
+| `flutterbuildweb`       | Rebuild Flutter web only              |
+| `build-workspace-image` | Rebuild workspace image (podman)      |
+| `build-base-image`      | Rebuild workspace base image          |
+| `build-host-image`      | Build host container image            |
+| `run-host-container`    | Run host container locally            |
+| `trivy-host`            | Scan host image for vulnerabilities   |
+| `update-plugins`        | Fetch plugins from plugins.yaml       |
 
 ## Plugin System
 
@@ -300,7 +300,7 @@ A plugin needs at minimum an `extension.ts`. The `klangk/` subdirectory is only 
 ### Build integration
 
 - `scripts/import_dart_plugins.py` scans `$KLANGK_PLUGINS_DIR/*/klangk/` for plugin Dart packages and generates `$KLANGK_PLUGINS_DIR/.dart/` (the `klangk_plugins` package with path deps and `createAllPlugins()`)
-- `build-backend-image` stages `extension.ts` and `tools/` files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named build contexts (`plugin-extensions`, `plugin-tools`)
+- `build-workspace-image` stages `extension.ts` and `tools/` files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named build contexts (`plugin-extensions`, `plugin-tools`)
 - `flutterbuildweb` runs the codegen before compiling
 - `stub_dart_plugins.sh` creates a minimal stub at `$KLANGK_PLUGINS_DIR/.dart/` so `flutter pub get` works before plugins are fetched (runs automatically at devenv shell startup via `enterShell`; skips if `pubspec_overrides.yaml` already exists)
 - Both build tasks are triggered automatically by `devenv up` via `execIfModified`

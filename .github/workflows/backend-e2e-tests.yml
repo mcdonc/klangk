@@ -37,7 +37,7 @@ jobs:
       - uses: ./.github/actions/devenv-setup
         if: steps.filter.outputs.e2e == 'true'
         with:
-          build-tasks: klangk:build-backend-image
+          build-tasks: klangk:build-workspace-image
           cache-nix: "false"
 
       - name: Run backend E2E tests

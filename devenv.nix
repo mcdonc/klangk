@@ -66,8 +66,8 @@ in
         "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
       ];
     };
-    "klangk:build-backend-image" = {
-      exec = ''exec bash "$DEVENV_ROOT/scripts/build-backend-image.sh"'';
+    "klangk:build-workspace-image" = {
+      exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh"'';
       showOutput = true;
     };
     "klangk:kill-containers" = {
@@ -96,7 +96,7 @@ in
       '';
       after = [
         "klangk:flutter-build"
-        "klangk:build-backend-image"
+        "klangk:build-workspace-image"
         "klangk:kill-containers"
         "klangk:kill-port-holders"
       ];
@@ -105,7 +105,7 @@ in
       exec = ''exec bash "$DEVENV_ROOT/scripts/nginx.sh"'';
       after = [
         "klangk:flutter-build"
-        "klangk:build-backend-image"
+        "klangk:build-workspace-image"
         "klangk:kill-port-holders"
       ];
     };
@@ -164,7 +164,7 @@ in
   dotenv.enable = true;
 
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
-  scripts.build-backend-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-backend-image.sh" "$@"'';
+  scripts.build-workspace-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh" "$@"'';
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
   scripts.build-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-base-image.sh" "$@"'';
@@ -189,7 +189,7 @@ in
 
   scripts.rebuild.exec = ''
     echo "Rebuilding backend image..."
-    build-backend-image
+    build-workspace-image
     echo "Rebuilding Flutter..."
     flutterbuildweb
     echo "==> Done"
@@ -215,7 +215,7 @@ in
 
   scripts.test-frontend-e2e.exec = ''
     cd $DEVENV_ROOT
-    devenv tasks run klangk:flutter-build klangk:build-backend-image
+    devenv tasks run klangk:flutter-build klangk:build-workspace-image
     cd src/frontend/e2e-tests
     npm install --silent
     exec npx playwright test --reporter=list "$@"

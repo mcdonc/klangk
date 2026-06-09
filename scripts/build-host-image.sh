@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
 bash "$SCRIPT_DIR/flutterbuildweb.sh"
-bash "$SCRIPT_DIR/build-backend-image.sh"
+bash "$SCRIPT_DIR/build-workspace-image.sh"
 
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
