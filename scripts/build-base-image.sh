@@ -21,8 +21,6 @@ if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
 fi
 "$PODMAN" build "${POLICY_ARGS[@]}" \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
-  --build-arg KLANGK_UID="$(id -u)" \
-  --build-arg KLANGK_GID="$(id -g)" \
   -f src/containers/workspace/Dockerfile.base \
   -t "$IMAGE:latest" \
   -t "$IMAGE:$VERSION" \

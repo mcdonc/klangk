@@ -84,7 +84,7 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_PORT`                        | `8997`                               | Backend (FastAPI/uvicorn) port — proxied through nginx, not accessed directly                                                                                                              |
 | `KLANGK_DATA_DIR`                    | `$DEVENV_STATE/klangk/data`          | Database, workspaces, Pi sessions                                                                                                                                                          |
 | `KLANGK_PLUGINS_DIR`                 | `$DEVENV_STATE/klangk/plugins`       | Fetched plugins (outside repo for `execIfModified`)                                                                                                                                        |
-| `KLANGK_IMAGE_NAME`                  | `klangk`                             | Podman image name for workspace containers                                                                                                                                                 |
+| `KLANGK_IMAGE_NAME`                  | `klangk-workspace`                   | Podman image name for workspace containers                                                                                                                                                 |
 | `KLANGK_IMAGE_PULL_POLICY`           | `never`                              | Podman `--pull` policy for workspace containers (`never`, `missing`, `always`, `newer`). Default `never` requires the image to exist locally; `missing` pulls from a registry if not found |
 | `KLANGK_PODMAN_STORAGE`              |                                      | Custom path for podman image storage (graphroot). Set to a path on ext4 (not ZFS) for `--userns=keep-id` support. ZFS lacks idmapped mounts, causing slow container startup.               |
 | `KLANGK_ALLOWED_MOUNT_ROOTS`         |                                      | Comma-separated list of allowed host path prefixes for bind mounts (e.g., `/home,/data`). If unset, all bind mount paths are allowed. Protected paths are always blocked (see below).      |
@@ -169,50 +169,54 @@ All 4 run automatically on PRs. You can bypass as repo admin.
 
 ## Host Container
 
-The host container packages the backend, nginx proxy, and Flutter web UI into a single Docker image based on `python:3.13-slim`. It does **not** include workspace containers — those are managed separately via podman.
+The host container is a self-contained deployment image. It packages the backend, nginx proxy, Flutter web UI, and the workspace image into a single Docker image based on `python:3.13-slim`. Workspace containers are launched inside the host container via rootless podman (pasta networking).
 
-### Building
+The published image is available from GHCR:
 
 ```bash
-build-host-image
+docker pull ghcr.io/mcdonc/klangk/klangk-host:latest
 ```
 
-This builds the `klangk-host` image using the pre-built venv from devenv and the Flutter web output. The image is tagged with both `latest` and a CalVer version (e.g., `2026.06.05-abc1234`).
-
-The version is baked into `/home/klangk/version.json` inside the image and served at the `GET /version` endpoint.
-
 ### Running
+
+```bash
+docker run -d \
+  -p 8995:8995 -p 8997:8997 \
+  --cap-add SYS_ADMIN \
+  --device /dev/fuse \
+  --device /dev/net/tun \
+  --security-opt seccomp=unconfined \
+  --security-opt systempaths=unconfined \
+  -e KLANGK_DEFAULT_USER=admin@example.com \
+  -e KLANGK_DEFAULT_PASSWORD=admin \
+  -e KLANGK_JWT_SECRET=change-me \
+  klangk-host
+```
+
+Open http://localhost:8995. On first startup the embedded workspace image is automatically loaded into podman.
+
+The five Docker flags are required for rootless podman to create workspace containers inside the host container. They grant mount capabilities (`SYS_ADMIN`), FUSE filesystem access (`/dev/fuse`), pasta networking (`/dev/net/tun`), and remove default restrictions on syscalls and `/proc` that block nested container creation.
+
+Data is stored in `/home/klangk/data` inside the container. To persist across restarts, mount a volume:
+
+```bash
+docker run -d -v klangk-data:/home/klangk/data ...
+```
+
+Inside devenv, `run-host-container` handles the flags and passes through `KLANGK_*` env vars automatically:
 
 ```bash
 run-host-container        # foreground (Ctrl-C to stop)
 run-host-container -d     # detached
 ```
 
-Open http://localhost:8995 (nginx) or http://localhost:8997 (uvicorn direct).
-
-`run-host-container` collects all `KLANGK_*` environment variables from the current devenv shell (including values loaded from `.env` via `dotenv.enable`) and passes them into the container via `--env-file`. Host-local paths like `KLANGK_DATA_DIR` and `KLANGK_PLUGINS_DIR` are excluded so the container's own defaults apply. It also maps the Docker socket and exposes the configured ports.
-
-To run manually without devenv:
+### Building locally
 
 ```bash
-docker run -d \
-  -p 8997:8997 -p 8995:8995 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  --group-add $(stat -c '%g' /var/run/docker.sock) \
-  -e KLANGK_DEFAULT_USER=admin@example.com \
-  -e KLANGK_DEFAULT_PASSWORD=admin \
-  -e KLANGK_JWT_SECRET=change-me \
-  -e KLANGK_LLM_API_KEY=your-key \
-  -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
-  -e KLANGK_LLM_MODEL=gemma4:31b \
-  klangk-host
+build-host-image
 ```
 
-Data is stored in `/home/klangk/data` inside the container. To persist it across restarts, mount a volume:
-
-```bash
-docker run -d -v klangk-data:/home/klangk/data ...
-```
+This builds everything from source: Flutter web, workspace image (podman), then the host image (Docker). Tagged with `latest` and a CalVer version (e.g., `2026.06.09-abc1234`). The version is baked into `/home/klangk/version.json` and served at `GET /version`.
 
 ### Scanning
 
@@ -223,17 +227,11 @@ trivy-host --severity CRITICAL    # critical only
 
 ### CI
 
-The `docker-host.yml` workflow builds and pushes the host image to GHCR on push to `main` when relevant files change (host Dockerfile, backend source, frontend source, build scripts). It tags the image with both `:latest` and the CalVer version (e.g., `:2026.06.05-abc1234`). It can also be triggered manually via `workflow_dispatch`.
-
-### Notes
-
-- The `--group-add` flag grants the container user access to the Docker socket. The GID must match the host's docker socket group.
-- Nginx starts automatically alongside uvicorn. If `KLANGK_LLM_BASE_URL` is not set, the LLM proxy block is omitted and nginx still serves the UI and API.
-- The workspace image (`klangk`) must be available in the podman image store — the host container does not build it.
+The `image-host.yml` workflow builds and pushes the host image to GHCR. It is triggered manually via `workflow_dispatch` (building is too expensive for automatic push triggers). The `image-workspace.yml` workflow builds and pushes the workspace image independently on push to `main`.
 
 ## Build Architecture (amd64 / arm64)
 
-All workspace image builds (`build-backend-image`, `build-base-image`) use podman and build for `$KLANGK_PLATFORM`, which `devenv.nix` defaults to the host architecture (`linux/arm64` on Apple Silicon, `linux/amd64` elsewhere). This means images build and run natively instead of under QEMU emulation. The host container (`build-host-image`) still uses Docker. Override per-shell via `.env`:
+All workspace image builds (`build-workspace-image`, `build-base-image`) use podman and build for `$KLANGK_PLATFORM`, which `devenv.nix` defaults to the host architecture (`linux/arm64` on Apple Silicon, `linux/amd64` elsewhere). This means images build and run natively instead of under QEMU emulation. The host container (`build-host-image`) still uses Docker. Override per-shell via `.env`:
 
 ```bash
 KLANGK_PLATFORM=linux/amd64   # force amd64 even on an arm64 host
@@ -257,7 +255,7 @@ src/
   frontend/            # Flutter web app
     test/              # Frontend unit tests
     e2e-tests/         # Playwright E2E tests
-  docker/
+  containers/
     host/              # Host container (Dockerfile, entrypoint)
     workspace/         # Workspace container (Dockerfile, base, entrypoint)
   bridge/              # @klangk/bridge npm package
@@ -270,19 +268,19 @@ devenv.nix             # devenv configuration
 
 Inside `devenv shell`, these commands are available:
 
-| Command               | Description                           |
-| --------------------- | ------------------------------------- |
-| `test-backend`        | Run backend unit tests                |
-| `test-frontend`       | Run frontend unit tests with coverage |
-| `test-cli-e2e`        | Run CLI E2E tests                     |
-| `test-frontend-e2e`   | Run Flutter E2E tests (all browsers)  |
-| `flutterbuildweb`     | Rebuild Flutter web only              |
-| `build-backend-image` | Rebuild workspace image (podman)      |
-| `build-base-image`    | Rebuild workspace base image          |
-| `build-host-image`    | Build host container image            |
-| `run-host-container`  | Run host container locally            |
-| `trivy-host`          | Scan host image for vulnerabilities   |
-| `update-plugins`      | Fetch plugins from plugins.yaml       |
+| Command                 | Description                           |
+| ----------------------- | ------------------------------------- |
+| `test-backend`          | Run backend unit tests                |
+| `test-frontend`         | Run frontend unit tests with coverage |
+| `test-cli-e2e`          | Run CLI E2E tests                     |
+| `test-frontend-e2e`     | Run Flutter E2E tests (all browsers)  |
+| `flutterbuildweb`       | Rebuild Flutter web only              |
+| `build-workspace-image` | Rebuild workspace image (podman)      |
+| `build-base-image`      | Rebuild workspace base image          |
+| `build-host-image`      | Build host container image            |
+| `run-host-container`    | Run host container locally            |
+| `trivy-host`            | Scan host image for vulnerabilities   |
+| `update-plugins`        | Fetch plugins from plugins.yaml       |
 
 ## Plugin System
 
@@ -300,7 +298,7 @@ A plugin needs at minimum an `extension.ts`. The `klangk/` subdirectory is only 
 ### Build integration
 
 - `scripts/import_dart_plugins.py` scans `$KLANGK_PLUGINS_DIR/*/klangk/` for plugin Dart packages and generates `$KLANGK_PLUGINS_DIR/.dart/` (the `klangk_plugins` package with path deps and `createAllPlugins()`)
-- `build-backend-image` stages `extension.ts` and `tools/` files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named build contexts (`plugin-extensions`, `plugin-tools`)
+- `build-workspace-image` stages `extension.ts` and `tools/` files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named build contexts (`plugin-extensions`, `plugin-tools`)
 - `flutterbuildweb` runs the codegen before compiling
 - `stub_dart_plugins.sh` creates a minimal stub at `$KLANGK_PLUGINS_DIR/.dart/` so `flutter pub get` works before plugins are fetched (runs automatically at devenv shell startup via `enterShell`; skips if `pubspec_overrides.yaml` already exists)
 - Both build tasks are triggered automatically by `devenv up` via `execIfModified`

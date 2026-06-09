@@ -8,7 +8,7 @@ STAMP="$DEVENV_STATE/klangk/.backend-image-hash"
 
 # Compute a hash of all files that affect the workspace image.
 CURRENT_HASH=$(find \
-  scripts/build-backend-image.sh \
+  scripts/build-workspace-image.sh \
   src/containers/workspace/ \
   "$KLANGK_PLUGINS_DIR" \
   -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)

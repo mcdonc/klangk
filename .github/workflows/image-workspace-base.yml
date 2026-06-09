@@ -31,8 +31,6 @@ jobs:
           VERSION="${CALVER}-${COMMIT}"
           REPO="ghcr.io/${{ github.repository }}/klangk-workspace-base"
           docker build --platform linux/amd64 \
-            --build-arg KLANGK_UID=1000 \
-            --build-arg KLANGK_GID=1000 \
             -f src/containers/workspace/Dockerfile.base \
             -t "$REPO:latest" \
             -t "$REPO:$VERSION" \

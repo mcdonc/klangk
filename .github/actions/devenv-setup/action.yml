@@ -3,8 +3,9 @@ description: Bootstrap nix/devenv, build Docker image, and start services
 
 inputs:
   build-tasks:
-    description: "Space-separated devenv tasks to run (e.g. 'klangk:build-backend-image klangk:flutter-build')"
-    required: true
+    description: "Space-separated devenv tasks to run (e.g. 'klangk:build-workspace-image klangk:flutter-build'). Empty to skip."
+    required: false
+    default: ""
   cache-nix:
     description: "Enable nix store caching (default true)"
     required: false
@@ -48,6 +49,7 @@ runs:
         devenv shell -- true
 
     - name: Build
+      if: inputs.build-tasks != ''
       shell: bash
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh

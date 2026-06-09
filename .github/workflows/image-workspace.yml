@@ -7,7 +7,7 @@ on:
     branches: [main]
     paths:
       - "src/containers/workspace/**"
-      - "scripts/build-backend-image.sh"
+      - "scripts/build-workspace-image.sh"
       - ".github/workflows/image-workspace.yml"
 
 concurrency:
@@ -26,7 +26,7 @@ jobs:
 
       - uses: ./.github/actions/devenv-setup
         with:
-          build-tasks: klangk:build-backend-image
+          build-tasks: klangk:build-workspace-image
 
       - name: Push workspace image to GHCR
         run: |
