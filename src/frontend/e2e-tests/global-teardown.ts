@@ -3,6 +3,12 @@ import { existsSync, rmSync } from "fs";
 import { join } from "path";
 
 async function globalTeardown() {
+  // When using an external server, skip all cleanup.
+  if (process.env.KLANGK_TEST_URL) {
+    console.log("External server — skipping teardown");
+    return;
+  }
+
   const projectRoot = join(__dirname, "..", "..", "..");
 
   const pid = process.env.KLANGK_E2E_PID;

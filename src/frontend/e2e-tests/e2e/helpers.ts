@@ -6,7 +6,8 @@ import { execSync } from "child_process";
 // containers, and parallel execution is safe because no state is shared.
 
 export const BACKEND_PORT = process.env.KLANGK_E2E_PORT || "18997";
-export const API_BASE = `http://localhost:${BACKEND_PORT}`;
+export const API_BASE =
+  process.env.KLANGK_TEST_URL || `http://localhost:${BACKEND_PORT}`;
 export const TEST_PASSWORD = "testpass";
 
 /** Register a new user via API (test mode allows unauthenticated registration).

@@ -4,6 +4,27 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 async function globalSetup() {
+  // When KLANGK_TEST_URL is set, skip server startup — tests run against
+  // an already-running instance (e.g. the host container).
+  if (process.env.KLANGK_TEST_URL) {
+    const url = process.env.KLANGK_TEST_URL;
+    console.log(`Using external server at ${url} — skipping server startup`);
+    // Verify it's reachable
+    for (let i = 0; i < 30; i++) {
+      try {
+        const resp = await fetch(`${url}/health`);
+        if (resp.ok) {
+          console.log(`External server ready`);
+          return;
+        }
+      } catch {
+        // Not ready yet
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new Error(`External server at ${url} not reachable after 30s`);
+  }
+
   const dataDir = mkdtempSync(join(tmpdir(), "klangk-e2e-"));
   process.env.KLANGK_E2E_DATA_DIR = dataDir;
 
