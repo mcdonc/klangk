@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the klangk-host container image via Dockerfile.
 #
-# Embeds version info (CalVer + commit) into the image.
-# Requires: devenv shell (for venv), flutter build web (for frontend).
+# Builds all prerequisites (flutter web, workspace image) unless pulling
+# the workspace image from a registry via KLANGK_WORKSPACE_REGISTRY.
 #
 # Usage:
 #   bash scripts/build-host-image.sh
@@ -10,6 +10,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
+
+# Build prerequisites unless using a registry workspace image.
+if [ -z "${KLANGK_WORKSPACE_REGISTRY:-}" ]; then
+  bash "$SCRIPT_DIR/flutterbuildweb.sh"
+  bash "$SCRIPT_DIR/build-backend-image.sh"
+fi
 
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"

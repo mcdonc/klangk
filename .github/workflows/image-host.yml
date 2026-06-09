@@ -11,6 +11,7 @@ on:
       - "src/frontend/lib/**"
       - "scripts/build-host-image.sh"
       - "scripts/build-backend-image.sh"
+      - "scripts/flutterbuildweb.sh"
       - "scripts/nginx.sh"
       - ".github/workflows/image-host.yml"
 
@@ -19,14 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  workspace:
-    uses: ./.github/workflows/image-workspace.yml
-    permissions:
-      packages: write
-      contents: read
-
   build:
-    needs: workspace
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -37,17 +31,16 @@ jobs:
 
       - uses: ./.github/actions/devenv-setup
         with:
-          build-tasks: klangk:flutter-build
+          build-tasks: ""
 
-      - name: Build host image (pulls workspace image from GHCR)
+      - name: Build host image (builds everything from source)
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          KLANGK_WORKSPACE_REGISTRY="ghcr.io/${{ github.repository }}/klangk-workspace:latest" \
-            devenv shell -- build-host-image
+          devenv shell -- build-host-image
 
       - name: Push host image to GHCR
         run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           COMMIT=$(git rev-parse --short HEAD)
           CALVER="$(date -u +%Y.%m.%d)"
           VERSION="${CALVER}-${COMMIT}"
