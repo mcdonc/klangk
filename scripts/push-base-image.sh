@@ -13,7 +13,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
-IMAGE="ghcr.io/mcdonc/klangk/klangk-base"
+IMAGE="ghcr.io/mcdonc/klangk/klangk-workspace-base"
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
 VERSION="${CALVER}-${COMMIT}"

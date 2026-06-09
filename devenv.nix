@@ -124,7 +124,7 @@ in
   env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (
     config.devenv.root + "/.devenv/state/klangk/plugins"
   );
-  env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk";
+  env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
   # Rootless podman from nix (Linux) has no default policy.json; it is
   # generated in enterShell and scripts pass it via --signature-policy.
   # On macOS podman runs in *remote* mode against the VM, which has its own
@@ -149,7 +149,7 @@ in
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
   # emulation. On macOS, pin to linux/amd64: the published GHCR base
-  # (klangk-base:latest) is amd64-only, so an arm64 default would mismatch
+  # (klangk-workspace-base:latest) is amd64-only, so an arm64 default would mismatch
   # (containers run in the podman VM, emulated when needed). Override in .env
   # to force a specific arch; native arm64 needs an arm64 base variant (see
   # push-base-image).

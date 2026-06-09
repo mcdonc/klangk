@@ -239,7 +239,7 @@ All workspace image builds (`build-backend-image`, `build-base-image`) use podma
 KLANGK_PLATFORM=linux/amd64   # force amd64 even on an arm64 host
 ```
 
-Building the **workspace** image natively requires a **base** image with a matching variant. The base (`ghcr.io/mcdonc/klangk/klangk-base`) is published as a multi-arch manifest (amd64 + arm64) by `push-base-image`, so `pull-base-image` automatically gets the right variant for the host. If the published base lacks your arch, build it locally first:
+Building the **workspace** image natively requires a **base** image with a matching variant. The base (`ghcr.io/mcdonc/klangk/klangk-workspace-base`) is published as a multi-arch manifest (amd64 + arm64) by `push-base-image`, so `pull-base-image` automatically gets the right variant for the host. If the published base lacks your arch, build it locally first:
 
 ```bash
 build-base-image            # local single-arch build for $KLANGK_PLATFORM

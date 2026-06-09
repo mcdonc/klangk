@@ -34,7 +34,10 @@ if "$PODMAN" image exists "$WORKSPACE_IMAGE" 2>/dev/null; then
 elif [ -n "${KLANGK_WORKSPACE_REGISTRY:-}" ]; then
   echo "Pulling workspace image from $KLANGK_WORKSPACE_REGISTRY ..."
   docker pull "$KLANGK_WORKSPACE_REGISTRY"
-  docker save -o "$WORKSPACE_DIR/workspace.tar" "$KLANGK_WORKSPACE_REGISTRY"
+  # Retag so the embedded tarball uses the local image name, matching
+  # KLANGK_IMAGE_NAME inside the host container.
+  docker tag "$KLANGK_WORKSPACE_REGISTRY" "$WORKSPACE_IMAGE"
+  docker save -o "$WORKSPACE_DIR/workspace.tar" "$WORKSPACE_IMAGE"
 else
   echo "ERROR: workspace image '$WORKSPACE_IMAGE' not found in podman"
   echo "  Build it first: devenv shell -- build-backend-image"

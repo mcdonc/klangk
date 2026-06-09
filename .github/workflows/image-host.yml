@@ -43,7 +43,7 @@ jobs:
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          KLANGK_WORKSPACE_REGISTRY="ghcr.io/${{ github.repository }}/klangk:latest" \
+          KLANGK_WORKSPACE_REGISTRY="ghcr.io/${{ github.repository }}/klangk-workspace:latest" \
             devenv shell -- build-host-image
 
       - name: Push host image to GHCR

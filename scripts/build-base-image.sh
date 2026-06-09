@@ -12,7 +12,7 @@ PODMAN="${KLANGK_PODMAN_BIN:-podman}"
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
 VERSION="${CALVER}-${COMMIT}"
-IMAGE="ghcr.io/mcdonc/klangk/klangk-base"
+IMAGE="ghcr.io/mcdonc/klangk/klangk-workspace-base"
 
 echo "==> Building base image $VERSION (${KLANGK_PLATFORM:-linux/amd64})"
 POLICY_ARGS=()
