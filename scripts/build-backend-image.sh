@@ -54,6 +54,7 @@ if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
   POLICY_ARGS+=(--signature-policy "${KLANGK_SIGNATURE_POLICY}")
 fi
 "$PODMAN" build "${POLICY_ARGS[@]}" \
+  --pull=newer \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-context plugin-extensions="$STAGING/extensions" \
   --build-context plugin-tools="$STAGING/tools" \
