@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:xterm/xterm.dart';
 import '../ws/ws_client.dart';
 import '../utils/web_helpers_stub.dart'
@@ -148,7 +147,7 @@ class ContainerTerminalState extends State<ContainerTerminal> {
           theme: _theme,
           textStyle: TerminalStyle(
             fontSize: 16,
-            fontFamily: GoogleFonts.robotoMono().fontFamily!,
+            fontFamily: 'JetBrains Mono',
           ),
           focusNode: _focusNode,
           scrollController: _scrollController,

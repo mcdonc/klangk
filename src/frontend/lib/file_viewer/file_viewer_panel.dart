@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../theme/colors.dart';
 import 'package:http/http.dart' as http;
 import '../ws/ws_client.dart';
@@ -481,9 +480,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
               width: double.infinity,
               child: SelectableText(
                 _fileContent ?? 'Loading...',
-                style: TextStyle(
-                    fontFamily: GoogleFonts.robotoMono().fontFamily,
-                    fontSize: 14),
+                style: TextStyle(fontFamily: 'JetBrains Mono', fontSize: 14),
                 textAlign: TextAlign.left,
               ),
             ),
