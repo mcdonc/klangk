@@ -22,7 +22,7 @@ def _container_dns_config() -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
-IMAGE_NAME = util.resolve_env_secret("KLANGK_IMAGE_NAME", "klangk")
+IMAGE_NAME = util.resolve_env_secret("KLANGK_IMAGE_NAME", "klangk-workspace")
 INSTANCE_ID = util.resolve_env_secret("KLANGK_INSTANCE_ID", "default")
 
 _allowed_images_env = util.resolve_env_secret("KLANGK_ALLOWED_IMAGES", "")
