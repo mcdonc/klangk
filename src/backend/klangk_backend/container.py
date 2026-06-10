@@ -693,6 +693,28 @@ class ContainerRegistry:
                 self.cleanup_idle_containers()
             )
 
+    # --- Pre-warm ---
+
+    async def prewarm_podman(self) -> None:
+        """Run a throwaway container create+rm to warm podman caches.
+
+        The very first ``podman create`` in a session can take ~20s while
+        podman initialises storage, user-namespace mappings, and network
+        helpers.  Paying that cost here (during backend startup) keeps it
+        off the path where a user is waiting.
+        """
+        t0 = time.monotonic()
+        try:
+            cid = await podman.create_container(
+                "klangk-prewarm", IMAGE_NAME, pull="never"
+            )
+            await podman.remove_container(cid)
+            logger.info("Podman pre-warmed in %.3fs", time.monotonic() - t0)
+        except podman.PodmanError as e:
+            logger.warning(
+                "Podman pre-warm failed (%.3fs): %s", time.monotonic() - t0, e
+            )
+
     # --- Orphan adoption ---
 
     async def adopt_orphaned_containers(self) -> None:

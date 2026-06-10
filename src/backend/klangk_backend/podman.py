@@ -100,14 +100,17 @@ async def _run(
         out = out_f.read().decode("utf-8", errors="replace")
         err = err_f.read().decode("utf-8", errors="replace")
     rc = proc.returncode or 0
+    elapsed = t3 - t0
     logger.info(
-        "workspace-open: _run(%s) tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",
+        "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",
         cmd_label,
         t1 - t0,
         t2 - t1,
         t3 - t2,
-        t3 - t0,
+        elapsed,
     )
+    if elapsed > 2.0 and err.strip():  # pragma: no cover
+        logger.info("podman-timing: %s stderr: %s", cmd_label, err.strip())
     if check and rc != 0:
         raise PodmanError(_classify(err), err.strip() or f"podman {args[0]}")
     return rc, out, err
