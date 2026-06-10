@@ -38,9 +38,10 @@ const webkitUse = {
 };
 
 // Test projects:
-// - chromium-api: API-only + simple UI tests that don't need cross-browser (run once)
-// - chromium → firefox → webkit: browser-specific tests (sequential to avoid
-//   container startup contention from parallel browser projects)
+// - chromium-api: API-only tests that don't need cross-browser (run once)
+// - chromium, firefox, webkit: browser-specific tests
+// CI runs chromium + chromium-api as the merge-gating job, and
+// firefox + webkit as a separate non-blocking job.
 
 export default defineConfig({
   testDir: "./e2e",
@@ -74,13 +75,11 @@ export default defineConfig({
     {
       name: "firefox",
       testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
-      dependencies: ["chromium"],
       use: firefoxUse,
     },
     {
       name: "webkit",
       testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
-      dependencies: ["firefox"],
       use: webkitUse,
     },
     {
