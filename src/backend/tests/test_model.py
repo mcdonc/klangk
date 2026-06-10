@@ -507,6 +507,42 @@ class TestLoginAttempts:
         await model.clear_login_attempts("nobody@example.com")
 
 
+class TestChatMessagesMigration:
+    async def test_migrate_adds_message_type_column(self, db):
+        """init_db adds message_type column to existing tables that lack it."""
+        raw_db = await model.get_db()
+        try:
+            # Drop and recreate without message_type to simulate old schema
+            await raw_db.execute("DROP TABLE IF EXISTS chat_mentions")
+            await raw_db.execute("DROP TABLE IF EXISTS chat_messages")
+            await raw_db.execute("""
+                CREATE TABLE chat_messages (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_email TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await raw_db.commit()
+        finally:
+            await raw_db.close()
+
+        # Re-run init_db — should add message_type via ALTER TABLE
+        await model.init_db()
+
+        migrated_db = await model.get_db()
+        try:
+            cursor = await migrated_db.execute(
+                "PRAGMA table_info(chat_messages)"
+            )
+            cols = {row[1] for row in await cursor.fetchall()}
+            assert "message_type" in cols
+        finally:
+            await migrated_db.close()
+
+
 class TestChatMessages:
     async def test_add_chat_message(self, workspace, user):
         msg = await model.add_chat_message(
