@@ -38,15 +38,7 @@ export async function loginViaUI(page: Page, email: string, password: string) {
   const cx = width / 2;
   const f = fv(page);
 
-  // The "Enable accessibility" button (if present) can cover the center of
-  // the screen and intercept our login field clicks. Dismiss it first if visible.
-  const accessibilityBtn = page.locator("button", {
-    hasText: "Enable accessibility",
-  });
-  if (await accessibilityBtn.isVisible({ timeout: 500 }).catch(() => false)) {
-    await accessibilityBtn.click();
-    await page.waitForTimeout(300);
-  }
+  await dismissAccessibility(page);
 
   await f.click({ position: { x: cx, y: height * 0.46 }, force: true });
   await page.waitForTimeout(200);
@@ -70,13 +62,7 @@ export async function tryLogin(page: Page, email: string, password: string) {
   const cx = width / 2;
   const f = fv(page);
 
-  const accessibilityBtn = page.locator("button", {
-    hasText: "Enable accessibility",
-  });
-  if (await accessibilityBtn.isVisible({ timeout: 500 }).catch(() => false)) {
-    await accessibilityBtn.click();
-    await page.waitForTimeout(300);
-  }
+  await dismissAccessibility(page);
 
   await f.click({ position: { x: cx, y: height * 0.46 }, force: true });
   await page.waitForTimeout(200);
@@ -102,6 +88,16 @@ export async function waitForFlutter(page: Page) {
   // Wait for flutter-view to be present and rendered
   await page.waitForSelector("flutter-view", { timeout: 10_000 });
   await page.waitForTimeout(500);
+}
+
+/** Dismiss the "Enable accessibility" button if visible. Flutter shows this
+ *  overlay on each route load and it can cover the canvas / terminal. */
+async function dismissAccessibility(page: Page) {
+  const btn = page.locator("button", { hasText: "Enable accessibility" });
+  if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
+    await btn.click();
+    await page.waitForTimeout(300);
+  }
 }
 
 export function fv(page: Page) {
@@ -232,7 +228,7 @@ export async function openFilesTab(page: Page) {
   const { width } = vp(page);
   const tabWidth = width / 5;
   await flutterClick(page, tabWidth + tabWidth / 2, 76);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
 }
 
 /** Tap a file row in the file list by its 0-based index. Rows are dense
@@ -241,7 +237,7 @@ export async function clickFileRow(page: Page, index: number) {
   const rowY = 110 + index * 48;
   const { width } = vp(page);
   await flutterClick(page, width / 2, rowY);
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(300);
 }
 
 /** Click the terminal area, wait for it to be interactive, then type a command and press Enter. */
@@ -257,7 +253,7 @@ export async function terminalType(
   const f = fv(page);
 
   await f.click({ position: { x, y }, force: true });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
 }
@@ -349,6 +345,7 @@ export async function openWorkspace(
   await waitForFlutter(page);
   await containerPromise;
   await terminalPromise;
+  await dismissAccessibility(page);
 }
 
 /** Convenience: register user, create workspace, open it. */

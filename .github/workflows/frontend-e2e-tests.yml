@@ -19,9 +19,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Chromium + API tests — gates PR merges
   test-frontend-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       KLANGK_LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       KLANGK_LLM_BASE_URL: https://ollama.com/v1
@@ -55,12 +56,12 @@ jobs:
           build-tasks: klangk:build-workspace-image klangk:flutter-build
           cache-nix: "false"
 
-      - name: Run E2E tests
+      - name: Run E2E tests (chromium + API)
         if: steps.filter.outputs.e2e == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          ARGS=()
-          if [ -n "${{ inputs.project }}" ]; then ARGS+=(--project="${{ inputs.project }}" --no-deps); fi
+          ARGS=(--project=chromium-api --project=chromium --no-deps)
+          if [ -n "${{ inputs.project }}" ]; then ARGS=(--project="${{ inputs.project }}" --no-deps); fi
           if [ -n "${{ inputs.grep }}" ]; then ARGS+=(-g "${{ inputs.grep }}"); fi
           devenv shell -- test-frontend-e2e "${ARGS[@]}"
 
@@ -68,7 +69,7 @@ jobs:
         if: always() && steps.filter.outputs.e2e == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-results
+          name: playwright-results-chromium
           retention-days: 7
           path: |
             src/frontend/e2e-tests/test-results/

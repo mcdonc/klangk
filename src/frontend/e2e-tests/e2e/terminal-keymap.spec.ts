@@ -31,6 +31,20 @@ async function focusTerminal(page: Page) {
   await page.waitForTimeout(500);
 }
 
+/** Press a sentinel key and wait for its frame to arrive on the wire.
+ *  Any frame from the *test* key would have arrived first, so checking
+ *  sent.length after this is race-free without a fixed sleep. */
+async function waitForSentinel(page: Page, sent: string[]): Promise<number> {
+  const before = sent.length;
+  await page.keyboard.press("x");
+  // Wait for the sentinel's terminal_input frame (up to 2s)
+  const deadline = Date.now() + 2000;
+  while (sent.length === before && Date.now() < deadline) {
+    await page.waitForTimeout(50);
+  }
+  return before; // return count *before* sentinel, for comparison
+}
+
 test.describe("terminal keymap (web)", () => {
   test("plain PageUp on the shell is not sent to the PTY", async ({
     page,
@@ -44,8 +58,9 @@ test.describe("terminal keymap (web)", () => {
       await focusTerminal(page);
       const n = sent.length;
       await page.keyboard.press("PageUp");
-      await page.waitForTimeout(750);
-      expect(sent.length).toBe(n); // nothing reached the PTY; browser owns it
+      const nBeforeSentinel = await waitForSentinel(page, sent);
+      // Only the sentinel arrived — PageUp was not sent to the PTY
+      expect(nBeforeSentinel).toBe(n);
     } finally {
       await cleanup();
     }
@@ -78,8 +93,8 @@ test.describe("terminal keymap (web)", () => {
       await focusTerminal(page);
       const n = sent.length;
       await page.keyboard.press("Shift+PageUp");
-      await page.waitForTimeout(750);
-      expect(sent.length).toBe(n); // handled by Flutter scrollback, not the PTY
+      const nBeforeSentinel = await waitForSentinel(page, sent);
+      expect(nBeforeSentinel).toBe(n); // handled by Flutter scrollback, not the PTY
     } finally {
       await cleanup();
     }
@@ -107,8 +122,8 @@ test.describe("terminal keymap (web)", () => {
       const n = sent.length;
       await page.keyboard.press(`${zoomMod}+Equal`);
       await page.keyboard.press(`${zoomMod}+Minus`);
-      await page.waitForTimeout(750);
-      expect(sent.length).toBe(n); // browser owns zoom; terminal didn't eat it
+      const nBeforeSentinel = await waitForSentinel(page, sent);
+      expect(nBeforeSentinel).toBe(n); // browser owns zoom; terminal didn't eat it
     } finally {
       await cleanup();
     }
@@ -135,8 +150,8 @@ test.describe("terminal keymap (web)", () => {
       await page.mouse.move(width / 2, height / 2);
       const n = sent.length;
       await page.mouse.wheel(0, -600); // wheel up over the primary screen
-      await page.waitForTimeout(750);
-      expect(sent.length).toBe(n); // primary scrollback is local; nothing to PTY
+      const nBeforeSentinel = await waitForSentinel(page, sent);
+      expect(nBeforeSentinel).toBe(n); // primary scrollback is local; nothing to PTY
     } finally {
       await cleanup();
     }
@@ -158,10 +173,13 @@ test.describe("terminal keymap (web)", () => {
       await page.waitForTimeout(500);
       await focusTerminal(page);
       await page.keyboard.press("Shift+PageUp"); // scroll up (no PTY)
-      await page.waitForTimeout(500);
       const n = sent.length;
       await page.keyboard.press("x"); // a real keystroke
-      await page.waitForTimeout(750);
+      // Wait for the keystroke's frame to arrive
+      const deadline = Date.now() + 2000;
+      while (sent.length === n && Date.now() < deadline) {
+        await page.waitForTimeout(50);
+      }
       expect(sent.length).toBeGreaterThan(n); // the character reached the PTY
     } finally {
       await cleanup();

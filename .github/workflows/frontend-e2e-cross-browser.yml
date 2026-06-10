@@ -1,0 +1,44 @@
+name: "E2E: Cross-Browser Tests"
+
+on:
+  schedule:
+    # Every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  test-frontend-e2e-cross-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KLANGK_LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      KLANGK_LLM_BASE_URL: https://ollama.com/v1
+      KLANGK_LLM_MODEL: gemma4:31b
+      KLANGK_JWT_SECRET: e2e-test-secret
+      KLANGK_DEFAULT_USER: admin@plope.com
+      KLANGK_DEFAULT_PASSWORD: admin
+      KLANGK_TEST_MODE: "1"
+      KLANGK_PODMAN_BIN: /usr/bin/podman
+      KLANGK_PODMAN_STORAGE: /home/runner/.local/share/containers/storage
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-workspace-image klangk:flutter-build
+          cache-nix: "false"
+
+      - name: Run E2E tests (firefox + webkit)
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- test-frontend-e2e --project=firefox --project=webkit --no-deps
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-results-cross-browser
+          retention-days: 7
+          path: |
+            src/frontend/e2e-tests/test-results/
+            src/frontend/e2e-tests/logs/

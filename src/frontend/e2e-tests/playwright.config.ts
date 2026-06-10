@@ -37,8 +37,11 @@ const webkitUse = {
   browserName: "webkit" as const,
 };
 
-// Browsers run sequentially (chromium → firefox → webkit) to avoid
-// overwhelming SQLite with concurrent writes from parallel tests.
+// Test projects:
+// - chromium-api: API-only tests that don't need cross-browser (run once)
+// - chromium, firefox, webkit: browser-specific tests
+// CI runs chromium + chromium-api as the merge-gating job, and
+// firefox + webkit as a separate non-blocking job.
 
 export default defineConfig({
   testDir: "./e2e",
@@ -59,6 +62,12 @@ export default defineConfig({
   },
   projects: [
     {
+      // API-only and simple-UI tests — no cross-browser behavior, run once.
+      name: "chromium-api",
+      testMatch: "api.spec.ts",
+      use: chromiumUse,
+    },
+    {
       name: "chromium",
       testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
       use: chromiumUse,
@@ -66,13 +75,11 @@ export default defineConfig({
     {
       name: "firefox",
       testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
-      dependencies: ["chromium"],
       use: firefoxUse,
     },
     {
       name: "webkit",
       testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
-      dependencies: ["firefox"],
       use: webkitUse,
     },
     {
