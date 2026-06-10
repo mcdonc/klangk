@@ -59,6 +59,105 @@ class TestHealth:
         assert resp.json() == {"status": "ok"}
 
 
+class TestVerifyWorkspaceToken:
+    async def test_valid_workspace_token(self, client):
+        token = auth.create_workspace_token("ws-123")
+        resp = await client.get(
+            "/auth/verify-workspace-token",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["workspace_id"] == "ws-123"
+
+    async def test_missing_auth_header(self, client):
+        resp = await client.get("/auth/verify-workspace-token")
+        assert resp.status_code == 401
+
+    async def test_invalid_token(self, client):
+        resp = await client.get(
+            "/auth/verify-workspace-token",
+            headers={"Authorization": "Bearer garbage"},
+        )
+        assert resp.status_code == 401
+
+    async def test_user_jwt_rejected(self, client):
+        user_token = auth.create_token("user-1", "u@test.com")
+        resp = await client.get(
+            "/auth/verify-workspace-token",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        assert resp.status_code == 401
+
+
+class TestWorkspaceChat:
+    async def test_post_agent_message(self, client, user):
+        workspace = await model.create_workspace(user["id"], "chat-ws")
+        token = auth.create_workspace_token(workspace["id"])
+        resp = await client.post(
+            "/api/workspace/post-chat-message",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "hello from agent"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["message"] == "hello from agent"
+        assert data["message_type"] == model.MSG_AGENT
+        assert data["workspace_id"] == workspace["id"]
+
+    async def test_broadcasts_to_websocket(self, client, user):
+        workspace = await model.create_workspace(user["id"], "bcast-ws")
+        token = auth.create_workspace_token(workspace["id"])
+        session = wshandler.state.get_or_create_session(workspace["id"])
+        mock_sock = MagicMock()
+        session.subscribers.add(mock_sock)
+
+        await client.post(
+            "/api/workspace/post-chat-message",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "broadcast test"},
+        )
+
+        mock_sock.send_json.assert_called_once()
+        sent = mock_sock.send_json.call_args[0][0]
+        assert sent["type"] == "chat_message"
+        assert sent["message"] == "broadcast test"
+
+        wshandler.state.sessions.pop(workspace["id"], None)
+
+    async def test_missing_auth(self, client):
+        resp = await client.post(
+            "/api/workspace/post-chat-message", json={"message": "hi"}
+        )
+        assert resp.status_code == 401
+
+    async def test_invalid_token(self, client):
+        resp = await client.post(
+            "/api/workspace/post-chat-message",
+            headers={"Authorization": "Bearer garbage"},
+            json={"message": "hi"},
+        )
+        assert resp.status_code == 401
+
+    async def test_workspace_not_found(self, client):
+        token = auth.create_workspace_token("nonexistent-ws")
+        resp = await client.post(
+            "/api/workspace/post-chat-message",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "hi"},
+        )
+        assert resp.status_code == 404
+
+    async def test_empty_message_rejected(self, client, user):
+        workspace = await model.create_workspace(user["id"], "empty-ws")
+        token = auth.create_workspace_token(workspace["id"])
+        resp = await client.post(
+            "/api/workspace/post-chat-message",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "   "},
+        )
+        assert resp.status_code == 400
+
+
 class TestVersion:
     async def test_version_from_file(self, client, tmp_path, monkeypatch):
         version_file = tmp_path / "version.json"

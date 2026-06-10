@@ -387,6 +387,28 @@ class TestPasswordReset:
         assert auth.decode_password_reset_token(verify) is None
 
 
+class TestWorkspaceToken:
+    def test_create_and_decode_workspace_token(self):
+        token = auth.create_workspace_token("ws-123")
+        assert auth.decode_workspace_token(token) == "ws-123"
+
+    def test_decode_invalid_token(self):
+        assert auth.decode_workspace_token("garbage") is None
+
+    def test_user_token_rejected(self):
+        user_token = auth.create_token("user-1", "u@test.com")
+        assert auth.decode_workspace_token(user_token) is None
+
+    def test_verify_token_rejected(self):
+        verify_token = auth.create_verification_token("user-1")
+        assert auth.decode_workspace_token(verify_token) is None
+
+    def test_workspace_token_rejected_by_other_decoders(self):
+        ws_token = auth.create_workspace_token("ws-123")
+        assert auth.decode_verification_token(ws_token) is None
+        assert auth.decode_password_reset_token(ws_token) is None
+
+
 class TestTokenValidation:
     async def test_get_user_from_valid_token(self, user):
         token = auth.create_token(user["id"], user["email"])

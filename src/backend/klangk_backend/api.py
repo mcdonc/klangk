@@ -56,6 +56,20 @@ async def health():
     return {"status": "ok"}
 
 
+@router.get("/auth/verify-workspace-token")
+async def verify_workspace_token(request: Request):
+    """Validate a workspace JWT. Used by nginx auth_request to gate
+    container→host endpoints (/llm-proxy, /api/browser-delegate, etc.)."""
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    token = authorization[7:]
+    workspace_id = auth.decode_workspace_token(token)
+    if workspace_id is None:
+        raise HTTPException(status_code=401, detail="Invalid workspace token")
+    return {"status": "ok", "workspace_id": workspace_id}
+
+
 @router.get("/version")
 async def version():
     """Return build version info (version, commit, build timestamp)."""
@@ -1757,6 +1771,49 @@ async def browser_delegate_stream(body: BrowserDelegateRequest):
         ),
         media_type="application/x-ndjson",
     )
+
+
+# --- Container-to-chat API (workspace JWT auth) ---
+
+
+class WorkspaceChatRequest(BaseModel):
+    message: str
+
+
+@router.post("/api/workspace/post-chat-message")
+async def workspace_chat(body: WorkspaceChatRequest, request: Request):
+    """Post a chat message from a container using a workspace JWT.
+
+    The message is stored as MSG_AGENT and broadcast to all connected
+    WebSocket subscribers in the workspace.
+    """
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = authorization[7:]
+    workspace_id = auth.decode_workspace_token(token)
+    if workspace_id is None:
+        raise HTTPException(status_code=401, detail="Invalid workspace token")
+
+    workspace = await model.get_workspace_by_id(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    text = body.message.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    chat_msg = await model.add_chat_message(
+        workspace_id,
+        "agent",
+        "agent",
+        text,
+        message_type=model.MSG_AGENT,
+    )
+    session = wshandler.state.get_session(workspace_id)
+    if session:
+        session.broadcast({"type": "chat_message", **chat_msg})
+    return chat_msg
 
 
 # --- Admin endpoints (require admin role) ---

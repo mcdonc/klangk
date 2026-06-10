@@ -415,6 +415,22 @@ class TestStartContainer:
         # host.containers.internal must be resolvable
         assert "host.containers.internal:host-gateway" in kwargs["add_hosts"]
 
+    async def test_workspace_token_injected(self, workspace):
+        """Container env includes a valid KLANGK_WORKSPACE_TOKEN JWT."""
+        from klangk_backend import auth
+
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        env_dict = dict(e.split("=", 1) for e in kwargs["env"])
+        assert "KLANGK_WORKSPACE_TOKEN" in env_dict
+        decoded_ws = auth.decode_workspace_token(
+            env_dict["KLANGK_WORKSPACE_TOKEN"]
+        )
+        assert decoded_ws == workspace["id"]
+
     async def test_pull_policy_default_never(self, workspace):
         with patch_podman() as p:
             await container.registry.start_container(

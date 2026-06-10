@@ -310,6 +310,31 @@ def decode_invitation_token(token: str) -> tuple[str, str] | None:
         return None
 
 
+WORKSPACE_TOKEN_EXPIRE_HOURS = int(
+    resolve_env_secret("KLANGK_WORKSPACE_TOKEN_HOURS", "24")
+)
+
+
+def create_workspace_token(workspace_id: str) -> str:
+    """Create a JWT token identifying a workspace for container→host auth."""
+    expire = datetime.now(timezone.utc) + timedelta(
+        hours=WORKSPACE_TOKEN_EXPIRE_HOURS
+    )
+    payload = {"sub": workspace_id, "purpose": "workspace", "exp": expire}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_workspace_token(token: str) -> str | None:
+    """Decode a workspace token. Returns workspace_id or None if invalid."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose") != "workspace":
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict:

@@ -8,6 +8,7 @@
 function getConfig() {
   const bridgeUrl = process.env.KLANGK_BRIDGE_URL;
   const token = process.env.KLANGK_BRIDGE_TOKEN;
+  const workspaceToken = process.env.KLANGK_WORKSPACE_TOKEN;
   if (!bridgeUrl) {
     throw new Error(
       "@klangk/bridge: KLANGK_BRIDGE_URL is not set. " +
@@ -23,6 +24,7 @@ function getConfig() {
   return {
     bridgeUrl: `${bridgeUrl}/api/browser-delegate`,
     token,
+    workspaceToken: workspaceToken || null,
   };
 }
 
@@ -37,11 +39,16 @@ function getConfig() {
  * @returns {Promise<{status: number, headers: Record<string, string>, body: string}>}
  */
 async function browserFetch(url, options = {}) {
-  const { bridgeUrl, token } = getConfig();
+  const { bridgeUrl, token, workspaceToken } = getConfig();
+
+  const headers = { "Content-Type": "application/json" };
+  if (workspaceToken) {
+    headers["Authorization"] = `Bearer ${workspaceToken}`;
+  }
 
   const resp = await fetch(bridgeUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       action: "fetch",
       token,
@@ -75,14 +82,19 @@ async function browserFetch(url, options = {}) {
  * @returns {Promise<{status: string}>}
  */
 async function browserAction(action, payload = {}) {
-  const { bridgeUrl, token } = getConfig();
+  const { bridgeUrl, token, workspaceToken } = getConfig();
 
   // Prevent payload from overwriting action or token
   const { action: _a, token: _t, ...safePayload } = payload;
 
+  const headers = { "Content-Type": "application/json" };
+  if (workspaceToken) {
+    headers["Authorization"] = `Bearer ${workspaceToken}`;
+  }
+
   const resp = await fetch(bridgeUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       action,
       token,
