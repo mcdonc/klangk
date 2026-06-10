@@ -359,6 +359,28 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       return KeyEventResult.handled;
     }
 
+    // Ctrl+K → kill from cursor to end of current line (emacs-style)
+    if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyK) {
+      final text = _textController.text;
+      final cursor = _textController.selection.baseOffset;
+      if (cursor >= 0) {
+        var lineEnd = text.indexOf('\n', cursor);
+        if (lineEnd < 0) {
+          // Last line: delete to end of text
+          lineEnd = text.length;
+        } else if (lineEnd == cursor) {
+          // Cursor is at a newline: delete just the newline (join lines)
+          lineEnd = cursor + 1;
+        }
+        final newText = text.substring(0, cursor) + text.substring(lineEnd);
+        _textController.value = TextEditingValue(
+          text: newText,
+          selection: TextSelection.collapsed(offset: cursor),
+        );
+      }
+      return KeyEventResult.handled;
+    }
+
     return KeyEventResult.ignored;
   }
 
