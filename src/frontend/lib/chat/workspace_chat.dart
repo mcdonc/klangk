@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'
+    show HardwareKeyboard, KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../ws/ws_client.dart';
 import '../theme/colors.dart';
@@ -40,8 +42,18 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   bool _isVisible = false;
   bool _hasMention = false;
 
+  // Expanded message IDs (for long message truncation)
+  final Set<String> _expandedMessages = {};
+
+  // Sent message history (for Up/Down recall)
+  final List<String> _sentHistory = [];
+  int _historyIndex = -1;
+  String _savedDraft = '';
+
   // Autocomplete state
   OverlayEntry? _autocompleteOverlay;
+  List<Map<String, dynamic>> _filteredMembers = [];
+  int _highlightedIndex = 0;
   String _mentionQuery = '';
   final _inputKey = GlobalKey();
 
@@ -55,6 +67,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     _chatSub = widget.wsClient.chatMessages.listen(_onMessage);
     _textController.addListener(_onTextChanged);
     widget.wsClient.addListener(_onPresenceChanged);
+    _inputFocusNode.onKeyEvent = _handleKeyEvent;
   }
 
   /// Focuses the message input. Called by the parent when the Chat tab is
@@ -147,64 +160,212 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   void _showAutocomplete() {
     final members = widget.wsClient.workspaceMembers;
-    final filtered = members.where((m) {
+    _filteredMembers = members.where((m) {
       final email = (m['email'] as String? ?? '').toLowerCase();
       return email.contains(_mentionQuery);
     }).toList();
-    if (filtered.isEmpty) {
+    if (_filteredMembers.isEmpty) {
       _hideAutocomplete();
       return;
     }
+    // Clamp highlight index when the list shrinks
+    if (_highlightedIndex >= _filteredMembers.length) {
+      _highlightedIndex = 0;
+    }
     _autocompleteOverlay?.remove();
-    _autocompleteOverlay = OverlayEntry(builder: (context) {
-      final renderBox =
-          _inputKey.currentContext?.findRenderObject() as RenderBox?;
-      if (renderBox == null) return const SizedBox.shrink();
-      final offset = renderBox.localToGlobal(Offset.zero);
-      final maxItems = filtered.length > 5 ? 5 : filtered.length;
-      final height = maxItems * 36.0;
-      return Positioned(
-        left: offset.dx,
-        top: offset.dy - height - 4,
-        width: renderBox.size.width,
-        child: Material(
-          elevation: 4,
-          color: KColors.bgSurface,
-          borderRadius: BorderRadius.circular(6),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: height),
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              shrinkWrap: true,
-              itemCount: filtered.length > 5 ? 5 : filtered.length,
-              itemBuilder: (ctx, i) {
-                final email = filtered[i]['email'] as String? ?? '';
-                return InkWell(
-                  onTap: () => _insertMention(email),
-                  child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: Text(
-                      email,
-                      style: const TextStyle(
-                        color: KColors.textPrimary,
-                        fontSize: 13,
+    _autocompleteOverlay = OverlayEntry(
+      builder: (context) {
+        final renderBox =
+            _inputKey.currentContext?.findRenderObject() as RenderBox?;
+        if (renderBox == null) return const SizedBox.shrink();
+        final offset = renderBox.localToGlobal(Offset.zero);
+        final visibleCount =
+            _filteredMembers.length > 5 ? 5 : _filteredMembers.length;
+        final height = visibleCount * 36.0;
+        return Positioned(
+          left: offset.dx,
+          top: offset.dy - height - 4,
+          width: renderBox.size.width,
+          child: Material(
+            elevation: 4,
+            color: KColors.bgSurface,
+            borderRadius: BorderRadius.circular(6),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: height),
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                itemCount: visibleCount,
+                itemBuilder: (ctx, i) {
+                  final email = _filteredMembers[i]['email'] as String? ?? '';
+                  final isHighlighted = i == _highlightedIndex;
+                  return InkWell(
+                    onTap: () => _insertMention(email),
+                    child: Container(
+                      color: isHighlighted
+                          ? KColors.bgOverlay
+                          : Colors.transparent,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        email,
+                        style: const TextStyle(
+                          color: KColors.textPrimary,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
     Overlay.of(context).insert(_autocompleteOverlay!);
+  }
+
+  /// Accept the currently highlighted autocomplete suggestion.
+  void _acceptHighlightedSuggestion() {
+    if (_filteredMembers.isEmpty) return;
+    final idx = _highlightedIndex.clamp(0, _filteredMembers.length - 1);
+    final email = _filteredMembers[idx]['email'] as String? ?? '';
+    _insertMention(email);
+  }
+
+  /// Handle keyboard events for autocomplete navigation and message sending.
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final isShift = HardwareKeyboard.instance.isShiftPressed;
+
+    // When autocomplete is visible, intercept navigation keys
+    if (_autocompleteOverlay != null) {
+      if (event.logicalKey == LogicalKeyboardKey.tab) {
+        _acceptHighlightedSuggestion();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        final maxIdx =
+            (_filteredMembers.length > 5 ? 5 : _filteredMembers.length) - 1;
+        _highlightedIndex = (_highlightedIndex + 1).clamp(0, maxIdx);
+        _autocompleteOverlay?.markNeedsBuild();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        _highlightedIndex = (_highlightedIndex - 1).clamp(
+          0,
+          _filteredMembers.length - 1,
+        );
+        _autocompleteOverlay?.markNeedsBuild();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.enter && !isShift) {
+        _acceptHighlightedSuggestion();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        _hideAutocomplete();
+        return KeyEventResult.handled;
+      }
+    }
+
+    // Enter (without Shift) sends the message; Shift+Enter inserts a newline
+    if (event.logicalKey == LogicalKeyboardKey.enter && !isShift) {
+      _sendMessage();
+      return KeyEventResult.handled;
+    }
+
+    // Up arrow on first line → recall previous sent message
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp &&
+        _sentHistory.isNotEmpty) {
+      final text = _textController.text;
+      final cursor = _textController.selection.baseOffset;
+      final onFirstLine =
+          cursor >= 0 && !text.substring(0, cursor).contains('\n');
+      if (onFirstLine) {
+        if (_historyIndex == -1) {
+          _savedDraft = text;
+          _historyIndex = _sentHistory.length - 1;
+        } else if (_historyIndex > 0) {
+          _historyIndex--;
+        }
+        _textController.text = _sentHistory[_historyIndex];
+        _textController.selection = TextSelection.collapsed(
+          offset: _textController.text.length,
+        );
+        return KeyEventResult.handled;
+      }
+    }
+
+    // Down arrow on last line → recall next sent message or restore draft
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+        _historyIndex >= 0) {
+      final text = _textController.text;
+      final cursor = _textController.selection.baseOffset;
+      final onLastLine = cursor >= 0 && !text.substring(cursor).contains('\n');
+      if (onLastLine) {
+        if (_historyIndex < _sentHistory.length - 1) {
+          _historyIndex++;
+          _textController.text = _sentHistory[_historyIndex];
+        } else {
+          _historyIndex = -1;
+          _textController.text = _savedDraft;
+        }
+        _textController.selection = TextSelection.collapsed(
+          offset: _textController.text.length,
+        );
+        return KeyEventResult.handled;
+      }
+    }
+
+    final isCtrl = HardwareKeyboard.instance.isControlPressed;
+
+    // Shift+Ctrl+A → select all text
+    if (isCtrl && isShift && event.logicalKey == LogicalKeyboardKey.keyA) {
+      _textController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _textController.text.length,
+      );
+      return KeyEventResult.handled;
+    }
+
+    // Ctrl+A → move cursor to beginning of current line (emacs-style)
+    if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyA) {
+      final text = _textController.text;
+      final cursor = _textController.selection.baseOffset;
+      if (cursor >= 0) {
+        final lineStart = text.lastIndexOf('\n', cursor - 1) + 1;
+        _textController.selection = TextSelection.collapsed(offset: lineStart);
+      }
+      return KeyEventResult.handled;
+    }
+
+    // Ctrl+E → move cursor to end of current line (emacs-style)
+    if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyE) {
+      final text = _textController.text;
+      final cursor = _textController.selection.baseOffset;
+      if (cursor >= 0) {
+        var lineEnd = text.indexOf('\n', cursor);
+        if (lineEnd < 0) lineEnd = text.length;
+        _textController.selection = TextSelection.collapsed(offset: lineEnd);
+      }
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
   }
 
   void _hideAutocomplete() {
     _autocompleteOverlay?.remove();
     _autocompleteOverlay = null;
+    _filteredMembers = [];
+    _highlightedIndex = 0;
   }
 
   void _insertMention(String email) {
@@ -305,8 +466,12 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
     _hideAutocomplete();
+    _sentHistory.add(text);
+    _historyIndex = -1;
+    _savedDraft = '';
     widget.wsClient.sendChatMessage(text);
     _textController.clear();
+    _inputFocusNode.requestFocus();
   }
 
   void _deleteMessage(String messageId) {
@@ -414,15 +579,18 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                   )
                 : ListView.builder(
                     controller: _scrollController,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     itemCount: _messages.length,
                     itemBuilder: (context, index) {
                       final msg = _messages[index];
                       final email = msg['user_email'] as String? ?? '';
                       final text = msg['message'] as String? ?? '';
-                      final createdAt =
-                          _formatTime(msg['created_at'] as String? ?? '');
+                      final createdAt = _formatTime(
+                        msg['created_at'] as String? ?? '',
+                      );
                       final msgUserId = msg['user_id'] as String?;
                       final isOwn = msgUserId == currentUserId;
                       final isDeleted = text == '<message deleted by author>';
@@ -432,40 +600,56 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    email,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: _colorForEmail(email),
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  if (isDeleted)
+                              child: _CollapsibleMessage(
+                                messageId: msg['id'] as String? ?? '',
+                                isExpanded: _expandedMessages.contains(
+                                  msg['id'],
+                                ),
+                                onToggle: () {
+                                  setState(() {
+                                    final id = msg['id'] as String? ?? '';
+                                    if (_expandedMessages.contains(id)) {
+                                      _expandedMessages.remove(id);
+                                    } else {
+                                      _expandedMessages.add(id);
+                                    }
+                                  });
+                                },
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                                     Text(
-                                      text,
-                                      style: const TextStyle(
-                                        color: KColors.textMuted,
+                                      email,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: _colorForEmail(email),
                                         fontSize: 13,
-                                        fontStyle: FontStyle.italic,
                                       ),
-                                    )
-                                  else
-                                    MarkdownBody(
-                                      data: _highlightMentions(text),
-                                      selectable: true,
-                                      styleSheet: _chatMarkdownStyle(context),
-                                      // coverage:ignore-start
-                                      onTapLink: (text, href, title) {
-                                        if (href != null && href.isNotEmpty) {
-                                          openUrl(href);
-                                        }
-                                      },
-                                      // coverage:ignore-end
                                     ),
-                                ],
+                                    if (isDeleted)
+                                      Text(
+                                        text,
+                                        style: const TextStyle(
+                                          color: KColors.textMuted,
+                                          fontSize: 13,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      )
+                                    else
+                                      MarkdownBody(
+                                        data: _highlightMentions(text),
+                                        selectable: true,
+                                        styleSheet: _chatMarkdownStyle(context),
+                                        // coverage:ignore-start
+                                        onTapLink: (text, href, title) {
+                                          if (href != null && href.isNotEmpty) {
+                                            openUrl(href);
+                                          }
+                                        },
+                                        // coverage:ignore-end
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -498,30 +682,33 @@ class WorkspaceChatState extends State<WorkspaceChat> {
           Container(
             key: _inputKey,
             decoration: const BoxDecoration(
-              border: Border(
-                top: BorderSide(color: KColors.borderDefault),
-              ),
+              border: Border(top: BorderSide(color: KColors.borderDefault)),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _textController,
-                    focusNode: _inputFocusNode,
-                    style: const TextStyle(
-                      color: KColors.textPrimary,
-                      fontSize: 13,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 120),
+                    child: TextField(
+                      controller: _textController,
+                      focusNode: _inputFocusNode,
+                      maxLines: null,
+                      style: const TextStyle(
+                        color: KColors.textPrimary,
+                        fontSize: 13,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: 'Type a message...',
+                        hintStyle: TextStyle(color: KColors.textMuted),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          vertical: 8,
+                          horizontal: 8,
+                        ),
+                      ),
                     ),
-                    decoration: const InputDecoration(
-                      hintText: 'Type a message...',
-                      hintStyle: TextStyle(color: KColors.textMuted),
-                      border: InputBorder.none,
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                    ),
-                    onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
                 IconButton(
@@ -534,6 +721,135 @@ class WorkspaceChatState extends State<WorkspaceChat> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Truncates long messages to ~3 lines with a "show more" / "show less" toggle.
+class _CollapsibleMessage extends StatelessWidget {
+  const _CollapsibleMessage({
+    required this.messageId,
+    required this.isExpanded,
+    required this.onToggle,
+    required this.child,
+  });
+
+  final String messageId;
+  final bool isExpanded;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  /// Approximate max height for 3 lines of 13px text with line spacing.
+  static const _collapsedMaxHeight = 60.0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isExpanded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          child,
+          GestureDetector(
+            onTap: onToggle,
+            child: const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                'show less',
+                style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Use a TextPainter to check if the content would exceed 3 lines.
+        // We approximate by checking the intrinsic height of the child.
+        return _MeasuredCollapse(
+          maxHeight: _collapsedMaxHeight,
+          onToggle: onToggle,
+          child: child,
+        );
+      },
+    );
+  }
+}
+
+/// Measures the child's height and shows a "show more" link if it overflows.
+class _MeasuredCollapse extends StatefulWidget {
+  const _MeasuredCollapse({
+    required this.maxHeight,
+    required this.onToggle,
+    required this.child,
+  });
+
+  final double maxHeight;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  @override
+  State<_MeasuredCollapse> createState() => _MeasuredCollapseState();
+}
+
+class _MeasuredCollapseState extends State<_MeasuredCollapse> {
+  bool _overflows = false;
+  final _childKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkOverflow());
+  }
+
+  @override
+  void didUpdateWidget(_MeasuredCollapse oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkOverflow());
+  }
+
+  void _checkOverflow() {
+    final renderBox =
+        _childKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null || !mounted) return;
+    final childHeight = renderBox.size.height;
+    final overflows = childHeight > widget.maxHeight;
+    if (overflows != _overflows) {
+      setState(() => _overflows = overflows);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_overflows)
+          SizedBox(
+            height: widget.maxHeight,
+            child: ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.topLeft,
+                maxHeight: double.infinity,
+                child: KeyedSubtree(key: _childKey, child: widget.child),
+              ),
+            ),
+          )
+        else
+          KeyedSubtree(key: _childKey, child: widget.child),
+        if (_overflows)
+          GestureDetector(
+            onTap: widget.onToggle,
+            child: const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                '…show more',
+                style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
