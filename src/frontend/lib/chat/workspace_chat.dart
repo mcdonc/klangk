@@ -179,8 +179,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             _inputKey.currentContext?.findRenderObject() as RenderBox?;
         if (renderBox == null) return const SizedBox.shrink();
         final offset = renderBox.localToGlobal(Offset.zero);
-        final visibleCount =
-            _filteredMembers.length > 5 ? 5 : _filteredMembers.length;
+        final visibleCount = _filteredMembers.length > 5
+            ? 5
+            : _filteredMembers.length;
         final height = visibleCount * 36.0;
         return Positioned(
           left: offset.dx,
@@ -427,10 +428,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   /// Build a [MarkdownStyleSheet] that matches the dark Klangk theme.
   static MarkdownStyleSheet _chatMarkdownStyle(BuildContext context) {
-    const baseText = TextStyle(
-      color: KColors.textPrimary,
-      fontSize: 13,
-    );
+    const baseText = TextStyle(color: KColors.textPrimary, fontSize: 13);
     return MarkdownStyleSheet(
       p: baseText,
       pPadding: EdgeInsets.zero,
@@ -507,10 +505,12 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                 message: email,
                 child: CircleAvatar(
                   radius: 10,
-                  backgroundColor:
-                      isSelf ? Colors.transparent : _colorForEmail(email),
-                  foregroundColor:
-                      isSelf ? _colorForEmail(email) : Colors.white,
+                  backgroundColor: isSelf
+                      ? Colors.transparent
+                      : _colorForEmail(email),
+                  foregroundColor: isSelf
+                      ? _colorForEmail(email)
+                      : Colors.white,
                   child: isSelf
                       ? DecoratedBox(
                           decoration: BoxDecoration(
@@ -749,13 +749,18 @@ class _CollapsibleMessage extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           child,
-          GestureDetector(
-            onTap: onToggle,
-            child: const Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: Text(
-                'show less',
-                style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+          ExcludeFocus(
+            child: GestureDetector(
+              onTap: onToggle,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 2),
+                  child: Text(
+                    'show less',
+                    style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+                  ),
+                ),
               ),
             ),
           ),
@@ -839,13 +844,18 @@ class _MeasuredCollapseState extends State<_MeasuredCollapse> {
         else
           KeyedSubtree(key: _childKey, child: widget.child),
         if (_overflows)
-          GestureDetector(
-            onTap: widget.onToggle,
-            child: const Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: Text(
-                '…show more',
-                style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+          ExcludeFocus(
+            child: GestureDetector(
+              onTap: widget.onToggle,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 2),
+                  child: Text(
+                    '…show more',
+                    style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+                  ),
+                ),
               ),
             ),
           ),
