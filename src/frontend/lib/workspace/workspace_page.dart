@@ -162,6 +162,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   void _onClientUpdate() {
     final wsClient = context.read<WsClient>();
     if (wsClient.currentWorkspaceId == widget.workspaceId) {
+      final wasDisconnected = _disconnected;
       setState(() {
         _connecting = false;
         _disconnected = false;
@@ -169,10 +170,24 @@ class _WorkspacePageState extends State<WorkspacePage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         wsClient.sendUiReady();
       });
+      if (wasDisconnected && mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(const SnackBar(
+            content: Text('Reconnected'),
+            duration: Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+            width: 200,
+          ));
+      }
     }
     // Detect WebSocket disconnect after we were connected
     if (!wsClient.connected && !_connecting && !_disconnected) {
       setState(() => _disconnected = true);
+    }
+    // Rebuild when reconnecting state changes
+    if (wsClient.reconnecting) {
+      setState(() {});
     }
   }
 
@@ -343,14 +358,26 @@ class _WorkspacePageState extends State<WorkspacePage> {
             Container(
               color: Colors.black54,
               child: Center(
-                child: _connecting
-                    ? const Column(
+                child: wsClient.reconnecting
+                    ? Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          CircularProgressIndicator(color: Colors.white),
-                          SizedBox(height: 12),
-                          Text('Reconnecting...',
-                              style: TextStyle(color: Colors.white)),
+                          const CircularProgressIndicator(color: Colors.white),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Reconnecting (attempt ${wsClient.reconnectAttempt})...',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: _reconnect,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Reconnect now'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: KColors.accentGreen,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
                         ],
                       )
                     : Column(
