@@ -516,9 +516,29 @@ class TestChatMessages:
         assert msg["user_id"] == user["id"]
         assert msg["user_email"] == "testuser@example.com"
         assert msg["message"] == "hello"
+        assert msg["message_type"] == model.MSG_USER
         assert "id" in msg
         assert "created_at" in msg
         assert msg["mentions"] == []
+
+    async def test_add_chat_message_with_type(self, workspace, user):
+        msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            "testuser@example.com",
+            "system event",
+            message_type=model.MSG_SYSTEM,
+        )
+        assert msg["message_type"] == model.MSG_SYSTEM
+
+        agent_msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            "agent@bot",
+            "agent reply",
+            message_type=model.MSG_AGENT,
+        )
+        assert agent_msg["message_type"] == model.MSG_AGENT
 
     async def test_get_chat_messages(self, workspace, user):
         await model.add_chat_message(
@@ -531,8 +551,29 @@ class TestChatMessages:
         assert len(msgs) == 2
         assert msgs[0]["message"] == "first"
         assert msgs[1]["message"] == "second"
+        assert msgs[0]["message_type"] == model.MSG_USER
+        assert msgs[1]["message_type"] == model.MSG_USER
         assert msgs[0]["mentions"] == []
         assert msgs[1]["mentions"] == []
+
+    async def test_get_chat_messages_preserves_type(self, workspace, user):
+        await model.add_chat_message(
+            workspace["id"],
+            "uid",
+            "u@test.com",
+            "joined",
+            message_type=model.MSG_SYSTEM,
+        )
+        await model.add_chat_message(
+            workspace["id"],
+            "uid",
+            "u@test.com",
+            "hello",
+        )
+        msgs = await model.get_chat_messages(workspace["id"])
+        assert len(msgs) == 2
+        assert msgs[0]["message_type"] == model.MSG_SYSTEM
+        assert msgs[1]["message_type"] == model.MSG_USER
 
     async def test_get_chat_messages_limit(self, workspace, user):
         for i in range(5):

@@ -17,6 +17,11 @@ _data_dir = Path(
 )
 DB_PATH = _data_dir / "klangk.db"
 
+# Chat message types
+MSG_USER = 0
+MSG_AGENT = 1
+MSG_SYSTEM = 2
+
 
 async def get_db() -> aiosqlite.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -143,9 +148,18 @@ async def init_db() -> None:
                 user_id TEXT NOT NULL,
                 user_email TEXT NOT NULL,
                 message TEXT NOT NULL,
+                message_type INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        # Migration: add message_type column to existing chat_messages tables
+        cursor = await db.execute("PRAGMA table_info(chat_messages)")
+        chat_cols = {row[1] for row in await cursor.fetchall()}
+        if "message_type" not in chat_cols:
+            await db.execute(
+                "ALTER TABLE chat_messages"
+                " ADD COLUMN message_type INTEGER NOT NULL DEFAULT 0"
+            )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS chat_mentions (
                 id TEXT PRIMARY KEY,
@@ -1377,16 +1391,21 @@ async def parse_mentions(
 
 
 async def add_chat_message(
-    workspace_id: str, user_id: str, user_email: str, message: str
+    workspace_id: str,
+    user_id: str,
+    user_email: str,
+    message: str,
+    message_type: int = MSG_USER,
 ) -> dict:
     """Store a chat message and return it."""
     db = await get_db()
     try:
         msg_id = str(uuid.uuid4())
         await db.execute(
-            "INSERT INTO chat_messages (id, workspace_id, user_id, user_email, message)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (msg_id, workspace_id, user_id, user_email, message),
+            "INSERT INTO chat_messages"
+            " (id, workspace_id, user_id, user_email, message, message_type)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (msg_id, workspace_id, user_id, user_email, message, message_type),
         )
         mentioned_user_ids = await parse_mentions(db, message, workspace_id)
         for uid in mentioned_user_ids:
@@ -1406,6 +1425,7 @@ async def add_chat_message(
             "user_id": user_id,
             "user_email": user_email,
             "message": message,
+            "message_type": message_type,
             "created_at": row["created_at"],
             "mentions": mentioned_user_ids,
         }
@@ -1437,7 +1457,8 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT id, workspace_id, user_id, user_email, message, created_at"
+            "SELECT id, workspace_id, user_id, user_email, message,"
+            " message_type, created_at"
             " FROM chat_messages WHERE workspace_id = ?"
             " ORDER BY created_at DESC, rowid DESC LIMIT ?",
             (workspace_id, limit),
@@ -1452,6 +1473,7 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
                         "user_id": row["user_id"],
                         "user_email": row["user_email"],
                         "message": row["message"],
+                        "message_type": row["message_type"],
                         "created_at": row["created_at"],
                     }
                     for row in rows
