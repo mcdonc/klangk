@@ -788,6 +788,75 @@ void main() {
       expect(data, contains('**@bob@test.com**'));
     });
 
+    testWidgets('system message renders centered and muted', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-sys',
+          'user_email': 'alice@test.com',
+          'message': 'alice@test.com joined',
+          'message_type': 2,
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // System message text is rendered
+      expect(find.text('alice@test.com joined'), findsOneWidget);
+      // Should be centered — wrapped in a Center widget
+      expect(find.byType(Center), findsWidgets);
+      // No delete button for system messages
+      expect(find.byIcon(Icons.close), findsNothing);
+    });
+
+    testWidgets('agent message renders with robot icon', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-agent',
+          'user_email': 'agent@bot',
+          'message': 'I can help with that',
+          'message_type': 1,
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // Agent message should have a smart_toy icon
+      expect(find.byIcon(Icons.smart_toy), findsOneWidget);
+      // Message text should be present
+      expect(find.byType(SelectableText), findsOneWidget);
+    });
+
+    testWidgets('user message renders without robot icon (default type)',
+        (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-user',
+          'user_email': 'alice@test.com',
+          'message': 'normal message',
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // No robot icon for user messages
+      expect(find.byIcon(Icons.smart_toy), findsNothing);
+    });
+
     testWidgets('presence bar shows connected users', (tester) async {
       client.presenceUsers = [
         {'user_id': 'u1', 'user_email': 'alice@test.com'},

@@ -651,6 +651,16 @@ class Connection:
                 if sock is not self.sock:
                     sock.send_json(join_msg)
 
+            # Broadcast a system chat message for the join
+            sys_msg = await model.add_chat_message(
+                workspace_id,
+                self.user["id"],
+                self.user["email"],
+                f"{self.user['email']} joined",
+                message_type=model.MSG_SYSTEM,
+            )
+            session.broadcast({"type": "chat_message", **sys_msg})
+
         # Store status for when frontend sends ui_ready
         self.pending_status_msg = status_msg
         logger.info(
@@ -988,6 +998,15 @@ class Connection:
                     for s in session.subscribers
                 )
                 if not still_connected:
+                    # Broadcast a system chat message for the leave
+                    sys_msg = await model.add_chat_message(
+                        workspace_id,
+                        self.user["id"],
+                        self.user["email"],
+                        f"{self.user['email']} left",
+                        message_type=model.MSG_SYSTEM,
+                    )
+                    session.broadcast({"type": "chat_message", **sys_msg})
                     session.broadcast(
                         {
                             "type": "presence_leave",

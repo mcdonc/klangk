@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from fastapi import WebSocketDisconnect
 
 from klangk_backend import (
+    model,
     wshandler,
     container,
     workspaces as ws_mod,
@@ -753,7 +754,13 @@ class TestCleanupConnection:
             conn._idle_cb
         )
 
-        await conn.cleanup()
+        with patch.object(
+            model,
+            "add_chat_message",
+            new_callable=AsyncMock,
+            return_value={"id": "fake", "message": "left", "message_type": 2},
+        ):
+            await conn.cleanup()
 
         # Terminal for THIS connection should be stopped
         t.stop.assert_awaited_once()
@@ -1988,7 +1995,13 @@ class TestCleanupSubscriberRace:
         conn1.container_id = "cid-conc"
 
         # sock1 disconnects, sock2 remains
-        await conn1.cleanup()
+        with patch.object(
+            model,
+            "add_chat_message",
+            new_callable=AsyncMock,
+            return_value={"id": "fake", "message": "left", "message_type": 2},
+        ):
+            await conn1.cleanup()
 
         # Session should still exist because sock2 is still subscribed
         assert "ws-conc" in wshandler.state.sessions

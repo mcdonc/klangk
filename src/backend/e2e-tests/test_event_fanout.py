@@ -202,6 +202,20 @@ async def recv_until(ws, predicate, timeout=30):
     return messages
 
 
+def register_user(server, email, password):
+    """Register a new user (requires KLANGK_TEST_MODE=1), return auth dict."""
+    url = server["url"]
+    resp = httpx.post(
+        f"{url}/auth/register",
+        json={"email": email, "password": password},
+        timeout=10,
+    )
+    assert resp.status_code == 200
+    token = resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    return {"token": token, "headers": headers}
+
+
 class TestEventFanout:
     @pytest.mark.asyncio
     async def test_both_connections_receive_container_ready(
@@ -279,6 +293,111 @@ class TestEventFanout:
             finally:
                 await ws1.close()
                 await ws2.close()
+        finally:
+            cleanup()
+
+    @pytest.mark.asyncio
+    async def test_join_broadcasts_system_chat_message(self, server, auth):
+        """Connecting to a workspace broadcasts a system chat message."""
+        workspace_id, cleanup = create_workspace(server, auth)
+        try:
+            ws1 = await ws_connect(server, auth, workspace_id)
+            try:
+                # Drain ws1 until we see the "joined" system chat message
+                def is_join_chat(msg):
+                    return (
+                        msg.get("type") == "chat_message"
+                        and msg.get("message_type") == 2
+                        and "joined" in msg.get("message", "")
+                    )
+
+                msgs = await recv_until(ws1, is_join_chat, timeout=15)
+                join_msgs = [m for m in msgs if is_join_chat(m)]
+                assert len(join_msgs) >= 1
+                assert join_msgs[0]["message"] == "test@example.com joined"
+                assert join_msgs[0]["message_type"] == 2
+            finally:
+                await ws1.close()
+        finally:
+            cleanup()
+
+    @pytest.mark.asyncio
+    async def test_leave_broadcasts_system_chat_message(self, server, auth):
+        """Disconnecting broadcasts a 'left' system chat message to others."""
+        workspace_id, cleanup = create_workspace(server, auth)
+        try:
+            # Register a second user and share the workspace
+            auth2 = register_user(server, "user2@example.com", "testpass2")
+            resp = httpx.post(
+                f"{server['url']}/workspaces/{workspace_id}/members",
+                headers=auth["headers"],
+                json={"email": "user2@example.com"},
+                timeout=10,
+            )
+            assert resp.status_code == 200
+
+            ws1 = await ws_connect(server, auth, workspace_id)
+            ws2 = await ws_connect(server, auth2, workspace_id)
+
+            try:
+                # Drain any pending messages on ws1
+                await recv_until(
+                    ws1,
+                    lambda m: False,
+                    timeout=3,
+                )
+
+                # Close ws2 — should trigger "left" system message
+                await ws2.close()
+
+                # ws1 should receive the leave system chat message
+                def is_leave_chat(msg):
+                    return (
+                        msg.get("type") == "chat_message"
+                        and msg.get("message_type") == 2
+                        and "left" in msg.get("message", "")
+                    )
+
+                msgs = await recv_until(ws1, is_leave_chat, timeout=10)
+                leave_msgs = [m for m in msgs if is_leave_chat(m)]
+                assert len(leave_msgs) >= 1
+                assert leave_msgs[0]["message"] == "user2@example.com left"
+                assert leave_msgs[0]["message_type"] == 2
+            finally:
+                await ws1.close()
+        finally:
+            cleanup()
+
+    @pytest.mark.asyncio
+    async def test_same_user_multi_connect_no_duplicate_leave(
+        self, server, auth
+    ):
+        """Same user with two connections — closing one does not emit 'left'."""
+        workspace_id, cleanup = create_workspace(server, auth)
+        try:
+            ws1 = await ws_connect(server, auth, workspace_id)
+            ws2 = await ws_connect(server, auth, workspace_id)
+
+            try:
+                # Drain pending messages on ws1
+                await recv_until(ws1, lambda m: False, timeout=3)
+
+                # Close ws2 — same user still has ws1
+                await ws2.close()
+                await asyncio.sleep(1)
+
+                # Drain ws1 — should NOT have a "left" message
+                remaining = await recv_until(ws1, lambda m: False, timeout=3)
+                leave_msgs = [
+                    m
+                    for m in remaining
+                    if m.get("type") == "chat_message"
+                    and m.get("message_type") == 2
+                    and "left" in m.get("message", "")
+                ]
+                assert len(leave_msgs) == 0
+            finally:
+                await ws1.close()
         finally:
             cleanup()
 

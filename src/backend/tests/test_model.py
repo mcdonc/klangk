@@ -507,6 +507,42 @@ class TestLoginAttempts:
         await model.clear_login_attempts("nobody@example.com")
 
 
+class TestChatMessagesMigration:
+    async def test_migrate_adds_message_type_column(self, db):
+        """init_db adds message_type column to existing tables that lack it."""
+        raw_db = await model.get_db()
+        try:
+            # Drop and recreate without message_type to simulate old schema
+            await raw_db.execute("DROP TABLE IF EXISTS chat_mentions")
+            await raw_db.execute("DROP TABLE IF EXISTS chat_messages")
+            await raw_db.execute("""
+                CREATE TABLE chat_messages (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_email TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await raw_db.commit()
+        finally:
+            await raw_db.close()
+
+        # Re-run init_db — should add message_type via ALTER TABLE
+        await model.init_db()
+
+        migrated_db = await model.get_db()
+        try:
+            cursor = await migrated_db.execute(
+                "PRAGMA table_info(chat_messages)"
+            )
+            cols = {row[1] for row in await cursor.fetchall()}
+            assert "message_type" in cols
+        finally:
+            await migrated_db.close()
+
+
 class TestChatMessages:
     async def test_add_chat_message(self, workspace, user):
         msg = await model.add_chat_message(
@@ -516,9 +552,29 @@ class TestChatMessages:
         assert msg["user_id"] == user["id"]
         assert msg["user_email"] == "testuser@example.com"
         assert msg["message"] == "hello"
+        assert msg["message_type"] == model.MSG_USER
         assert "id" in msg
         assert "created_at" in msg
         assert msg["mentions"] == []
+
+    async def test_add_chat_message_with_type(self, workspace, user):
+        msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            "testuser@example.com",
+            "system event",
+            message_type=model.MSG_SYSTEM,
+        )
+        assert msg["message_type"] == model.MSG_SYSTEM
+
+        agent_msg = await model.add_chat_message(
+            workspace["id"],
+            user["id"],
+            "agent@bot",
+            "agent reply",
+            message_type=model.MSG_AGENT,
+        )
+        assert agent_msg["message_type"] == model.MSG_AGENT
 
     async def test_get_chat_messages(self, workspace, user):
         await model.add_chat_message(
@@ -531,8 +587,29 @@ class TestChatMessages:
         assert len(msgs) == 2
         assert msgs[0]["message"] == "first"
         assert msgs[1]["message"] == "second"
+        assert msgs[0]["message_type"] == model.MSG_USER
+        assert msgs[1]["message_type"] == model.MSG_USER
         assert msgs[0]["mentions"] == []
         assert msgs[1]["mentions"] == []
+
+    async def test_get_chat_messages_preserves_type(self, workspace, user):
+        await model.add_chat_message(
+            workspace["id"],
+            "uid",
+            "u@test.com",
+            "joined",
+            message_type=model.MSG_SYSTEM,
+        )
+        await model.add_chat_message(
+            workspace["id"],
+            "uid",
+            "u@test.com",
+            "hello",
+        )
+        msgs = await model.get_chat_messages(workspace["id"])
+        assert len(msgs) == 2
+        assert msgs[0]["message_type"] == model.MSG_SYSTEM
+        assert msgs[1]["message_type"] == model.MSG_USER
 
     async def test_get_chat_messages_limit(self, workspace, user):
         for i in range(5):

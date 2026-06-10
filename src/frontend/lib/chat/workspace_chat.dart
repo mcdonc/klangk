@@ -616,11 +616,42 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                       final msgUserId = msg['user_id'] as String?;
                       final isOwn = msgUserId == currentUserId;
                       final isDeleted = text == '<message deleted by author>';
+                      final messageType = msg['message_type'] as int? ?? 0;
+
+                      // System messages: centered, muted, no sender
+                      if (messageType == 2) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Center(
+                            child: Text(
+                              text,
+                              style: const TextStyle(
+                                color: KColors.textMuted,
+                                fontSize: 11,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+
+                      // Agent messages: robot icon prefix, subtle tint
+                      final isAgent = messageType == 1;
+
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            if (isAgent)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 6, top: 1),
+                                child: Icon(
+                                  Icons.smart_toy,
+                                  size: 14,
+                                  color: KColors.accentCyan,
+                                ),
+                              ),
                             Expanded(
                               child: _CollapsibleMessage(
                                 messageId: msg['id'] as String? ?? '',
@@ -644,7 +675,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                                       email,
                                       style: TextStyle(
                                         fontWeight: FontWeight.bold,
-                                        color: _colorForEmail(email),
+                                        color: isAgent
+                                            ? KColors.accentCyan
+                                            : _colorForEmail(email),
                                         fontSize: 13,
                                       ),
                                     ),

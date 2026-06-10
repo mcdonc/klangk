@@ -2085,14 +2085,94 @@ test.describe("Klangk E2E", () => {
 
     await page2.waitForTimeout(2000);
 
-    expect(memberChatMessages.length).toBeGreaterThan(0);
-    const received = JSON.parse(memberChatMessages[0]);
+    // Filter out system messages (message_type 2 = join/leave)
+    const userMessages = memberChatMessages
+      .map((s) => JSON.parse(s))
+      .filter((m: any) => m.type === "chat_message" && m.message_type !== 2);
+    expect(userMessages.length).toBeGreaterThan(0);
+    const received = userMessages[0];
     expect(received.type).toBe("chat_message");
     expect(received.message).toBe("hello from e2e");
     expect(received.user_email).toBe(ownerEmail);
 
     await ctx1.close();
     await ctx2.close();
+    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      headers: ownerHeaders,
+    });
+  });
+
+  test("system chat messages on user join and leave", async ({
+    browser,
+    request,
+  }) => {
+    const ownerEmail = `join-owner-${Date.now()}@test.example.com`;
+    const memberEmail = `join-member-${Date.now()}@test.example.com`;
+    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+    await registerUser(request, memberEmail);
+
+    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+      headers: ownerHeaders,
+      data: { name: `e2e-joinleave-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspaceId = (await wsResp.json()).id;
+
+    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+      headers: ownerHeaders,
+      data: { email: memberEmail },
+    });
+
+    const ctx1 = await browser.newContext();
+    const page1 = await ctx1.newPage();
+
+    // Collect system chat messages (message_type == 2) on the owner's page
+    const systemMessages: any[] = [];
+    page1.on("websocket", (ws) => {
+      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+        const text = frame.payload.toString();
+        if (text.includes("chat_message")) {
+          try {
+            const msg = JSON.parse(text);
+            if (msg.type === "chat_message" && msg.message_type === 2) {
+              systemMessages.push(msg);
+            }
+          } catch {}
+        }
+      });
+    });
+
+    await openWorkspace(page1, ownerEmail, workspaceId, {
+      waitForTerminal: true,
+    });
+
+    // Member joins — owner should see a "joined" system message
+    const ctx2 = await browser.newContext();
+    const page2 = await ctx2.newPage();
+    await openWorkspace(page2, memberEmail, workspaceId, {
+      waitForTerminal: true,
+    });
+
+    // Wait for join message to arrive
+    await page1.waitForTimeout(2000);
+    const joinMsgs = systemMessages.filter(
+      (m) => m.message.includes("joined") && m.message.includes(memberEmail),
+    );
+    expect(joinMsgs.length).toBeGreaterThan(0);
+    expect(joinMsgs[0].message).toBe(`${memberEmail} joined`);
+
+    // Member leaves — owner should see a "left" system message
+    const beforeLeave = systemMessages.length;
+    await ctx2.close();
+    await page1.waitForTimeout(2000);
+
+    const leaveMsgs = systemMessages.filter(
+      (m) => m.message.includes("left") && m.message.includes(memberEmail),
+    );
+    expect(leaveMsgs.length).toBeGreaterThan(0);
+    expect(leaveMsgs[0].message).toBe(`${memberEmail} left`);
+
+    await ctx1.close();
     await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
@@ -2201,8 +2281,12 @@ test.describe("Klangk E2E", () => {
 
     await page1.waitForTimeout(2000);
 
-    expect(ownerChatMessages.length).toBeGreaterThan(0);
-    const chatMsg = JSON.parse(ownerChatMessages[0]);
+    // Filter out system messages (message_type 2 = join/leave)
+    const userChatMsgs = ownerChatMessages
+      .map((s) => JSON.parse(s))
+      .filter((m: any) => m.type === "chat_message" && m.message_type !== 2);
+    expect(userChatMsgs.length).toBeGreaterThan(0);
+    const chatMsg = userChatMsgs[0];
     expect(chatMsg.type).toBe("chat_message");
     expect(chatMsg.message).toContain(`@${memberEmail}`);
     expect(chatMsg.mentions).toBeDefined();
