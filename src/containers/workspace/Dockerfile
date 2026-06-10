@@ -18,8 +18,10 @@ COPY builtin-extensions/ /opt/klangk/pi-agent/extensions/
 
 # Herdr: terminal-based agent runtime (persistent sessions, pane API)
 ARG HERDR_VERSION=0.6.6
-RUN curl -fsSL -o /usr/local/bin/herdr \
-    "https://github.com/ogulcancelik/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64" \
+ARG TARGETARCH
+RUN HERDR_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
+    && curl -fsSL -o /usr/local/bin/herdr \
+    "https://github.com/ogulcancelik/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-${HERDR_ARCH}" \
     && chmod +x /usr/local/bin/herdr
 
 # Entrypoint, system prompt, bash defaults (change frequently during dev)
