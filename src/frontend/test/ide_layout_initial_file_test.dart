@@ -34,7 +34,8 @@ MockClient _client() => MockClient((req) async {
       return http.Response('nf', 404);
     });
 
-Widget _ide(GlobalKey<FileViewerPanelState> fvKey, WsClient ws, String? file) =>
+Widget _ide(GlobalKey<FileViewerPanelState> fvKey, WsClient ws, String? file,
+        {String? dir}) =>
     MaterialApp(
       home: Scaffold(
         body: SizedBox(
@@ -50,6 +51,7 @@ Widget _ide(GlobalKey<FileViewerPanelState> fvKey, WsClient ws, String? file) =>
             ),
             terminal: const SizedBox(),
             initialFile: file,
+            initialDir: dir,
           ),
         ),
       ),
@@ -96,6 +98,36 @@ void main() {
     await tester.pumpWidget(_ide(fvKey, ws, 'docs/note.txt'));
     await tester.pumpAndSettle();
     expect(find.textContaining('ide body'), findsOneWidget);
+    ws.close();
+  });
+
+  testWidgets('initialDir browses the folder on load (no file opened)',
+      (tester) async {
+    testBaseUrlOverride = 'http://localhost:8997';
+    testHttpClientOverride = _client();
+    final fvKey = GlobalKey<FileViewerPanelState>();
+    final ws = _MockWsClient();
+    await tester.pumpWidget(_ide(fvKey, ws, null, dir: 'docs'));
+    await tester.pumpAndSettle();
+    // Breadcrumb segment proves openDirectory('docs') ran; no file content.
+    expect(find.text('docs'), findsOneWidget);
+    expect(find.textContaining('ide body'), findsNothing);
+    ws.close();
+  });
+
+  testWidgets('changing initialDir reopens the folder (didUpdateWidget)',
+      (tester) async {
+    testBaseUrlOverride = 'http://localhost:8997';
+    testHttpClientOverride = _client();
+    final fvKey = GlobalKey<FileViewerPanelState>();
+    final ws = _MockWsClient();
+    await tester.pumpWidget(_ide(fvKey, ws, null));
+    await tester.pumpAndSettle();
+    expect(find.text('docs'), findsNothing);
+    // Same tree, new initialDir → IdeLayout.didUpdateWidget fires.
+    await tester.pumpWidget(_ide(fvKey, ws, null, dir: 'docs'));
+    await tester.pumpAndSettle();
+    expect(find.text('docs'), findsOneWidget);
     ws.close();
   });
 }

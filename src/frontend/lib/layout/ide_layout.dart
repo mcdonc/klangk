@@ -20,9 +20,13 @@ class IdeLayout extends StatefulWidget {
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
   final GlobalKey<WorkspaceChatState>? chatKey;
 
-  /// Deep-linked workspace-relative file path to open in the Files tab on load
-  /// (and whenever it changes). Null/empty shows the default (Terminal) tab.
+  /// Deep-linked workspace-relative file to open in the Files tab on load (and
+  /// whenever it changes). Null/empty (with no [initialDir]) shows Terminal.
   final String? initialFile;
+
+  /// Deep-linked workspace-relative directory to browse in the Files tab on
+  /// load. Used when [initialFile] is null/empty.
+  final String? initialDir;
 
   const IdeLayout({
     super.key,
@@ -38,6 +42,7 @@ class IdeLayout extends StatefulWidget {
     this.fileViewerKey,
     this.chatKey,
     this.initialFile,
+    this.initialDir,
   });
 
   @override
@@ -58,22 +63,34 @@ class IdeLayoutState extends State<IdeLayout> {
     // Focus the pane shown first (Terminal by default) so the user can type
     // immediately on workspace open, without an extra click into it.
     _focusPane(_selectedIndex);
-    _maybeOpenInitialFile();
+    _maybeOpenInitial();
   }
 
   @override
   void didUpdateWidget(IdeLayout oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.initialFile != oldWidget.initialFile) _maybeOpenInitialFile();
+    if (widget.initialFile != oldWidget.initialFile ||
+        widget.initialDir != oldWidget.initialDir) {
+      _maybeOpenInitial();
+    }
   }
 
-  /// Opens [IdeLayout.initialFile] in the Files tab once the panel is built.
-  /// Deferred to after the frame so the fileViewer's state is attached.
-  void _maybeOpenInitialFile() {
-    final path = widget.initialFile;
-    if (path == null || path.isEmpty) return;
+  /// Opens the deep-linked [IdeLayout.initialFile] (preferred) or
+  /// [IdeLayout.initialDir] in the Files tab once the panel is built. Deferred
+  /// to after the frame so the fileViewer's state is attached.
+  void _maybeOpenInitial() {
+    final file = widget.initialFile;
+    final dir = widget.initialDir;
+    final hasFile = file != null && file.isNotEmpty;
+    final hasDir = dir != null && dir.isNotEmpty;
+    if (!hasFile && !hasDir) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) openFile(path);
+      if (!mounted) return;
+      if (hasFile) {
+        openFile(file);
+      } else {
+        openDirectory(dir!);
+      }
     });
   }
 
@@ -81,6 +98,12 @@ class IdeLayoutState extends State<IdeLayout> {
   void openFile(String path) {
     _selectTab(1);
     widget.fileViewerKey?.currentState?.openFile(path);
+  }
+
+  /// Switches to the Files tab and browses directory [path].
+  void openDirectory(String path) {
+    _selectTab(1);
+    widget.fileViewerKey?.currentState?.openDir(path);
   }
 
   void _selectTab(int index) {

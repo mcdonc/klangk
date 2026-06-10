@@ -307,5 +307,52 @@ void main() {
       expect(pasted.join(), contains('clipboard-payload'));
       client.close();
     });
+
+    testWidgets('handleLinkTap forwards token/uri/tail and the live pwd',
+        (tester) async {
+      ({String token, String? uri, String pwd, String tail})? captured;
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: GhosttyTerminal(
+            key: key,
+            wsClient: client,
+            onPathTap: (e) => captured = e,
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      key.currentState!.handleLinkTap(
+        (
+          row: 3,
+          col: 5,
+          token: 'work/a b.txt',
+          uri: null,
+          tail: 'work/a b.txt rest',
+        ),
+      );
+
+      expect(captured, isNotNull);
+      expect(captured!.token, 'work/a b.txt');
+      expect(captured!.tail, 'work/a b.txt rest');
+      expect(captured!.uri, isNull);
+      expect(captured!.pwd, isA<String>()); // live OSC 7 cwd (empty until set)
+      client.close();
+    });
+
+    testWidgets('handleLinkTap is a no-op when onPathTap is null',
+        (tester) async {
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await tester.pumpWidget(_build(client, key: key)); // no onPathTap
+      await tester.pumpAndSettle();
+      // Must not throw when there is no callback wired.
+      key.currentState!.handleLinkTap(
+        (row: 0, col: 0, token: 'x', uri: 'https://e', tail: 'x'),
+      );
+      client.close();
+    });
   });
 }

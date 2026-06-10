@@ -16,6 +16,11 @@ import '../file_viewer/file_viewer_panel.dart';
 import '../file_viewer/file_renderer_wiring.dart';
 import '../layout/ide_layout.dart';
 import '../terminal/ghostty_terminal.dart';
+import '../terminal/terminal_link.dart';
+import 'workspace_file_api.dart';
+import 'package:http/http.dart' as http;
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../browser/browser_delegate.dart';
 import '../chat/workspace_chat.dart';
 import '../debug/debug_panel.dart';
@@ -29,10 +34,15 @@ class WorkspacePage extends StatefulWidget {
   /// (from the `?file=` query param on the workspace route).
   final String? initialFile;
 
+  /// Deep-linked workspace-relative directory to browse in the Files tab on
+  /// load (from the `?dir=` query param).
+  final String? initialDir;
+
   const WorkspacePage({
     super.key,
     required this.workspaceId,
     this.initialFile,
+    this.initialDir,
   });
 
   @override
@@ -40,6 +50,12 @@ class WorkspacePage extends StatefulWidget {
 }
 
 class _WorkspacePageState extends State<WorkspacePage> {
+  // TODO(config): hoist these container paths into workspace/container config.
+  // They must match the container layout (the file API is relative to the
+  // home; the shell cwd is `work/` under it). Containers may be configured
+  // differently, so hardcoding is a stopgap — follow-up PR.
+  static const _containerHome = '/home/klangk';
+  static const _containerCwd = '/home/klangk/work';
   final _terminalKey = GlobalKey<GhosttyTerminalState>();
   final _fileViewerKey = GlobalKey<FileViewerPanelState>();
   final _chatKey = GlobalKey<WorkspaceChatState>();
@@ -59,6 +75,33 @@ class _WorkspacePageState extends State<WorkspacePage> {
   late final ToolPluginRegistry _pluginRegistry;
   late final List<ToolPlugin> _plugins;
   late final FileRendererRegistry _fileRenderers;
+
+  /// Resolves a ⌘/Ctrl-clicked terminal token and opens it: external `http(s)`
+  /// URLs in a new tab; workspace files (after existence-verify) in the file
+  /// view via the `?file=` deep-link. All untrusted-input handling lives in
+  /// [TerminalLinkActions]/[classifyTerminalLink].
+  void _handleTerminalPathTap(
+      ({String token, String? uri, String pwd, String tail}) e) {
+    final authToken = context.read<AuthService>().token;
+    final actions = TerminalLinkActions(
+      pathRoot: _containerHome,
+      defaultCwd: _containerCwd,
+      openExternalUrl: openUrl,
+      statPath: (rel) => statWorkspacePath(
+        client: http.Client(),
+        baseUrl: baseUrl,
+        workspaceId: widget.workspaceId,
+        rel: rel,
+        authToken: authToken,
+      ),
+      openFile: (rel) => context.go('/workspace/${widget.workspaceId}'
+          '?file=${Uri.encodeQueryComponent(rel)}'),
+      openDirectory: (rel) => context.go('/workspace/${widget.workspaceId}'
+          '?dir=${Uri.encodeQueryComponent(rel)}'),
+    );
+    unawaited(
+        actions.handle(token: e.token, uri: e.uri, pwd: e.pwd, tail: e.tail));
+  }
 
   @override
   void initState() {
@@ -295,7 +338,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
               authToken: authToken,
               registry: _fileRenderers,
             ),
-            terminal: GhosttyTerminal(key: _terminalKey, wsClient: wsClient),
+            terminal: GhosttyTerminal(
+              key: _terminalKey,
+              wsClient: wsClient,
+              onPathTap: _handleTerminalPathTap,
+            ),
             chat: _hasPerm('chat')
                 ? WorkspaceChat(
                     key: _chatKey,
@@ -324,6 +371,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
             fileViewerKey: _fileViewerKey,
             chatKey: _chatKey,
             initialFile: widget.initialFile,
+            initialDir: widget.initialDir,
             debug: DebugPanel(wsClient: wsClient),
           ),
           for (final plugin in _plugins)

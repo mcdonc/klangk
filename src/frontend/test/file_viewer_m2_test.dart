@@ -159,6 +159,26 @@ MockClient _listing(List<Map<String, dynamic>> entries,
   });
 }
 
+/// Renders a unique marker for one extension, to prove which renderer the
+/// viewer selected (so a stale renderer after a direct file switch is visible).
+class _MarkerRenderer extends FileRenderer {
+  _MarkerRenderer(this.ext, this.marker);
+  final String ext;
+  final String marker;
+  @override
+  String get id => marker;
+  @override
+  String get modeLabel => marker;
+  @override
+  IconData get icon => Icons.abc;
+  @override
+  int get priority => 10;
+  @override
+  bool canRender(RenderableFile file) => file.extension == ext;
+  @override
+  Widget build(BuildContext context, RenderableFile file) => Text(marker);
+}
+
 void main() {
   tearDown(() {
     testBaseUrlOverride = null;
@@ -569,6 +589,76 @@ void main() {
       key.currentState!.openFile('docs/note.txt');
       await tester.pumpAndSettle();
       expect(find.textContaining('deep-linked body'), findsOneWidget);
+      ws.close();
+    });
+  });
+
+  group('openDir + direct file switch', () {
+    testWidgets('openDir browses the folder (shows the listing)',
+        (tester) async {
+      testBaseUrlOverride = 'http://localhost:8997';
+      testHttpClientOverride = _listing([
+        {'name': 'note.txt', 'path': 'docs/note.txt', 'is_dir': false},
+      ]);
+      final key = GlobalKey<FileViewerPanelState>();
+      final ws = _MockWsClient();
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 900,
+            height: 600,
+            child: FileViewerPanel(
+                key: key, wsClient: ws, workspaceId: 'ws-1', authToken: 'tok'),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      key.currentState!.openDir('docs');
+      await tester.pumpAndSettle();
+      expect(
+          find.text('note.txt'), findsOneWidget); // the listing, not a viewer
+      ws.close();
+    });
+
+    testWidgets(
+        'switching files directly recreates the viewer with the new renderer',
+        (tester) async {
+      testBaseUrlOverride = 'http://localhost:8997';
+      testHttpClientOverride = _listing([
+        {'name': 'a.md', 'path': 'docs/a.md', 'is_dir': false},
+        {'name': 'b.txt', 'path': 'docs/b.txt', 'is_dir': false},
+      ]);
+      final registry = FileRendererRegistry()
+        ..registerAll([
+          _MarkerRenderer('md', 'MD_RENDERER'),
+          _MarkerRenderer('txt', 'TXT_RENDERER'),
+        ]);
+      final key = GlobalKey<FileViewerPanelState>();
+      final ws = _MockWsClient();
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 900,
+            height: 600,
+            child: FileViewerPanel(
+              key: key,
+              wsClient: ws,
+              workspaceId: 'ws-1',
+              authToken: 'tok',
+              registry: registry,
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      key.currentState!.openFile('docs/a.md');
+      await tester.pumpAndSettle();
+      expect(find.text('MD_RENDERER'), findsOneWidget);
+      // Switch directly to a different-type file (no list step in between).
+      key.currentState!.openFile('docs/b.txt');
+      await tester.pumpAndSettle();
+      expect(find.text('TXT_RENDERER'), findsOneWidget);
+      expect(find.text('MD_RENDERER'), findsNothing);
       ws.close();
     });
   });

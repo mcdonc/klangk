@@ -77,6 +77,16 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     _loadFiles();
   }
 
+  /// Browses directory [path] (workspace-relative; empty = home root). Used by
+  /// deep-links and terminal directory-clicks.
+  void openDir(String path) {
+    setState(() {
+      _currentPath = path.isEmpty ? '.' : path;
+      _selectedFile = null;
+    });
+    _loadFiles();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -455,6 +465,10 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           Expanded(
             child: _selectedFile != null
                 ? _FileViewer(
+                    // Key by path so switching files (e.g. PDF → .md) directly —
+                    // without going through the list — recreates the viewer with
+                    // the new file's renderers instead of reusing stale ones.
+                    key: ValueKey(_selectedFile),
                     registry: _registry,
                     file: _renderableFor(_selectedFile!),
                     onClose: () => setState(() => _selectedFile = null),
@@ -542,6 +556,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 /// actions (e.g. image rotate) live inside that widget.
 class _FileViewer extends StatefulWidget {
   const _FileViewer({
+    super.key,
     required this.registry,
     required this.file,
     required this.onClose,
