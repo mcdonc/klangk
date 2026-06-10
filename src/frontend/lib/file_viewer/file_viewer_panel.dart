@@ -63,6 +63,20 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// Refresh the file list for the current directory.
   void refresh() => _loadFiles();
 
+  /// Opens [path] (workspace-relative, same space as the file list) directly in
+  /// the viewer: positions the browser at the file's directory — so the path
+  /// bar's up/breadcrumbs work — and shows its content via the existing viewer.
+  /// Used by deep-links and terminal path-clicks.
+  void openFile(String path) {
+    final dir =
+        path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
+    setState(() {
+      _currentPath = dir;
+      _selectedFile = path;
+    });
+    _loadFiles();
+  }
+
   @override
   void initState() {
     super.initState();

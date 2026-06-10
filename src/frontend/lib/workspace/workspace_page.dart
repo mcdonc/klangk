@@ -25,7 +25,15 @@ import 'workspace_sharing_panel.dart';
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
 
-  const WorkspacePage({super.key, required this.workspaceId});
+  /// Deep-linked workspace-relative file to open in the Files tab on load
+  /// (from the `?file=` query param on the workspace route).
+  final String? initialFile;
+
+  const WorkspacePage({
+    super.key,
+    required this.workspaceId,
+    this.initialFile,
+  });
 
   @override
   State<WorkspacePage> createState() => _WorkspacePageState();
@@ -315,6 +323,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
             chatKey: _chatKey,
+            initialFile: widget.initialFile,
             debug: DebugPanel(wsClient: wsClient),
           ),
           for (final plugin in _plugins)

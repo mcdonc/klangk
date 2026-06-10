@@ -20,6 +20,10 @@ class IdeLayout extends StatefulWidget {
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
   final GlobalKey<WorkspaceChatState>? chatKey;
 
+  /// Deep-linked workspace-relative file path to open in the Files tab on load
+  /// (and whenever it changes). Null/empty shows the default (Terminal) tab.
+  final String? initialFile;
+
   const IdeLayout({
     super.key,
     required this.fileViewer,
@@ -33,13 +37,14 @@ class IdeLayout extends StatefulWidget {
     this.terminalKey,
     this.fileViewerKey,
     this.chatKey,
+    this.initialFile,
   });
 
   @override
-  State<IdeLayout> createState() => _IdeLayoutState();
+  State<IdeLayout> createState() => IdeLayoutState();
 }
 
-class _IdeLayoutState extends State<IdeLayout> {
+class IdeLayoutState extends State<IdeLayout> {
   int _selectedIndex = 0;
   double _debugHeight = 0; // collapsed by default
 
@@ -53,6 +58,29 @@ class _IdeLayoutState extends State<IdeLayout> {
     // Focus the pane shown first (Terminal by default) so the user can type
     // immediately on workspace open, without an extra click into it.
     _focusPane(_selectedIndex);
+    _maybeOpenInitialFile();
+  }
+
+  @override
+  void didUpdateWidget(IdeLayout oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialFile != oldWidget.initialFile) _maybeOpenInitialFile();
+  }
+
+  /// Opens [IdeLayout.initialFile] in the Files tab once the panel is built.
+  /// Deferred to after the frame so the fileViewer's state is attached.
+  void _maybeOpenInitialFile() {
+    final path = widget.initialFile;
+    if (path == null || path.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) openFile(path);
+    });
+  }
+
+  /// Switches to the Files tab and opens [path] in the existing viewer.
+  void openFile(String path) {
+    _selectTab(1);
+    widget.fileViewerKey?.currentState?.openFile(path);
   }
 
   void _selectTab(int index) {
