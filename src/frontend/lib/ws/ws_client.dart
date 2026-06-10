@@ -12,11 +12,8 @@ class WsDebugEntry {
   final String summary;
   final Map<String, dynamic>? data;
 
-  WsDebugEntry({
-    required this.direction,
-    required this.summary,
-    this.data,
-  }) : timestamp = DateTime.now();
+  WsDebugEntry({required this.direction, required this.summary, this.data})
+    : timestamp = DateTime.now();
 }
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
@@ -76,6 +73,12 @@ class WsClient extends ChangeNotifier {
   /// Chat messages (individual and history) from the backend.
   Stream<Map<String, dynamic>> get chatMessages => _chatController.stream;
 
+  /// Older chat history pages loaded on demand.
+  final _chatHistoryPageController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get chatHistoryPages =>
+      _chatHistoryPageController.stream;
+
   /// Custom events from the backend (container_ready, container_stopped, etc.)
   Stream<Map<String, dynamic>> get customEvents =>
       _customEventController.stream;
@@ -129,11 +132,9 @@ class WsClient extends ChangeNotifier {
             final summary = type == 'event'
                 ? 'event:${(json['event'] as Map?)?['name'] ?? '?'}'
                 : type ?? '?';
-            _debugLogController.add(WsDebugEntry(
-              direction: 'RECV',
-              summary: summary,
-              data: json,
-            ));
+            _debugLogController.add(
+              WsDebugEntry(direction: 'RECV', summary: summary, data: json),
+            );
           }
 
           if (type == 'workspace_ready') {
@@ -157,6 +158,8 @@ class WsClient extends ChangeNotifier {
               chatHistory.add(msg);
               _chatController.add(msg);
             }
+          } else if (type == 'chat_history_page') {
+            _chatHistoryPageController.add(json);
           } else if (type == 'chat_updated') {
             _chatController.add(json);
           } else if (type == 'workspace_members') {
@@ -179,8 +182,9 @@ class WsClient extends ChangeNotifier {
           } else if (type == 'presence_leave') {
             final uid = json['user_id'] as String?;
             if (uid != null) {
-              presenceUsers =
-                  presenceUsers.where((u) => u['user_id'] != uid).toList();
+              presenceUsers = presenceUsers
+                  .where((u) => u['user_id'] != uid)
+                  .toList();
               notifyListeners();
             }
           } else if (type == 'event') {
@@ -218,11 +222,9 @@ class WsClient extends ChangeNotifier {
     final cmd = msg['cmd'] as String? ?? '?';
     // Skip noisy terminal_input from debug log
     if (cmd != 'terminal_input') {
-      _debugLogController.add(WsDebugEntry(
-        direction: 'SEND',
-        summary: cmd,
-        data: msg,
-      ));
+      _debugLogController.add(
+        WsDebugEntry(direction: 'SEND', summary: cmd, data: msg),
+      );
     }
     _channel!.sink.add(jsonEncode(msg));
   }
@@ -273,6 +275,10 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'chat_send', 'message': text});
   }
 
+  void sendChatLoadMore(String beforeId, {int limit = 50}) {
+    _send({'cmd': 'chat_load_more', 'before_id': beforeId, 'limit': limit});
+  }
+
   void sendChatDelete(String messageId) {
     _send({'cmd': 'chat_delete', 'message_id': messageId});
   }
@@ -307,6 +313,7 @@ class WsClient extends ChangeNotifier {
     _terminalOutputController.close();
     _browserRequestController.close();
     _chatController.close();
+    _chatHistoryPageController.close();
     _customEventController.close();
     _debugLogController.close();
     super.dispose();

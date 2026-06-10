@@ -875,6 +875,25 @@ class Connection:
                     }
                 )
 
+    async def handle_chat_load_more(self, msg: dict) -> None:
+        workspace_id = self.workspace_id
+        if not workspace_id:
+            return
+        before_id = msg.get("before_id", "")
+        if not before_id:
+            return
+        limit = min(msg.get("limit", 50), 100)
+        messages = await model.get_chat_messages_before(
+            workspace_id, before_id, limit
+        )
+        self.sock.send_json(
+            {
+                "type": "chat_history_page",
+                "messages": messages,
+                "has_more": len(messages) == limit,
+            }
+        )
+
     async def handle_ui_ready(self) -> None:
         if self.workspace_id:
             sess = state.get_session(self.workspace_id)
@@ -1081,6 +1100,8 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_chat_send(msg)
             elif cmd == "chat_delete":
                 await conn.handle_chat_delete(msg)
+            elif cmd == "chat_load_more":
+                await conn.handle_chat_load_more(msg)
             elif cmd == "browser_response":
                 state.handle_browser_response(msg, safe_ws)
             elif cmd == "browser_chunk":

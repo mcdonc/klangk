@@ -38,9 +38,12 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   final _textController = TextEditingController();
   final _inputFocusNode = FocusNode(debugLabel: 'workspace-chat-input');
   StreamSubscription<Map<String, dynamic>>? _chatSub;
+  StreamSubscription<Map<String, dynamic>>? _historyPageSub;
   int _unreadCount = 0;
   bool _isVisible = false;
   bool _hasMention = false;
+  bool _loadingOlder = false;
+  bool _hasMore = true;
 
   // Expanded message IDs (for long message truncation)
   final Set<String> _expandedMessages = {};
@@ -65,6 +68,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       _messages.addAll(widget.wsClient.chatHistory);
     }
     _chatSub = widget.wsClient.chatMessages.listen(_onMessage);
+    _historyPageSub = widget.wsClient.chatHistoryPages.listen(_onHistoryPage);
+    _scrollController.addListener(_onScroll);
     _textController.addListener(_onTextChanged);
     widget.wsClient.addListener(_onPresenceChanged);
     _inputFocusNode.onKeyEvent = _handleKeyEvent;
@@ -128,6 +133,59 @@ class WorkspaceChatState extends State<WorkspaceChat> {
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
         );
+      }
+    });
+  }
+
+  void _onScroll() {
+    if (!_hasMore || _loadingOlder) return;
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.pixels <= 0 && _messages.isNotEmpty) {
+      _loadOlderMessages();
+    }
+  }
+
+  void _loadOlderMessages() {
+    final oldestId = _messages.first['id'] as String?;
+    if (oldestId == null) return;
+    setState(() => _loadingOlder = true);
+    widget.wsClient.sendChatLoadMore(oldestId);
+  }
+
+  void _onHistoryPage(Map<String, dynamic> page) {
+    if (!mounted) return;
+    final messages = page['messages'] as List? ?? [];
+    final hasMore = page['has_more'] as bool? ?? false;
+
+    if (messages.isEmpty) {
+      setState(() {
+        _loadingOlder = false;
+        _hasMore = false;
+      });
+      return;
+    }
+
+    // Preserve scroll position: measure before prepending, restore after.
+    final scrollBefore = _scrollController.hasClients
+        ? _scrollController.position.pixels
+        : 0.0;
+    final maxBefore = _scrollController.hasClients
+        ? _scrollController.position.maxScrollExtent
+        : 0.0;
+
+    setState(() {
+      final older = messages.cast<Map<String, dynamic>>();
+      _messages.insertAll(0, older);
+      _loadingOlder = false;
+      _hasMore = hasMore;
+    });
+
+    // After rebuild, restore scroll so the view doesn't jump.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        final maxAfter = _scrollController.position.maxScrollExtent;
+        final delta = maxAfter - maxBefore;
+        _scrollController.jumpTo(scrollBefore + delta);
       }
     });
   }
@@ -574,6 +632,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     widget.wsClient.removeListener(_onPresenceChanged);
     _hideAutocomplete();
     _chatSub?.cancel();
+    _historyPageSub?.cancel();
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _textController.removeListener(_onTextChanged);
     _textController.dispose();
@@ -605,9 +665,22 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                       horizontal: 12,
                       vertical: 8,
                     ),
-                    itemCount: _messages.length,
+                    itemCount: _messages.length + (_loadingOlder ? 1 : 0),
                     itemBuilder: (context, index) {
-                      final msg = _messages[index];
+                      if (_loadingOlder && index == 0) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Center(
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        );
+                      }
+                      final msgIndex = _loadingOlder ? index - 1 : index;
+                      final msg = _messages[msgIndex];
                       final email = msg['user_email'] as String? ?? '';
                       final text = msg['message'] as String? ?? '';
                       final createdAt = _formatTime(

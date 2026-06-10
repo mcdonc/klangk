@@ -836,8 +836,9 @@ void main() {
       expect(find.byType(SelectableText), findsOneWidget);
     });
 
-    testWidgets('user message renders without robot icon (default type)',
-        (tester) async {
+    testWidgets('user message renders without robot icon (default type)', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildChat());
 
       await tester.runAsync(() async {
@@ -1362,6 +1363,148 @@ void main() {
 
       expect(find.text('…show more'), findsNothing);
       expect(find.text('show less'), findsNothing);
+    });
+
+    testWidgets('scroll to top triggers load more', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      // Add enough messages to require scrolling
+      await tester.runAsync(() async {
+        for (int i = 0; i < 30; i++) {
+          channel.serverSend({
+            'type': 'chat_message',
+            'id': 'msg-$i',
+            'user_email': 'user@test.com',
+            'message': 'Message $i',
+            'created_at': '2026-01-01 00:${i.toString().padLeft(2, '0')}:00',
+          });
+        }
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pumpAndSettle();
+
+      // Scroll to top
+      await tester.drag(find.byType(ListView).last, const Offset(0, 5000));
+      await tester.pump();
+
+      // Should have sent chat_load_more
+      final msgs = channel._sink.sent
+          .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
+          .toList();
+      final loadMore = msgs.where((m) => m['cmd'] == 'chat_load_more').toList();
+      expect(loadMore.length, 1);
+      expect(loadMore[0]['before_id'], 'msg-0');
+    });
+
+    testWidgets('history page prepends messages', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      // Add initial messages
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-new',
+          'user_email': 'user@test.com',
+          'message': 'newest',
+          'created_at': '2026-01-01 00:01:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // Simulate receiving a history page
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_history_page',
+          'messages': [
+            {
+              'id': 'msg-old',
+              'user_email': 'user@test.com',
+              'message': 'oldest',
+              'created_at': '2026-01-01 00:00:00',
+            },
+          ],
+          'has_more': false,
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // Both messages should be present
+      expect(find.byType(MarkdownBody), findsNWidgets(2));
+    });
+
+    testWidgets('empty history page sets hasMore to false', (tester) async {
+      final chatKey = GlobalKey<WorkspaceChatState>();
+      await tester.pumpWidget(buildChat(chatKey: chatKey));
+
+      // Add a message
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-1',
+          'user_email': 'user@test.com',
+          'message': 'hello',
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // Simulate empty history page
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_history_page',
+          'messages': [],
+          'has_more': false,
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // Scrolling to top should NOT trigger another load
+      channel._sink.sent.clear();
+      await tester.drag(find.byType(ListView).last, const Offset(0, 5000));
+      await tester.pump();
+
+      final msgs = channel._sink.sent
+          .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
+          .toList();
+      final loadMore = msgs.where((m) => m['cmd'] == 'chat_load_more').toList();
+      expect(loadMore.length, 0);
+    });
+
+    testWidgets('loading spinner shown during load more', (tester) async {
+      final chatKey = GlobalKey<WorkspaceChatState>();
+      await tester.pumpWidget(buildChat(chatKey: chatKey));
+
+      // Add enough messages to scroll
+      await tester.runAsync(() async {
+        for (int i = 0; i < 30; i++) {
+          channel.serverSend({
+            'type': 'chat_message',
+            'id': 'load-$i',
+            'user_email': 'user@test.com',
+            'message': 'Message $i',
+            'created_at': '2026-01-01 00:${i.toString().padLeft(2, '0')}:00',
+          });
+        }
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pumpAndSettle();
+
+      // Scroll to top to trigger loading
+      await tester.drag(find.byType(ListView).last, const Offset(0, 5000));
+      await tester.pump();
+
+      // Loading spinner should be visible
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
   });
 }
