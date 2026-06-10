@@ -1,0 +1,25 @@
+#!/bin/sh
+# macOS xcrun shim for `devenv test-frontend`.
+#
+# Why this exists:
+#   `flutter test` on macOS compiles the objective_c native FFI (a transitive
+#   dependency via the flterm/libghostty terminal stack). dart's
+#   native_toolchain_c resolves the macOS SDK by running
+#   `xcrun --sdk macosx --show-sdk-path`. Inside the devenv (nix) shell the
+#   first `xcrun` on PATH is nix's xcbuild shim, which only resolves the SDK
+#   when DEVELOPER_DIR is set. flutter strips DEVELOPER_DIR (and SDKROOT) from
+#   the environment of its native-assets build hook, so that xcrun fails and
+#   prints "error: unable to find sdk: 'macosx'"; native_toolchain_c then
+#   feeds that error string to clang as -isysroot, which yields
+#   "'Foundation/Foundation.h' file not found" and "Building native assets
+#   failed".
+#
+# What this does:
+#   Delegates to the system /usr/bin/xcrun, which resolves the active macOS
+#   SDK from xcode-select state with no environment variables at all. That SDK
+#   ships the system frameworks (Foundation, etc.), and the nix clang-wrapper
+#   compiles objective-c against it without issue.
+#
+# This shim is prepended to PATH only on Darwin by the `test-frontend` script
+# in devenv.nix, so it never affects Linux CI or non-test builds.
+exec /usr/bin/xcrun "$@"

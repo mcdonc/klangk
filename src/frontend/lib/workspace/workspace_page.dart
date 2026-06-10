@@ -13,6 +13,7 @@ import '../utils/page_title.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 import '../file_viewer/file_viewer_panel.dart';
+import '../file_viewer/file_renderer_wiring.dart';
 import '../layout/ide_layout.dart';
 import '../terminal/ghostty_terminal.dart';
 import '../browser/browser_delegate.dart';
@@ -49,6 +50,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   StreamSubscription<String>? _errorSub;
   late final ToolPluginRegistry _pluginRegistry;
   late final List<ToolPlugin> _plugins;
+  late final FileRendererRegistry _fileRenderers;
 
   @override
   void initState() {
@@ -58,6 +60,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     for (final plugin in _plugins) {
       _pluginRegistry.register(plugin);
     }
+    _fileRenderers = buildFileRendererRegistry(_plugins);
     _fetchWorkspaceName();
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
@@ -267,6 +270,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
               wsClient: wsClient,
               workspaceId: widget.workspaceId,
               authToken: authToken,
+              registry: _fileRenderers,
             ),
             terminal: GhosttyTerminal(key: _terminalKey, wsClient: wsClient),
             chat: _hasPerm('chat')
