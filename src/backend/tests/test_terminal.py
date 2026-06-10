@@ -83,6 +83,17 @@ def _patch(fake):
     return patch(SHELL_FACTORY, return_value=fake)
 
 
+def _drain_text(session):
+    """Concatenate queued text output up to the end-of-stream sentinel."""
+    out = ""
+    while not session._output_queue.empty():
+        item = session._output_queue.get_nowait()
+        if item is None:
+            break
+        out += item
+    return out
+
+
 class TestInit:
     def test_initial_state(self):
         s = TerminalSession("cid")
@@ -202,6 +213,33 @@ class TestReadLoop:
         assert s._output_queue.get_nowait() == "prompt"
         # exception in read -> loop ends -> sentinel queued
         assert s._output_queue.get_nowait() is None
+        await s.stop()
+
+    async def test_read_loop_reassembles_split_utf8(self):
+        # '─' (U+2500) is e2 94 80; split across two reads. A per-chunk
+        # decode would mangle it into replacement chars; the incremental
+        # decoder must buffer the partial sequence and emit the intact glyph.
+        fake = FakeShell(chunks=[b"\xe2\x94", b"\x80 done"])
+        with _patch(fake):
+            s = TerminalSession("cid")
+            await s.start()
+
+        await asyncio.sleep(0.05)
+        out = _drain_text(s)
+        assert out == "─ done"
+        assert "�" not in out
+        await s.stop()
+
+    async def test_read_loop_flushes_incomplete_trailing_bytes(self):
+        # Stream ends mid-character: the buffered partial sequence is flushed
+        # as a single replacement char rather than silently dropped.
+        fake = FakeShell(chunks=[b"ok\xe2\x94"])  # ends mid '─'
+        with _patch(fake):
+            s = TerminalSession("cid")
+            await s.start()
+
+        await asyncio.sleep(0.05)
+        assert _drain_text(s) == "ok�"
         await s.stop()
 
 

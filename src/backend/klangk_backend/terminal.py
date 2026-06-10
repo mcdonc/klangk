@@ -8,6 +8,7 @@ podman with ``SIGWINCH`` so it resizes the container PTY.
 """
 
 import asyncio
+import codecs
 import fcntl
 import logging
 import os
@@ -172,15 +173,29 @@ class TerminalSession:
         )
 
     async def _read_loop(self) -> None:
-        """Read PTY output and queue it as text."""
+        """Read PTY output and queue it as text.
+
+        Uses an *incremental* UTF-8 decoder so a multi-byte glyph (e.g. the
+        box-drawing ``─`` = ``e2 94 80``) split across two ``os.read`` chunks is
+        buffered and reassembled instead of being mangled into ``U+FFFD``
+        replacement chars. Per-chunk ``bytes.decode`` corrupted such glyphs,
+        shifting columns and desyncing the terminal cell model (ghosting).
+        """
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         try:
             while self._running and self._shell is not None:
                 data = await self._shell.read()
                 if not data:
                     break
-                text = data.decode("utf-8", errors="replace")
+                text = decoder.decode(data)
                 if text:
                     await self._output_queue.put(text)
+            # Flush any trailing partial sequence (a stream that ends
+            # mid-character yields a single replacement char rather than
+            # dropping bytes).
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                await self._output_queue.put(tail)
         except asyncio.CancelledError:  # pragma: no cover
             raise
         except Exception:
