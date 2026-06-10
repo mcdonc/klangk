@@ -103,6 +103,7 @@ All settings can be overridden in `.env`. Defaults (where appropriate) are provi
 | `KLANGK_LLM_MODEL`                   |                                      | LLM model name                                                                                                                                                                             |
 | `KLANGK_JWT_SECRET`                  |                                      | JWT signing secret. A warning is logged at startup if unset or left as the insecure dev default.                                                                                           |
 | `KLANGK_PREVENT_INSECURE_JWT_SECRET` |                                      | Set to `1` to fail at startup if `KLANGK_JWT_SECRET` is unset or insecure. Recommended for production.                                                                                     |
+| `KLANGK_WORKSPACE_TOKEN_HOURS`       | `24`                                 | Lifetime in hours for per-workspace JWTs injected into containers. Containers use this token to authenticate to /llm-proxy and /api/workspace/post-chat-message.                           |
 | `KLANGK_DEFAULT_USER`                |                                      | Auto-seeded admin email on startup                                                                                                                                                         |
 | `KLANGK_DEFAULT_PASSWORD`            |                                      | Auto-seeded password on startup (omit to generate random; supports `file:` prefix)                                                                                                         |
 | `KLANGK_MIN_PASSWORD_LENGTH`         | `4`                                  | Minimum password length                                                                                                                                                                    |
@@ -477,6 +478,16 @@ KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_require_verified_email
 # Map Keycloak klangk-admin role to the admin group
 KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_admin_hook
 ```
+
+## Workspace JWT Auth
+
+Each container receives a `KLANGK_WORKSPACE_TOKEN` environment variable at startup — a signed JWT identifying the workspace. Containers include this token as `Authorization: Bearer <token>` in HTTP requests to the host. Nginx validates it via `auth_request` before allowing access to:
+
+- `/llm-proxy` — LLM API proxy (injects the real API key upstream)
+- `/api/browser-delegate` — browser-delegate bridge for Pi extensions
+- `/api/workspace/post-chat-message` — containers can post chat messages
+
+The token uses the same `KLANGK_JWT_SECRET` as user JWTs but is distinguished by a `purpose: "workspace"` claim. Token lifetime is controlled by `KLANGK_WORKSPACE_TOKEN_HOURS` (default 24h). IP-based ACLs (`CONTAINER_ACL`) remain as defense-in-depth alongside JWT validation.
 
 ## Authorization (ACL System)
 
