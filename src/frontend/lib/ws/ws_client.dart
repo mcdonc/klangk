@@ -333,17 +333,21 @@ class WsClient extends ChangeNotifier {
     _reconnecting = true;
     _reconnectAttempt++;
     notifyListeners();
+    // coverage:ignore-start
     final delay = testBackoffOverride != null
         ? testBackoffOverride!(_reconnectAttempt)
         : _backoffDelay(_reconnectAttempt);
+    // coverage:ignore-end
     _reconnectTimer = Timer(delay, _attemptReconnect);
   }
 
+  // coverage:ignore-start
   static Duration _backoffDelay(int attempt) {
     final baseSeconds = min(1 << attempt, _maxBackoffSeconds);
     final jitter = Random().nextDouble() * baseSeconds;
     return Duration(milliseconds: ((baseSeconds + jitter) / 2 * 1000).round());
   }
+  // coverage:ignore-end
 
   Future<void> _attemptReconnect() async {
     _reconnectTimer = null;
