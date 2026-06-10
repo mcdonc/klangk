@@ -333,9 +333,9 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: "feat/file-renderer"
-      resolved-ref: "8c87c8790037c85c3744500de629b85c4c5aa299"
-      url: "https://github.com/runyaga/klangk-plugin-api.git"
+      ref: HEAD
+      resolved-ref: a2887d6cfc9508ff6fe0b4806d5bb08b69153058
+      url: "https://github.com/mcdonc/klangk-plugin-api.git"
     source: git
     version: "0.1.0"
   klangk_plugins:

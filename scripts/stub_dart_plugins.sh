@@ -43,15 +43,6 @@ cat >"$OVERRIDES" <<EOF
 dependency_overrides:
   klangk_plugins:
     path: $STUB_DIR
-  # The file-viewers stack needs the FileRenderer API, which currently lives on
-  # an unmerged branch of the plugin-api fork (mcdonc/klangk-plugin-api PR #2).
-  # Override klangk_plugin_api to that fork so both the stub package (which
-  # otherwise pins mcdonc) and the frontend resolve a single, FileRenderer-
-  # capable source. Drop this once PR #2 lands on mcdonc/main.
-  klangk_plugin_api:
-    git:
-      url: https://github.com/runyaga/klangk-plugin-api.git
-      ref: feat/file-renderer
 EOF
 ln -sf "$OVERRIDES" "$FRONTEND_DIR/pubspec_overrides.yaml"
 
