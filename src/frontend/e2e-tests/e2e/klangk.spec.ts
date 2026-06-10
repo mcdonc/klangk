@@ -2085,8 +2085,12 @@ test.describe("Klangk E2E", () => {
 
     await page2.waitForTimeout(2000);
 
-    expect(memberChatMessages.length).toBeGreaterThan(0);
-    const received = JSON.parse(memberChatMessages[0]);
+    // Filter out system messages (message_type 2 = join/leave)
+    const userMessages = memberChatMessages
+      .map((s) => JSON.parse(s))
+      .filter((m: any) => m.type === "chat_message" && m.message_type !== 2);
+    expect(userMessages.length).toBeGreaterThan(0);
+    const received = userMessages[0];
     expect(received.type).toBe("chat_message");
     expect(received.message).toBe("hello from e2e");
     expect(received.user_email).toBe(ownerEmail);
@@ -2277,8 +2281,12 @@ test.describe("Klangk E2E", () => {
 
     await page1.waitForTimeout(2000);
 
-    expect(ownerChatMessages.length).toBeGreaterThan(0);
-    const chatMsg = JSON.parse(ownerChatMessages[0]);
+    // Filter out system messages (message_type 2 = join/leave)
+    const userChatMsgs = ownerChatMessages
+      .map((s) => JSON.parse(s))
+      .filter((m: any) => m.type === "chat_message" && m.message_type !== 2);
+    expect(userChatMsgs.length).toBeGreaterThan(0);
+    const chatMsg = userChatMsgs[0];
     expect(chatMsg.type).toBe("chat_message");
     expect(chatMsg.message).toContain(`@${memberEmail}`);
     expect(chatMsg.mentions).toBeDefined();
