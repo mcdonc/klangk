@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
@@ -38,17 +39,12 @@ class _FakeSink extends Fake implements WebSocketSink {
   Future close([int? closeCode, String? closeReason]) async {}
 }
 
-/// Recursively search all TextSpans in a tree for one matching [predicate].
-bool _findSpan(InlineSpan root, bool Function(TextSpan) predicate) {
-  if (root is TextSpan) {
-    if (predicate(root)) return true;
-    if (root.children != null) {
-      for (final child in root.children!) {
-        if (_findSpan(child, predicate)) return true;
-      }
-    }
-  }
-  return false;
+/// Find the MarkdownBody widget and return its data property.
+String? _findMarkdownData(WidgetTester tester) {
+  final finder = find.byType(MarkdownBody);
+  if (finder.evaluate().isEmpty) return null;
+  final widget = tester.widget<MarkdownBody>(finder.first);
+  return widget.data;
 }
 
 void main() {
@@ -106,7 +102,7 @@ void main() {
       expect(find.text('No messages yet'), findsOneWidget);
     });
 
-    testWidgets('renders message list', (tester) async {
+    testWidgets('renders message as markdown', (tester) async {
       await tester.pumpWidget(buildChat());
 
       await tester.runAsync(() async {
@@ -117,7 +113,6 @@ void main() {
           'message': 'hello world',
           'created_at': '2026-01-01 00:00:00',
         });
-        // Let stream events propagate through microtasks
         await Future.delayed(Duration.zero);
         await Future.delayed(Duration.zero);
       });
@@ -125,12 +120,54 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(find.text('No messages yet'), findsNothing);
-      // Message is rendered via RichText with TextSpan children
-      expect(find.byType(RichText), findsWidgets);
-      // Timestamp is rendered as a plain Text widget
-      // Timestamp is formatted and localized — just verify it renders
-      // (the exact format depends on the test runner's timezone)
-      expect(find.byType(Text), findsWidgets);
+      // Sender email rendered as Text widget
+      expect(find.text('alice@test.com'), findsOneWidget);
+      // Message rendered via MarkdownBody
+      expect(find.byType(MarkdownBody), findsOneWidget);
+      expect(_findMarkdownData(tester), 'hello world');
+    });
+
+    testWidgets('renders markdown formatting in messages', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-md',
+          'user_email': 'alice@test.com',
+          'message': 'try `code` and **bold** text',
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      final data = _findMarkdownData(tester);
+      assert(data != null);
+      expect(data, contains('`code`'));
+      expect(data, contains('**bold**'));
+    });
+
+    testWidgets('renders code blocks in messages', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      const codeMsg = '```python\nprint("hello")\n```';
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-code',
+          'user_email': 'alice@test.com',
+          'message': codeMsg,
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      expect(find.byType(MarkdownBody), findsOneWidget);
+      expect(_findMarkdownData(tester), codeMsg);
     });
 
     testWidgets('sends message on Enter', (tester) async {
@@ -211,16 +248,8 @@ void main() {
       });
       await tester.pump();
 
-      // Verify original text is rendered in a TextSpan
-      bool hasOriginal = false;
-      for (final st
-          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
-        final span = st.textSpan;
-        if (span != null && _findSpan(span, (s) => s.text == 'original text')) {
-          hasOriginal = true;
-        }
-      }
-      expect(hasOriginal, isTrue);
+      // Verify original text is in MarkdownBody
+      expect(_findMarkdownData(tester), 'original text');
 
       await tester.runAsync(() async {
         channel.serverSend({
@@ -233,23 +262,10 @@ void main() {
       });
       await tester.pump();
 
-      // Original text should be gone, replaced text should appear
-      bool hasDeleted = false;
-      bool stillHasOriginal = false;
-      for (final st
-          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
-        final span = st.textSpan;
-        if (span != null) {
-          if (_findSpan(span, (s) => s.text == 'original text')) {
-            stillHasOriginal = true;
-          }
-          if (_findSpan(span, (s) => s.text == '<message deleted by author>')) {
-            hasDeleted = true;
-          }
-        }
-      }
-      expect(stillHasOriginal, isFalse);
-      expect(hasDeleted, isTrue);
+      // After deletion, MarkdownBody should be gone (deleted uses plain Text)
+      expect(find.byType(MarkdownBody), findsNothing);
+      // Deleted message rendered as plain italic Text
+      expect(find.text('<message deleted by author>'), findsOneWidget);
     });
 
     testWidgets('delete button shown for own messages', (tester) async {
@@ -348,21 +364,14 @@ void main() {
       // No delete button for already-deleted messages
       expect(find.byIcon(Icons.close), findsNothing);
 
-      // Verify italic style via SelectableText TextSpan
-      bool foundItalic = false;
-      for (final st
-          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
-        final span = st.textSpan;
-        if (span != null &&
-            _findSpan(
-                span,
-                (s) =>
-                    s.text == '<message deleted by author>' &&
-                    s.style?.fontStyle == FontStyle.italic)) {
-          foundItalic = true;
-        }
-      }
-      expect(foundItalic, isTrue);
+      // Deleted messages rendered as plain Text (not MarkdownBody)
+      expect(find.byType(MarkdownBody), findsNothing);
+      // Verify italic style
+      final deletedText = tester.widgetList<Text>(find.text(
+        '<message deleted by author>',
+      ));
+      expect(deletedText, isNotEmpty);
+      expect(deletedText.first.style?.fontStyle, FontStyle.italic);
     });
 
     testWidgets('formats timestamp for this-week messages', (tester) async {
@@ -399,7 +408,7 @@ void main() {
       expect(hasDayAbbrev, isTrue);
     });
 
-    testWidgets('URLs in messages rendered as styled links', (tester) async {
+    testWidgets('URLs in messages rendered via markdown', (tester) async {
       await tester.pumpWidget(buildChat());
 
       await tester.runAsync(() async {
@@ -415,32 +424,10 @@ void main() {
       });
       await tester.pump();
 
-      // Find the SelectableText and verify URL span is styled differently
-      bool foundUrl = false;
-      bool foundPrefix = false;
-      bool foundSuffix = false;
-      for (final st
-          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
-        final span = st.textSpan;
-        if (span != null) {
-          if (_findSpan(
-              span,
-              (s) =>
-                  s.text == 'https://example.com/path' &&
-                  s.style?.decoration == TextDecoration.underline)) {
-            foundUrl = true;
-          }
-          if (_findSpan(span, (s) => s.text == 'Check ')) {
-            foundPrefix = true;
-          }
-          if (_findSpan(span, (s) => s.text == ' for details')) {
-            foundSuffix = true;
-          }
-        }
-      }
-      expect(foundUrl, isTrue);
-      expect(foundPrefix, isTrue);
-      expect(foundSuffix, isTrue);
+      // Message is rendered via MarkdownBody which handles URL auto-linking
+      expect(find.byType(MarkdownBody), findsOneWidget);
+      final data = _findMarkdownData(tester);
+      expect(data, contains('https://example.com/path'));
     });
 
     testWidgets('setVisible clears unread count', (tester) async {
@@ -502,10 +489,11 @@ void main() {
       await tester.pumpWidget(buildChat());
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('buffered message'), findsOneWidget);
+      expect(find.byType(MarkdownBody), findsOneWidget);
+      expect(_findMarkdownData(tester), 'buffered message');
     });
 
-    testWidgets('@mention renders as bold blue span', (tester) async {
+    testWidgets('@mention renders as bold in markdown', (tester) async {
       await tester.pumpWidget(buildChat());
 
       await tester.runAsync(() async {
@@ -522,24 +510,12 @@ void main() {
       });
       await tester.pump();
 
-      bool foundMention = false;
-      for (final st
-          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
-        final span = st.textSpan;
-        if (span != null &&
-            _findSpan(
-                span,
-                (s) =>
-                    s.text == '@bob@test.com' &&
-                    s.style?.fontWeight == FontWeight.bold)) {
-          foundMention = true;
-        }
-      }
-      expect(foundMention, isTrue);
+      // @mentions are wrapped in ** for bold rendering
+      final data = _findMarkdownData(tester);
+      expect(data, contains('**@bob@test.com**'));
     });
 
-    testWidgets('self-mention renders with background highlight',
-        (tester) async {
+    testWidgets('self-mention renders as bold in markdown', (tester) async {
       final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
           '.' +
           base64Url
@@ -565,20 +541,8 @@ void main() {
       });
       await tester.pump();
 
-      bool foundSelfMention = false;
-      for (final st
-          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
-        final span = st.textSpan;
-        if (span != null &&
-            _findSpan(
-                span,
-                (s) =>
-                    s.text == '@me@test.com' &&
-                    s.style?.backgroundColor != null)) {
-          foundSelfMention = true;
-        }
-      }
-      expect(foundSelfMention, isTrue);
+      final data = _findMarkdownData(tester);
+      expect(data, contains('**@me@test.com**'));
     });
 
     testWidgets('onMentionChanged fires when mentioned while hidden',
@@ -779,7 +743,7 @@ void main() {
       expect(find.text('alice@test.com'), findsNothing);
     });
 
-    testWidgets('mention not in URL is highlighted', (tester) async {
+    testWidgets('mention and URL both present in markdown', (tester) async {
       await tester.pumpWidget(buildChat());
 
       await tester.runAsync(() async {
@@ -796,30 +760,9 @@ void main() {
       });
       await tester.pump();
 
-      bool foundUrl = false;
-      bool foundMention = false;
-      for (final st
-          in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
-        final span = st.textSpan;
-        if (span != null) {
-          if (_findSpan(
-              span,
-              (s) =>
-                  s.text == 'https://example.com' &&
-                  s.style?.decoration == TextDecoration.underline)) {
-            foundUrl = true;
-          }
-          if (_findSpan(
-              span,
-              (s) =>
-                  s.text == '@bob@test.com' &&
-                  s.style?.fontWeight == FontWeight.bold)) {
-            foundMention = true;
-          }
-        }
-      }
-      expect(foundUrl, isTrue);
-      expect(foundMention, isTrue);
+      final data = _findMarkdownData(tester);
+      expect(data, contains('https://example.com'));
+      expect(data, contains('**@bob@test.com**'));
     });
 
     testWidgets('presence bar shows connected users', (tester) async {

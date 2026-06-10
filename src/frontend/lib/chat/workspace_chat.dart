@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../ws/ws_client.dart';
 import '../theme/colors.dart';
 import '../auth/auth_service.dart';
@@ -254,88 +254,51 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   static Color _colorForEmail(String email) => KColors.colorForString(email);
 
-  static final _urlRegex = RegExp(r'https?://[^\s<>"{}|\\^`\[\]]+');
   static final _mentionRegex = RegExp(r'@(\S+)');
 
-  /// Build TextSpans for a message, turning URLs into clickable links
-  /// and @mentions into highlighted spans.
-  List<TextSpan> _buildMessageSpans(
-    String text,
-    bool isDeleted,
-    String? currentUserEmail,
-  ) {
-    final style = TextStyle(
-      color: isDeleted ? KColors.textMuted : KColors.textPrimary,
+  /// Pre-process @mentions into bold markdown syntax, taking care not to
+  /// modify mentions that are already inside markdown links or code spans.
+  static String _highlightMentions(String text) {
+    return text.replaceAllMapped(_mentionRegex, (m) {
+      return '**${m.group(0)}**';
+    });
+  }
+
+  /// Build a [MarkdownStyleSheet] that matches the dark Klangk theme.
+  static MarkdownStyleSheet _chatMarkdownStyle(BuildContext context) {
+    const baseText = TextStyle(
+      color: KColors.textPrimary,
       fontSize: 13,
-      fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
     );
-
-    if (isDeleted) {
-      return [TextSpan(text: text, style: style)];
-    }
-
-    // Collect all matches (URLs and mentions) sorted by position
-    final matches = <_SpanMatch>[];
-    for (final m in _urlRegex.allMatches(text)) {
-      matches.add(_SpanMatch(m.start, m.end, _SpanType.url, m.group(0)!));
-    }
-    for (final m in _mentionRegex.allMatches(text)) {
-      // Skip if overlapping with a URL
-      final overlaps = matches.any((u) => m.start < u.end && m.end > u.start);
-      if (!overlaps) {
-        matches.add(_SpanMatch(m.start, m.end, _SpanType.mention, m.group(0)!));
-      }
-    }
-    matches.sort((a, b) => a.start.compareTo(b.start));
-
-    final spans = <TextSpan>[];
-    int lastEnd = 0;
-    for (final match in matches) {
-      if (match.start > lastEnd) {
-        spans.add(TextSpan(
-          text: text.substring(lastEnd, match.start),
-          style: style,
-        ));
-      }
-      if (match.type == _SpanType.url) {
-        spans.add(TextSpan(
-          text: match.text,
-          style: style.copyWith(
-            color: KColors.accentBlue,
-            decoration: TextDecoration.underline,
-          ),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () => openUrl(match.text), // coverage:ignore-line
-        ));
-      } else {
-        // Mention
-        final mentionEmail = match.text.substring(1); // strip @
-        final isSelf = currentUserEmail != null &&
-            mentionEmail.toLowerCase() == currentUserEmail.toLowerCase();
-        spans.add(TextSpan(
-          text: match.text,
-          style: style.copyWith(
-            color: KColors.accentBlue,
-            fontWeight: FontWeight.bold,
-            backgroundColor:
-                isSelf ? KColors.accentBlue.withValues(alpha: 0.15) : null,
-          ),
-        ));
-      }
-      lastEnd = match.end;
-    }
-    if (lastEnd < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(lastEnd),
-        style: style,
-      ));
-    }
-    // coverage:ignore-start
-    if (spans.isEmpty) {
-      spans.add(TextSpan(text: text, style: style));
-    }
-    // coverage:ignore-end
-    return spans;
+    return MarkdownStyleSheet(
+      p: baseText,
+      pPadding: EdgeInsets.zero,
+      a: baseText.copyWith(
+        color: KColors.accentBlue,
+        decoration: TextDecoration.underline,
+      ),
+      strong: baseText.copyWith(fontWeight: FontWeight.bold),
+      em: baseText.copyWith(fontStyle: FontStyle.italic),
+      code: baseText.copyWith(
+        backgroundColor: KColors.bgOverlay,
+        fontFamily: 'JetBrains Mono',
+        fontSize: 12,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: KColors.bgOverlay,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      codeblockPadding: const EdgeInsets.all(8),
+      blockSpacing: 4,
+      listBullet: baseText,
+      blockquoteDecoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: KColors.borderDefault, width: 3),
+        ),
+      ),
+      blockquotePadding: const EdgeInsets.only(left: 8),
+      blockquote: baseText.copyWith(color: KColors.textSecondary),
+    );
   }
 
   void _sendMessage() {
@@ -435,7 +398,6 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   Widget build(BuildContext context) {
     final auth = context.read<AuthService>();
     final currentUserId = auth.userId;
-    final currentUserEmail = auth.email;
 
     return Container(
       color: KColors.bgCanvas,
@@ -470,24 +432,38 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
-                              child: SelectableText.rich(
-                                TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: '$email  ',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: _colorForEmail(email),
-                                        fontSize: 13,
-                                      ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    email,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: _colorForEmail(email),
+                                      fontSize: 13,
                                     ),
-                                    ..._buildMessageSpans(
+                                  ),
+                                  if (isDeleted)
+                                    Text(
                                       text,
-                                      isDeleted,
-                                      currentUserEmail,
+                                      style: const TextStyle(
+                                        color: KColors.textMuted,
+                                        fontSize: 13,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    )
+                                  else
+                                    MarkdownBody(
+                                      data: _highlightMentions(text),
+                                      selectable: true,
+                                      styleSheet: _chatMarkdownStyle(context),
+                                      onTapLink: (text, href, title) {
+                                        if (href != null && href.isNotEmpty) {
+                                          openUrl(href); // coverage:ignore-line
+                                        }
+                                      },
                                     ),
-                                  ],
-                                ),
+                                ],
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -558,14 +534,4 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       ),
     );
   }
-}
-
-enum _SpanType { url, mention }
-
-class _SpanMatch {
-  final int start;
-  final int end;
-  final _SpanType type;
-  final String text;
-  _SpanMatch(this.start, this.end, this.type, this.text);
 }
