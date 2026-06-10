@@ -270,10 +270,12 @@ void main() {
     });
 
     testWidgets('delete button shown for own messages', (tester) async {
-      final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
+      final fakeJwt =
+          base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
           '.' +
           base64Url.encode(
-              utf8.encode('{"sub":"test-uid","email":"test@test.com"}')) +
+            utf8.encode('{"sub":"test-uid","email":"test@test.com"}'),
+          ) +
           '.sig';
       SharedPreferences.setMockInitialValues({'klangk_jwt': fakeJwt});
       final auth = AuthService();
@@ -299,10 +301,12 @@ void main() {
     });
 
     testWidgets('delete button calls sendChatDelete', (tester) async {
-      final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
+      final fakeJwt =
+          base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
           '.' +
           base64Url.encode(
-              utf8.encode('{"sub":"test-uid","email":"test@test.com"}')) +
+            utf8.encode('{"sub":"test-uid","email":"test@test.com"}'),
+          ) +
           '.sig';
       SharedPreferences.setMockInitialValues({'klangk_jwt': fakeJwt});
       final auth = AuthService();
@@ -335,12 +339,15 @@ void main() {
       expect(delMsgs[0]['message_id'], 'msg-del');
     });
 
-    testWidgets('deleted message shown in italic without delete button',
-        (tester) async {
-      final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
+    testWidgets('deleted message shown in italic without delete button', (
+      tester,
+    ) async {
+      final fakeJwt =
+          base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
           '.' +
           base64Url.encode(
-              utf8.encode('{"sub":"test-uid","email":"test@test.com"}')) +
+            utf8.encode('{"sub":"test-uid","email":"test@test.com"}'),
+          ) +
           '.sig';
       SharedPreferences.setMockInitialValues({'klangk_jwt': fakeJwt});
       final auth = AuthService();
@@ -368,9 +375,9 @@ void main() {
       // Deleted messages rendered as plain Text (not MarkdownBody)
       expect(find.byType(MarkdownBody), findsNothing);
       // Verify italic style
-      final deletedText = tester.widgetList<Text>(find.text(
-        '<message deleted by author>',
-      ));
+      final deletedText = tester.widgetList<Text>(
+        find.text('<message deleted by author>'),
+      );
       expect(deletedText, isNotEmpty);
       expect(deletedText.first.style?.fontStyle, FontStyle.italic);
     });
@@ -404,8 +411,9 @@ void main() {
       for (final textWidget in tester.widgetList<Text>(find.byType(Text))) {
         if (textWidget.data != null) allText.add(textWidget.data!);
       }
-      final hasDayAbbrev =
-          allText.any((t) => dayAbbrevs.any((d) => t.contains(d)));
+      final hasDayAbbrev = allText.any(
+        (t) => dayAbbrevs.any((d) => t.contains(d)),
+      );
       expect(hasDayAbbrev, isTrue);
     });
 
@@ -435,10 +443,12 @@ void main() {
       final unreadCounts = <int>[];
       final chatKey = GlobalKey<WorkspaceChatState>();
 
-      await tester.pumpWidget(buildChat(
-        onUnreadChanged: (count) => unreadCounts.add(count),
-        chatKey: chatKey,
-      ));
+      await tester.pumpWidget(
+        buildChat(
+          onUnreadChanged: (count) => unreadCounts.add(count),
+          chatKey: chatKey,
+        ),
+      );
 
       // Send a message while not visible (default _isVisible is false)
       await tester.runAsync(() async {
@@ -517,10 +527,12 @@ void main() {
     });
 
     testWidgets('self-mention renders as bold in markdown', (tester) async {
-      final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
+      final fakeJwt =
+          base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
           '.' +
-          base64Url
-              .encode(utf8.encode('{"sub":"my-uid","email":"me@test.com"}')) +
+          base64Url.encode(
+            utf8.encode('{"sub":"my-uid","email":"me@test.com"}'),
+          ) +
           '.sig';
       SharedPreferences.setMockInitialValues({'klangk_jwt': fakeJwt});
       final auth = AuthService();
@@ -546,12 +558,15 @@ void main() {
       expect(data, contains('**@me@test.com**'));
     });
 
-    testWidgets('onMentionChanged fires when mentioned while hidden',
-        (tester) async {
-      final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
+    testWidgets('onMentionChanged fires when mentioned while hidden', (
+      tester,
+    ) async {
+      final fakeJwt =
+          base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
           '.' +
-          base64Url
-              .encode(utf8.encode('{"sub":"my-uid","email":"me@test.com"}')) +
+          base64Url.encode(
+            utf8.encode('{"sub":"my-uid","email":"me@test.com"}'),
+          ) +
           '.sig';
       SharedPreferences.setMockInitialValues({'klangk_jwt': fakeJwt});
       final auth = AuthService();
@@ -560,11 +575,13 @@ void main() {
       final mentionStates = <bool>[];
       final chatKey = GlobalKey<WorkspaceChatState>();
 
-      await tester.pumpWidget(buildChat(
-        authService: auth,
-        onMentionChanged: (m) => mentionStates.add(m),
-        chatKey: chatKey,
-      ));
+      await tester.pumpWidget(
+        buildChat(
+          authService: auth,
+          onMentionChanged: (m) => mentionStates.add(m),
+          chatKey: chatKey,
+        ),
+      );
 
       // Chat is not visible by default
       await tester.runAsync(() async {
@@ -589,10 +606,12 @@ void main() {
     });
 
     testWidgets('mention not fired for non-self mentions', (tester) async {
-      final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
+      final fakeJwt =
+          base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
           '.' +
-          base64Url
-              .encode(utf8.encode('{"sub":"my-uid","email":"me@test.com"}')) +
+          base64Url.encode(
+            utf8.encode('{"sub":"my-uid","email":"me@test.com"}'),
+          ) +
           '.sig';
       SharedPreferences.setMockInitialValues({'klangk_jwt': fakeJwt});
       final auth = AuthService();
@@ -600,10 +619,12 @@ void main() {
 
       final mentionStates = <bool>[];
 
-      await tester.pumpWidget(buildChat(
-        authService: auth,
-        onMentionChanged: (m) => mentionStates.add(m),
-      ));
+      await tester.pumpWidget(
+        buildChat(
+          authService: auth,
+          onMentionChanged: (m) => mentionStates.add(m),
+        ),
+      );
 
       await tester.runAsync(() async {
         channel.serverSend({
@@ -724,8 +745,9 @@ void main() {
       expect(find.text('alice@test.com'), findsNothing);
     });
 
-    testWidgets('@autocomplete handles invalid cursor position',
-        (tester) async {
+    testWidgets('@autocomplete handles invalid cursor position', (
+      tester,
+    ) async {
       client.workspaceMembers = [
         {'id': 'u1', 'email': 'alice@test.com'},
       ];
@@ -808,10 +830,12 @@ void main() {
     });
 
     testWidgets('self user shown with outline style', (tester) async {
-      final fakeJwt = base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
+      final fakeJwt =
+          base64Url.encode(utf8.encode('{"alg":"HS256"}')) +
           '.' +
-          base64Url
-              .encode(utf8.encode('{"sub":"my-uid","email":"me@test.com"}')) +
+          base64Url.encode(
+            utf8.encode('{"sub":"my-uid","email":"me@test.com"}'),
+          ) +
           '.sig';
       SharedPreferences.setMockInitialValues({'klangk_jwt': fakeJwt});
       final auth = AuthService();
@@ -829,15 +853,18 @@ void main() {
       expect(find.text('O'), findsOneWidget);
 
       // Self avatar should have transparent background (outline style)
-      final avatars =
-          tester.widgetList<CircleAvatar>(find.byType(CircleAvatar));
+      final avatars = tester.widgetList<CircleAvatar>(
+        find.byType(CircleAvatar),
+      );
       final selfAvatar = avatars.firstWhere(
         (a) => a.backgroundColor == Colors.transparent,
       );
       expect(selfAvatar, isNotNull);
     });
 
-    testWidgets('Tab key accepts first autocomplete suggestion', (tester) async {
+    testWidgets('Tab key accepts first autocomplete suggestion', (
+      tester,
+    ) async {
       client.workspaceMembers = [
         {'id': 'u1', 'email': 'alice@test.com'},
         {'id': 'u2', 'email': 'bob@test.com'},
@@ -857,8 +884,7 @@ void main() {
       expect(field.controller!.text, '@alice@test.com ');
     });
 
-    testWidgets('Arrow keys navigate autocomplete suggestions',
-        (tester) async {
+    testWidgets('Arrow keys navigate autocomplete suggestions', (tester) async {
       client.workspaceMembers = [
         {'id': 'u1', 'email': 'alice@test.com'},
         {'id': 'u2', 'email': 'bob@test.com'},
@@ -903,8 +929,9 @@ void main() {
       expect(field.controller!.text, '@alice@test.com ');
     });
 
-    testWidgets('Enter key accepts autocomplete when overlay is visible',
-        (tester) async {
+    testWidgets('Enter key accepts autocomplete when overlay is visible', (
+      tester,
+    ) async {
       client.workspaceMembers = [
         {'id': 'u1', 'email': 'alice@test.com'},
       ];
@@ -997,8 +1024,7 @@ void main() {
       await tester.pump();
 
       final field = tester.widget<TextField>(find.byType(TextField));
-      field.controller!.selection =
-          const TextSelection.collapsed(offset: 0);
+      field.controller!.selection = const TextSelection.collapsed(offset: 0);
       await tester.pump();
 
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
@@ -1007,6 +1033,45 @@ void main() {
       await tester.pump();
 
       expect(field.controller!.selection.baseOffset, 11);
+    });
+
+    testWidgets('Ctrl+K kills to end of line', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'hello world');
+      await tester.pump();
+
+      // Move cursor to position 5 (after "hello")
+      final field = tester.widget<TextField>(find.byType(TextField));
+      field.controller!.selection = const TextSelection.collapsed(offset: 5);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(field.controller!.text, 'hello');
+      expect(field.controller!.selection.baseOffset, 5);
+    });
+
+    testWidgets('Ctrl+K at newline joins lines', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'line1\nline2');
+      await tester.pump();
+
+      // Move cursor to position 5 (the newline between lines)
+      final field = tester.widget<TextField>(find.byType(TextField));
+      field.controller!.selection = const TextSelection.collapsed(offset: 5);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(field.controller!.text, 'line1line2');
     });
 
     testWidgets('Shift+Ctrl+A selects all text', (tester) async {
@@ -1049,8 +1114,9 @@ void main() {
       expect(field.controller!.text, 'first');
     });
 
-    testWidgets('Down arrow restores draft after history recall',
-        (tester) async {
+    testWidgets('Down arrow restores draft after history recall', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildChat());
 
       await tester.enterText(find.byType(TextField), 'sent msg');
@@ -1102,8 +1168,9 @@ void main() {
       expect(field.controller!.text, 'third');
     });
 
-    testWidgets('autocomplete highlight clamps when list shrinks',
-        (tester) async {
+    testWidgets('autocomplete highlight clamps when list shrinks', (
+      tester,
+    ) async {
       client.workspaceMembers = [
         {'id': 'u1', 'email': 'alice@test.com'},
         {'id': 'u2', 'email': 'bob@test.com'},
@@ -1130,8 +1197,9 @@ void main() {
       expect(field.controller!.text, '@bob@test.com ');
     });
 
-    testWidgets('long message is truncated with show more link',
-        (tester) async {
+    testWidgets('long message is truncated with show more link', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildChat());
 
       final longMsg = 'A' * 500;

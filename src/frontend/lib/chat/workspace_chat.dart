@@ -179,8 +179,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             _inputKey.currentContext?.findRenderObject() as RenderBox?;
         if (renderBox == null) return const SizedBox.shrink();
         final offset = renderBox.localToGlobal(Offset.zero);
-        final visibleCount =
-            _filteredMembers.length > 5 ? 5 : _filteredMembers.length;
+        final visibleCount = _filteredMembers.length > 5
+            ? 5
+            : _filteredMembers.length;
         final height = visibleCount * 36.0;
         return Positioned(
           left: offset.dx,
@@ -358,6 +359,28 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       return KeyEventResult.handled;
     }
 
+    // Ctrl+K → kill from cursor to end of current line (emacs-style)
+    if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyK) {
+      final text = _textController.text;
+      final cursor = _textController.selection.baseOffset;
+      if (cursor >= 0) {
+        var lineEnd = text.indexOf('\n', cursor);
+        if (lineEnd < 0) {
+          // Last line: delete to end of text
+          lineEnd = text.length;
+        } else if (lineEnd == cursor) {
+          // Cursor is at a newline: delete just the newline (join lines)
+          lineEnd = cursor + 1;
+        }
+        final newText = text.substring(0, cursor) + text.substring(lineEnd);
+        _textController.value = TextEditingValue(
+          text: newText,
+          selection: TextSelection.collapsed(offset: cursor),
+        );
+      }
+      return KeyEventResult.handled;
+    }
+
     return KeyEventResult.ignored;
   }
 
@@ -427,10 +450,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   /// Build a [MarkdownStyleSheet] that matches the dark Klangk theme.
   static MarkdownStyleSheet _chatMarkdownStyle(BuildContext context) {
-    const baseText = TextStyle(
-      color: KColors.textPrimary,
-      fontSize: 13,
-    );
+    const baseText = TextStyle(color: KColors.textPrimary, fontSize: 13);
     return MarkdownStyleSheet(
       p: baseText,
       pPadding: EdgeInsets.zero,
@@ -507,10 +527,12 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                 message: email,
                 child: CircleAvatar(
                   radius: 10,
-                  backgroundColor:
-                      isSelf ? Colors.transparent : _colorForEmail(email),
-                  foregroundColor:
-                      isSelf ? _colorForEmail(email) : Colors.white,
+                  backgroundColor: isSelf
+                      ? Colors.transparent
+                      : _colorForEmail(email),
+                  foregroundColor: isSelf
+                      ? _colorForEmail(email)
+                      : Colors.white,
                   child: isSelf
                       ? DecoratedBox(
                           decoration: BoxDecoration(
