@@ -142,10 +142,10 @@ test.describe("Klangk E2E", () => {
         position: { x: width / 2, y: height / 2 },
         force: true,
       });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
       // ControlOrMeta → Cmd on macOS, Ctrl elsewhere (CI is Linux).
       await page.keyboard.press("ControlOrMeta+KeyV");
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
       await page.keyboard.press("Enter");
 
       await waitForFile(request, workspaceId, "work/.paste-test", headers);
@@ -248,10 +248,10 @@ test.describe("Klangk E2E", () => {
         position: { x: width / 2, y: height / 2 },
         force: true,
       });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
       await page.keyboard.type("echo COPYTEST123");
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       // Select the output by dragging across the first line of output.
       // The "COPYTEST123" should be on the second line (first is the command).
@@ -263,7 +263,7 @@ test.describe("Klangk E2E", () => {
       await page.mouse.down();
       await page.mouse.move(endX, lineY, { steps: 10 });
       await page.mouse.up();
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
       // Read clipboard — should contain the selected text.
       // WebKit doesn't support clipboard.readText() even with
@@ -306,24 +306,23 @@ test.describe("Klangk E2E", () => {
         position: { x: width / 2, y: height / 2 },
         force: true,
       });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
       // Right-click — should NOT show Flutter popup (no selection).
-      // Capture a screenshot to verify no Flutter menu overlay.
       await f.click({
         position: { x: width / 2, y: height / 2 },
         button: "right",
         force: true,
       });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
       // Dismiss whatever context menu appeared
       await page.keyboard.press("Escape");
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(200);
 
       // Type a command to verify the terminal is still interactive
       await page.keyboard.type("echo rc-works");
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(200);
 
       // The Flutter popup would have intercepted the right-click and
       // shown Copy/Paste. If no Flutter menu appeared, the terminal
@@ -356,17 +355,17 @@ test.describe("Klangk E2E", () => {
         position: { x: width / 2, y: height / 2 },
         force: true,
       });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
       await page.keyboard.type("echo SELECTME");
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       // Select text by dragging across the output
       await page.mouse.move(10, 130);
       await page.mouse.down();
       await page.mouse.move(200, 130, { steps: 10 });
       await page.mouse.up();
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
       // Right-click on the selection — should NOT show Flutter popup
       await f.click({
@@ -374,15 +373,15 @@ test.describe("Klangk E2E", () => {
         button: "right",
         force: true,
       });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
       // Dismiss whatever context menu appeared
       await page.keyboard.press("Escape");
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(200);
 
       // Terminal should still be interactive after dismissing
       await page.keyboard.type("echo still-works");
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(200);
     } finally {
       await cleanup();
     }
@@ -424,15 +423,15 @@ test.describe("Klangk E2E", () => {
       const tabWidth = width / 5;
       const filesTabX = tabWidth + tabWidth / 2;
       await f.click({ position: { x: filesTabX, y: 76 }, force: true });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
       // Fire the paste shortcut and Enter. If the terminal listener
       // mistakenly consumed the event, the canary file would appear; if it
       // correctly returned false, nothing reaches the PTY.
       await page.keyboard.press("ControlOrMeta+KeyV");
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       const readResp = await request.get(
         `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.paste-leak-canary`,
@@ -503,7 +502,7 @@ test.describe("Klangk E2E", () => {
 
     // Logout button is in the top-right corner of the workspaces page
     await flutterClick(page, width - 25, 28);
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(500);
 
     await expect(page).toHaveTitle(/Login/i, { timeout: 30_000 });
   });
@@ -607,17 +606,17 @@ test.describe("Klangk E2E", () => {
 
       // Switch to Files tab
       await f.click({ position: { x: filesTabX, y: 76 }, force: true });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
       // Switch back to Terminal tab
       await f.click({ position: { x: termTabX, y: 76 }, force: true });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
 
       // Switch to Files again and back
       await f.click({ position: { x: filesTabX, y: 76 }, force: true });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
       await f.click({ position: { x: termTabX, y: 76 }, force: true });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       // Terminal should still work — run a command
       const termX = width / 2;
@@ -677,7 +676,7 @@ test.describe("Klangk E2E", () => {
 
       // Container should still be running after navigating away
       // (idle timeout handles cleanup, not disconnect)
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(1000);
       const containersAfter = dockerContainersForWorkspace(workspaceId);
       expect(containersAfter.length).toBe(1);
       expect(containersAfter[0]).toBe(containersBefore[0]);
@@ -1442,7 +1441,7 @@ test.describe("Klangk E2E", () => {
     });
 
     // Wait for presence_list to arrive
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1000);
 
     expect(presenceMessages.length).toBeGreaterThan(0);
     const presenceList = JSON.parse(

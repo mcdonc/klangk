@@ -228,7 +228,7 @@ export async function openFilesTab(page: Page) {
   const { width } = vp(page);
   const tabWidth = width / 5;
   await flutterClick(page, tabWidth + tabWidth / 2, 76);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
 }
 
 /** Tap a file row in the file list by its 0-based index. Rows are dense
@@ -237,7 +237,7 @@ export async function clickFileRow(page: Page, index: number) {
   const rowY = 110 + index * 48;
   const { width } = vp(page);
   await flutterClick(page, width / 2, rowY);
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(300);
 }
 
 /** Click the terminal area, wait for it to be interactive, then type a command and press Enter. */
@@ -253,7 +253,7 @@ export async function terminalType(
   const f = fv(page);
 
   await f.click({ position: { x, y }, force: true });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
 }
