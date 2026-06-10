@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../auth/auth_service.dart';
@@ -34,9 +35,33 @@ class WsClient extends ChangeNotifier {
   bool _connected = false;
   Timer? _heartbeatTimer;
 
+  /// Whether an automatic reconnection is in progress.
+  bool _reconnecting = false;
+  bool get reconnecting => _reconnecting;
+
+  /// Current reconnect attempt number (0 when not reconnecting).
+  int _reconnectAttempt = 0;
+  int get reconnectAttempt => _reconnectAttempt;
+
+  Timer? _reconnectTimer;
+
+  /// Whether auto-reconnect should be attempted on disconnect.
+  /// Set to false during intentional disconnects.
+  bool _autoReconnect = false;
+
+  /// Max backoff duration in seconds.
+  static const int _maxBackoffSeconds = 30;
+
+  /// Workspace ID to rejoin after reconnecting.
+  String? _pendingWorkspaceId;
+
   /// Override for testing to inject a fake channel factory.
   @visibleForTesting
   static WebSocketChannel Function(Uri uri)? testChannelFactory;
+
+  /// Override for testing to control reconnect backoff delay.
+  @visibleForTesting
+  static Duration Function(int attempt)? testBackoffOverride;
 
   /// Inject a pre-connected channel for testing.
   @visibleForTesting
@@ -97,6 +122,8 @@ class WsClient extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     if (_connected || _auth?.token == null) return;
 
     if (testChannelFactory != null) {
@@ -140,6 +167,9 @@ class WsClient extends ChangeNotifier {
           if (type == 'workspace_ready') {
             _currentWorkspaceId = json['workspaceId'] as String?;
             _defaultCommand = json['defaultCommand'] as String?;
+            _reconnecting = false;
+            _reconnectAttempt = 0;
+            _pendingWorkspaceId = null;
             _startHeartbeat();
             notifyListeners();
           } else if (type == 'terminal_output') {
@@ -195,20 +225,28 @@ class WsClient extends ChangeNotifier {
         }
       },
       onDone: () {
+        _stopHeartbeat();
         _connected = false;
+        _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
         _defaultCommand = null;
         notifyListeners();
+        _scheduleReconnect();
       },
       onError: (e) {
         _errorController.add('WebSocket error: $e');
+        _stopHeartbeat();
         _connected = false;
+        _pendingWorkspaceId ??= _currentWorkspaceId;
+        _currentWorkspaceId = null;
         notifyListeners();
+        _scheduleReconnect();
       },
     );
   }
 
   void disconnect() {
+    _cancelReconnect();
     _stopHeartbeat();
     _channel?.sink.close();
     _channel = null;
@@ -230,10 +268,13 @@ class WsClient extends ChangeNotifier {
   }
 
   void connectWorkspace(String workspaceId) {
+    _autoReconnect = true;
+    _pendingWorkspaceId = workspaceId;
     _send({'cmd': 'workspace_connect', 'workspaceId': workspaceId});
   }
 
   void disconnectWorkspace() {
+    _cancelReconnect();
     _stopHeartbeat();
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
@@ -293,6 +334,48 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'browser_chunk', 'id': id, 'delta': delta});
   }
 
+  void _scheduleReconnect() {
+    if (!_autoReconnect || _reconnecting) return;
+    _reconnecting = true;
+    _reconnectAttempt++;
+    notifyListeners();
+    // coverage:ignore-start
+    final delay = testBackoffOverride != null
+        ? testBackoffOverride!(_reconnectAttempt)
+        : _backoffDelay(_reconnectAttempt);
+    // coverage:ignore-end
+    _reconnectTimer = Timer(delay, _attemptReconnect);
+  }
+
+  // coverage:ignore-start
+  static Duration _backoffDelay(int attempt) {
+    final baseSeconds = min(1 << attempt, _maxBackoffSeconds);
+    final jitter = Random().nextDouble() * baseSeconds;
+    return Duration(milliseconds: ((baseSeconds + jitter) / 2 * 1000).round());
+  }
+  // coverage:ignore-end
+
+  Future<void> _attemptReconnect() async {
+    _reconnectTimer = null;
+    await connect();
+    if (_connected && _pendingWorkspaceId != null) {
+      connectWorkspace(_pendingWorkspaceId!);
+    } else if (!_connected) {
+      // connect() failed — schedule next attempt
+      _reconnecting = false;
+      _scheduleReconnect();
+    }
+  }
+
+  void _cancelReconnect() {
+    _autoReconnect = false;
+    _reconnecting = false;
+    _reconnectAttempt = 0;
+    _pendingWorkspaceId = null;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+  }
+
   void _startHeartbeat() {
     _stopHeartbeat();
     _heartbeatTimer = Timer.periodic(
@@ -308,6 +391,7 @@ class WsClient extends ChangeNotifier {
 
   @override
   void dispose() {
+    _cancelReconnect();
     disconnect();
     _errorController.close();
     _terminalOutputController.close();

@@ -254,6 +254,311 @@ void main() {
     });
   });
 
+  group('WsClient auto-reconnect', () {
+    late List<_FakeWebSocketChannel> channels;
+
+    setUp(() {
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+      channels = [];
+      WsClient.testChannelFactory = (_) {
+        final ch = _FakeWebSocketChannel();
+        channels.add(ch);
+        return ch;
+      };
+      WsClient.testBackoffOverride = (_) => Duration.zero;
+    });
+
+    tearDown(() {
+      WsClient.testChannelFactory = null;
+      WsClient.testBackoffOverride = null;
+    });
+
+    test('server close triggers auto-reconnect when workspace was connected',
+        () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      expect(client.connected, isTrue);
+
+      // Simulate workspace connection
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+      expect(client.currentWorkspaceId, 'ws-1');
+
+      // Server closes connection
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.connected, isFalse);
+      expect(client.reconnecting, isTrue);
+      expect(client.reconnectAttempt, 1);
+
+      // Let the reconnect timer fire (Duration.zero)
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      expect(channels.length, 2);
+      expect(client.connected, isTrue);
+
+      // workspace_connect should have been re-sent
+      final msgs = channels[1]
+          .sentMessages
+          .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
+          .toList();
+      expect(msgs.any((m) => m['cmd'] == 'workspace_connect'), isTrue);
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('server error triggers auto-reconnect', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // Consume error stream to prevent unhandled errors
+      final errors = <String>[];
+      client.errors.listen(errors.add);
+
+      channels[0].serverError(Exception('network failure'));
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isTrue);
+      expect(client.reconnectAttempt, 1);
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('successful reconnect clears reconnect state', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // Disconnect
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.reconnecting, isTrue);
+
+      // Reconnect fires
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      expect(channels.length, 2);
+
+      // Backend responds with workspace_ready
+      channels[1]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isFalse);
+      expect(client.reconnectAttempt, 0);
+      expect(client.connected, isTrue);
+      expect(client.currentWorkspaceId, 'ws-1');
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('intentional disconnect does NOT trigger auto-reconnect', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      client.disconnect();
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isFalse);
+      expect(client.reconnectAttempt, 0);
+      expect(channels.length, 1); // no second channel created
+
+      client.dispose();
+    });
+
+    test('disconnectWorkspace does NOT trigger auto-reconnect', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      client.disconnectWorkspace();
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isFalse);
+      expect(client.reconnectAttempt, 0);
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('reconnect attempt increments on repeated failures', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // First disconnect
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.reconnectAttempt, 1);
+
+      // Reconnect fires, but new channel fails
+      channels.add(_FakeWebSocketChannel()..failReady = true);
+      // Override factory to return the failing channel
+      var callCount = 0;
+      WsClient.testChannelFactory = (_) {
+        callCount++;
+        if (channels.length > callCount) return channels[callCount];
+        final ch = _FakeWebSocketChannel()..failReady = true;
+        channels.add(ch);
+        return ch;
+      };
+
+      // Let first reconnect attempt fire and fail
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnectAttempt, greaterThan(1));
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('no auto-reconnect before workspace connected', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      // Don't call connectWorkspace — _autoReconnect stays false
+
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isFalse);
+      expect(channels.length, 1);
+
+      client.dispose();
+    });
+
+    test('manual connect cancels pending reconnect timer', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      // Use a long backoff so the timer doesn't fire before our manual connect
+      WsClient.testBackoffOverride = (_) => const Duration(seconds: 60);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // Server closes
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.reconnecting, isTrue);
+
+      // Manual connect before timer fires
+      await client.connect();
+      expect(client.connected, isTrue);
+      expect(channels.length, 2);
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('dispose cancels reconnect timer', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      WsClient.testBackoffOverride = (_) => const Duration(seconds: 60);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.reconnecting, isTrue);
+
+      // Dispose should cancel reconnect and not throw
+      client.dispose();
+      expect(client.reconnecting, isFalse);
+      expect(channels.length, 1); // no reconnect attempt was made
+    });
+
+    test('backoff delay override is called with correct attempt', () async {
+      final attempts = <int>[];
+      WsClient.testBackoffOverride = (attempt) {
+        attempts.add(attempt);
+        return Duration.zero;
+      };
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+
+      expect(attempts, [1]);
+
+      client.disconnect();
+      client.dispose();
+    });
+  });
+
   group('WsClient with fake channel', () {
     late WsClient client;
     late _FakeWebSocketChannel channel;
