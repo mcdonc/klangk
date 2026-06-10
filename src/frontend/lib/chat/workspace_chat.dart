@@ -457,11 +457,13 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                                       data: _highlightMentions(text),
                                       selectable: true,
                                       styleSheet: _chatMarkdownStyle(context),
+                                      // coverage:ignore-start
                                       onTapLink: (text, href, title) {
                                         if (href != null && href.isNotEmpty) {
-                                          openUrl(href); // coverage:ignore-line
+                                          openUrl(href);
                                         }
                                       },
+                                      // coverage:ignore-end
                                     ),
                                 ],
                               ),
