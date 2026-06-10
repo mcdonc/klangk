@@ -227,6 +227,17 @@ trivy-host --severity CRITICAL    # critical only
 
 The `image-host.yml` workflow builds and pushes the host image to GHCR. It is triggered manually via `workflow_dispatch` (building is too expensive for automatic push triggers). The `image-workspace.yml` workflow builds and pushes the workspace image independently on push to `main`.
 
+### Releasing
+
+Push a CalVer tag to trigger the `release.yml` workflow:
+
+```bash
+git tag v2026.06.10
+git push origin v2026.06.10
+```
+
+This builds the host image (including workspace and Flutter web), pushes both `klangk-host` and `klangk-workspace` to GHCR tagged with `latest` and the version, and creates a GitHub Release with auto-generated notes. If you need a second release on the same day, append a suffix: `v2026.06.10.1`.
+
 ## Build Architecture (amd64 / arm64)
 
 All workspace image builds (`build-workspace-image`, `build-base-image`) use podman and build for `$KLANGK_PLATFORM`, which `devenv.nix` defaults to the host architecture (`linux/arm64` on Apple Silicon, `linux/amd64` elsewhere). This means images build and run natively instead of under QEMU emulation. The host container (`build-host-image`) still uses Docker. Override per-shell via `.env`:
