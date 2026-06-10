@@ -1452,6 +1452,69 @@ async def delete_chat_message(message_id: str, user_id: str) -> bool:
         await db.close()
 
 
+async def get_chat_messages_before(
+    workspace_id: str, before_id: str, limit: int = 50
+) -> list[dict]:
+    """Get older chat messages before a given message ID."""
+    db = await get_db()
+    try:
+        # Get the created_at and rowid of the anchor message
+        cursor = await db.execute(
+            "SELECT created_at, rowid FROM chat_messages WHERE id = ?",
+            (before_id,),
+        )
+        anchor = await cursor.fetchone()
+        if anchor is None:
+            return []
+        anchor_ts = anchor["created_at"]
+        anchor_rowid = anchor["rowid"]
+
+        cursor = await db.execute(
+            "SELECT id, workspace_id, user_id, user_email, message,"
+            " message_type, created_at"
+            " FROM chat_messages WHERE workspace_id = ?"
+            " AND (created_at < ? OR (created_at = ? AND rowid < ?))"
+            " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (workspace_id, anchor_ts, anchor_ts, anchor_rowid, limit),
+        )
+        rows = await cursor.fetchall()
+        messages = list(
+            reversed(
+                [
+                    {
+                        "id": row["id"],
+                        "workspace_id": row["workspace_id"],
+                        "user_id": row["user_id"],
+                        "user_email": row["user_email"],
+                        "message": row["message"],
+                        "message_type": row["message_type"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
+            )
+        )
+        if messages:
+            msg_ids = [m["id"] for m in messages]
+            placeholders = ",".join("?" for _ in msg_ids)
+            cursor = await db.execute(
+                "SELECT message_id, user_id FROM chat_mentions"
+                " WHERE message_id IN (" + placeholders + ")",
+                msg_ids,
+            )
+            mention_rows = await cursor.fetchall()
+            mentions_by_msg: dict[str, list[str]] = {}
+            for mr in mention_rows:
+                mentions_by_msg.setdefault(mr["message_id"], []).append(
+                    mr["user_id"]
+                )
+            for m in messages:
+                m["mentions"] = mentions_by_msg.get(m["id"], [])
+        return messages
+    finally:
+        await db.close()
+
+
 async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
     """Get the most recent chat messages for a workspace."""
     db = await get_db()

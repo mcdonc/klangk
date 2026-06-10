@@ -1522,6 +1522,27 @@ class TestExecDispatch:
         mock.assert_awaited_once()
 
 
+class TestChatLoadMoreDispatch:
+    async def test_dispatch_chat_load_more(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {"cmd": "chat_load_more", "before_id": "x", "limit": 10}
+                ),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_chat_load_more", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+
 class TestHandleHeartbeat:
     async def test_records_activity(self):
         conn = _base_conn()
@@ -2575,6 +2596,41 @@ class TestChatSend:
         assert len(history) == 1
         assert len(history[0]["messages"]) == 1
         assert history[0]["messages"][0]["message"] == "old message"
+
+    async def test_chat_load_more(self, workspace, user):
+        from klangk_backend import model
+
+        msgs = []
+        for i in range(5):
+            msgs.append(
+                await model.add_chat_message(
+                    workspace["id"], "uid", "u@test.com", f"msg{i}"
+                )
+            )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        await conn.handle_chat_load_more(
+            {"before_id": msgs[4]["id"], "limit": 2}
+        )
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "chat_history_page"
+        assert len(sent["messages"]) == 2
+        assert sent["messages"][0]["message"] == "msg2"
+        assert sent["has_more"] is True
+
+    async def test_chat_load_more_no_workspace(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        await conn.handle_chat_load_more({"before_id": "x"})
+        sock.send_json.assert_not_called()
+
+    async def test_chat_load_more_no_before_id(self, workspace, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        await conn.handle_chat_load_more({})
+        sock.send_json.assert_not_called()
 
     async def test_workspace_members_on_connect(self, user):
         """Workspace members list is sent on connect."""

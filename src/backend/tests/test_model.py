@@ -649,6 +649,72 @@ class TestChatMessages:
         assert msgs[0]["message"] == "mine"
 
 
+class TestChatMessagesPagination:
+    async def test_get_messages_before(self, workspace, user):
+        msgs = []
+        for i in range(5):
+            msgs.append(
+                await model.add_chat_message(
+                    workspace["id"], "uid", "u@test.com", f"msg{i}"
+                )
+            )
+        # Load messages before the last one
+        older = await model.get_chat_messages_before(
+            workspace["id"], msgs[4]["id"], limit=50
+        )
+        assert len(older) == 4
+        assert older[0]["message"] == "msg0"
+        assert older[3]["message"] == "msg3"
+
+    async def test_get_messages_before_with_limit(self, workspace, user):
+        msgs = []
+        for i in range(5):
+            msgs.append(
+                await model.add_chat_message(
+                    workspace["id"], "uid", "u@test.com", f"msg{i}"
+                )
+            )
+        older = await model.get_chat_messages_before(
+            workspace["id"], msgs[4]["id"], limit=2
+        )
+        assert len(older) == 2
+        assert older[0]["message"] == "msg2"
+        assert older[1]["message"] == "msg3"
+
+    async def test_get_messages_before_invalid_id(self, workspace, user):
+        older = await model.get_chat_messages_before(
+            workspace["id"], "nonexistent", limit=50
+        )
+        assert older == []
+
+    async def test_get_messages_before_includes_mentions(
+        self, workspace, user
+    ):
+        # Create a user and add ACL so mention resolution finds them
+        target = await model.create_user(
+            "mention-pag@test.com", "pass", verified=True
+        )
+        await model.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=target["id"],
+        )
+        await model.add_chat_message(
+            workspace["id"], "uid", "u@test.com", f"hey @{target['email']}"
+        )
+        anchor = await model.add_chat_message(
+            workspace["id"], "uid", "u@test.com", "anchor"
+        )
+        older = await model.get_chat_messages_before(
+            workspace["id"], anchor["id"]
+        )
+        assert len(older) == 1
+        assert len(older[0]["mentions"]) > 0
+
+
 class TestChatMentions:
     async def test_mention_workspace_owner(self, workspace, user):
         """@mentioning the workspace owner resolves to their user ID."""
