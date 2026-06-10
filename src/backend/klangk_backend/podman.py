@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 
 from . import util
 
@@ -70,10 +71,13 @@ async def _run(
     spawn long-lived helpers (``pasta``) that inherit pipe fds, blocking
     ``communicate()`` forever.  Temp files avoid this.
     """
+    cmd_label = f"podman {args[0]}" if args else "podman"
+    t0 = time.monotonic()
     with (
         tempfile.TemporaryFile() as out_f,
         tempfile.TemporaryFile() as err_f,
     ):
+        t1 = time.monotonic()
         proc = await asyncio.create_subprocess_exec(
             PODMAN_BIN,
             *args,
@@ -84,16 +88,29 @@ async def _run(
             stderr=err_f,
             env=subprocess_env(),
         )
+        t2 = time.monotonic()
         if stdin_data is not None:
             proc.stdin.write(stdin_data)
             await proc.stdin.drain()
             proc.stdin.close()
         await proc.wait()
+        t3 = time.monotonic()
         out_f.seek(0)
         err_f.seek(0)
         out = out_f.read().decode("utf-8", errors="replace")
         err = err_f.read().decode("utf-8", errors="replace")
     rc = proc.returncode or 0
+    elapsed = t3 - t0
+    logger.info(
+        "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",
+        cmd_label,
+        t1 - t0,
+        t2 - t1,
+        t3 - t2,
+        elapsed,
+    )
+    if elapsed > 2.0 and err.strip():  # pragma: no cover
+        logger.info("podman-timing: %s stderr: %s", cmd_label, err.strip())
     if check and rc != 0:
         raise PodmanError(_classify(err), err.strip() or f"podman {args[0]}")
     return rc, out, err

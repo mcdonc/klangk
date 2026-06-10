@@ -145,6 +145,7 @@ async def lifespan(app: FastAPI):
     from . import wshandler
 
     container.registry.set_on_workspace_killed(wshandler.reset_workspace_state)
+    await container.registry.prewarm_podman()
     await container.registry.adopt_orphaned_containers()
     container.registry.start_cleanup_loop()
     logger.info("Klangk backend started")

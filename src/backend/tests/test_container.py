@@ -1503,6 +1503,23 @@ class TestStartCleanupLoop:
         container.registry.cleanup_task.cancel()
 
 
+class TestPrewarmPodman:
+    async def test_prewarm_creates_and_removes(self):
+        with patch_podman() as p:
+            await container.registry.prewarm_podman()
+        p.create_container.assert_awaited_once()
+        p.remove_container.assert_awaited_once_with("new-cid")
+
+    async def test_prewarm_handles_error(self):
+        with patch_podman(
+            create_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "boom")
+            )
+        ):
+            await container.registry.prewarm_podman()
+        # Should not raise
+
+
 class TestAdoptOrphanedContainers:
     def setup_method(self):
         container.registry.states.clear()
