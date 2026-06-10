@@ -42,6 +42,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   bool _isVisible = false;
   bool _hasMention = false;
 
+  // Expanded message IDs (for long message truncation)
+  final Set<String> _expandedMessages = {};
+
   // Sent message history (for Up/Down recall)
   final List<String> _sentHistory = [];
   int _historyIndex = -1;
@@ -176,9 +179,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             _inputKey.currentContext?.findRenderObject() as RenderBox?;
         if (renderBox == null) return const SizedBox.shrink();
         final offset = renderBox.localToGlobal(Offset.zero);
-        final visibleCount = _filteredMembers.length > 5
-            ? 5
-            : _filteredMembers.length;
+        final visibleCount =
+            _filteredMembers.length > 5 ? 5 : _filteredMembers.length;
         final height = visibleCount * 36.0;
         return Positioned(
           left: offset.dx,
@@ -505,12 +507,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                 message: email,
                 child: CircleAvatar(
                   radius: 10,
-                  backgroundColor: isSelf
-                      ? Colors.transparent
-                      : _colorForEmail(email),
-                  foregroundColor: isSelf
-                      ? _colorForEmail(email)
-                      : Colors.white,
+                  backgroundColor:
+                      isSelf ? Colors.transparent : _colorForEmail(email),
+                  foregroundColor:
+                      isSelf ? _colorForEmail(email) : Colors.white,
                   child: isSelf
                       ? DecoratedBox(
                           decoration: BoxDecoration(
@@ -600,40 +600,56 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    email,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: _colorForEmail(email),
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  if (isDeleted)
+                              child: _CollapsibleMessage(
+                                messageId: msg['id'] as String? ?? '',
+                                isExpanded: _expandedMessages.contains(
+                                  msg['id'],
+                                ),
+                                onToggle: () {
+                                  setState(() {
+                                    final id = msg['id'] as String? ?? '';
+                                    if (_expandedMessages.contains(id)) {
+                                      _expandedMessages.remove(id);
+                                    } else {
+                                      _expandedMessages.add(id);
+                                    }
+                                  });
+                                },
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                                     Text(
-                                      text,
-                                      style: const TextStyle(
-                                        color: KColors.textMuted,
+                                      email,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: _colorForEmail(email),
                                         fontSize: 13,
-                                        fontStyle: FontStyle.italic,
                                       ),
-                                    )
-                                  else
-                                    MarkdownBody(
-                                      data: _highlightMentions(text),
-                                      selectable: true,
-                                      styleSheet: _chatMarkdownStyle(context),
-                                      // coverage:ignore-start
-                                      onTapLink: (text, href, title) {
-                                        if (href != null && href.isNotEmpty) {
-                                          openUrl(href);
-                                        }
-                                      },
-                                      // coverage:ignore-end
                                     ),
-                                ],
+                                    if (isDeleted)
+                                      Text(
+                                        text,
+                                        style: const TextStyle(
+                                          color: KColors.textMuted,
+                                          fontSize: 13,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      )
+                                    else
+                                      MarkdownBody(
+                                        data: _highlightMentions(text),
+                                        selectable: true,
+                                        styleSheet: _chatMarkdownStyle(context),
+                                        // coverage:ignore-start
+                                        onTapLink: (text, href, title) {
+                                          if (href != null && href.isNotEmpty) {
+                                            openUrl(href);
+                                          }
+                                        },
+                                        // coverage:ignore-end
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -705,6 +721,135 @@ class WorkspaceChatState extends State<WorkspaceChat> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Truncates long messages to ~3 lines with a "show more" / "show less" toggle.
+class _CollapsibleMessage extends StatelessWidget {
+  const _CollapsibleMessage({
+    required this.messageId,
+    required this.isExpanded,
+    required this.onToggle,
+    required this.child,
+  });
+
+  final String messageId;
+  final bool isExpanded;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  /// Approximate max height for 3 lines of 13px text with line spacing.
+  static const _collapsedMaxHeight = 60.0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isExpanded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          child,
+          GestureDetector(
+            onTap: onToggle,
+            child: const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                'show less',
+                style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Use a TextPainter to check if the content would exceed 3 lines.
+        // We approximate by checking the intrinsic height of the child.
+        return _MeasuredCollapse(
+          maxHeight: _collapsedMaxHeight,
+          onToggle: onToggle,
+          child: child,
+        );
+      },
+    );
+  }
+}
+
+/// Measures the child's height and shows a "show more" link if it overflows.
+class _MeasuredCollapse extends StatefulWidget {
+  const _MeasuredCollapse({
+    required this.maxHeight,
+    required this.onToggle,
+    required this.child,
+  });
+
+  final double maxHeight;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  @override
+  State<_MeasuredCollapse> createState() => _MeasuredCollapseState();
+}
+
+class _MeasuredCollapseState extends State<_MeasuredCollapse> {
+  bool _overflows = false;
+  final _childKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkOverflow());
+  }
+
+  @override
+  void didUpdateWidget(_MeasuredCollapse oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkOverflow());
+  }
+
+  void _checkOverflow() {
+    final renderBox =
+        _childKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null || !mounted) return;
+    final childHeight = renderBox.size.height;
+    final overflows = childHeight > widget.maxHeight;
+    if (overflows != _overflows) {
+      setState(() => _overflows = overflows);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_overflows)
+          SizedBox(
+            height: widget.maxHeight,
+            child: ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.topLeft,
+                maxHeight: double.infinity,
+                child: KeyedSubtree(key: _childKey, child: widget.child),
+              ),
+            ),
+          )
+        else
+          KeyedSubtree(key: _childKey, child: widget.child),
+        if (_overflows)
+          GestureDetector(
+            onTap: widget.onToggle,
+            child: const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                '…show more',
+                style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
