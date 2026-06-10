@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -581,6 +582,7 @@ class Connection:
         logger.info("Container ready for workspace %s", workspace_id)
 
     async def handle_workspace_connect(self, msg: dict) -> None:
+        t_connect_start = time.monotonic()
         workspace_id = msg.get("workspaceId")
         if not workspace_id:
             send_error(self.sock, "Missing workspaceId")
@@ -599,11 +601,22 @@ class Connection:
             send_error(self.sock, "Workspace not found")
             return
 
+        logger.info(
+            "workspace-open: check permissions and fetch workspace from DB: %.3fs",
+            time.monotonic() - t_connect_start,
+        )
+
         # Disconnect from any current workspace
         await self.handle_workspace_disconnect()
 
+        t_container = time.monotonic()
         await self.start_workspace_container(workspace_id, workspace)
+        logger.info(
+            "workspace-open: start or reuse container (see breakdown above): %.3fs",
+            time.monotonic() - t_container,
+        )
 
+        t_post = time.monotonic()
         ports = await container.registry.get_workspace_ports(workspace_id)
         status = getattr(self, "container_status", "created")
         container_name, ports_str = _format_container_info(workspace_id, ports)
@@ -661,8 +674,17 @@ class Connection:
             )
             session.broadcast({"type": "chat_message", **sys_msg})
 
+        logger.info(
+            "workspace-open: send chat history, members, and presence to client: %.3fs",
+            time.monotonic() - t_post,
+        )
+
         # Store status for when frontend sends ui_ready
         self.pending_status_msg = status_msg
+        logger.info(
+            "workspace-open: TOTAL workspace connect (user sees workspace_ready after this): %.3fs",
+            time.monotonic() - t_connect_start,
+        )
         logger.info(
             "User %s connected to workspace %s (ports %s)",
             self.user["email"],

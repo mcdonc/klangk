@@ -343,6 +343,7 @@ class ContainerRegistry:
         Returns (container_id, status) where status is one of:
         'connected' (already running), 'restarted', or 'created'.
         """
+        t_start = time.monotonic()
         resolved_image = image or IMAGE_NAME
         if resolved_image not in ALLOWED_IMAGES:
             raise ValueError(
@@ -352,6 +353,11 @@ class ContainerRegistry:
 
         if existing_container_id:
             info = await podman.inspect_container(existing_container_id)
+            t_inspect = time.monotonic()
+            logger.info(
+                "workspace-open: check if old container still exists (podman inspect): %.3fs",
+                t_inspect - t_start,
+            )
             if info is None:
                 logger.info(
                     "Could not find container %s, creating new one",
@@ -359,9 +365,17 @@ class ContainerRegistry:
                 )
             elif info["State"]["Running"]:
                 self.track_activity(existing_container_id, workspace_id)
+                logger.info(
+                    "workspace-open: DONE — container was already running, no work needed: %.3fs",
+                    time.monotonic() - t_start,
+                )
                 return existing_container_id, "connected"
             else:
                 await podman.remove_container(existing_container_id)
+                logger.info(
+                    "workspace-open: delete old stopped container (podman rm): %.3fs",
+                    time.monotonic() - t_inspect,
+                )
                 logger.info(
                     "Removed stopped container %s for workspace %s, "
                     "will recreate",
@@ -371,6 +385,7 @@ class ContainerRegistry:
 
         # Lock the entire read+allocate sequence to prevent
         # concurrent start_container calls from double-allocating.
+        t_ports_start = time.monotonic()
         async with self.port_lock:
             host_ports = await model.get_workspace_ports(workspace_id)
             if len(host_ports) < num_ports:
@@ -385,6 +400,12 @@ class ContainerRegistry:
                 await model.remove_port_allocations(workspace_id, excess)
                 host_ports = host_ports[:num_ports]
 
+        logger.info(
+            "workspace-open: allocate host ports from DB: %.3fs",
+            time.monotonic() - t_ports_start,
+        )
+
+        t_env_start = time.monotonic()
         env_vars = []
         nginx_port = util.resolve_env_secret("KLANGK_NGINX_PORT", "8995")
         proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
@@ -490,12 +511,23 @@ class ContainerRegistry:
             pull=image_pull_policy(),
         )
 
+        logger.info(
+            "workspace-open: build env vars, volumes, and container config: %.3fs",
+            time.monotonic() - t_env_start,
+        )
+
         async def _create_and_start() -> str:
+            t_create = time.monotonic()
             cid = await podman.create_container(
                 container_name, resolved_image, **create_kwargs
             )
+            logger.info(
+                "workspace-open: create container image (podman create): %.3fs",
+                time.monotonic() - t_create,
+            )
             await model.update_workspace_container(workspace_id, cid)
             self.track_activity(cid, workspace_id)
+            t_podman_start = time.monotonic()
             try:
                 await podman.start_container(cid)
             except podman.PodmanError as exc:
@@ -544,10 +576,18 @@ class ContainerRegistry:
                                 del_exc,
                             )
                 await podman.start_container(cid)
+            logger.info(
+                "workspace-open: boot container (podman start): %.3fs",
+                time.monotonic() - t_podman_start,
+            )
             return cid
 
         container_id = await asyncio.shield(_create_and_start())
 
+        logger.info(
+            "workspace-open: DONE — new container created and started: %.3fs",
+            time.monotonic() - t_start,
+        )
         logger.info(
             "Started container %s for workspace %s (ports %s)",
             container_id,
