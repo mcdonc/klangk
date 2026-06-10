@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -174,7 +175,7 @@ void main() {
       await tester.pumpWidget(buildChat());
 
       await tester.enterText(find.byType(TextField), 'test message');
-      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
 
       final msgs = channel._sink.sent
@@ -834,6 +835,396 @@ void main() {
         (a) => a.backgroundColor == Colors.transparent,
       );
       expect(selfAvatar, isNotNull);
+    });
+
+    testWidgets('Tab key accepts first autocomplete suggestion', (tester) async {
+      client.workspaceMembers = [
+        {'id': 'u1', 'email': 'alice@test.com'},
+        {'id': 'u2', 'email': 'bob@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), '@al');
+      await tester.pump();
+
+      expect(find.text('alice@test.com'), findsWidgets);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '@alice@test.com ');
+    });
+
+    testWidgets('Arrow keys navigate autocomplete suggestions',
+        (tester) async {
+      client.workspaceMembers = [
+        {'id': 'u1', 'email': 'alice@test.com'},
+        {'id': 'u2', 'email': 'bob@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), '@');
+      await tester.pump();
+
+      expect(find.text('alice@test.com'), findsWidgets);
+      expect(find.text('bob@test.com'), findsWidgets);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '@bob@test.com ');
+    });
+
+    testWidgets('Arrow up wraps highlight back', (tester) async {
+      client.workspaceMembers = [
+        {'id': 'u1', 'email': 'alice@test.com'},
+        {'id': 'u2', 'email': 'bob@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), '@');
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '@alice@test.com ');
+    });
+
+    testWidgets('Enter key accepts autocomplete when overlay is visible',
+        (tester) async {
+      client.workspaceMembers = [
+        {'id': 'u1', 'email': 'alice@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), '@al');
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '@alice@test.com ');
+
+      final msgs = channel._sink.sent
+          .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
+          .toList();
+      final chatMsgs = msgs.where((m) => m['cmd'] == 'chat_send').toList();
+      expect(chatMsgs.length, 0);
+    });
+
+    testWidgets('Escape dismisses autocomplete', (tester) async {
+      client.workspaceMembers = [
+        {'id': 'u1', 'email': 'alice@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), '@al');
+      await tester.pump();
+
+      expect(find.text('alice@test.com'), findsWidgets);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+
+      expect(find.text('alice@test.com'), findsNothing);
+    });
+
+    testWidgets('Enter sends message and re-focuses input', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'hello');
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      final msgs = channel._sink.sent
+          .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
+          .toList();
+      final chatMsgs = msgs.where((m) => m['cmd'] == 'chat_send').toList();
+      expect(chatMsgs.length, 1);
+      expect(chatMsgs[0]['message'], 'hello');
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, isEmpty);
+      expect(field.focusNode!.hasFocus, isTrue);
+    });
+
+    testWidgets('multiline text field grows', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.maxLines, isNull);
+    });
+
+    testWidgets('Ctrl+A moves cursor to beginning of line', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'hello world');
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.selection.baseOffset, 11);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(field.controller!.selection.baseOffset, 0);
+    });
+
+    testWidgets('Ctrl+E moves cursor to end of line', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'hello world');
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      field.controller!.selection =
+          const TextSelection.collapsed(offset: 0);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(field.controller!.selection.baseOffset, 11);
+    });
+
+    testWidgets('Shift+Ctrl+A selects all text', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'hello world');
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.selection.baseOffset, 0);
+      expect(field.controller!.selection.extentOffset, 11);
+    });
+
+    testWidgets('Up arrow recalls previous sent message', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'first');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField), 'second');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, 'second');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      expect(field.controller!.text, 'first');
+    });
+
+    testWidgets('Down arrow restores draft after history recall',
+        (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'sent msg');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField), 'my draft');
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, 'sent msg');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(field.controller!.text, 'my draft');
+    });
+
+    testWidgets('Down arrow navigates forward through history', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), 'first');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'second');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'third');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, 'first');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(field.controller!.text, 'second');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(field.controller!.text, 'third');
+    });
+
+    testWidgets('autocomplete highlight clamps when list shrinks',
+        (tester) async {
+      client.workspaceMembers = [
+        {'id': 'u1', 'email': 'alice@test.com'},
+        {'id': 'u2', 'email': 'bob@test.com'},
+        {'id': 'u3', 'email': 'abby@test.com'},
+      ];
+
+      await tester.pumpWidget(buildChat());
+
+      await tester.enterText(find.byType(TextField), '@');
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField), '@bo');
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '@bob@test.com ');
+    });
+
+    testWidgets('long message is truncated with show more link',
+        (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      final longMsg = 'A' * 500;
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-long',
+          'user_email': 'alice@test.com',
+          'message': longMsg,
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('…show more'), findsOneWidget);
+    });
+
+    testWidgets('tapping show more expands message', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      final longMsg = 'A' * 500;
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-long2',
+          'user_email': 'alice@test.com',
+          'message': longMsg,
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('…show more'));
+      await tester.pump();
+
+      expect(find.text('show less'), findsOneWidget);
+      expect(find.text('…show more'), findsNothing);
+    });
+
+    testWidgets('tapping show less collapses message', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      final longMsg = 'A' * 500;
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-long3',
+          'user_email': 'alice@test.com',
+          'message': longMsg,
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('…show more'));
+      await tester.pump();
+
+      await tester.tap(find.text('show less'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('…show more'), findsOneWidget);
+      expect(find.text('show less'), findsNothing);
+    });
+
+    testWidgets('short message has no show more link', (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-short',
+          'user_email': 'alice@test.com',
+          'message': 'hi',
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('…show more'), findsNothing);
+      expect(find.text('show less'), findsNothing);
     });
   });
 }
