@@ -771,13 +771,18 @@ class _CollapsibleMessage extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           child,
-          GestureDetector(
-            onTap: onToggle,
-            child: const Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: Text(
-                'show less',
-                style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+          ExcludeFocus(
+            child: GestureDetector(
+              onTap: onToggle,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 2),
+                  child: Text(
+                    'show less',
+                    style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+                  ),
+                ),
               ),
             ),
           ),
@@ -861,13 +866,18 @@ class _MeasuredCollapseState extends State<_MeasuredCollapse> {
         else
           KeyedSubtree(key: _childKey, child: widget.child),
         if (_overflows)
-          GestureDetector(
-            onTap: widget.onToggle,
-            child: const Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: Text(
-                '…show more',
-                style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+          ExcludeFocus(
+            child: GestureDetector(
+              onTap: widget.onToggle,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 2),
+                  child: Text(
+                    '…show more',
+                    style: TextStyle(color: KColors.accentBlue, fontSize: 12),
+                  ),
+                ),
               ),
             ),
           ),
