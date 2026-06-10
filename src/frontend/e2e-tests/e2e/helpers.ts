@@ -300,7 +300,10 @@ export async function openWorkspace(
   page: Page,
   email: string,
   workspaceId: string,
-  { waitForTerminal = false }: { waitForTerminal?: boolean } = {},
+  {
+    waitForTerminal = false,
+    containerTimeout = 120_000,
+  }: { waitForTerminal?: boolean; containerTimeout?: number } = {},
 ) {
   // Set up WebSocket listener before login so we catch all WebSocket
   // connections.  A single framereceived handler watches for both
@@ -308,19 +311,21 @@ export async function openWorkspace(
   // race where a separate waitForTerminalReady listener misses the frame.
   let resolveContainer: () => void;
   let resolveTerminal: (() => void) | null = null;
+  const secs = Math.round(containerTimeout / 1000);
   const containerPromise = new Promise<void>((resolve, reject) => {
     resolveContainer = resolve;
     setTimeout(
-      () => reject(new Error("Container did not become ready within 120s")),
-      120_000,
+      () => reject(new Error(`Container did not become ready within ${secs}s`)),
+      containerTimeout,
     );
   });
   const terminalPromise = waitForTerminal
     ? new Promise<void>((resolve, reject) => {
         resolveTerminal = resolve;
         setTimeout(
-          () => reject(new Error("Terminal did not become ready within 120s")),
-          120_000,
+          () =>
+            reject(new Error(`Terminal did not become ready within ${secs}s`)),
+          containerTimeout,
         );
       })
     : Promise.resolve();
@@ -351,7 +356,10 @@ export async function createAndOpenWorkspace(
   page: Page,
   request: APIRequestContext,
   namePrefix: string,
-  { waitForTerminal = false }: { waitForTerminal?: boolean } = {},
+  {
+    waitForTerminal = false,
+    containerTimeout,
+  }: { waitForTerminal?: boolean; containerTimeout?: number } = {},
 ): Promise<{
   workspaceId: string;
   email: string;
@@ -366,7 +374,10 @@ export async function createAndOpenWorkspace(
     headers,
     namePrefix,
   );
-  await openWorkspace(page, email, workspaceId, { waitForTerminal });
+  await openWorkspace(page, email, workspaceId, {
+    waitForTerminal,
+    containerTimeout,
+  });
   return { workspaceId, email, token, headers, cleanup };
 }
 

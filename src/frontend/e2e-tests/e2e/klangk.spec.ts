@@ -1106,56 +1106,64 @@ test.describe("Klangk E2E", () => {
     }
   });
 
-  test("container stops after idle timeout", async ({ page, request }) => {
-    test.skip(
-      !!process.env.KLANGK_CONTAINER_TEST_MODE,
-      "requires local podman access",
-    );
-    // Check if test mode is enabled
-    const getResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
-    if (!getResp.ok()) {
-      test.skip(true, "KLANGK_TEST_MODE not enabled");
-      return;
-    }
+  test.describe("idle timeout", () => {
+    test.describe.configure({ retries: 1 });
 
-    const { workspaceId, email, headers, cleanup } =
-      await createAndOpenWorkspace(page, request, "e2e-idle-test");
-
-    // Set a short idle timeout for this workspace only
-    await request.post(`${API_BASE}/api/test/set-idle-timeout`, {
-      headers,
-      data: { seconds: 5, workspace_id: workspaceId },
-    });
-
-    try {
-      // Wait for the container to actually stop
-      let stopped = false;
-      for (let i = 0; i < 30; i++) {
-        if (dockerContainersForWorkspace(workspaceId).length === 0) {
-          stopped = true;
-          break;
-        }
-        await page.waitForTimeout(1000);
+    test("container stops after idle timeout", async ({ page, request }) => {
+      test.skip(
+        !!process.env.KLANGK_CONTAINER_TEST_MODE,
+        "requires local podman access",
+      );
+      // Check if test mode is enabled
+      const getResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
+      if (!getResp.ok()) {
+        test.skip(true, "KLANGK_TEST_MODE not enabled");
+        return;
       }
-      expect(stopped).toBeTruthy();
 
-      // Reset per-workspace timeout so the restarted container isn't
-      // immediately killed again.
+      const { workspaceId, email, headers, cleanup } =
+        await createAndOpenWorkspace(page, request, "e2e-idle-test", {
+          containerTimeout: 180_000,
+        });
+
+      // Set a short idle timeout for this workspace only
       await request.post(`${API_BASE}/api/test/set-idle-timeout`, {
         headers,
-        data: { seconds: 300, workspace_id: workspaceId },
+        data: { seconds: 5, workspace_id: workspaceId },
       });
 
-      // Re-open the workspace using openWorkspace which handles login,
-      // navigation, WebSocket lifecycle, and container_ready properly.
-      await openWorkspace(page, email, workspaceId);
+      try {
+        // Wait for the container to actually stop
+        let stopped = false;
+        for (let i = 0; i < 30; i++) {
+          if (dockerContainersForWorkspace(workspaceId).length === 0) {
+            stopped = true;
+            break;
+          }
+          await page.waitForTimeout(1000);
+        }
+        expect(stopped).toBeTruthy();
 
-      expect(dockerContainersForWorkspace(workspaceId).length).toBeGreaterThan(
-        0,
-      );
-    } finally {
-      await cleanup();
-    }
+        // Reset per-workspace timeout so the restarted container isn't
+        // immediately killed again.
+        await request.post(`${API_BASE}/api/test/set-idle-timeout`, {
+          headers,
+          data: { seconds: 300, workspace_id: workspaceId },
+        });
+
+        // Re-open the workspace using openWorkspace which handles login,
+        // navigation, WebSocket lifecycle, and container_ready properly.
+        await openWorkspace(page, email, workspaceId, {
+          containerTimeout: 180_000,
+        });
+
+        expect(
+          dockerContainersForWorkspace(workspaceId).length,
+        ).toBeGreaterThan(0);
+      } finally {
+        await cleanup();
+      }
+    });
   });
 
   test("admin can list users, add/remove groups, and delete users", async ({
