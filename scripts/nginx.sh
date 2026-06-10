@@ -90,6 +90,7 @@ if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
   LLM_BLOCK="
     location ~ ^/llm-proxy/(.*)\$ {
 ${CONTAINER_ACL}
+      auth_request /auth/verify-workspace-token;
       resolver ${DNS_RESOLVERS} valid=30s;
       set \$llm_backend ${KLANGK_LLM_BASE_URL}/\$1;
       proxy_pass \$llm_backend;
@@ -158,6 +159,7 @@ ${LLM_BLOCK}
     # before the backend's own idle timeout fires.
     location = /api/browser-delegate {
 ${CONTAINER_ACL}
+      auth_request /auth/verify-workspace-token;
       proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/browser-delegate;
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
@@ -166,6 +168,26 @@ ${CONTAINER_ACL}
       proxy_read_timeout 300s;
       proxy_send_timeout 300s;
       proxy_buffering off;
+    }
+
+    # Container-to-chat API: containers post chat messages via workspace JWT.
+    location = /api/workspace/post-chat-message {
+${CONTAINER_ACL}
+      auth_request /auth/verify-workspace-token;
+      proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/workspace/post-chat-message;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_http_version 1.1;
+    }
+
+    # Workspace token verification subrequest (nginx auth_request target).
+    location = /auth/verify-workspace-token {
+      internal;
+      proxy_pass http://127.0.0.1:${KLANGK_PORT}/auth/verify-workspace-token;
+      proxy_pass_request_body off;
+      proxy_set_header Content-Length "";
+      proxy_set_header Authorization \$http_authorization;
     }
 
     location / {

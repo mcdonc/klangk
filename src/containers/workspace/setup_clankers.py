@@ -135,10 +135,11 @@ def merge_models_json():
         models = {}
 
     providers = models.setdefault("providers", {})
+    workspace_token = os.environ.get("KLANGK_WORKSPACE_TOKEN", "proxy")
     providers["llm-proxy"] = {
         "baseUrl": proxy_url,
         "api": "openai-completions",
-        "apiKey": "proxy",
+        "apiKey": workspace_token,
         # Only advertise a model when one is configured. Pi's schema rejects an
         # empty id ("must not have fewer than 1 characters"), so when
         # KLANGK_LLM_MODEL is unset we write an empty model list instead of an

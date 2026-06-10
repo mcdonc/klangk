@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 
-from . import model, podman, util
+from . import auth, model, podman, util
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +411,8 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_HOSTING_HOSTNAME={hosting_hostname}")
         env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
+        workspace_token = auth.create_workspace_token(workspace_id)
+        env_vars.append(f"KLANGK_WORKSPACE_TOKEN={workspace_token}")
 
         if extra_env:
             for k, v in extra_env.items():
