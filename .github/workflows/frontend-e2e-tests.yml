@@ -11,6 +11,8 @@ on:
         description: "-g pattern to filter tests; blank = all"
         required: false
         default: ""
+  push:
+    branches: [release/**]
   pull_request:
     branches: [main]
 
