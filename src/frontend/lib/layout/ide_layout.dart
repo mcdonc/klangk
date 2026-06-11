@@ -20,6 +20,14 @@ class IdeLayout extends StatefulWidget {
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
   final GlobalKey<WorkspaceChatState>? chatKey;
 
+  /// Deep-linked workspace-relative file to open in the Files tab on load (and
+  /// whenever it changes). Null/empty (with no [initialDir]) shows Terminal.
+  final String? initialFile;
+
+  /// Deep-linked workspace-relative directory to browse in the Files tab on
+  /// load. Used when [initialFile] is null/empty.
+  final String? initialDir;
+
   const IdeLayout({
     super.key,
     required this.fileViewer,
@@ -33,13 +41,15 @@ class IdeLayout extends StatefulWidget {
     this.terminalKey,
     this.fileViewerKey,
     this.chatKey,
+    this.initialFile,
+    this.initialDir,
   });
 
   @override
-  State<IdeLayout> createState() => _IdeLayoutState();
+  State<IdeLayout> createState() => IdeLayoutState();
 }
 
-class _IdeLayoutState extends State<IdeLayout> {
+class IdeLayoutState extends State<IdeLayout> {
   int _selectedIndex = 0;
   double _debugHeight = 0; // collapsed by default
 
@@ -53,6 +63,47 @@ class _IdeLayoutState extends State<IdeLayout> {
     // Focus the pane shown first (Terminal by default) so the user can type
     // immediately on workspace open, without an extra click into it.
     _focusPane(_selectedIndex);
+    _maybeOpenInitial();
+  }
+
+  @override
+  void didUpdateWidget(IdeLayout oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialFile != oldWidget.initialFile ||
+        widget.initialDir != oldWidget.initialDir) {
+      _maybeOpenInitial();
+    }
+  }
+
+  /// Opens the deep-linked [IdeLayout.initialFile] (preferred) or
+  /// [IdeLayout.initialDir] in the Files tab once the panel is built. Deferred
+  /// to after the frame so the fileViewer's state is attached.
+  void _maybeOpenInitial() {
+    final file = widget.initialFile;
+    final dir = widget.initialDir;
+    final hasFile = file != null && file.isNotEmpty;
+    final hasDir = dir != null && dir.isNotEmpty;
+    if (!hasFile && !hasDir) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (hasFile) {
+        openFile(file);
+      } else {
+        openDirectory(dir!);
+      }
+    });
+  }
+
+  /// Switches to the Files tab and opens [path] in the existing viewer.
+  void openFile(String path) {
+    _selectTab(1);
+    widget.fileViewerKey?.currentState?.openFile(path);
+  }
+
+  /// Switches to the Files tab and browses directory [path].
+  void openDirectory(String path) {
+    _selectTab(1);
+    widget.fileViewerKey?.currentState?.openDir(path);
   }
 
   void _selectTab(int index) {
@@ -113,7 +164,10 @@ class _IdeLayoutState extends State<IdeLayout> {
         padding: const EdgeInsets.only(left: 6, top: 4),
         child: widget.terminal,
       ),
-      Container(
+      // Material (not a plain ColoredBox) so the file viewer's ListTiles paint
+      // their background/ink on a Material ancestor instead of this pane's
+      // colored box — newer Flutter asserts on ListTile-in-ColoredBox.
+      Material(
         color: KColors.bgCanvas,
         child: widget.fileViewer,
       ),

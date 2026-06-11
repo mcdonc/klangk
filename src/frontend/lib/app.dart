@@ -113,6 +113,8 @@ class _KlangkAppState extends State<KlangkApp> {
           path: '/workspace/:id',
           builder: (context, state) => WorkspacePage(
             workspaceId: state.pathParameters['id']!,
+            initialFile: state.uri.queryParameters['file'],
+            initialDir: state.uri.queryParameters['dir'],
           ),
         ),
         GoRoute(

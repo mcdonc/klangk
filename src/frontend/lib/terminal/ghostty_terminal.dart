@@ -22,7 +22,14 @@ import '../utils/web_helpers_stub.dart'
 class GhosttyTerminal extends StatefulWidget {
   final WsClient wsClient;
 
-  const GhosttyTerminal({super.key, required this.wsClient});
+  /// Called on a ⌘/Ctrl-click over a path/URL token, with the clicked token,
+  /// any OSC 8 uri, the row's tail (token start → EOL, for spaces in names),
+  /// and the current OSC 7 working directory. The host resolves and opens it
+  /// (see workspace_page).
+  final ValueChanged<({String token, String? uri, String pwd, String tail})>?
+      onPathTap;
+
+  const GhosttyTerminal({super.key, required this.wsClient, this.onPathTap});
 
   @override
   State<GhosttyTerminal> createState() => GhosttyTerminalState();
@@ -121,7 +128,8 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           // pty now at the real grid size instead of the 80x24 seed.
           _startTerminal();
         }
-      };
+      }
+      ..onLinkTap = handleLinkTap;
     _outputSub = widget.wsClient.terminalOutput.listen((data) {
       _writingServerOutput = true;
       try {
@@ -151,6 +159,18 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     if (!_focusNode.hasFocus) return false;
     _terminal.paste(text);
     return true;
+  }
+
+  /// Forwards a ⌘/Ctrl-click on a link cell to [GhosttyTerminal.onPathTap],
+  /// attaching the live OSC 7 working directory ([TerminalController.pwd]) so
+  /// the host can resolve relative tokens. Wired to the controller's
+  /// `onLinkTap`; exposed for tests since the gesture path needs the FFI engine.
+  @visibleForTesting
+  void handleLinkTap(LinkTap t) {
+    final cb = widget.onPathTap;
+    if (cb != null) {
+      cb((token: t.token, uri: t.uri, pwd: _terminal.pwd, tail: t.tail));
+    }
   }
 
   // Loads the bundled font's raw bytes. Overridable in tests so the
