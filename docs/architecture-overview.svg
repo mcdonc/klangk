@@ -34,7 +34,7 @@
 
   <!-- Title -->
   <text x="450" y="38" text-anchor="middle" fill="#E6EDF3" font-size="20" font-weight="700">Klangk Architecture</text>
-  <text x="450" y="58" text-anchor="middle" fill="#8B949E" font-size="12">Multi-User Web Coding Agent Platform</text>
+  <text x="450" y="58" text-anchor="middle" fill="#8B949E" font-size="12">Multi-User AI Collaboration and Coding Platform</text>
 
   <!-- ════════ BROWSER ════════ -->
   <rect x="200" y="78" width="500" height="80" rx="10" fill="url(#browserGrad)" filter="url(#shadow)"/>
