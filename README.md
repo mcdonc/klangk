@@ -45,7 +45,7 @@ Open [http://localhost:8995](http://localhost:8995) and log in with `admin@examp
 ### What You Can Do
 
 1. **Create a workspace** — each workspace is an isolated coding environment
-2. **Chat with the AI agent** — execute "pi" in the terminal, then ask it to write code, create projects, fix bugs
+2. **Chat with the AI agent** — execute `claude` or `pi` in the terminal, then ask it to write code, create projects, fix bugs
 3. **Use the terminal** for direct shell access to the container (bash with tab completion and colors)
 4. **View files** in the file viewer panel, drag-and-drop files or folders to upload, right-click to download, rename, or delete. Preview markdown, images, code (with syntax highlighting and editing), PDFs, video, and spreadsheets
 5. **Chat with other workspace users** in shared workspaces
