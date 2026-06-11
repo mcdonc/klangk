@@ -37,7 +37,7 @@ services:
       # Uncomment for Tailscale DNS in containers:
       # KLANGK_DNS_SERVERS: "${KLANGK_DNS_SERVERS:-100.100.100.100,8.8.8.8}"
       # Uncomment to restrict bind mount paths:
-      # KLANGK_ALLOWED_MOUNT_ROOTS: "${KLANGK_ALLOWED_MOUNT_ROOTS:-/var/lib/klangk/mount}"
+      # KLANGK_ALLOWED_MOUNT_ROOTS: "${KLANGK_ALLOWED_MOUNT_ROOTS:-/home/klangk/mount}"
       # Uncomment for SMTP email:
       # KLANGK_SMTP_HOST: "${KLANGK_SMTP_HOST}"
       # KLANGK_SMTP_USER: "${KLANGK_SMTP_USER}"

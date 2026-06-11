@@ -145,17 +145,37 @@ Re-inviting someone after a revocation creates a new pending invitation that ove
 docker run -d \
   -p 8995:8995 \
   -v ./data:/home/klangk/data \
+  -v ./oidc.yaml:/home/klangk/oidc.yaml:ro \
+  -v ./cacert.pem:/home/klangk/cacert.pem:ro \
   --cap-add SYS_ADMIN \
   --device /dev/fuse \
   --device /dev/net/tun \
   --security-opt seccomp=unconfined \
   --security-opt systempaths=unconfined \
+  -e KLANGK_NGINX_PORT=8995 \
+  -e KLANGK_PORT=8997 \
   -e KLANGK_DEFAULT_USER=admin@example.com \
-  -e KLANGK_DEFAULT_PASSWORD=admin \
-  -e KLANGK_JWT_SECRET=change-me \
+  -e KLANGK_DEFAULT_PASSWORD=changeme \
+  -e KLANGK_JWT_SECRET=change-this-to-a-random-secret \
+  -e KLANGK_PREVENT_INSECURE_JWT_SECRET=1 \
+  -e KLANGK_DATA_DIR=/home/klangk/data \
   -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
   -e KLANGK_LLM_API_KEY=your-api-key \
   -e KLANGK_LLM_MODEL=gemma4:31b \
+  -e KLANGK_INSTANCE_ID=default \
+  -e KLANGK_OIDC_CONFIG=/home/klangk/oidc.yaml \
+  -e KLANGK_AUTH_MODES=both \
+  -e KLANGK_OIDC_LOGIN_HOOK=login_hook.require_invitation \
+  -e KLANGK_DISABLE_REGISTRATION=1 \
+  -e KLANGK_DNS_SERVERS=100.100.100.100,8.8.8.8 \
+  -e KLANGK_ALLOWED_MOUNT_ROOTS=/home/klangk/mount \
+  -e KLANGK_SMTP_HOST=smtp.example.com \
+  -e KLANGK_SMTP_USER=you@example.com \
+  -e KLANGK_SMTP_PASSWORD=your-smtp-password \
+  -e KLANGK_SMTP_FROM=noreply@example.com \
+  -e LOGFIRE_BASE_URL=https://logfire-api.pydantic.dev \
+  -e LOGFIRE_TOKEN=your-logfire-token \
+  -e LOGFIRE_ENVIRONMENT=production \
   ghcr.io/mcdonc/klangk/klangk-host-custom
 ```
 
