@@ -145,6 +145,7 @@ Re-inviting someone after a revocation creates a new pending invitation that ove
 docker run -d \
   -p 8995:8995 \
   -v ./data:/home/klangk/data \
+  -v ./mount:/home/klangk/mount \
   -v ./oidc.yaml:/home/klangk/oidc.yaml:ro \
   -v ./cacert.pem:/home/klangk/cacert.pem:ro \
   --cap-add SYS_ADMIN \

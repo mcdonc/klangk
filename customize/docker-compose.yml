@@ -53,3 +53,9 @@ services:
         target: /home/klangk/data
         bind:
           create_host_path: false
+      # Mount directory for workspace bind mounts (must exist and be owned by 1000:1000):
+      - type: bind
+        source: ./mount
+        target: /home/klangk/mount
+        bind:
+          create_host_path: false
