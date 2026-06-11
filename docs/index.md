@@ -1,0 +1,36 @@
+# Klangk
+
+Multi-User AI Collaboration and Coding Platform
+
+![Klangk Web Coding Agent](assets/screenshot.png)
+
+Klangk is a container orchestration system powered by Podman, which specializes in sandboxing AI tasks. It gives users isolated coding environments (aka "workspaces") using containers. Within each workspace, any task can be run, but special consideration is given to LLM-focused tasks. Coding harnesses like `pi` and `claude` are made available in each workspace.
+
+## What You Can Do
+
+1. **Create a workspace** — each workspace is an isolated coding environment
+2. **Chat with the AI agent** — execute "pi" or "claude" in the terminal, then ask it to write code, create projects, fix bugs
+3. **Use the terminal** for direct shell access to the container (bash with tab completion and colors)
+4. **View files** in the file viewer panel, drag-and-drop files or folders to upload, right-click to download, rename, or delete. Preview markdown, images, code (with syntax highlighting and editing), PDFs, video, and spreadsheets
+5. **Chat with other workspace users** in shared workspaces
+6. **Share workspaces** with other users or groups, controlling access per-permission (terminal, files, chat, etc.)
+7. **Monitor activity** in the debug panel
+8. **Manage users and groups** (admin only) — add users, create groups, manage membership
+
+## Architecture
+
+![Architecture Overview](assets/architecture-overview.svg)
+
+## Key Technologies
+
+- **Pi Coding Agent**: Minimal terminal coding harness (pi.dev) running in interactive terminal mode with native session persistence and extension tools
+- **LLM Provider**: Any OpenAI-compatible LLM provider (Ollama Cloud, self-hosted Ollama, etc.), configurable via env vars (`KLANGK_LLM_BASE_URL`, `KLANGK_LLM_MODEL`, `KLANGK_LLM_API_KEY`). The model must support tool/function calling — Pi uses tools (bash, edit, write, read) to interact with the workspace.
+- **Pydantic Logfire**: AI observability — FastAPI auto-instrumentation via Logfire Python SDK (`LOGFIRE_TOKEN`). Pi agent tracing via [pi-otel-telemetry](https://github.com/mprokopov/pi-otel-telemetry) extension (OTLP export to Logfire) — requires `LOGFIRE_TOKEN` as a workspace env var and sourcing `. /opt/klangk/otel.sh` in the container shell (or `.bashrc`) to set the standard `OTEL_*` env vars.
+- **devenv**: Nix-based development environment with auto-setup, conditional build tasks (`execIfModified`), auto-reload disabled
+
+## Components
+
+- **Backend** (`src/backend/`): Python/FastAPI — single-port server for API, WebSocket, and frontend static files
+- **CLI** (`src/backend/klangk_backend/cli/`): `klangk` command — typer-based thin client that talks to the backend over HTTP + WebSocket for terminal access to containers
+- **Frontend** (`src/frontend/`): Flutter Web — chat (markdown rendering, syntax-highlighted code blocks, @mentions, message types, pagination, history recall), file viewer, debug panel, workspace presence
+- **Containers** (`src/containers/`): Custom Dockerfile for Pi agent containers with Python3, Node.js, build-essential, SQLite, vim, emacs, network tools, Pi extensions (built and run via podman)

@@ -46,6 +46,7 @@ in
       podman
       sqlite.bin
       rsync
+      zensical
     ]
     ++ (if pkgs.stdenv.isDarwin then [ iproute2mac ] else [ iproute2 ]);
 
@@ -251,6 +252,16 @@ in
     if [ $cov_exit -ne 0 ]; then
       exit 1
     fi
+  '';
+
+  scripts.build-docs.exec = ''
+    cd $DEVENV_ROOT
+    exec zensical build "$@"
+  '';
+
+  scripts.serve-docs.exec = ''
+    cd $DEVENV_ROOT
+    exec zensical serve --dev-addr 0.0.0.0:9111 "$@"
   '';
 
   # --- Pre-commit hooks ---

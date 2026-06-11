@@ -64,3 +64,6 @@ src/frontend/e2e-tests/logs/
 .pre-commit-config.yaml
 coverage.json
 oidc.tar.gz
+
+# Zensical docs build output
+site/
