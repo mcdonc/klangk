@@ -1,0 +1,9 @@
+.klangk/
+.plugins/
+web/
+ssl/*.pem
+ssl/*.crt
+oidc.yaml
+cacert.pem
+.env
+data/*
