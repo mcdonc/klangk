@@ -1,4 +1,4 @@
-ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.06.10-e973f3c
+ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.06.11-2603487
 FROM $WORKSPACE_BASE_IMAGE
 
 # Install npm-based Pi extensions globally via pi install.
