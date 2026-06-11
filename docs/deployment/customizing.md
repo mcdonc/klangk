@@ -104,28 +104,6 @@ See the [Plugin System](../reference/plugin-system.md) reference for plugin stru
 
 Place `.pem` or `.crt` files in the `ssl/` directory (or set `KLANGK_SSL_CERT_DIR`). They are installed into the system CA store of both the host and workspace images. This is needed when services (e.g., Logfire, OIDC providers) use certificates signed by a private CA. The `ssl/` directory is gitignored — certs must be provided at build time.
 
-## Running
-
-```bash
-docker run -d \
-  -p 8995:8995 \
-  -v ./data:/home/klangk/data \
-  --cap-add SYS_ADMIN \
-  --device /dev/fuse \
-  --device /dev/net/tun \
-  --security-opt seccomp=unconfined \
-  --security-opt systempaths=unconfined \
-  -e KLANGK_DEFAULT_USER=admin@example.com \
-  -e KLANGK_DEFAULT_PASSWORD=admin \
-  -e KLANGK_JWT_SECRET=change-me \
-  -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
-  -e KLANGK_LLM_API_KEY=your-api-key \
-  -e KLANGK_LLM_MODEL=gemma4:31b \
-  ghcr.io/mcdonc/klangk/klangk-host-custom
-```
-
-Or use `docker-compose.yml` with a `.env` file. The provided `docker-compose.yml` has all options documented as comments.
-
 ## OIDC Authentication
 
 To enable OIDC login, create an `oidc.yaml` in the `customize/` directory (gitignored), then mount it at runtime:
@@ -160,3 +138,25 @@ The example hook's logic:
 - If the user has **no invitation and no account**, login is **blocked**
 
 Re-inviting someone after a revocation creates a new pending invitation that overrides the revocation.
+
+## Running
+
+```bash
+docker run -d \
+  -p 8995:8995 \
+  -v ./data:/home/klangk/data \
+  --cap-add SYS_ADMIN \
+  --device /dev/fuse \
+  --device /dev/net/tun \
+  --security-opt seccomp=unconfined \
+  --security-opt systempaths=unconfined \
+  -e KLANGK_DEFAULT_USER=admin@example.com \
+  -e KLANGK_DEFAULT_PASSWORD=admin \
+  -e KLANGK_JWT_SECRET=change-me \
+  -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
+  -e KLANGK_LLM_API_KEY=your-api-key \
+  -e KLANGK_LLM_MODEL=gemma4:31b \
+  ghcr.io/mcdonc/klangk/klangk-host-custom
+```
+
+Or use `docker-compose.yml` with a `.env` file. The provided `docker-compose.yml` has all options documented as comments.
