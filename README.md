@@ -17,6 +17,7 @@ See the [full documentation](https://mcdonc.github.io/klangk/) for architecture,
 
 ### Prerequisites
 
+- macOS or Linux
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (or run `./bootstrap` to install both)
 - An OpenAI-compatible LLM provider (e.g., [Ollama Cloud](https://ollama.com) or self-hosted Ollama or LiteLLM instance)
 

@@ -2,6 +2,7 @@
 
 ## Prerequisites
 
+- macOS or Linux
 - Podman (rootless) available
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (or run `./bootstrap`)
 - An OpenAI-compatible LLM provider (e.g., [Ollama Cloud](https://ollama.com) or self-hosted Ollama or LiteLLM instance)
