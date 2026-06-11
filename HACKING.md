@@ -192,7 +192,7 @@ docker run -d \
   -e KLANGK_DEFAULT_USER=admin@example.com \
   -e KLANGK_DEFAULT_PASSWORD=admin \
   -e KLANGK_JWT_SECRET=change-me \
-  ghcr.io/mcdonc/klangk/klangk-host
+  ghcr.io/mcdonc/klangk/klangk-host:v2026.06.10
 ```
 
 Open http://localhost:8995. On first startup the embedded workspace image is automatically loaded into podman.
@@ -211,7 +211,7 @@ docker run -d -v klangk-data:/home/klangk/data ...
 build-host-image
 ```
 
-This builds everything from source: Flutter web, workspace image (podman), then the host image (Docker). Tagged with `latest` and a CalVer version (e.g., `2026.06.09-abc1234`). The version is baked into `/home/klangk/version.json` and served at `GET /version`.
+This builds everything from source: Flutter web, workspace image (podman), then the host image (Docker). Tagged locally with `latest` and a CalVer version (e.g., `2026.06.09-abc1234`). Only the CalVer version tag is pushed to GHCR — `:latest` is never pushed to the registry. The version is baked into `/home/klangk/version.json` and served at `GET /version`.
 
 ### Custom image with plugins
 
