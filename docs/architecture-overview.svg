@@ -120,7 +120,7 @@
   <!-- ════════ FILE STORAGE ════════ -->
   <rect x="660" y="462" width="140" height="76" rx="8" fill="url(#storageGrad)" filter="url(#shadow)"/>
   <text x="730" y="490" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Persistent Storage</text>
-  <text x="730" y="510" text-anchor="middle" fill="#B2BEC3" font-size="10">User files · Pi sessions</text>
+  <text x="730" y="510" text-anchor="middle" fill="#B2BEC3" font-size="10">User files · Projects</text>
   <text x="730" y="524" text-anchor="middle" fill="#B2BEC3" font-size="10">Bash history · Dotfiles</text>
   <!-- Arrow: containers → storage -->
   <line x1="560" y1="500" x2="656" y2="500" stroke="#8B949E" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowGrey)"/>
