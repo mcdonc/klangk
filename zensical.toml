@@ -34,6 +34,7 @@ nav = [
   { "Deployment" = [
     { "Host Container" = "deployment/index.md" },
     { "Hosting & Nginx" = "deployment/hosting.md" },
+    { "Customizing" = "deployment/customizing.md" },
   ]},
   { "Reference" = [
     { "ACL System" = "reference/acl.md" },

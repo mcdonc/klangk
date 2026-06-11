@@ -1,0 +1,55 @@
+services:
+  klangk:
+    image: ghcr.io/mcdonc/klangk/klangk-host-custom
+    ports:
+      - "8995:8995"
+    devices:
+      - /dev/net/tun
+      - /dev/fuse
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - label=disable
+      - systempaths=unconfined
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      KLANGK_NGINX_PORT: "${KLANGK_NGINX_PORT:-8995}"
+      KLANGK_DEFAULT_USER: "${KLANGK_DEFAULT_USER:-admin@example.com}"
+      KLANGK_DEFAULT_PASSWORD: "${KLANGK_DEFAULT_PASSWORD}"
+      KLANGK_PORT: "${KLANGK_PORT:-8997}"
+      KLANGK_LLM_BASE_URL: "${KLANGK_LLM_BASE_URL}"
+      KLANGK_LLM_API_KEY: "${KLANGK_LLM_API_KEY}"
+      KLANGK_LLM_MODEL: "${KLANGK_LLM_MODEL}"
+      KLANGK_DATA_DIR: /home/klangk/data
+      KLANGK_JWT_SECRET: "${KLANGK_JWT_SECRET}"
+      KLANGK_PREVENT_INSECURE_JWT_SECRET: "1"
+      LOGFIRE_BASE_URL: "${LOGFIRE_BASE_URL}"
+      LOGFIRE_TOKEN: "${LOGFIRE_TOKEN}"
+      LOGFIRE_ENVIRONMENT: "${LOGFIRE_ENVIRONMENT}"
+      KLANGK_INSTANCE_ID: "${KLANGK_INSTANCE_ID:-default}"
+      # Uncomment for OIDC authentication:
+      # KLANGK_OIDC_CONFIG: /home/klangk/oidc.yaml
+      # KLANGK_AUTH_MODES: "both"
+      # KLANGK_OIDC_LOGIN_HOOK: "login_hook.require_invitation"
+      # Uncomment to disable open registration:
+      # KLANGK_DISABLE_REGISTRATION: "1"
+      # Uncomment for Tailscale DNS in containers:
+      # KLANGK_DNS_SERVERS: "${KLANGK_DNS_SERVERS:-100.100.100.100,8.8.8.8}"
+      # Uncomment to restrict bind mount paths:
+      # KLANGK_ALLOWED_MOUNT_ROOTS: "${KLANGK_ALLOWED_MOUNT_ROOTS:-/var/lib/klangk/mount}"
+      # Uncomment for SMTP email:
+      # KLANGK_SMTP_HOST: "${KLANGK_SMTP_HOST}"
+      # KLANGK_SMTP_USER: "${KLANGK_SMTP_USER}"
+      # KLANGK_SMTP_PASSWORD: "${KLANGK_SMTP_PASSWORD}"
+      # KLANGK_SMTP_FROM: "${KLANGK_SMTP_FROM}"
+    volumes:
+      # Uncomment for OIDC:
+      # - ./oidc.yaml:/home/klangk/oidc.yaml:ro
+      # - ./cacert.pem:/home/klangk/cacert.pem:ro
+      # Data volume (must exist and be owned by 1000:1000):
+      - type: bind
+        source: ./data
+        target: /home/klangk/data
+        bind:
+          create_host_path: false
