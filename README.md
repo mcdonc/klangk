@@ -56,6 +56,8 @@ Klangk uses an ACL (Access Control List) authorization system with fine-grained,
 
 See the [Environment Variables](HACKING.md#environment-variables) section in HACKING.md for the full list of configuration options.
 
-## For More Information
+## Architecture
 
-See [HACKING.md](HACKING.md) for development setup, and [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation.
+![Architecture Overview](docs/architecture-overview.svg)
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation and [HACKING.md](HACKING.md) for development setup.
