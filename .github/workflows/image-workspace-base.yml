@@ -39,7 +39,8 @@ jobs:
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             -f src/containers/workspace/Dockerfile.base \
-            -t "$REPO:latest" \
             -t "$REPO:$VERSION" \
             --push \
             src/containers/workspace/
+          echo "Pushed $REPO:$VERSION"
+          echo "Update src/containers/workspace/Dockerfile ARG to use this tag."

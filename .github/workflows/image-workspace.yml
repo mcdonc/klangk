@@ -36,7 +36,5 @@ jobs:
           CALVER="$(date -u +%Y.%m.%d)"
           VERSION="${CALVER}-${COMMIT}"
           REPO="ghcr.io/${{ github.repository }}/klangk-workspace"
-          devenv shell -- podman tag klangk-workspace "$REPO:latest"
           devenv shell -- podman tag klangk-workspace "$REPO:$VERSION"
-          devenv shell -- podman push "$REPO:latest"
           devenv shell -- podman push "$REPO:$VERSION"
