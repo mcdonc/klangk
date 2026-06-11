@@ -32,19 +32,15 @@ jobs:
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           VERSION="${GITHUB_REF_NAME}"
 
-          # Push host image
+          # Push host image (versioned tag only, no :latest)
           HOST_REPO="ghcr.io/${{ github.repository }}/klangk-host"
-          docker tag klangk-host "$HOST_REPO:latest"
           docker tag klangk-host "$HOST_REPO:$VERSION"
-          docker push "$HOST_REPO:latest"
           docker push "$HOST_REPO:$VERSION"
 
-          # Push workspace image
+          # Push workspace image (versioned tag only, no :latest)
           WS_REPO="ghcr.io/${{ github.repository }}/klangk-workspace"
           devenv shell -- podman login ghcr.io -u ${{ github.actor }} --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
-          devenv shell -- podman tag klangk-workspace "$WS_REPO:latest"
           devenv shell -- podman tag klangk-workspace "$WS_REPO:$VERSION"
-          devenv shell -- podman push "$WS_REPO:latest"
           devenv shell -- podman push "$WS_REPO:$VERSION"
 
       - name: Create GitHub Release
