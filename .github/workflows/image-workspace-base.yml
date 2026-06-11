@@ -61,7 +61,7 @@ jobs:
           git add src/containers/workspace/Dockerfile
           git -c user.name="github-actions[bot]" \
               -c user.email="github-actions[bot]@users.noreply.github.com" \
-              commit -m "build: bump workspace base image to ${VERSION}"
+              commit -m "build: bump workspace base image to ${VERSION} [skip ci]"
           git push origin "$BRANCH"
           gh pr create \
             --title "Bump workspace base image to ${VERSION}" \
