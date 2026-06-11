@@ -152,7 +152,7 @@ KLANGK_OIDC_LOGIN_HOOK=login_hook.require_invitation
 
 The hook works because the Dockerfile copies `login_hook.py` into the backend's Python path (`/home/klangk/src/backend/`), making it importable by the OIDC login system.
 
-The hook logic:
+The example hook's logic:
 
 - If the user's most recent invitation is **revoked**, login is **blocked** (even if they have an existing account)
 - If the user's most recent invitation is **pending** or **accepted**, login is **allowed**
