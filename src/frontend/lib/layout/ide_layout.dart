@@ -164,7 +164,10 @@ class IdeLayoutState extends State<IdeLayout> {
         padding: const EdgeInsets.only(left: 6, top: 4),
         child: widget.terminal,
       ),
-      Container(
+      // Material (not a plain ColoredBox) so the file viewer's ListTiles paint
+      // their background/ink on a Material ancestor instead of this pane's
+      // colored box — newer Flutter asserts on ListTile-in-ColoredBox.
+      Material(
         color: KColors.bgCanvas,
         child: widget.fileViewer,
       ),
