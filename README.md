@@ -9,6 +9,10 @@ containers. Within each workspace, any task can be run, but special
 consideration is given to LLM-focused tasks. Coding harnesses like `pi` and
 `claude` are made available in each workspace.
 
+## Documentation
+
+See the [full documentation](https://mcdonc.github.io/klangk/) for architecture, development, and deployment details.
+
 ## Quick Start
 
 ### Prerequisites
@@ -48,16 +52,6 @@ Open [http://localhost:8995](http://localhost:8995) and log in with `admin@examp
 7. **Monitor activity** in the debug panel
 8. **Manage users and groups** (admin only) — add users, create groups, manage membership
 
-### Security
-
-Klangk uses an ACL (Access Control List) authorization system with fine-grained, per-resource permissions. Permissions are defined on a resource tree hierarchy and support allow/deny rules for individual users, groups, and system principals. See the [Authorization](HACKING.md#authorization-acl-system) section in HACKING.md for details.
-
-## Environment Variables
-
-See the [Environment Variables](HACKING.md#environment-variables) section in HACKING.md for the full list of configuration options.
-
 ## Architecture
 
 ![Architecture Overview](docs/architecture-overview.svg)
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation and [HACKING.md](HACKING.md) for development setup.

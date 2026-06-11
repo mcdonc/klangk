@@ -1,0 +1,51 @@
+# Authentication
+
+## Auth Methods
+
+- **Two auth methods**: email/password (local) and OIDC (external Identity Providers). Configurable via `KLANGK_AUTH_MODES`: `password`, `oidc`, or `both` (default: `both` if OIDC configured, `password` otherwise).
+- **OIDC authentication**: Supports multiple OIDC providers (e.g., two Keycloak realms for CAC + internal SSO). Configured via a JSON file (`KLANGK_OIDC_CONFIG`). Each provider has its own login/callback endpoints (`GET /auth/oidc/{provider_id}/login`, `GET /auth/oidc/{provider_id}/callback`). Uses Authorization Code flow with PKCE. ID token signature validated against the IdP's JWKS. Login page shows one button per configured provider. JIT user provisioning on first OIDC login — users are created as verified with no password. Existing email/password users are linked to their OIDC identity on first SSO login. Per-provider group mapping syncs IdP group claims to Klangk admin group membership on every login. CLI login (`klangk login`) opens a browser for the OIDC flow and receives the token via a temporary localhost callback server.
+- **Email/password authentication**: bcrypt hashing, email validated at registration
+
+See [OIDC Configuration](../reference/oidc.md) for detailed setup instructions.
+
+## Email Verification
+
+- Registration sends a verification email with a signed token link; user must click to activate account and is auto-logged-in on verification
+- Resend via "Resend verification email" link on login page (shown on 403 "not verified" error, rate-limited to 1/min per email)
+- Email sent via SMTP (`KLANGK_SMTP_HOST/PORT/USER/PASSWORD/FROM`) or local sendmail (default, configurable via `KLANGK_SENDMAIL_PATH`)
+
+## JWT Sessions
+
+- JWT tokens (24hr expiry, secret configurable via `KLANGK_JWT_SECRET`) with token blocklist for logout
+- Session persists across page reloads (async token loading before routing)
+- Deep link preservation: unauthenticated visits to protected URLs redirect to login, then return to the original URL after successful login
+
+## Authorization
+
+- **ACL authorization**: Pyramid-style ACL system with resource tree, principals (user/group/system), and ordered allow/deny ACEs. See [ACL System](../reference/acl.md) for details.
+- Default user auto-seeded on startup in the `admin` group (configurable via `KLANGK_DEFAULT_USER/PASSWORD` in `.env`)
+
+## Admin Management
+
+- List/add/edit/delete users, create/manage groups and membership, edit ACLs on any resource
+- User data archived to tar.xz on deletion, self-deletion prevented
+- Admin create-user endpoint (`POST /admin/users`) creates verified users directly without email verification
+
+## Invitation System
+
+- Admins can invite users by email (`POST /admin/invitations` or `klangk invite <email>`)
+- Generates a 72-hour JWT token (configurable via `KLANGK_INVITE_EXPIRE_HOURS`), sends an email with a registration link (`/#/accept-invite?token=...`)
+- Invited users set a password to create a verified account — bypasses `KLANGK_DISABLE_REGISTRATION`
+- Invitations tracked in `invitations` table (pending/accepted/revoked), listable via `GET /admin/invitations` or `klangk invitations`, revocable via `DELETE /admin/invitations/{id}`
+- Disabled via `KLANGK_DISABLE_INVITES=true`
+
+## Brute-Force Protection
+
+- Failed login attempts tracked per email in SQLite
+- `KLANGK_LOGIN_LOCKOUT_FAILURES=N` failures within `KLANGK_LOGIN_LOCKOUT_WINDOW=S` (default 300s) triggers a `KLANGK_LOGIN_LOCKOUT_DURATION=D` (default 900s) lockout (429 with remaining seconds)
+- Disabled by default (N=0)
+
+## Registration
+
+- Open registration with email verification (test mode auto-verifies for E2E tests)
+- Login rejects unverified accounts
