@@ -21,7 +21,7 @@ dependencies:
   flterm:
     git:
       url: https://github.com/runyaga/libghostty.git
-      ref: "0.0.3.1"
+      ref: "0.0.3.2"
       path: packages/flterm
   libghostty: ^0.0.9
   web_socket_channel: ^3.0.0
