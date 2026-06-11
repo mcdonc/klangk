@@ -226,7 +226,7 @@ trivy-host --severity CRITICAL    # critical only
 
 ### CI
 
-The `image-host.yml` workflow builds and pushes the host image to GHCR. It is triggered manually via `workflow_dispatch` (building is too expensive for automatic push triggers). The `image-workspace.yml` workflow builds and pushes the workspace image independently on push to `main`.
+The `release.yml` workflow builds and pushes the host image to GHCR, triggered by pushing a CalVer tag. The `image-workspace.yml` workflow builds and pushes the workspace image independently on push to `main` (when workspace container files change).
 
 ### Releasing
 
@@ -395,7 +395,7 @@ plugins:
 ## Data
 
 - All data stored in `$KLANGK_DATA_DIR` (defaults to `$DEVENV_STATE/klangk/data`)
-- SQLite database: `klangk.db` (users, workspaces, port allocations, token blocklist, login attempts)
+- SQLite database: `klangk.db` (users, workspaces, groups, ACL entries, port allocations, chat messages, chat mentions, token blocklist, login attempts, invitations)
 - Workspace files: `workspaces/<user-id>/home/<workspace-id>/work/` (inside the `/home/klangk` bind mount)
 - Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/klangk` — dotfiles, bash history, Pi sessions)
 - Database persists across restarts and rebuilds
@@ -680,11 +680,18 @@ System-level packages (apt installs, etc.) are not included — those belong in 
 
 Pre-commit hooks run automatically on `git commit` via [git-hooks.nix](https://github.com/cachix/git-hooks.nix):
 
-- **ruff check --fix** — Python linting with auto-fix
-- **ruff format** — Python formatting
+- **actionlint** — GitHub Actions workflow linting
+- **check-executables-have-shebangs** — ensures executable scripts have a shebang line
+- **check-toml** — TOML syntax validation
 - **dart format** — Dart formatting
+- **markdownlint** — Markdown linting
 - **nixfmt** — Nix formatting
 - **prettier** — TypeScript, JavaScript, and YAML formatting
+- **ruff format** — Python formatting
+- **ruff check --fix** — Python linting with auto-fix
+- **shellcheck** — shell script linting
+- **shfmt** — shell script formatting
+- **trufflehog** — secret scanning
 - **yamllint** — YAML linting
 
 Hooks are installed automatically when entering the devenv shell.

@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 680" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.12"/>
+    </filter>
+    <linearGradient id="browserGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4A90D9"/>
+      <stop offset="100%" stop-color="#3B7DD8"/>
+    </linearGradient>
+    <linearGradient id="nginxGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#009639"/>
+      <stop offset="100%" stop-color="#007A2F"/>
+    </linearGradient>
+    <linearGradient id="backendGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6C5CE7"/>
+      <stop offset="100%" stop-color="#5A4BD1"/>
+    </linearGradient>
+    <linearGradient id="containerGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E17055"/>
+      <stop offset="100%" stop-color="#D35400"/>
+    </linearGradient>
+    <linearGradient id="llmGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FDCB6E"/>
+      <stop offset="100%" stop-color="#F0B429"/>
+    </linearGradient>
+    <linearGradient id="storageGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#636E72"/>
+      <stop offset="100%" stop-color="#4A5459"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="680" rx="12" fill="#0D1117"/>
+
+  <!-- Title -->
+  <text x="450" y="38" text-anchor="middle" fill="#E6EDF3" font-size="20" font-weight="700">Klangk Architecture</text>
+  <text x="450" y="58" text-anchor="middle" fill="#8B949E" font-size="12">Multi-User Web Coding Agent Platform</text>
+
+  <!-- ════════ BROWSER ════════ -->
+  <rect x="200" y="78" width="500" height="80" rx="10" fill="url(#browserGrad)" filter="url(#shadow)"/>
+  <text x="450" y="104" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Browser — Flutter Web App</text>
+  <text x="260" y="126" fill="#D4E4F7" font-size="11">Terminal</text>
+  <text x="350" y="126" fill="#D4E4F7" font-size="11">File Viewer</text>
+  <text x="455" y="126" fill="#D4E4F7" font-size="11">Chat</text>
+  <text x="530" y="126" fill="#D4E4F7" font-size="11">Presence</text>
+  <text x="625" y="126" fill="#D4E4F7" font-size="11">Debug Panel</text>
+  <!-- User icons -->
+  <text x="220" y="108" fill="#fff" font-size="18">👤</text>
+  <text x="244" y="146" fill="#B8D4F0" font-size="10">WebSocket + REST</text>
+
+  <!-- Arrow: Browser → nginx -->
+  <line x1="450" y1="158" x2="450" y2="188" stroke="#8B949E" stroke-width="2" marker-end="url(#arrowGrey)"/>
+  <defs><marker id="arrowGrey" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#8B949E"/></marker></defs>
+
+  <!-- ════════ NGINX ════════ -->
+  <rect x="150" y="188" width="600" height="72" rx="10" fill="url(#nginxGrad)" filter="url(#shadow)"/>
+  <text x="450" y="214" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">nginx Reverse Proxy</text>
+  <text x="225" y="236" fill="#C8F7C5" font-size="10">UI + API</text>
+  <text x="330" y="236" fill="#C8F7C5" font-size="10">WebSocket</text>
+  <text x="435" y="236" fill="#C8F7C5" font-size="10">LLM Proxy</text>
+  <text x="545" y="236" fill="#C8F7C5" font-size="10">Hosted Apps</text>
+  <text x="660" y="236" fill="#C8F7C5" font-size="10">JWT Auth</text>
+  <text x="450" y="252" fill="#A8E6A1" font-size="10">Validates workspace tokens via auth_request</text>
+
+  <!-- Arrow: nginx → backend -->
+  <line x1="380" y1="260" x2="380" y2="296" stroke="#8B949E" stroke-width="2" marker-end="url(#arrowGrey)"/>
+  <!-- Arrow: nginx → LLM (right side) -->
+  <line x1="780" y1="224" x2="830" y2="224" stroke="#FDCB6E" stroke-width="2" marker-end="url(#arrowYellow)"/>
+  <defs><marker id="arrowYellow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#FDCB6E"/></marker></defs>
+
+  <!-- ════════ LLM PROVIDER (right side) ════════ -->
+  <rect x="830" y="195" width="55" height="58" rx="8" fill="url(#llmGrad)" filter="url(#shadow)"/>
+  <text x="857" y="220" text-anchor="middle" fill="#2D3436" font-size="10" font-weight="700">LLM</text>
+  <text x="857" y="234" text-anchor="middle" fill="#2D3436" font-size="9">API</text>
+
+  <!-- ════════ BACKEND ════════ -->
+  <rect x="150" y="296" width="460" height="110" rx="10" fill="url(#backendGrad)" filter="url(#shadow)"/>
+  <text x="380" y="322" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Python / FastAPI Backend</text>
+  <!-- Sub-items in 2 columns -->
+  <text x="195" y="346" fill="#D6D0F7" font-size="11">🔐 Auth (JWT + ACL)</text>
+  <text x="195" y="366" fill="#D6D0F7" font-size="11">📦 Workspace Manager</text>
+  <text x="195" y="386" fill="#D6D0F7" font-size="11">💬 Chat + @Mentions</text>
+  <text x="410" y="346" fill="#D6D0F7" font-size="11">🖥️ Terminal Sessions</text>
+  <text x="410" y="366" fill="#D6D0F7" font-size="11">🌉 Browser Bridge</text>
+  <text x="410" y="386" fill="#D6D0F7" font-size="11">👥 Presence</text>
+
+  <!-- ════════ SQLITE (right of backend) ════════ -->
+  <rect x="660" y="310" width="100" height="82" rx="8" fill="url(#storageGrad)" filter="url(#shadow)"/>
+  <text x="710" y="340" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">SQLite</text>
+  <text x="710" y="358" text-anchor="middle" fill="#B2BEC3" font-size="10">Users</text>
+  <text x="710" y="372" text-anchor="middle" fill="#B2BEC3" font-size="10">Workspaces</text>
+  <text x="710" y="386" text-anchor="middle" fill="#B2BEC3" font-size="10">ACL · Chat</text>
+  <!-- Arrow: backend → sqlite -->
+  <line x1="610" y1="351" x2="656" y2="351" stroke="#8B949E" stroke-width="2" marker-end="url(#arrowGrey)"/>
+
+  <!-- Arrow: backend → containers -->
+  <line x1="380" y1="406" x2="380" y2="448" stroke="#8B949E" stroke-width="2" marker-end="url(#arrowGrey)"/>
+  <text x="390" y="434" fill="#8B949E" font-size="10">podman exec</text>
+
+  <!-- ════════ CONTAINERS ════════ -->
+  <!-- Container 1 -->
+  <rect x="100" y="448" width="220" height="105" rx="10" fill="url(#containerGrad)" filter="url(#shadow)"/>
+  <text x="210" y="476" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Workspace Container</text>
+  <text x="210" y="496" text-anchor="middle" fill="#FFEAA7" font-size="11">Pi Coding Agent</text>
+  <text x="130" y="518" fill="#FAD7A0" font-size="10">Extensions · Tools</text>
+  <text x="130" y="536" fill="#FAD7A0" font-size="10">Isolated per-user</text>
+
+  <!-- Container 2 (dimmed duplicate to show "per workspace") -->
+  <rect x="340" y="448" width="220" height="105" rx="10" fill="url(#containerGrad)" opacity="0.55" filter="url(#shadow)"/>
+  <text x="450" y="476" text-anchor="middle" fill="#fff" font-size="13" font-weight="700" opacity="0.8">Workspace Container</text>
+  <text x="450" y="496" text-anchor="middle" fill="#FFEAA7" font-size="11" opacity="0.8">Pi Coding Agent</text>
+  <text x="370" y="518" fill="#FAD7A0" font-size="10" opacity="0.7">Extensions · Tools</text>
+  <text x="370" y="536" fill="#FAD7A0" font-size="10" opacity="0.7">Isolated per-user</text>
+
+  <!-- Ellipsis -->
+  <text x="580" y="500" fill="#8B949E" font-size="22" font-weight="700">···</text>
+  <text x="576" y="520" fill="#8B949E" font-size="10">1 per</text>
+  <text x="563" y="533" fill="#8B949E" font-size="10">workspace</text>
+
+  <!-- ════════ FILE STORAGE ════════ -->
+  <rect x="660" y="462" width="140" height="76" rx="8" fill="url(#storageGrad)" filter="url(#shadow)"/>
+  <text x="730" y="490" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Persistent Storage</text>
+  <text x="730" y="510" text-anchor="middle" fill="#B2BEC3" font-size="10">User files · Pi sessions</text>
+  <text x="730" y="524" text-anchor="middle" fill="#B2BEC3" font-size="10">Bash history · Dotfiles</text>
+  <!-- Arrow: containers → storage -->
+  <line x1="560" y1="500" x2="656" y2="500" stroke="#8B949E" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowGrey)"/>
+  <text x="590" y="493" fill="#8B949E" font-size="9">bind mount</text>
+
+  <!-- ════════ BOTTOM LABELS ════════ -->
+  <!-- Key features bar -->
+  <rect x="60" y="590" width="780" height="75" rx="10" fill="#161B22" stroke="#30363D" stroke-width="1"/>
+  <text x="450" y="612" text-anchor="middle" fill="#8B949E" font-size="11" font-weight="600">KEY CAPABILITIES</text>
+  <text x="120" y="636" fill="#58A6FF" font-size="11">🔐 ACL Permissions</text>
+  <text x="275" y="636" fill="#58A6FF" font-size="11">🤖 AI Coding Agent</text>
+  <text x="430" y="636" fill="#58A6FF" font-size="11">👥 Multi-User Collab</text>
+  <text x="600" y="636" fill="#58A6FF" font-size="11">🔒 Isolated Containers</text>
+  <text x="770" y="636" fill="#58A6FF" font-size="11">🔌 Plugins</text>
+  <text x="120" y="654" fill="#8B949E" font-size="9">Per-resource access control</text>
+  <text x="275" y="654" fill="#8B949E" font-size="9">Pi agent with tool calling</text>
+  <text x="430" y="654" fill="#8B949E" font-size="9">Chat, presence, sharing</text>
+  <text x="600" y="654" fill="#8B949E" font-size="9">Podman, per-user isolation</text>
+  <text x="770" y="654" fill="#8B949E" font-size="9">Extensible tools</text>
+
+  <!-- Arrow: nginx hosted apps → containers direct -->
+  <path d="M 750,260 L 750,462" stroke="#E17055" stroke-width="1.5" stroke-dasharray="5,3" fill="none" marker-end="url(#arrowOrange)"/>
+  <defs><marker id="arrowOrange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#E17055"/></marker></defs>
+  <text x="756" y="380" fill="#E17055" font-size="9" transform="rotate(90, 756, 380)">hosted apps (direct)</text>
+
+  <!-- Container → nginx arrow (LLM proxy + chat API) -->
+  <path d="M 130,448 L 130,224 L 146,224" stroke="#FDCB6E" stroke-width="1.5" stroke-dasharray="5,3" fill="none" marker-end="url(#arrowYellow)"/>
+  <text x="68" y="340" fill="#FDCB6E" font-size="9">LLM proxy</text>
+  <text x="68" y="353" fill="#FDCB6E" font-size="9">+ chat API</text>
+  <text x="68" y="366" fill="#FDCB6E" font-size="9">(JWT auth)</text>
+</svg>
