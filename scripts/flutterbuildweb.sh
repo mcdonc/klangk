@@ -22,7 +22,33 @@ FLUTTER="${KLANGK_WEB_FLUTTER:-flutter}"
 # dart2js (JS) renderer instead of WasmGC. To revert, restore the wasm flags:
 #   --wasm --no-strip-wasm --no-minify-wasm
 # (a benign "Wasm dry run succeeded" warning is expected in JS-only mode.)
-cd src/frontend && "$FLUTTER" --disable-analytics && "$FLUTTER" pub get && "$FLUTTER" build web --release --base-href=/ --no-web-resources-cdn --source-maps --no-minify-js
+cd src/frontend
+"$FLUTTER" --disable-analytics
+"$FLUTTER" pub get
+
+# Guard against a stale web plugin registrant. Flutter's incremental web build
+# does not reliably re-run the web_plugin_registrant target when the plugin set
+# changes, so a newly-added web plugin (e.g. video_player_web, url_launcher_web)
+# can compile into the bundle *unregistered* -> "UnimplementedError: init() has
+# not been implemented" at runtime. `flutter pub get` (above) rewrites
+# .flutter-plugins-dependencies; when its contents change vs the last build, drop
+# the build cache so the registrant is regenerated from the current plugin set.
+# Incremental builds are preserved while the plugin set is unchanged.
+PLUGINS_DEPS=.flutter-plugins-dependencies
+PLUGINS_MARKER=.dart_tool/.klangk-web-plugins.sha256
+if [ -f "$PLUGINS_DEPS" ]; then
+  NEW_PLUGINS_HASH="$(sha256sum "$PLUGINS_DEPS" | cut -d' ' -f1)"
+  if [ "$(cat "$PLUGINS_MARKER" 2>/dev/null || true)" != "$NEW_PLUGINS_HASH" ]; then
+    echo "Plugin set changed -> clearing build cache to regenerate web plugin registrant"
+    rm -rf .dart_tool/flutter_build
+  fi
+fi
+
+"$FLUTTER" build web --release --base-href=/ --no-web-resources-cdn --source-maps --no-minify-js
+
+# Record the plugin-set hash so the next build only clears the cache on change.
+[ -f "$PLUGINS_DEPS" ] && sha256sum "$PLUGINS_DEPS" | cut -d' ' -f1 >"$PLUGINS_MARKER"
+
 rm -f build/web/flutter_service_worker.js
 
 # Inline `sourcesContent` into the source maps so devtools (especially
