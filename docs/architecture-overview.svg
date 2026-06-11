@@ -103,14 +103,14 @@
   <text x="210" y="476" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Workspace Container</text>
   <text x="210" y="496" text-anchor="middle" fill="#FFEAA7" font-size="11">Pi Coding Agent</text>
   <text x="130" y="518" fill="#FAD7A0" font-size="10">Extensions · Tools</text>
-  <text x="130" y="536" fill="#FAD7A0" font-size="10">Read-only rootfs</text>
+  <text x="130" y="536" fill="#FAD7A0" font-size="10">Isolated per-user</text>
 
   <!-- Container 2 (dimmed duplicate to show "per workspace") -->
   <rect x="340" y="448" width="220" height="105" rx="10" fill="url(#containerGrad)" opacity="0.55" filter="url(#shadow)"/>
   <text x="450" y="476" text-anchor="middle" fill="#fff" font-size="13" font-weight="700" opacity="0.8">Workspace Container</text>
   <text x="450" y="496" text-anchor="middle" fill="#FFEAA7" font-size="11" opacity="0.8">Pi Coding Agent</text>
   <text x="370" y="518" fill="#FAD7A0" font-size="10" opacity="0.7">Extensions · Tools</text>
-  <text x="370" y="536" fill="#FAD7A0" font-size="10" opacity="0.7">Read-only rootfs</text>
+  <text x="370" y="536" fill="#FAD7A0" font-size="10" opacity="0.7">Isolated per-user</text>
 
   <!-- Ellipsis -->
   <text x="580" y="500" fill="#8B949E" font-size="22" font-weight="700">···</text>
@@ -138,7 +138,7 @@
   <text x="120" y="654" fill="#8B949E" font-size="9">Per-resource access control</text>
   <text x="275" y="654" fill="#8B949E" font-size="9">Pi agent with tool calling</text>
   <text x="430" y="654" fill="#8B949E" font-size="9">Chat, presence, sharing</text>
-  <text x="600" y="654" fill="#8B949E" font-size="9">Podman, read-only rootfs</text>
+  <text x="600" y="654" fill="#8B949E" font-size="9">Podman, per-user isolation</text>
   <text x="770" y="654" fill="#8B949E" font-size="9">Extensible tools</text>
 
   <!-- Arrow: nginx hosted apps → containers direct -->
