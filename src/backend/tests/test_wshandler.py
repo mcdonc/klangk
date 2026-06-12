@@ -3360,3 +3360,35 @@ class TestDispatchBrowserRequestStreamTo:
         ) as mock:
             await handle_websocket(websocket)
         mock.assert_called_once()
+
+
+class TestHandleAutoCreateFailure:
+    async def test_handle_creation_failure_logs_and_continues(
+        self, user, temp_data_dir
+    ):
+        """If auto-handle creation fails entirely, log and proceed without HOME."""
+        from klangk_backend import workspaces
+
+        ws = await workspaces.create_workspace(user["id"], "handle-fail")
+        sock = _mock_sock()
+        conn = _base_conn(
+            user={"id": user["id"], "email": user["email"]}, ws=sock
+        )
+        conn.workspace_id = ws["id"]
+        conn._user_home = None
+        conn.pending_status_msg = "ready"
+
+        with patch.object(
+            workspaces, "suggest_handle", side_effect=RuntimeError("boom")
+        ):
+            await conn.handle_ui_ready()
+        # _user_home stays None (creation failed)
+        assert conn._user_home is None
+        # container_ready is still sent
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict)
+            and m.get("type") == "event"
+            and m.get("event", {}).get("name") == "container_ready"
+            for m in sent
+        )
