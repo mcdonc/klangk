@@ -468,7 +468,7 @@ class ContainerRegistry:
                             )
 
         binds = [
-            f"{home_path}:/home/klangk",
+            f"{home_path}:/home",
         ]
         if config_path:
             binds.append(f"{config_path}:/opt/klangk/config:ro")

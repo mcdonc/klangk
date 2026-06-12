@@ -114,7 +114,7 @@ class TestStart:
         assert argv[0] == "exec"
         assert "-t" in argv and "-i" in argv
         assert argv[argv.index("-u") + 1] == "klangk"
-        assert argv[argv.index("-w") + 1] == "/home/klangk/work"
+        assert argv[argv.index("-w") + 1] == "/home"
         assert "cid" in argv
         assert argv[-2:] == ["tmux", "new-session"]
         assert (fake.rows, fake.cols) == (40, 120)
@@ -166,6 +166,32 @@ class TestStart:
             s = TerminalSession("cid")
             await s.start()
         assert not any("KLANGK_BRIDGE_TOKEN" in a for a in fake.argv)
+        await s.stop()
+
+    async def test_user_home_sets_home_env(self):
+        fake = FakeShell(block_after_chunks=True)
+        with _patch(fake):
+            s = TerminalSession("cid", user_home="/home/alice")
+            await s.start(120, 40)
+        assert "HOME=/home/alice" in fake.argv
+        # Work dir is always /home (bash cd's to $HOME on login)
+        assert fake.argv[fake.argv.index("-w") + 1] == "/home"
+        # HOME is also passed to tmux via -e so child shells inherit it
+        tmux_idx = fake.argv.index("tmux")
+        tmux_tail = fake.argv[tmux_idx:]
+        assert "-e" in tmux_tail
+        assert "HOME=/home/alice" in tmux_tail
+        # Session named after handle; -A reattaches on reconnect
+        assert "-A" in tmux_tail
+        assert tmux_tail[tmux_tail.index("-s") + 1] == "alice"
+        await s.stop()
+
+    async def test_no_user_home_by_default(self):
+        fake = FakeShell(block_after_chunks=True)
+        with _patch(fake):
+            s = TerminalSession("cid")
+            await s.start()
+        assert not any(a.startswith("HOME=") for a in fake.argv)
         await s.stop()
 
     async def test_start_failure_resets_running(self):

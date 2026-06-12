@@ -46,7 +46,7 @@ final _urlPattern = RegExp(r'^https?://');
 ///
 /// [uri] is the cell's OSC 8 hyperlink (if any); [pwd] is the OSC 7 working
 /// directory (`file://host/abs`, a bare path, or empty); [workspaceRoot] is the
-/// container path files resolve under (e.g. `/home/klangk/work`).
+/// container path files resolve under (e.g. `/home/work`).
 ///
 /// Security: only `http(s)` URLs open externally — every other OSC 8 scheme
 /// (`javascript:`, `data:`, `file://`, …) is ignored.
@@ -55,9 +55,9 @@ final _urlPattern = RegExp(r'^https?://');
 /// relative to the container **home**, while the shell's working directory is a
 /// subdir of it:
 /// - [defaultCwd] is where a *relative* token resolves when [pwd] (OSC 7) is
-///   absent — the shell's cwd, e.g. `/home/klangk/work`.
+///   absent — the shell's cwd, e.g. `/home/work`.
 /// - [pathRoot] is stripped to produce the file-API path — the home, e.g.
-///   `/home/klangk`, so a file under `work/` yields `work/...`.
+///   `/home`, so a file under `work/` yields `work/...`.
 ///
 /// The resolved path must land inside [pathRoot], else [NoLink] (rejects
 /// `../` escapes).

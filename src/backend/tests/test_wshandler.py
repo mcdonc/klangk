@@ -404,6 +404,7 @@ class TestHandleTerminalStart:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
         container.registry.track_activity("cid", "ws")
 
         with patch.object(wshandler, "TerminalSession") as MockTS:
@@ -420,7 +421,7 @@ class TestHandleTerminalStart:
             # Let the background task run
             await asyncio.sleep(0)
 
-        MockTS.assert_called_once_with("cid")
+        MockTS.assert_called_once_with("cid", user_home="/home/testuser")
         # bridge_token should be passed (a UUID string)
         start_kwargs = mock_session.start.call_args
         assert start_kwargs[1]["command_override"] is None
@@ -440,12 +441,28 @@ class TestHandleTerminalStart:
         container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 
+    async def test_terminal_start_requires_handle(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        # _user_home not set
+
+        await conn.handle_terminal_start({"cols": 80, "rows": 24})
+        sent = sock.send_json.call_args_list
+        assert any(
+            call.args[0].get("type") == "error"
+            and "Handle" in call.args[0].get("message", "")
+            for call in sent
+        )
+
     async def test_restart_revokes_old_bridge_token(self):
         """Starting a second terminal revokes the previous bridge token."""
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
         container.registry.track_activity("cid", "ws")
 
         with patch.object(wshandler, "TerminalSession") as MockTS:
@@ -503,6 +520,7 @@ class TestHandleTerminalStart:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -532,6 +550,7 @@ class TestHandleTerminalStart:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -556,6 +575,7 @@ class TestHandleTerminalStart:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -580,6 +600,7 @@ class TestHandleTerminalStart:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -607,6 +628,123 @@ class TestHandleTerminalStart:
         conn = _base_conn(ws=sock)
         await conn.handle_terminal_start({})
         assert conn.terminal_session is None
+
+
+# --- handle management ---
+
+
+class TestHandleSetHandle:
+    async def test_set_handle_success(self, user, temp_data_dir):
+        from klangk_backend import workspaces
+
+        ws = await workspaces.create_workspace(user["id"], "handle-test")
+        sock = _mock_sock()
+        conn = _base_conn(
+            user={"id": user["id"], "email": user["email"]}, ws=sock
+        )
+        conn.workspace_id = ws["id"]
+
+        await conn.handle_set_handle({"handle": "alice"})
+        sent = sock.send_json.call_args_list
+        assert any(
+            call.args[0].get("type") == "handle_set"
+            and call.args[0].get("handle") == "alice"
+            for call in sent
+        )
+        assert conn._user_home == "/home/alice"
+
+    async def test_set_handle_conflict(self, user, temp_data_dir):
+        from klangk_backend import workspaces
+
+        ws = await workspaces.create_workspace(user["id"], "handle-test2")
+        workspaces.set_user_handle(user["id"], ws["id"], "other-uid", "alice")
+
+        sock = _mock_sock()
+        conn = _base_conn(
+            user={"id": user["id"], "email": user["email"]}, ws=sock
+        )
+        conn.workspace_id = ws["id"]
+
+        await conn.handle_set_handle({"handle": "alice"})
+        sent = sock.send_json.call_args_list
+        assert any(call.args[0].get("type") == "handle_error" for call in sent)
+        assert conn._user_home is None
+
+    async def test_set_handle_no_workspace(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        await conn.handle_set_handle({"handle": "alice"})
+        sent = sock.send_json.call_args_list
+        assert any(call.args[0].get("type") == "error" for call in sent)
+
+    async def test_handle_auto_created_on_ui_ready(self, user, temp_data_dir):
+        from klangk_backend import workspaces
+
+        ws = await workspaces.create_workspace(user["id"], "handle-test3")
+        sock = _mock_sock()
+        conn = _base_conn(
+            user={"id": user["id"], "email": user["email"]}, ws=sock
+        )
+        conn.workspace_id = ws["id"]
+        conn._user_home = None
+        conn.pending_status_msg = "ready"
+
+        await conn.handle_ui_ready()
+        # Handle auto-created from email
+        assert conn._user_home is not None
+        assert conn._user_home.startswith("/home/")
+        # container_ready sent (not deferred)
+        sent = sock.send_json.call_args_list
+        assert any(
+            call.args[0].get("event", {}).get("name") == "container_ready"
+            for call in sent
+            if isinstance(call.args[0], dict)
+            and call.args[0].get("type") == "event"
+        )
+
+    async def test_handle_auto_created_with_conflict(
+        self, user, temp_data_dir
+    ):
+        from klangk_backend import workspaces
+
+        ws = await workspaces.create_workspace(user["id"], "handle-conflict")
+        # Pre-create a conflicting handle from another user
+        workspaces.set_user_handle(
+            user["id"],
+            ws["id"],
+            "other-uid",
+            workspaces.suggest_handle(user["email"]),
+        )
+        sock = _mock_sock()
+        conn = _base_conn(
+            user={"id": user["id"], "email": user["email"]}, ws=sock
+        )
+        conn.workspace_id = ws["id"]
+        conn._user_home = None
+        conn.pending_status_msg = "ready"
+
+        await conn.handle_ui_ready()
+        # Should have used a suffixed alternative
+        assert conn._user_home is not None
+        assert "-2" in conn._user_home or "-3" in conn._user_home
+
+    async def test_handle_resolved_on_start(self, user, temp_data_dir):
+        from klangk_backend import workspaces
+
+        ws = await workspaces.create_workspace(user["id"], "handle-test4")
+        workspaces.set_user_handle(user["id"], ws["id"], user["id"], "chris")
+        sock = _mock_sock()
+        conn = _base_conn(
+            user={"id": user["id"], "email": user["email"]}, ws=sock
+        )
+        conn.workspace_id = ws["id"]
+        conn.pending_status_msg = "ready"
+
+        # Simulate what start_workspace_container does for handle resolution
+        handle = workspaces.get_user_handle(user["id"], ws["id"], user["id"])
+        if handle:
+            conn._user_home = f"/home/{handle}"
+        assert conn._user_home == "/home/chris"
 
 
 # --- forward_terminal_output ---
@@ -932,6 +1070,37 @@ class TestStartWorkspaceContainer:
         assert conn.workspace == workspace
         assert workspace["id"] in wshandler.state.sessions
         assert conn._idle_cb is not None
+        # No handle set yet
+        assert conn._user_home is None
+
+        wshandler.state.sessions.pop(workspace["id"], None)
+        container.registry.states.pop(workspace["id"], None)
+
+    async def test_resolves_existing_handle(self, user):
+        from klangk_backend import workspaces
+
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(user["id"], "handle-ws")
+        workspaces.set_user_handle(
+            user["id"], workspace["id"], user["id"], "chris"
+        )
+
+        async def fake_start(*a, **kw):
+            container.registry.track_activity("cid-h", workspace["id"])
+            return ("cid-h", "created")
+
+        with (
+            patch.object(
+                container.registry,
+                "start_container",
+                side_effect=fake_start,
+            ),
+            patch("glob.glob", return_value=[]),
+        ):
+            await conn.start_workspace_container(workspace["id"], workspace)
+
+        assert conn._user_home == "/home/chris"
 
         wshandler.state.sessions.pop(workspace["id"], None)
         container.registry.states.pop(workspace["id"], None)
@@ -1039,6 +1208,13 @@ class TestHandleWebsocketDispatch:
         )
         calls = [c[0][0] for c in websocket.send_json.call_args_list]
         assert any("Missing" in str(c) for c in calls)
+
+    async def test_dispatch_set_handle(self, user):
+        websocket = await self._run_commands(
+            user, [{"cmd": "set_handle", "handle": "alice"}]
+        )
+        calls = [c[0][0] for c in websocket.send_json.call_args_list]
+        assert any("Not connected" in str(c) for c in calls)
 
     async def test_dispatch_workspace_disconnect(self, user):
         websocket = await self._run_commands(
@@ -1163,6 +1339,7 @@ class TestHandleWebsocket:
         async def fake_start(self_arg, wid, ws_obj):
             self_arg.container_id = "cid"
             self_arg.workspace_id = wid
+            self_arg._user_home = "/home/testuser"
             wshandler.state.get_or_create_session(wid)
 
         websocket.receive_text = AsyncMock(

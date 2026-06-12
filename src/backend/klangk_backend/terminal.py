@@ -38,9 +38,13 @@ _SENSITIVE_ENV_PREFIXES = (
 
 
 def _build_environment(
-    command_override: str | None, bridge_token: str | None
+    command_override: str | None,
+    bridge_token: str | None,
+    user_home: str | None = None,
 ) -> list[str]:
     env = ["TERM=xterm-256color"]
+    if user_home is not None:
+        env.append(f"HOME={user_home}")
     if command_override is not None:
         env.append(f"KLANGK_CMD_OVERRIDE={command_override}")
     if bridge_token is not None:
@@ -48,18 +52,36 @@ def _build_environment(
     return env
 
 
-def _build_shell_command() -> list[str]:
+def _build_shell_command(user_home: str | None = None) -> list[str]:
     unset_args: list[str] = []
     for key in os.environ:
         if key.startswith(_SENSITIVE_ENV_PREFIXES):
             unset_args.extend(["-u", key])
-    return ["env", *unset_args, "tmux", "new-session"]
+    tmux_env: list[str] = []
+    session_args: list[str] = []
+    if user_home is not None:
+        tmux_env = ["-e", f"HOME={user_home}"]
+        # Name the session after the handle so reconnects reattach.
+        # -A attaches if the session exists, creates if not.
+        handle = user_home.rsplit("/", 1)[-1]
+        session_args = ["-A", "-s", handle]
+    return [
+        "env",
+        *unset_args,
+        "tmux",
+        "new-session",
+        *session_args,
+        *tmux_env,
+    ]
 
 
 def _build_exec_argv(
-    container_id: str, env: list[str], shell_cmd: list[str]
+    container_id: str,
+    env: list[str],
+    shell_cmd: list[str],
+    work_dir: str = "/home/work",
 ) -> list[str]:
-    argv = ["exec", "-t", "-i", "-u", "klangk", "-w", "/home/klangk/work"]
+    argv = ["exec", "-t", "-i", "-u", "klangk", "-w", work_dir]
     for entry in env:
         argv += ["-e", entry]
     argv.append(container_id)
@@ -137,8 +159,9 @@ def _make_shell_process() -> ShellProcess:
 class TerminalSession:
     """Manages an interactive shell session over a PTY."""
 
-    def __init__(self, container_id: str):
+    def __init__(self, container_id: str, user_home: str | None = None):
         self.container_id = container_id
+        self.user_home = user_home
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -155,9 +178,12 @@ class TerminalSession:
     ) -> None:
         """Start a shell session via ``podman exec`` over a PTY."""
         self._running = True
-        env = _build_environment(command_override, bridge_token)
-        shell_cmd = _build_shell_command()
-        argv = _build_exec_argv(self.container_id, env, shell_cmd)
+        env = _build_environment(
+            command_override, bridge_token, self.user_home
+        )
+        shell_cmd = _build_shell_command(self.user_home)
+        work_dir = "/home"
+        argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)
 
         shell = _make_shell_process()
         try:

@@ -338,10 +338,24 @@ packages:
       url: "https://github.com/runyaga/klangk-plugin-api.git"
     source: git
     version: "0.1.0"
+  klangk_plugin_beep:
+    dependency: transitive
+    description:
+      path: "/home/chrism/projects/klangk/.claude/worktrees/296-per-user-home/.devenv/state/klangk/plugins/beep/klangk"
+      relative: false
+    source: path
+    version: "0.1.0"
+  klangk_plugin_celebrate:
+    dependency: transitive
+    description:
+      path: "/home/chrism/projects/klangk/.claude/worktrees/296-per-user-home/.devenv/state/klangk/plugins/celebrate/klangk"
+      relative: false
+    source: path
+    version: "0.1.0"
   klangk_plugins:
     dependency: "direct main"
     description:
-      path: "/home/chrism/projects/klangk/.claude/worktrees/304-shutdown-button/.devenv/state/klangk/plugins/.dart"
+      path: "/home/chrism/projects/klangk/.claude/worktrees/296-per-user-home/.devenv/state/klangk/plugins/.dart"
       relative: false
     source: path
     version: "0.0.1"

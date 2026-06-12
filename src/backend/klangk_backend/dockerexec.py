@@ -12,8 +12,9 @@ logger = logging.getLogger(__name__)
 class ExecSession:
     """Manages a podman exec session with raw stdin/stdout pipes (no PTY)."""
 
-    def __init__(self, container_id: str):
+    def __init__(self, container_id: str, user_home: str | None = None):
         self.container_id = container_id
+        self.user_home = user_home
         self._proc: asyncio.subprocess.Process | None = None
         self._output_queue: BoundedOutputQueue[bytes] = BoundedOutputQueue(
             maxsize=64
@@ -26,14 +27,20 @@ class ExecSession:
         """Start a command via podman exec with piped stdin/stdout."""
         from . import podman
 
+        env_flags: list[str] = []
+        work_dir = "/home/work"
+        if self.user_home is not None:
+            env_flags += ["-e", f"HOME={self.user_home}"]
+            work_dir = self.user_home
         exec_cmd = [
             podman.PODMAN_BIN,
             "exec",
             "-i",
+            *env_flags,
             "-u",
             "klangk",
             "-w",
-            "/home/klangk/work",
+            work_dir,
             self.container_id,
             *command,
         ]
