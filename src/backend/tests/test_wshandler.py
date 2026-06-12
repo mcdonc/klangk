@@ -407,7 +407,13 @@ class TestHandleTerminalStart:
         conn._user_home = "/home/testuser"
         container.registry.track_activity("cid", "ws")
 
-        with patch.object(wshandler, "TerminalSession") as MockTS:
+        with (
+            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[{"index": 0, "name": "bash", "active": True}],
+            ),
+        ):
             mock_session = _mock_terminal()
             MockTS.return_value = mock_session
 
@@ -422,6 +428,12 @@ class TestHandleTerminalStart:
             await asyncio.sleep(0)
 
         MockTS.assert_called_once_with("cid", user_home="/home/testuser")
+        # Should have sent terminal_windows after terminal_started
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and m.get("type") == "terminal_windows"
+            for m in sent
+        )
         # bridge_token should be passed (a UUID string)
         start_kwargs = mock_session.start.call_args
         assert start_kwargs[1]["command_override"] is None
@@ -429,8 +441,11 @@ class TestHandleTerminalStart:
         assert conn._bridge_token == start_kwargs[1]["bridge_token"]
         assert conn.terminal_session is mock_session
         assert conn.terminal_task is not None
-        # Should have sent terminal_started ack
-        sock.send_json.assert_called_with({"type": "terminal_started"})
+        # Should have sent terminal_started ack (followed by terminal_windows)
+        assert any(
+            isinstance(m, dict) and m.get("type") == "terminal_started"
+            for m in sent
+        )
 
         # Clean up
         conn.terminal_task.cancel()
@@ -455,6 +470,47 @@ class TestHandleTerminalStart:
             and "Handle" in call.args[0].get("message", "")
             for call in sent
         )
+
+    async def test_start_window_list_failure_non_fatal(self):
+        """If list_windows fails after terminal start, terminal still works."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+        container.registry.track_activity("cid", "ws")
+
+        with (
+            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                side_effect=RuntimeError("tmux not ready"),
+            ),
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+        # terminal_started still sent despite list_windows failure
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and m.get("type") == "terminal_started"
+            for m in sent
+        )
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
+        container.registry.revoke_bridge_token("ws")
+        container.registry.states.pop("ws", None)
 
     async def test_restart_revokes_old_bridge_token(self):
         """Starting a second terminal revokes the previous bridge token."""
@@ -1239,6 +1295,17 @@ class TestHandleWebsocketDispatch:
     async def test_dispatch_terminal_stop(self, user):
         websocket = await self._run_commands(user, [{"cmd": "terminal_stop"}])
         websocket.accept.assert_awaited_once()
+
+    async def test_dispatch_terminal_window_commands(self, user):
+        for cmd in (
+            "terminal_new_window",
+            "terminal_select_window",
+            "terminal_close_window",
+            "terminal_rename_window",
+            "terminal_list_windows",
+        ):
+            websocket = await self._run_commands(user, [{"cmd": cmd}])
+            websocket.accept.assert_awaited_once()
 
     async def test_dispatch_restart_container(self, user):
         websocket = await self._run_commands(
@@ -2663,6 +2730,182 @@ class TestHandleShutdownContainer:
         assert any(
             isinstance(m, dict) and "Not connected" in str(m) for m in sent
         )
+
+
+class TestTerminalWindowHandlers:
+    async def test_new_window_no_container(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = None
+        await conn.handle_terminal_new_window({})
+        assert sock.send_json.call_count == 0
+
+    async def test_new_window_success(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.new_window",
+            return_value=[
+                {"index": 0, "name": "bash", "active": False},
+                {"index": 1, "name": "bash", "active": True},
+            ],
+        ):
+            await conn.handle_terminal_new_window({})
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "terminal_windows"
+        assert len(sent["windows"]) == 2
+
+    async def test_new_window_with_name(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.new_window",
+            return_value=[
+                {"index": 0, "name": "bash", "active": False},
+                {"index": 1, "name": "build", "active": True},
+            ],
+        ) as mock_new:
+            await conn.handle_terminal_new_window({"name": "build"})
+        mock_new.assert_called_once_with("cid", "alice", name="build")
+
+    async def test_new_window_error(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.new_window",
+            side_effect=ValueError("already exists"),
+        ):
+            await conn.handle_terminal_new_window({"name": "dup"})
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+
+    async def test_select_window(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.select_window",
+        ) as mock_sel:
+            await conn.handle_terminal_select_window({"index": 2})
+        mock_sel.assert_called_once_with("cid", "alice", 2)
+
+    async def test_select_window_error(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.select_window",
+            side_effect=RuntimeError("no such window"),
+        ):
+            await conn.handle_terminal_select_window({"index": 99})
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+
+    async def test_close_window(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.close_window",
+            return_value=[{"index": 0, "name": "bash", "active": True}],
+        ):
+            await conn.handle_terminal_close_window({"index": 1})
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "terminal_windows"
+
+    async def test_close_window_error(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.close_window",
+            side_effect=RuntimeError("no such window"),
+        ):
+            await conn.handle_terminal_close_window({"index": 99})
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+
+    async def test_rename_window(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with (
+            patch(
+                "klangk_backend.terminal.rename_window",
+            ),
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[{"index": 0, "name": "build", "active": True}],
+            ),
+        ):
+            await conn.handle_terminal_rename_window(
+                {"index": 0, "name": "build"}
+            )
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "terminal_windows"
+
+    async def test_rename_window_no_name(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        await conn.handle_terminal_rename_window({"index": 0})
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+        assert "Name" in sent["message"]
+
+    async def test_rename_window_error(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.rename_window",
+            side_effect=ValueError("already exists"),
+        ):
+            await conn.handle_terminal_rename_window(
+                {"index": 0, "name": "dup"}
+            )
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+
+    async def test_list_windows(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.list_windows",
+            return_value=[{"index": 0, "name": "bash", "active": True}],
+        ):
+            await conn.handle_terminal_list_windows()
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "terminal_windows"
+        assert len(sent["windows"]) == 1
+
+    async def test_list_windows_error(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.list_windows",
+            side_effect=RuntimeError("tmux not running"),
+        ):
+            await conn.handle_terminal_list_windows()
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
 
 
 class TestFractionalTimeout:

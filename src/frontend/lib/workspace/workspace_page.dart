@@ -248,6 +248,58 @@ class _WorkspacePageState extends State<WorkspacePage> {
     wsClient.sendRestartContainer();
   }
 
+  Widget _buildTerminalWithTabs(WsClient wsClient) {
+    final windows = wsClient.terminalWindows;
+    return Column(
+      children: [
+        if (windows.length > 1 || windows.isNotEmpty)
+          SizedBox(
+            height: 28,
+            child: Row(
+              children: [
+                Expanded(
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      for (final w in windows)
+                        _TerminalTab(
+                          name: w['name'] as String? ?? '?',
+                          active: w['active'] as bool? ?? false,
+                          onTap: () => wsClient.sendTerminalSelectWindow(
+                            w['index'] as int,
+                          ),
+                          onClose: windows.length > 1
+                              ? () => wsClient.sendTerminalCloseWindow(
+                                    w['index'] as int,
+                                  )
+                              : null,
+                        ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => wsClient.sendTerminalNewWindow(),
+                  icon: const Icon(Icons.add, size: 16),
+                  iconSize: 16,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 28, minHeight: 28),
+                  tooltip: 'New terminal',
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: GhosttyTerminal(
+            key: _terminalKey,
+            wsClient: wsClient,
+            onPathTap: _handleTerminalPathTap,
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _reconnect() async {
     setState(() => _connecting = true);
     final wsClient = context.read<WsClient>();
@@ -338,11 +390,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
               authToken: authToken,
               registry: _fileRenderers,
             ),
-            terminal: GhosttyTerminal(
-              key: _terminalKey,
-              wsClient: wsClient,
-              onPathTap: _handleTerminalPathTap,
-            ),
+            terminal: _buildTerminalWithTabs(wsClient),
             chat: _hasPerm('chat')
                 ? WorkspaceChat(
                     key: _chatKey,
@@ -458,6 +506,62 @@ class _WorkspacePageState extends State<WorkspacePage> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _TerminalTab extends StatelessWidget {
+  final String name;
+  final bool active;
+  final VoidCallback onTap;
+  final VoidCallback? onClose;
+
+  const _TerminalTab({
+    required this.name,
+    required this.active,
+    required this.onTap,
+    this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: active ? KColors.panelBg : Colors.transparent,
+          border: Border(
+            bottom: BorderSide(
+              color: active ? KColors.accentGreen : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              name,
+              style: TextStyle(
+                fontSize: 12,
+                color: active ? Colors.white : Colors.white60,
+              ),
+            ),
+            if (onClose != null) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: onClose,
+                child: Icon(
+                  Icons.close,
+                  size: 12,
+                  color: active ? Colors.white54 : Colors.white30,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

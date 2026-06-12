@@ -95,6 +95,9 @@ class WsClient extends ChangeNotifier {
   /// Users currently connected to the workspace.
   List<Map<String, dynamic>> presenceUsers = [];
 
+  /// Terminal windows in the current tmux session.
+  List<Map<String, dynamic>> terminalWindows = [];
+
   /// Chat messages (individual and history) from the backend.
   Stream<Map<String, dynamic>> get chatMessages => _chatController.stream;
 
@@ -216,6 +219,10 @@ class WsClient extends ChangeNotifier {
                   presenceUsers.where((u) => u['user_id'] != uid).toList();
               notifyListeners();
             }
+          } else if (type == 'terminal_windows') {
+            final windows = json['windows'] as List? ?? [];
+            terminalWindows = windows.cast<Map<String, dynamic>>();
+            notifyListeners();
           } else if (type == 'event') {
             _customEventController.add(json);
           }
@@ -305,6 +312,28 @@ class WsClient extends ChangeNotifier {
 
   void sendTerminalResize(int cols, int rows) {
     _send({'cmd': 'terminal_resize', 'cols': cols, 'rows': rows});
+  }
+
+  void sendTerminalNewWindow({String? name}) {
+    final msg = <String, dynamic>{'cmd': 'terminal_new_window'};
+    if (name != null) msg['name'] = name;
+    _send(msg);
+  }
+
+  void sendTerminalSelectWindow(int index) {
+    _send({'cmd': 'terminal_select_window', 'index': index});
+  }
+
+  void sendTerminalCloseWindow(int index) {
+    _send({'cmd': 'terminal_close_window', 'index': index});
+  }
+
+  void sendTerminalRenameWindow(int index, String name) {
+    _send({'cmd': 'terminal_rename_window', 'index': index, 'name': name});
+  }
+
+  void sendTerminalListWindows() {
+    _send({'cmd': 'terminal_list_windows'});
   }
 
   void sendTerminalStop() {
