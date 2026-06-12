@@ -407,12 +407,21 @@ class TestHandleTerminalStart:
         conn._user_home = "/home/testuser"
         container.registry.track_activity("cid", "ws")
 
+        list_call = [0]
+
+        async def fake_list(*a, **kw):
+            list_call[0] += 1
+            if list_call[0] <= 1:
+                return [{"index": 0, "name": "bash", "active": True}]
+            return [{"index": 0, "name": "1", "active": True}]
+
         with (
             patch.object(wshandler, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
-                return_value=[{"index": 0, "name": "bash", "active": True}],
+                side_effect=fake_list,
             ),
+            patch("klangk_backend.terminal.rename_window"),
         ):
             mock_session = _mock_terminal()
             MockTS.return_value = mock_session
@@ -470,6 +479,107 @@ class TestHandleTerminalStart:
             and "Handle" in call.args[0].get("message", "")
             for call in sent
         )
+
+    async def test_start_renames_bash_skips_taken_numbers(self):
+        """If window '1' exists, bash gets renamed to '2'."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+        container.registry.track_activity("cid", "ws")
+
+        list_call = [0]
+
+        async def fake_list(*a, **kw):
+            list_call[0] += 1
+            if list_call[0] <= 1:
+                return [
+                    {"index": 0, "name": "bash", "active": True},
+                    {"index": 1, "name": "1", "active": False},
+                ]
+            return [
+                {"index": 0, "name": "2", "active": True},
+                {"index": 1, "name": "1", "active": False},
+            ]
+
+        with (
+            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                side_effect=fake_list,
+            ),
+            patch("klangk_backend.terminal.rename_window") as mock_rename,
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+        # Should have renamed bash to "2" (skipping "1")
+        mock_rename.assert_called_once_with("cid", "testuser", 0, "2")
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
+        container.registry.revoke_bridge_token("ws")
+        container.registry.states.pop("ws", None)
+
+    async def test_start_rename_failure_non_fatal(self):
+        """If renaming the initial bash window fails, tabs still work."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+        container.registry.track_activity("cid", "ws")
+
+        with (
+            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[{"index": 0, "name": "bash", "active": True}],
+            ),
+            patch(
+                "klangk_backend.terminal.rename_window",
+                side_effect=RuntimeError("rename failed"),
+            ),
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and m.get("type") == "terminal_started"
+            for m in sent
+        )
+        # terminal_windows still sent even though rename failed
+        assert any(
+            isinstance(m, dict) and m.get("type") == "terminal_windows"
+            for m in sent
+        )
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
+        container.registry.revoke_bridge_token("ws")
+        container.registry.states.pop("ws", None)
 
     async def test_start_window_list_failure_non_fatal(self):
         """If list_windows fails after terminal start, terminal still works."""

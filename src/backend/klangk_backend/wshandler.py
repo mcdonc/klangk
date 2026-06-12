@@ -860,15 +860,40 @@ class Connection:
                 )
                 container.registry.record_activity(conn.container_id)
                 conn.sock.send_json({"type": "terminal_started"})
-                # Send initial window list so the frontend can render tabs.
+                # Rename the initial window to "1" and send the list.
                 try:
-                    from .terminal import _session_name, list_windows
+                    from .terminal import (
+                        _session_name,
+                        list_windows,
+                        rename_window,
+                    )
 
                     sname = _session_name(conn._user_home)
                     if sname:
                         windows = await list_windows(conn.container_id, sname)
+                        # Rename any window still called "bash" to
+                        # the next available number.
+                        for w in windows:
+                            if w["name"] == "bash":
+                                num = 1
+                                used = {x["name"] for x in windows}
+                                while str(num) in used:
+                                    num += 1
+                                try:
+                                    await rename_window(
+                                        conn.container_id,
+                                        sname,
+                                        w["index"],
+                                        str(num),
+                                    )
+                                except Exception:
+                                    pass
+                        windows = await list_windows(conn.container_id, sname)
                         conn.sock.send_json(
-                            {"type": "terminal_windows", "windows": windows}
+                            {
+                                "type": "terminal_windows",
+                                "windows": windows,
+                            }
                         )
                 except Exception:
                     pass  # Non-critical; tabs update on next window op
