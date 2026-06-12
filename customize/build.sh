@@ -52,7 +52,7 @@ cp "$SCRIPT_DIR/plugins.yaml" "$PLUGINS_DIR/plugins.yaml"
 
 cd "$KLANGK_DIR"
 
-DEVENV_CMD=(devenv --quiet -O dotenv.enable:bool false shell --no-tui --)
+DEVENV_CMD=(devenv --quiet -O dotenv.enable:bool false shell --)
 
 # Run everything inside devenv shell for access to flutter, podman, python, etc.
 "${DEVENV_CMD[@]}" bash "$SCRIPT_DIR/build-inner.sh" \
