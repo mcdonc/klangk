@@ -677,56 +677,100 @@ class TestHandleSetHandle:
         sent = sock.send_json.call_args_list
         assert any(call.args[0].get("type") == "error" for call in sent)
 
-    async def test_handle_auto_created_on_ui_ready(self, user, temp_data_dir):
-        from klangk_backend import workspaces
+    async def test_handle_auto_created_on_connect(self, user):
 
-        ws = await workspaces.create_workspace(user["id"], "handle-test3")
-        sock = _mock_sock()
-        conn = _base_conn(
-            user={"id": user["id"], "email": user["email"]}, ws=sock
-        )
-        conn.workspace_id = ws["id"]
-        conn._user_home = None
-        conn.pending_status_msg = "ready"
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(user["id"], "auto-handle")
 
-        await conn.handle_ui_ready()
-        # Handle auto-created from email
+        async def fake_start(*a, **kw):
+            container.registry.track_activity("cid-ah", workspace["id"])
+            return ("cid-ah", "created")
+
+        with (
+            patch.object(
+                container.registry,
+                "start_container",
+                side_effect=fake_start,
+            ),
+            patch("glob.glob", return_value=[]),
+        ):
+            await conn.start_workspace_container(workspace["id"], workspace)
+
         assert conn._user_home is not None
         assert conn._user_home.startswith("/home/")
-        # container_ready sent (not deferred)
-        sent = sock.send_json.call_args_list
-        assert any(
-            call.args[0].get("event", {}).get("name") == "container_ready"
-            for call in sent
-            if isinstance(call.args[0], dict)
-            and call.args[0].get("type") == "event"
-        )
 
-    async def test_handle_auto_created_with_conflict(
-        self, user, temp_data_dir
-    ):
+        wshandler.state.sessions.pop(workspace["id"], None)
+        container.registry.states.pop(workspace["id"], None)
+
+    async def test_handle_auto_created_with_conflict(self, user):
         from klangk_backend import workspaces
 
-        ws = await workspaces.create_workspace(user["id"], "handle-conflict")
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(
+            user["id"], "conflict-handle"
+        )
         # Pre-create a conflicting handle from another user
         workspaces.set_user_handle(
             user["id"],
-            ws["id"],
+            workspace["id"],
             "other-uid",
             workspaces.suggest_handle(user["email"]),
         )
-        sock = _mock_sock()
-        conn = _base_conn(
-            user={"id": user["id"], "email": user["email"]}, ws=sock
-        )
-        conn.workspace_id = ws["id"]
-        conn._user_home = None
-        conn.pending_status_msg = "ready"
 
-        await conn.handle_ui_ready()
-        # Should have used a suffixed alternative
+        async def fake_start(*a, **kw):
+            container.registry.track_activity("cid-ch", workspace["id"])
+            return ("cid-ch", "created")
+
+        with (
+            patch.object(
+                container.registry,
+                "start_container",
+                side_effect=fake_start,
+            ),
+            patch("glob.glob", return_value=[]),
+        ):
+            await conn.start_workspace_container(workspace["id"], workspace)
+
         assert conn._user_home is not None
         assert "-2" in conn._user_home or "-3" in conn._user_home
+
+        wshandler.state.sessions.pop(workspace["id"], None)
+        container.registry.states.pop(workspace["id"], None)
+
+    async def test_handle_creation_failure_logs_and_continues(self, user):
+        from klangk_backend import workspaces
+
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(user["id"], "handle-fail")
+
+        async def fake_start(*a, **kw):
+            container.registry.track_activity("cid-hf", workspace["id"])
+            return ("cid-hf", "created")
+
+        with (
+            patch.object(
+                container.registry,
+                "start_container",
+                side_effect=fake_start,
+            ),
+            patch("glob.glob", return_value=[]),
+            patch.object(
+                workspaces,
+                "set_user_handle",
+                side_effect=OSError("disk full"),
+            ),
+        ):
+            await conn.start_workspace_container(workspace["id"], workspace)
+
+        # Handle creation failed, but connect still worked
+        assert conn._user_home is None
+        assert conn.container_id == "cid-hf"
+
+        wshandler.state.sessions.pop(workspace["id"], None)
+        container.registry.states.pop(workspace["id"], None)
 
     async def test_handle_resolved_on_start(self, user, temp_data_dir):
         from klangk_backend import workspaces
@@ -1070,8 +1114,9 @@ class TestStartWorkspaceContainer:
         assert conn.workspace == workspace
         assert workspace["id"] in wshandler.state.sessions
         assert conn._idle_cb is not None
-        # No handle set yet
-        assert conn._user_home is None
+        # Handle auto-created from email on connect
+        assert conn._user_home is not None
+        assert conn._user_home.startswith("/home/")
 
         wshandler.state.sessions.pop(workspace["id"], None)
         container.registry.states.pop(workspace["id"], None)
