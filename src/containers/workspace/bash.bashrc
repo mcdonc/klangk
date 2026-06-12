@@ -17,8 +17,16 @@ while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done
 # Restore Ctrl+C for interactive shell.
 trap - INT
 
-# Pi agent config directory (persistent home mount)
+# Change to the user's home directory (podman exec -w can't use symlinks
+# without resolving them, so we start in /home and cd here instead).
+cd "$HOME" 2>/dev/null
+
+# Per-user Pi agent config.  Shared config lives at /home/.pi/agent/
+# (written by setup_clankers at container start).  Each user gets their
+# own PI_CODING_AGENT_DIR with symlinks to shared resources and copies
+# of files they may customize.
 export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+python3 /opt/klangk/bin/setup-user-pi
 
 PS1='\[\033[01;34m\]\w\[\033[00m\]\$ '
 HISTFILE=~/.bash_history

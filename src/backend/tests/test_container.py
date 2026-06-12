@@ -469,6 +469,17 @@ class TestStartContainer:
         binds = p.create_container.call_args.kwargs["binds"]
         assert not any("config" in b for b in binds)
 
+    async def test_home_mounted_at_slash_home(self, workspace):
+        """Home path is mounted at /home (not /home/klangk)."""
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        binds = p.create_container.call_args.kwargs["binds"]
+        assert "/tmp/home:/home" in binds
+
     async def test_hosting_env_vars(self, workspace):
         with patch_podman() as p:
             await container.registry.start_container(

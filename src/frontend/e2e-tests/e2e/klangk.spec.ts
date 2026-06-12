@@ -88,7 +88,7 @@ test.describe("Klangk E2E", () => {
 
       await terminalType(
         page,
-        "echo playwright-terminal-test > /home/klangk/work/.term-test",
+        "echo playwright-terminal-test > /home/work/.term-test",
         termX,
         termY,
       );
@@ -133,7 +133,7 @@ test.describe("Klangk E2E", () => {
         /* unsupported on firefox/webkit — fine */
       }
 
-      const cmd = "echo playwright-paste-test > /home/klangk/work/.paste-test";
+      const cmd = "echo playwright-paste-test > /home/work/.paste-test";
       await page.evaluate((t) => navigator.clipboard.writeText(t), cmd);
 
       const { width, height } = vp(page);
@@ -189,7 +189,7 @@ test.describe("Klangk E2E", () => {
       // Quotes, spaces, an emoji, and a non-Latin character. Wrap in a
       // heredoc so the shell preserves the payload exactly.
       const payload = `Hello "world" 'with' spaces — 🦋 中文`;
-      const cmd = `cat > /home/klangk/work/.paste-utf8 <<'EOF'\n${payload}\nEOF`;
+      const cmd = `cat > /home/work/.paste-utf8 <<'EOF'\n${payload}\nEOF`;
       await page.evaluate((t) => navigator.clipboard.writeText(t), cmd);
 
       const { width, height } = vp(page);
@@ -412,8 +412,7 @@ test.describe("Klangk E2E", () => {
         /* unsupported on firefox/webkit — fine */
       }
 
-      const cmd =
-        "echo paste-leak-canary > /home/klangk/work/.paste-leak-canary";
+      const cmd = "echo paste-leak-canary > /home/work/.paste-leak-canary";
       await page.evaluate((t) => navigator.clipboard.writeText(t), cmd);
 
       const { width } = vp(page);
@@ -473,12 +472,7 @@ test.describe("Klangk E2E", () => {
       const termX = width / 2;
       const termY = height / 2;
 
-      await terminalType(
-        page,
-        'echo "foo" > /home/klangk/work/foo.txt',
-        termX,
-        termY,
-      );
+      await terminalType(page, 'echo "foo" > /home/work/foo.txt', termX, termY);
       await waitForFile(request, workspaceId, "work/foo.txt", headers);
 
       const readResp = await request.get(
@@ -562,7 +556,7 @@ test.describe("Klangk E2E", () => {
       // Run a multi-command sequence
       await terminalType(
         page,
-        "mkdir -p /home/klangk/work/.e2e-multitest/sub && echo done > /home/klangk/work/.e2e-multitest/sub/result.txt",
+        "mkdir -p /home/work/.e2e-multitest/sub && echo done > /home/work/.e2e-multitest/sub/result.txt",
         termX,
         termY,
       );
@@ -623,7 +617,7 @@ test.describe("Klangk E2E", () => {
       const termY = 200;
       await terminalType(
         page,
-        "echo tab-survive-test > /home/klangk/work/.tab-survive",
+        "echo tab-survive-test > /home/work/.tab-survive",
         termX,
         termY,
       );
@@ -700,7 +694,7 @@ test.describe("Klangk E2E", () => {
       // Create nested directory structure via terminal
       await terminalType(
         page,
-        "mkdir -p /home/klangk/work/.e2e-nav/inner && echo nav-test > /home/klangk/work/.e2e-nav/inner/file.txt",
+        "mkdir -p /home/work/.e2e-nav/inner && echo nav-test > /home/work/.e2e-nav/inner/file.txt",
       );
       await waitForFile(
         request,
@@ -787,11 +781,19 @@ test.describe("Klangk E2E", () => {
 
     try {
       // File API roots at home, so create a file in ~ and read it directly
-      await terminalType(page, "echo home-test > ~/.home-persist-test");
-      await waitForFile(request, workspaceId, ".home-persist-test", headers);
+      await terminalType(
+        page,
+        "echo home-test > /home/work/.home-persist-test",
+      );
+      await waitForFile(
+        request,
+        workspaceId,
+        "work/.home-persist-test",
+        headers,
+      );
 
       const resp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.home-persist-test`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.home-persist-test`,
         { headers },
       );
       expect(resp.ok()).toBeTruthy();

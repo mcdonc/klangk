@@ -1,4 +1,4 @@
-ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.06.12-170fe20
+ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.06.12-d32e19e
 FROM $WORKSPACE_BASE_IMAGE
 
 # Install npm-based Pi extensions globally via pi install.
@@ -29,8 +29,11 @@ RUN HERDR_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64")
 COPY system-prompt.md /opt/klangk/system-prompt.md
 COPY entrypoint.sh /opt/klangk/entrypoint.sh
 COPY otel.sh /opt/klangk/otel.sh
-COPY setup_clankers.py /usr/local/bin/setup_clankers
-RUN chmod +x /opt/klangk/entrypoint.sh /usr/local/bin/setup_clankers
+COPY setup_clankers.py /opt/klangk/bin/setup-clankers
+COPY setup_user_pi.py /opt/klangk/bin/setup-user-pi
+RUN chmod +x /opt/klangk/entrypoint.sh \
+      /opt/klangk/bin/setup-clankers \
+      /opt/klangk/bin/setup-user-pi
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 

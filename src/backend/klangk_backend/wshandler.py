@@ -513,6 +513,7 @@ class Connection:
         self._idle_cb = None
         self.pending_status_msg: str | None = None
         self._bridge_token: str | None = None
+        self._user_home: str | None = None
 
     async def start_workspace_container(
         self, workspace_id: str, workspace: dict
@@ -578,6 +579,15 @@ class Connection:
 
         # Clear any stale pending_status_msg from a prior connect/restart.
         self.pending_status_msg = None
+
+        # Resolve per-user handle for HOME directory.
+        handle = workspaces.get_user_handle(
+            self.user["id"], workspace_id, self.user["id"]
+        )
+        if handle is not None:
+            self._user_home = f"/home/{handle}"
+        else:
+            self._user_home = None
 
         logger.info("Container ready for workspace %s", workspace_id)
 
@@ -783,12 +793,15 @@ class Connection:
     async def handle_terminal_start(self, msg: dict) -> None:
         if not self.container_id:
             return
+        if self._user_home is None:
+            send_error(self.sock, "Handle not set")
+            return
         # Stop existing terminal if any
         await self.stop_terminal()
         cols = msg.get("cols", 80)
         rows = msg.get("rows", 24)
         command_override = msg.get("commandOverride")
-        session = TerminalSession(self.container_id)
+        session = TerminalSession(self.container_id, user_home=self._user_home)
 
         # Revoke any existing bridge token from a previous terminal
         # session before creating a new one to avoid leaking entries.
@@ -866,7 +879,7 @@ class Connection:
         if not command:
             send_error(self.sock, "exec_start requires a command list")
             return
-        session = ExecSession(self.container_id)
+        session = ExecSession(self.container_id, user_home=self._user_home)
         await session.start(command)
         self.exec_session = session
         self.exec_task = asyncio.create_task(self.forward_exec_output(session))
@@ -960,8 +973,66 @@ class Connection:
                 sess.browser_subscribers.add(self.sock)
         status_msg = self.pending_status_msg
         self.pending_status_msg = None
+        if self._user_home is None and self.workspace_id:
+            # Auto-create handle from email on first connection.
+            try:
+                suggested = workspaces.suggest_handle(
+                    self.user.get("email", "")
+                )
+                try:
+                    container_home = workspaces.set_user_handle(
+                        self.user["id"],
+                        self.workspace_id,
+                        self.user["id"],
+                        suggested,
+                    )
+                except ValueError:
+                    alt = workspaces.suggest_alternative(
+                        self.user["id"], self.workspace_id, suggested
+                    )
+                    container_home = workspaces.set_user_handle(
+                        self.user["id"],
+                        self.workspace_id,
+                        self.user["id"],
+                        alt,
+                    )
+                self._user_home = container_home
+            except Exception:
+                logger.exception("Failed to auto-create handle")
         if status_msg:
             _send_event(self.sock, "container_ready", status_msg)
+
+    async def handle_set_handle(self, msg: dict) -> None:
+        handle = msg.get("handle", "").strip()
+        if not self.workspace_id:
+            send_error(self.sock, "Not connected to a workspace")
+            return
+        try:
+            container_home = workspaces.set_user_handle(
+                self.user["id"],
+                self.workspace_id,
+                self.user["id"],
+                handle,
+            )
+            self._user_home = container_home
+            self.sock.send_json(
+                {
+                    "type": "handle_set",
+                    "handle": handle,
+                    "home": container_home,
+                }
+            )
+        except ValueError as exc:
+            alternative = workspaces.suggest_alternative(
+                self.user["id"], self.workspace_id, handle
+            )
+            self.sock.send_json(
+                {
+                    "type": "handle_error",
+                    "error": str(exc),
+                    "suggested": alternative,
+                }
+            )
 
     async def _claim_and_stop_terminal(self) -> None:
         session = self.terminal_session
@@ -1135,6 +1206,8 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_workspace_disconnect()
             elif cmd == "ui_ready":
                 await conn.handle_ui_ready()
+            elif cmd == "set_handle":
+                await conn.handle_set_handle(msg)
             elif cmd == "terminal_start":
                 await conn.handle_terminal_start(msg)
             elif cmd == "terminal_input":

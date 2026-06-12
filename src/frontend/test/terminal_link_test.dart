@@ -5,8 +5,8 @@ void main() {
   // The file API addresses files relative to the container home; the shell cwd
   // is `work/` under it. So files under work carry a `work/` prefix, while a
   // file at the home root is bare (`file.txt`).
-  const home = '/home/klangk';
-  const cwd = '/home/klangk/work';
+  const home = '/home';
+  const cwd = '/home/work';
   TerminalLinkTarget classify(String token, {String? uri, String pwd = ''}) =>
       classifyTerminalLink(
         token: token,
@@ -52,15 +52,13 @@ void main() {
     });
 
     test('absolute path under the home root', () {
-      expect(classify('/home/klangk/work/a/b.md'),
-          const WorkspaceFile('work/a/b.md'));
-      expect(
-          classify('/home/klangk/file.txt'), const WorkspaceFile('file.txt'));
+      expect(classify('/home/work/a/b.md'), const WorkspaceFile('work/a/b.md'));
+      expect(classify('/home/file.txt'), const WorkspaceFile('file.txt'));
     });
 
     test('relative path resolves against the OSC 7 pwd', () {
       expect(
-        classify('x.md', pwd: 'file://host/home/klangk/work/sub'),
+        classify('x.md', pwd: 'file://host/home/work/sub'),
         const WorkspaceFile('work/sub/x.md'),
       );
     });

@@ -314,3 +314,40 @@ class TestExecSession:
         )
         assert result == []
         await session.stop()
+
+    async def test_default_work_dir(self):
+        session = ExecSession("cid")
+        proc = _mock_proc(b"")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ) as mock_exec:
+            await session.start(["echo"])
+        cmd = mock_exec.call_args[0]
+        assert "-w" in cmd
+        w_idx = cmd.index("-w")
+        assert cmd[w_idx + 1] == "/home/work"
+
+    async def test_user_home_sets_env_and_work_dir(self):
+        session = ExecSession("cid", user_home="/home/alice")
+        proc = _mock_proc(b"")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ) as mock_exec:
+            await session.start(["echo"])
+        cmd = mock_exec.call_args[0]
+        assert "HOME=/home/alice" in cmd
+        w_idx = cmd.index("-w")
+        assert cmd[w_idx + 1] == "/home/alice"
+
+    async def test_no_home_env_without_user_home(self):
+        session = ExecSession("cid")
+        proc = _mock_proc(b"")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ) as mock_exec:
+            await session.start(["echo"])
+        cmd = mock_exec.call_args[0]
+        assert not any(str(a).startswith("HOME=") for a in cmd)

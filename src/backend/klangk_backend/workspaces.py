@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import tempfile
@@ -249,6 +250,8 @@ async def create_workspace(
     home.mkdir(parents=True, exist_ok=True)
     work = workspace_path(user_id, workspace["id"])
     work.mkdir(parents=True, exist_ok=True)
+    users_dir = home / ".users"
+    users_dir.mkdir(exist_ok=True)
     if default_command:
         write_default_command(user_id, workspace["id"], default_command)
     # Allocate ports at creation time so ranges are sequential
@@ -296,3 +299,105 @@ def get_home_host_path(user_id: str, workspace_id: str) -> Path:
     path = home_path(user_id, workspace_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+# --- Handle management ---
+
+_HANDLE_RE = re.compile(r"^[a-z0-9._-]+$")
+_RESERVED_NAMES = frozenset({"work", ".users"})
+_MAX_HANDLE_LEN = 32
+
+
+def suggest_handle(email: str) -> str:
+    """Derive a handle from an email address local part."""
+    local = email.split("@")[0] if "@" in email else email
+    handle = re.sub(r"[^a-z0-9._-]", "", local.lower())
+    if not handle:
+        handle = "user"
+    return handle[:_MAX_HANDLE_LEN]
+
+
+def _validate_handle(handle: str) -> str | None:
+    """Return an error message if the handle is invalid, else None."""
+    if not handle:
+        return "Handle cannot be empty"
+    if len(handle) > _MAX_HANDLE_LEN:
+        return f"Handle must be {_MAX_HANDLE_LEN} characters or fewer"
+    if handle.startswith("."):
+        return "Handle cannot start with a dot"
+    if handle in _RESERVED_NAMES:
+        return f"'{handle}' is reserved"
+    if not _HANDLE_RE.match(handle):
+        return "Handle may only contain lowercase letters, digits, dots, dashes, and underscores"
+    return None
+
+
+def get_user_handle(
+    user_id: str, workspace_id: str, connecting_user_id: str
+) -> str | None:
+    """Find the handle symlink for a user in a workspace, or None."""
+    home = home_path(user_id, workspace_id)
+    if not home.exists():
+        return None
+    target = f".users/{connecting_user_id}"
+    for entry in home.iterdir():
+        if entry.is_symlink() and os.readlink(entry) == target:
+            return entry.name
+    return None
+
+
+def set_user_handle(
+    user_id: str,
+    workspace_id: str,
+    connecting_user_id: str,
+    handle: str,
+) -> str:
+    """Create or update a user's handle symlink.
+
+    Returns the container-side home path (e.g. ``/home/alice``).
+    Raises ``ValueError`` on validation failure or conflict.
+    """
+    error = _validate_handle(handle)
+    if error:
+        raise ValueError(error)
+
+    home = home_path(user_id, workspace_id)
+    users_dir = home / ".users"
+    users_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create the uuid directory.
+    user_dir = users_dir / connecting_user_id
+    user_dir.mkdir(exist_ok=True)
+
+    symlink = home / handle
+    target = f".users/{connecting_user_id}"
+
+    # If symlink already exists, check ownership.
+    if symlink.is_symlink():
+        if os.readlink(symlink) == target:
+            return f"/home/{handle}"  # already correct
+        raise ValueError(f"'{handle}' is already taken")
+    elif symlink.exists():
+        raise ValueError(f"'{handle}' conflicts with an existing file")
+
+    # Remove any existing symlink for this user (handle rename).
+    old_handle = get_user_handle(user_id, workspace_id, connecting_user_id)
+    if old_handle is not None:
+        old_symlink = home / old_handle
+        if old_symlink.is_symlink():
+            old_symlink.unlink()
+
+    symlink.symlink_to(target)
+    return f"/home/{handle}"
+
+
+def suggest_alternative(user_id: str, workspace_id: str, handle: str) -> str:
+    """Return the first available suffixed variant of a handle."""
+    home = home_path(user_id, workspace_id)
+    for i in range(2, 100):
+        candidate = f"{handle}-{i}"
+        if len(candidate) > _MAX_HANDLE_LEN:
+            candidate = f"{handle[: _MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
+        if not (home / candidate).exists():
+            return candidate
+    return f"{handle}-{id(handle) % 10000}"  # pragma: no cover

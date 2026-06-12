@@ -66,10 +66,10 @@ RUN npm install -g @mariozechner/pi-coding-agent @earendil-works/pi-coding-agent
 RUN EXISTING_USER=$(getent passwd 1000 | cut -d: -f1) \
     && [ -n "$EXISTING_USER" ] && userdel "$EXISTING_USER" || true \
     && groupadd -g 1000 klangk \
-    && useradd -u 1000 -g 1000 -m -d /home/klangk -s /bin/bash klangk
+    && useradd -u 1000 -g 1000 -m -d /home -s /bin/bash klangk
 
 # Make /bin/sh point to bash so Pi's bash tool supports bashisms (source, etc.)
 RUN ln -sf /bin/bash /bin/sh
 
-RUN mkdir -p /home/klangk/work && chown -R klangk:klangk /home/klangk
-WORKDIR /home/klangk/work
+RUN mkdir -p /home/work && chown -R klangk:klangk /home
+WORKDIR /home/work

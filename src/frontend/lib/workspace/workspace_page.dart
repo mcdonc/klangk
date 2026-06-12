@@ -54,8 +54,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
   // They must match the container layout (the file API is relative to the
   // home; the shell cwd is `work/` under it). Containers may be configured
   // differently, so hardcoding is a stopgap — follow-up PR.
-  static const _containerHome = '/home/klangk';
-  static const _containerCwd = '/home/klangk/work';
+  static const _containerHome = '/home';
+  static const _containerCwd = '/home/work';
   final _terminalKey = GlobalKey<GhosttyTerminalState>();
   final _fileViewerKey = GlobalKey<FileViewerPanelState>();
   final _chatKey = GlobalKey<WorkspaceChatState>();
