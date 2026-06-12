@@ -145,27 +145,26 @@ void main() {
       client.close();
     });
 
-    testWidgets(
-        'web + primary screen: PageUp reaches neither the PTY nor scrollback',
-        (tester) async {
+    testWidgets('web + primary screen: PageUp is forwarded to the PTY', (
+      tester,
+    ) async {
       GhosttyTerminalState.isWebOverride = true;
       final client = _MockWsClient();
       final key = GlobalKey<GhosttyTerminalState>();
       await _pumpReady(tester, client, key);
       await _fillPrimary(tester, client);
-      final scroll = key.currentState!.scrollController;
-      expect(scroll.position.maxScrollExtent, greaterThan(0));
-      final before = scroll.position.pixels;
       client.sentInput.clear();
 
       await _sendKey(tester, LogicalKeyboardKey.pageUp);
 
-      expect(client.sentInput, isEmpty,
-          reason: 'web primary PageUp is left for the browser, not the PTY');
-      expect(scroll.position.pixels, before,
-          reason: 'the ScrollIntent is swallowed so scrollback does not move');
+      expect(client.sentInput, isNotEmpty,
+          reason: 'PageUp goes to PTY where tmux handles scrollback');
       client.close();
     });
+
+    // NOTE: Shift+PageUp on web primary is NOT tested — flterm converts it
+    // into mouse-wheel scroll events rather than the key sequence. Plain
+    // PageUp works correctly for tmux copy-mode scrollback.
 
     testWidgets('web + primary screen: Ctrl+PageUp still goes to the PTY', (
       tester,
@@ -207,10 +206,10 @@ void main() {
       await _pumpReady(tester, client, key);
       await switchToAltScreen(tester, client, key);
 
-      // No terminal scrollback on the alt screen; _scrollByPage hands the app a
-      // page of mouse-wheel scroll (flterm handleScroll), which reaches the PTY.
-      // _bypassKey releases the combo to our shortcut so flterm doesn't encode
-      // it first under the app's keyboard protocol.
+      // No terminal scrollback on the alt screen; _scrollAltScreenByPage hands
+      // the app a page of mouse-wheel scroll (flterm handleScroll), which reaches
+      // the PTY. _bypassKey releases the combo to our shortcut so flterm doesn't
+      // encode it first under the app's keyboard protocol.
       client.sentInput.clear();
       await _sendKey(tester, LogicalKeyboardKey.pageUp,
           modifier: LogicalKeyboardKey.shift);
@@ -247,29 +246,7 @@ void main() {
       client.close();
     });
 
-    testWidgets('macOS Cmd+PgUp pages the scrollback on the primary screen', (
-      tester,
-    ) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-      GhosttyTerminalState.isWebOverride = true;
-      final client = _MockWsClient();
-      final key = GlobalKey<GhosttyTerminalState>();
-      await _pumpReady(tester, client, key);
-      await _fillPrimary(tester, client);
-      final scroll = key.currentState!.scrollController;
-      expect(scroll.position.maxScrollExtent, greaterThan(0));
-      final before = scroll.position.pixels;
-
-      await _sendKey(tester, LogicalKeyboardKey.pageUp,
-          modifier: LogicalKeyboardKey.meta);
-      await tester.pumpAndSettle();
-      expect(scroll.position.pixels, lessThan(before),
-          reason: 'Cmd+PgUp pages the scrollback up on macOS');
-      debugDefaultTargetPlatformOverride = null;
-      client.close();
-    });
-
-    testWidgets('alt screen: typing reaches the PTY and does not snap', (
+    testWidgets('alt screen: typing reaches the PTY', (
       tester,
     ) async {
       GhosttyTerminalState.isWebOverride = true;
@@ -278,78 +255,13 @@ void main() {
       await _pumpReady(tester, client, key);
       await switchToAltScreen(tester, client, key);
 
-      // Typing fires onOutput -> _snapToBottomOnInput, which must early-return
-      // on the alt screen: there is no scrollback, and the alt scroll position
-      // has an unbounded extent, so a jumpToBottom would be invalid. The key
-      // still reaches the PTY and nothing throws.
+      // Typing on the alt screen reaches the PTY normally.
       client.sentInput.clear();
       await _sendKey(tester, LogicalKeyboardKey.keyA);
       await tester.pumpAndSettle();
       expect(client.sentInput, isNotEmpty,
           reason: 'the keystroke is encoded to the PTY on the alt screen');
       client.close();
-    });
-
-    test('scrollShortcutsFor binds Shift everywhere and Cmd only on macOS', () {
-      const shiftUp = SingleActivator(LogicalKeyboardKey.pageUp, shift: true);
-      const shiftDown =
-          SingleActivator(LogicalKeyboardKey.pageDown, shift: true);
-      const cmdUp = SingleActivator(LogicalKeyboardKey.pageUp, meta: true);
-      const cmdDown = SingleActivator(LogicalKeyboardKey.pageDown, meta: true);
-
-      final mac = scrollShortcutsFor(TargetPlatform.macOS);
-      expect(mac.keys, containsAll(<ShortcutActivator>[shiftUp, shiftDown]));
-      expect(mac.keys, containsAll(<ShortcutActivator>[cmdUp, cmdDown]),
-          reason: 'macOS also binds Cmd+PgUp/PgDn');
-
-      final linux = scrollShortcutsFor(TargetPlatform.linux);
-      expect(linux.keys, containsAll(<ShortcutActivator>[shiftUp, shiftDown]),
-          reason: 'Shift+PgUp/PgDn is bound on Linux (and every platform)');
-      expect(linux.keys, isNot(contains(cmdUp)),
-          reason: 'Cmd+PgUp is not bound off macOS');
-      expect(linux.keys, isNot(contains(cmdDown)));
-    });
-
-    testWidgets('isPageScrollKey: Shift everywhere, Cmd only on macOS', (
-      tester,
-    ) async {
-      await tester.pumpWidget(const SizedBox());
-      KeyEvent ev(LogicalKeyboardKey k) => KeyDownEvent(
-            physicalKey: PhysicalKeyboardKey.pageUp,
-            logicalKey: k,
-            timeStamp: Duration.zero,
-          );
-
-      // No modifier -> not a page-scroll combo (plain PgUp routes elsewhere).
-      expect(
-          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageUp)),
-          isFalse);
-
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.shift);
-      expect(
-          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageUp)),
-          isTrue);
-      expect(
-          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageDown)),
-          isTrue);
-      expect(GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.keyA)),
-          isFalse,
-          reason: 'only PageUp/PageDown qualify');
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
-
-      // Cmd qualifies on macOS only.
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-      expect(
-          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageUp)),
-          isTrue);
-      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
-      expect(
-          GhosttyTerminalState.isPageScrollKey(ev(LogicalKeyboardKey.pageUp)),
-          isFalse,
-          reason: 'Cmd is not the page-scroll modifier off macOS');
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
-      debugDefaultTargetPlatformOverride = null;
     });
   });
 
@@ -515,36 +427,6 @@ void main() {
         expect(a.control, isTrue);
         expect(a.meta, isFalse);
       }
-    });
-  });
-
-  group('snap to bottom on input', () {
-    testWidgets('typing returns to the live row; Shift+PgUp does not', (
-      tester,
-    ) async {
-      GhosttyTerminalState.isWebOverride = false;
-      final client = _MockWsClient();
-      final key = GlobalKey<GhosttyTerminalState>();
-      await _pumpReady(tester, client, key);
-      await _fillPrimary(tester, client);
-      final pos = key.currentState!.scrollController.position;
-      expect(pos.maxScrollExtent, greaterThan(0));
-
-      // Scroll up a page — it must stay up (no snap on the scrollback key).
-      await _sendKey(tester, LogicalKeyboardKey.pageUp,
-          modifier: LogicalKeyboardKey.shift);
-      await tester.pumpAndSettle();
-      expect(pos.pixels, lessThan(pos.maxScrollExtent),
-          reason: 'Shift+PgUp scrolls up and stays put');
-
-      // Typing is encoded to the PTY (onOutput) and jumps back to the bottom.
-      client.sentInput.clear();
-      await _sendKey(tester, LogicalKeyboardKey.enter);
-      await tester.pumpAndSettle();
-      expect(client.sentInput, isNotEmpty, reason: 'Enter is sent to the PTY');
-      expect(pos.pixels, pos.maxScrollExtent,
-          reason: 'typing snaps the view back to the live prompt');
-      client.close();
     });
   });
 

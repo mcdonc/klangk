@@ -53,7 +53,7 @@ def _build_shell_command() -> list[str]:
     for key in os.environ:
         if key.startswith(_SENSITIVE_ENV_PREFIXES):
             unset_args.extend(["-u", key])
-    return ["env", *unset_args, "/bin/bash"]
+    return ["env", *unset_args, "tmux", "new-session"]
 
 
 def _build_exec_argv(
