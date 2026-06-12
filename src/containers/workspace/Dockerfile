@@ -34,4 +34,16 @@ RUN chmod +x /opt/klangk/entrypoint.sh /usr/local/bin/setup_clankers
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 
+# Fix non-root group ownership that causes crun fchownat errors with
+# --userns=keep-id. crun cannot remap groups like utmp, shadow, adm, ssh
+# in rootless user namespaces. The find handles most files; explicit
+# chgrp catches files that xargs may skip due to batch error handling.
+RUN chgrp root \
+      /var/log/btmp /var/log/wtmp /var/log/lastlog \
+      /var/log/apt/term.log \
+      /etc/shadow /etc/shadow- /etc/gshadow /etc/gshadow- \
+      /usr/bin/chage /usr/bin/expiry /usr/bin/ssh-agent \
+      /usr/sbin/unix_chkpwd /var/mail \
+    2>/dev/null; true
+
 ENTRYPOINT ["/opt/klangk/entrypoint.sh"]

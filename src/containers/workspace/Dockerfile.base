@@ -39,7 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     bsdextrautils \
     tmux \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && chown -R root:root /var/log/apt
 
 # GitHub CLI (not in default Debian repos)
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -47,7 +48,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && chown -R root:root /var/log/apt
 
 # fd-find installs as fdfind on Debian — symlink to fd
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
