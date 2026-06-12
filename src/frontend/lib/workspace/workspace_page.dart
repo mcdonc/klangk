@@ -531,7 +531,7 @@ class _TerminalTab extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
-          color: active ? KColors.panelBg : Colors.transparent,
+          color: active ? KColors.bgSurface : Colors.transparent,
           border: Border(
             bottom: BorderSide(
               color: active ? KColors.accentGreen : Colors.transparent,
