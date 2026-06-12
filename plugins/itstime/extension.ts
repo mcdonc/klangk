@@ -1,5 +1,6 @@
 const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
 const BRIDGE_TOKEN = process.env.KLANGK_BRIDGE_TOKEN;
+const WORKSPACE_TOKEN = process.env.KLANGK_WORKSPACE_TOKEN;
 
 export default function (pi: any) {
   if (!BRIDGE_URL || !BRIDGE_TOKEN) return;
@@ -20,7 +21,12 @@ export default function (pi: any) {
       try {
         const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(WORKSPACE_TOKEN
+              ? { Authorization: `Bearer ${WORKSPACE_TOKEN}` }
+              : {}),
+          },
           body: JSON.stringify({
             action: "itstime",
             token: BRIDGE_TOKEN,
