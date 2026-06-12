@@ -1,0 +1,4 @@
+/* Prevent wrapping in table cells that contain code (e.g., env var names) */
+td code {
+  white-space: nowrap;
+}

@@ -4,6 +4,7 @@ site_description = "Multi-User AI Collaboration and Coding Platform"
 site_author = "Chris McDonough"
 site_url = "https://mcdonc.github.io/klangk/"
 copyright = "Copyright &copy; 2026 Chris McDonough"
+extra_css = ["stylesheets/extra.css"]
 
 nav = [
   { "Home" = "index.md" },
