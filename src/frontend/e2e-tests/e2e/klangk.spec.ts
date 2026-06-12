@@ -786,12 +786,20 @@ test.describe("Klangk E2E", () => {
     );
 
     try {
-      // File API roots at home, so create a file in ~ and read it directly
-      await terminalType(page, "echo home-test > ~/.home-persist-test");
-      await waitForFile(request, workspaceId, ".home-persist-test", headers);
+      // Write to /home/work (shared dir at a known path) and verify via API
+      await terminalType(
+        page,
+        "echo home-test > /home/work/.home-persist-test",
+      );
+      await waitForFile(
+        request,
+        workspaceId,
+        "work/.home-persist-test",
+        headers,
+      );
 
       const resp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.home-persist-test`,
+        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.home-persist-test`,
         { headers },
       );
       expect(resp.ok()).toBeTruthy();

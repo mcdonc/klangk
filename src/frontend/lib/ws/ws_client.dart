@@ -14,7 +14,7 @@ class WsDebugEntry {
   final Map<String, dynamic>? data;
 
   WsDebugEntry({required this.direction, required this.summary, this.data})
-    : timestamp = DateTime.now();
+      : timestamp = DateTime.now();
 }
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
@@ -212,9 +212,8 @@ class WsClient extends ChangeNotifier {
           } else if (type == 'presence_leave') {
             final uid = json['user_id'] as String?;
             if (uid != null) {
-              presenceUsers = presenceUsers
-                  .where((u) => u['user_id'] != uid)
-                  .toList();
+              presenceUsers =
+                  presenceUsers.where((u) => u['user_id'] != uid).toList();
               notifyListeners();
             }
           } else if (type == 'event') {
@@ -290,6 +289,10 @@ class WsClient extends ChangeNotifier {
 
   void sendRestartContainer() {
     _send({'cmd': 'restart_container'});
+  }
+
+  void sendShutdownContainer() {
+    _send({'cmd': 'shutdown_container'});
   }
 
   void sendTerminalStart({int cols = 80, int rows = 24}) {
