@@ -132,12 +132,12 @@ async def list_windows(container_id: str, session_name: str) -> list[dict]:
             "-t",
             session_name,
             "-F",
-            "#{window_index}\t#{window_name}\t#{window_active}",
+            "#{window_index}|||#{window_name}|||#{window_active}",
         ],
     )
     windows = []
     for line in output.strip().splitlines():
-        parts = line.split("\t")
+        parts = line.split("|||")
         if len(parts) >= 3:
             windows.append(
                 {

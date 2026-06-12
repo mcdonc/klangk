@@ -502,7 +502,7 @@ class TestListWindows:
     async def test_parses_output(self):
         with patch(
             "klangk_backend.terminal.tmux_command",
-            return_value="0\tbash\t1\n1\tbuild\t0\n",
+            return_value="0|||bash|||1\n1|||build|||0\n",
         ):
             result = await list_windows("cid", "sess")
         assert result == [
