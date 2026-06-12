@@ -526,7 +526,7 @@ class TestNewWindow:
                 return [{"index": 0, "name": "bash", "active": True}]
             return [
                 {"index": 0, "name": "bash", "active": False},
-                {"index": 1, "name": "shell", "active": True},
+                {"index": 1, "name": "1", "active": True},
             ]
 
         with (
@@ -541,7 +541,7 @@ class TestNewWindow:
         ):
             result = await new_window("cid", "sess")
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["new-window", "-t", "sess", "-n", "shell"]
+            "cid", "sess", ["new-window", "-t", "sess", "-n", "1"]
         )
         assert len(result) == 2
 
@@ -553,12 +553,12 @@ class TestNewWindow:
             if call_count[0] == 1:
                 return [
                     {"index": 0, "name": "bash", "active": True},
-                    {"index": 1, "name": "shell", "active": False},
+                    {"index": 1, "name": "1", "active": False},
                 ]
             return [
                 {"index": 0, "name": "bash", "active": False},
-                {"index": 1, "name": "shell", "active": False},
-                {"index": 2, "name": "shell-2", "active": True},
+                {"index": 1, "name": "1", "active": False},
+                {"index": 2, "name": "2", "active": True},
             ]
 
         with (
@@ -573,7 +573,7 @@ class TestNewWindow:
         ):
             result = await new_window("cid", "sess")
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["new-window", "-t", "sess", "-n", "shell-2"]
+            "cid", "sess", ["new-window", "-t", "sess", "-n", "2"]
         )
         assert len(result) == 3
 

@@ -163,12 +163,11 @@ async def new_window(
     existing_names = {w["name"] for w in existing}
 
     if name is None:
-        # Auto-generate a unique name.
-        name = "shell"
-        counter = 2
-        while name in existing_names:
-            name = f"shell-{counter}"
+        # Auto-generate a unique numeric name.
+        counter = 1
+        while str(counter) in existing_names:
             counter += 1
+        name = str(counter)
     elif name in existing_names:
         raise ValueError(f"Window name '{name}' already exists")
 
