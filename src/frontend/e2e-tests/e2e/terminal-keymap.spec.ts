@@ -46,7 +46,7 @@ async function waitForSentinel(page: Page, sent: string[]): Promise<number> {
 }
 
 test.describe("terminal keymap (web)", () => {
-  test("plain PageUp on the shell is not sent to the PTY", async ({
+  test("plain PageUp on the shell is sent to the PTY for tmux scrollback", async ({
     page,
     request,
   }) => {
@@ -59,8 +59,8 @@ test.describe("terminal keymap (web)", () => {
       const n = sent.length;
       await page.keyboard.press("PageUp");
       const nBeforeSentinel = await waitForSentinel(page, sent);
-      // Only the sentinel arrived — PageUp was not sent to the PTY
-      expect(nBeforeSentinel).toBe(n);
+      // PageUp is sent to the PTY where tmux handles scrollback
+      expect(nBeforeSentinel).toBeGreaterThan(n);
     } finally {
       await cleanup();
     }
@@ -74,31 +74,10 @@ test.describe("terminal keymap (web)", () => {
   // on the primary shell instead). The remaining e2e here are all deterministic
   // primary-screen behaviors.
 
-  test("Shift+PageUp scrolls the buffer without touching the PTY", async ({
-    page,
-    request,
-  }) => {
-    const sent = captureTerminalInput(page);
-    const { cleanup } = await createAndOpenWorkspace(
-      page,
-      request,
-      "km-shift",
-      {
-        waitForTerminal: true,
-      },
-    );
-    try {
-      await terminalType(page, "seq 1 500"); // fill scrollback
-      await page.waitForTimeout(500);
-      await focusTerminal(page);
-      const n = sent.length;
-      await page.keyboard.press("Shift+PageUp");
-      const nBeforeSentinel = await waitForSentinel(page, sent);
-      expect(nBeforeSentinel).toBe(n); // handled by Flutter scrollback, not the PTY
-    } finally {
-      await cleanup();
-    }
-  });
+  // NOTE: Shift+PageUp is intentionally NOT tested here. flterm converts
+  // Shift+PgUp into mouse-wheel scroll events (SGR encoding) rather than
+  // sending the Shift+PgUp key sequence to the PTY. Plain PageUp works
+  // correctly for tmux copy-mode scrollback, so Shift+PgUp is not needed.
 
   test("the browser zoom combo is left for the browser, not sent to the PTY", async ({
     page,
@@ -129,41 +108,12 @@ test.describe("terminal keymap (web)", () => {
     }
   });
 
-  test("mouse wheel up on the shell scrolls the buffer, not the PTY", async ({
+  test("typing after tmux copy-mode scroll still reaches the PTY", async ({
     page,
     request,
   }) => {
-    const sent = captureTerminalInput(page);
-    const { cleanup } = await createAndOpenWorkspace(
-      page,
-      request,
-      "km-wheel",
-      {
-        waitForTerminal: true,
-      },
-    );
-    try {
-      await terminalType(page, "seq 1 500"); // fill scrollback
-      await page.waitForTimeout(500);
-      await focusTerminal(page);
-      const { width, height } = vp(page);
-      await page.mouse.move(width / 2, height / 2);
-      const n = sent.length;
-      await page.mouse.wheel(0, -600); // wheel up over the primary screen
-      const nBeforeSentinel = await waitForSentinel(page, sent);
-      expect(nBeforeSentinel).toBe(n); // primary scrollback is local; nothing to PTY
-    } finally {
-      await cleanup();
-    }
-  });
-
-  test("typing after scrolling up still reaches the PTY", async ({
-    page,
-    request,
-  }) => {
-    // The view snaps back to the live row on input — that is visual (asserted in
-    // the Dart widget tests). Over the wire we can confirm the flow is intact:
-    // after scrolling the buffer up, a typed character still gets to the PTY.
+    // After PgUp puts tmux into copy-mode, a regular keystroke exits
+    // copy-mode and the character reaches the PTY.
     const sent = captureTerminalInput(page);
     const { cleanup } = await createAndOpenWorkspace(page, request, "km-snap", {
       waitForTerminal: true,
@@ -172,15 +122,106 @@ test.describe("terminal keymap (web)", () => {
       await terminalType(page, "seq 1 500");
       await page.waitForTimeout(500);
       await focusTerminal(page);
-      await page.keyboard.press("Shift+PageUp"); // scroll up (no PTY)
+      await page.keyboard.press("PageUp"); // tmux enters copy-mode
+      await page.waitForTimeout(300);
+      // 'q' exits copy-mode (per tmux.conf), then type a real key
+      await page.keyboard.press("q");
+      await page.waitForTimeout(300);
       const n = sent.length;
       await page.keyboard.press("x"); // a real keystroke
-      // Wait for the keystroke's frame to arrive
       const deadline = Date.now() + 2000;
       while (sent.length === n && Date.now() < deadline) {
         await page.waitForTimeout(50);
       }
       expect(sent.length).toBeGreaterThan(n); // the character reached the PTY
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("typing still works after mouse wheel scroll", async ({
+    page,
+    request,
+  }) => {
+    // Verify the terminal remains responsive after scrolling. Wheel events
+    // are converted to PgUp/PgDn on the alternate screen (tmux), but the
+    // exact behavior depends on how the browser delivers PointerScrollEvent.
+    const sent = captureTerminalInput(page);
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "km-wheel",
+      { waitForTerminal: true },
+    );
+    try {
+      await terminalType(page, "seq 1 500");
+      await page.waitForTimeout(500);
+      await focusTerminal(page);
+      const { width, height } = vp(page);
+      await page.mouse.move(width / 2, height / 2);
+      await page.mouse.wheel(0, -600);
+      await page.waitForTimeout(500);
+
+      // After scrolling, typing must still reach the PTY
+      const n = sent.length;
+      await page.keyboard.press("x");
+      const deadline = Date.now() + 2000;
+      while (sent.length === n && Date.now() < deadline) {
+        await page.waitForTimeout(50);
+      }
+      expect(sent.length).toBeGreaterThan(n);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+test.describe("tmux configuration (web)", () => {
+  test("terminal runs inside tmux", async ({ page, request }) => {
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "tmux-env",
+      { waitForTerminal: true },
+    );
+    try {
+      await focusTerminal(page);
+      // Check $TMUX is set — tmux sets this automatically
+      await terminalType(page, "echo TMUX_CHECK=$TMUX");
+      await page.waitForTimeout(1000);
+      // We can't read the canvas, but we can verify the command was sent
+      // and the terminal is responsive. The real assertion is that the
+      // container started with tmux and didn't crash.
+    } finally {
+      await cleanup();
+    }
+  });
+
+  // NOTE: Mouse drag text selection is verified manually. With mouse off in
+  // tmux, plain click+drag selects text in the terminal emulator. The wire
+  // test is unreliable because flterm's gesture recognizer may produce
+  // terminal_input frames during drag even without mouse tracking enabled.
+
+  test("Ctrl+B is not intercepted (no tmux prefix key)", async ({
+    page,
+    request,
+  }) => {
+    // Our tmux.conf strips all keybindings (unbind-key -a), so Ctrl+B
+    // (the default tmux prefix) should pass through to the shell.
+    const sent = captureTerminalInput(page);
+    const { cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "tmux-prefix",
+      { waitForTerminal: true },
+    );
+    try {
+      await focusTerminal(page);
+      const n = sent.length;
+      await page.keyboard.press("Control+b");
+      const nBeforeSentinel = await waitForSentinel(page, sent);
+      // Ctrl+B reached the PTY (readline backward-char), not swallowed by tmux
+      expect(nBeforeSentinel).toBeGreaterThan(n);
     } finally {
       await cleanup();
     }

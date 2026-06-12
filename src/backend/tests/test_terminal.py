@@ -116,7 +116,7 @@ class TestStart:
         assert argv[argv.index("-u") + 1] == "klangk"
         assert argv[argv.index("-w") + 1] == "/home/klangk/work"
         assert "cid" in argv
-        assert argv[-1] == "/bin/bash"
+        assert argv[-2:] == ["tmux", "new-session"]
         assert (fake.rows, fake.cols) == (40, 120)
         assert s._running is True
         await s.stop()

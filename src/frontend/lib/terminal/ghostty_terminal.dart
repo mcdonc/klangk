@@ -2,11 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flterm/flterm.dart';
+import 'package:flutter/gestures.dart'
+    show PointerScrollEvent, kSecondaryMouseButton;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../utils/suppress_browser_menu.dart';
 import '../ws/ws_client.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
@@ -87,34 +90,19 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   int _cols = 80;
   int _rows = 24;
 
-  // True only while inside [_terminal.write] (processing server output). Lets
-  // [onOutput] tell a user keystroke (snap to bottom) apart from an automatic
-  // PTY reply libghostty emits while parsing that output (don't snap).
-  bool _writingServerOutput = false;
-
   @override
   void initState() {
     super.initState();
-    // scrollToBottom: never — the terminal must not auto-snap to the bottom on
-    // every keystroke (flterm's default .onKeystroke). That snap was undoing
-    // Shift+PgUp the instant a key/IME-commit fired, so a single page-up jumped
-    // straight back to the live row. Following live output while at the bottom
-    // still works via flterm's stick-to-bottom layout; scrolled-up stays put.
+    // scrollToBottom: never — don't auto-snap to the bottom on every keystroke.
+    // Mouse wheel scrollback needs the view to stay where the user scrolled.
+    // Following live output while at the bottom still works via flterm's
+    // stick-to-bottom layout; scrolled-up stays put.
     _terminal = TerminalController(
       config: const TerminalConfig(scrollToBottom: ScrollToBottom.never),
     )
       ..onOutput = (bytes) {
         widget.wsClient
             .sendTerminalInput(utf8.decode(bytes, allowMalformed: true));
-        // Standard terminal UX: typing jumps back to the live prompt. onOutput
-        // also fires for automatic PTY replies libghostty generates while
-        // parsing server output (cursor-position/device-status reports) — those
-        // must NOT snap, or a scrolled-up view is yanked back the instant a
-        // shell/pi query arrives. [_writingServerOutput] is true only inside
-        // [_terminal.write], so it tells a user keystroke apart from an
-        // auto-reply. Page-scroll keys never reach here (consumed by
-        // [scrollShortcutsFor]), so deliberate scrollback is unaffected either way.
-        if (!_writingServerOutput) _snapToBottomOnInput();
       }
       ..onResize = (cols, rows) {
         _cols = cols;
@@ -131,12 +119,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       }
       ..onLinkTap = handleLinkTap;
     _outputSub = widget.wsClient.terminalOutput.listen((data) {
-      _writingServerOutput = true;
-      try {
-        _terminal.write(utf8.encode(data));
-      } finally {
-        _writingServerOutput = false;
-      }
+      _terminal.write(utf8.encode(data));
     });
     _eventSub = widget.wsClient.customEvents.listen(_handleEvent);
     // Paste arrives via the browser's native `paste` event (works on Firefox
@@ -188,78 +171,39 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   @visibleForTesting
   bool get hasFocus => _focusNode.hasFocus;
 
-  // Scroll one viewport, driving the position exactly like a mouse wheel
-  // (a relative [ScrollPosition.pointerScroll] delta) rather than a [jumpTo]
-  // to an absolute target. flterm's scrollback is a hybrid model — pixel
-  // deltas are translated to line scrolls of the libghostty buffer and the
-  // position recenters — so an absolute jumpTo clamped to maxScrollExtent
-  // gets "stuck" after the first page, whereas a relative wheel-style delta
-  // keeps paging through the whole buffer.
-  //
-  // Pages each screen the right way. Direction: -1 = up (older history),
-  // +1 = down (toward the live row).
-  //
-  //   - Primary (shell): page the terminal scrollback with a relative
-  //     [ScrollPosition.pointerScroll] of one viewport — exactly what a mouse
-  //     wheel does — rather than a [jumpTo] to an absolute target (which gets
-  //     "stuck" after the first page in flterm's hybrid scrollback model).
-  //   - Alternate (vim/less/pi): there is no terminal scrollback, so hand the
-  //     app a page of MOUSE-WHEEL scroll via flterm's handleScroll — the exact
-  //     events the mouse wheel produces. For a mouse-tracking app like pi that
-  //     both scrolls its view AND pauses its auto-follow (so a streaming
-  //     transcript stays where it was paged), matching the wheel; plain or
-  //     encoded page keys don't trigger that mode. ([_bypassKey] releases these
-  //     combos to us on the alt screen so flterm doesn't encode them first under
-  //     the app's keyboard protocol, e.g. pi's Kitty mode.)
-  void _scrollByPage(int direction) {
+  // Page the alternate screen app (vim/less/pi) via mouse-wheel-style scroll.
+  // On the alternate screen there is no terminal scrollback, so hand the app a
+  // page of MOUSE-WHEEL scroll via flterm's handleScroll — the exact events the
+  // mouse wheel produces. Primary screen scrollback is handled by tmux
+  // (copy-mode via PgUp/Shift+PgUp bindings in tmux.conf).
+  void _scrollAltScreenByPage(int direction) {
     if (!_scrollController.hasClients) return;
     if (_scrollController.activeScreen == TerminalScreen.alternate) {
       _terminal.handleScroll(direction * _rows);
-    } else {
-      final pos = _scrollController.position;
-      pos.pointerScroll(pos.viewportDimension * direction);
     }
   }
-
-  // Jump to the live row when the user types. With scrollToBottom.never (so
-  // Shift+PgUp scrollback holds), real input no longer auto-follows, so we do
-  // it here. Reaching maxScrollExtent re-engages flterm's stick-to-bottom (its
-  // _onScroll recompute), so subsequent output keeps following. No-op when
-  // already at the bottom or before the viewport has clients.
-  //
-  // Primary screen only: the alternate screen (vim/less/pi) has no scrollback,
-  // and flterm gives it an unbounded (infinite) scroll extent, so jumping to
-  // maxScrollExtent there would be both meaningless and invalid.
-  void _snapToBottomOnInput() {
-    if (!_scrollController.hasClients) return;
-    if (_scrollController.activeScreen != TerminalScreen.primary) return;
-    final pos = _scrollController.position;
-    if (pos.pixels < pos.maxScrollExtent) {
-      pos.jumpTo(pos.maxScrollExtent);
-    }
-  }
-
-  // True when a plain PageUp/PageDown should be handed to the browser rather
-  // than the terminal: only on web, and only on the primary screen (the shell).
-  // On the alternate screen (vim/less/htop) the program needs PgUp/PgDn, and on
-  // native there is no browser to hand them to.
-  bool _passPlainPageKeyToBrowser() =>
-      isWebOverride &&
-      _scrollController.hasClients &&
-      _scrollController.activeScreen == TerminalScreen.primary;
 
   // flterm bypass predicate: returning true makes flterm leave the key for
   // outer handlers / the browser instead of encoding it for the PTY.
+  // Page keys go to the PTY on the primary screen (tmux handles scrollback).
+  // On the alternate screen, Shift+PgUp/PgDn (and Cmd+PgUp/PgDn on macOS)
+  // are intercepted and converted to mouse-wheel events for apps like Pi.
   bool _bypassKey(KeyEvent event, TerminalScreen screen) {
-    // Page-scroll combos (Shift+PgUp/PgDn, Cmd+PgUp/PgDn on macOS): always
-    // release them to our Shortcuts (scrollShortcutsFor -> _scrollByPage) so the
-    // scroll action fires. An app that turns on a modern keyboard protocol
-    // (e.g. pi's Kitty mode — pi runs on the *primary* screen) otherwise makes
-    // flterm encode these as key sequences the app ignores, swallowing the
-    // shortcut. Harmless for plain shells (which don't encode them anyway).
-    // Applies on web and native — it's about which handler runs, not the
-    // browser. Our Shortcut consumes the key, so it never leaks to the browser.
-    if (isPageScrollKey(event)) return true;
+    // Alt screen: intercept Shift+PgUp/PgDn and convert to mouse-wheel scroll
+    // for apps like Pi that need that specific input type.
+    if (screen == TerminalScreen.alternate) {
+      final k = event.logicalKey;
+      if (k == LogicalKeyboardKey.pageUp || k == LogicalKeyboardKey.pageDown) {
+        final hw = HardwareKeyboard.instance;
+        final isScrollCombo = hw.isShiftPressed ||
+            (hw.isMetaPressed && defaultTargetPlatform == TargetPlatform.macOS);
+        if (isScrollCombo) {
+          final direction = k == LogicalKeyboardKey.pageUp ? -1 : 1;
+          _scrollAltScreenByPage(direction);
+          return true;
+        }
+      }
+    }
     if (!isWebOverride) return false;
     // Browser zoom (Cmd +/-/0 on macOS, Ctrl +/-/0 elsewhere): leave the key
     // for the browser so its native zoom fires. flterm reports bypassed keys as
@@ -267,30 +211,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     // zooms. This applies on any screen — zoom is a browser-chrome action, not a
     // terminal one — and is why Cmd+= was previously swallowed on macOS web.
     if (isBrowserZoomKey(event)) return true;
-    if (screen != TerminalScreen.primary) return false;
-    final hw = HardwareKeyboard.instance;
-    if (hw.isShiftPressed ||
-        hw.isControlPressed ||
-        hw.isAltPressed ||
-        hw.isMetaPressed) {
-      return false;
-    }
-    final k = event.logicalKey;
-    return k == LogicalKeyboardKey.pageUp || k == LogicalKeyboardKey.pageDown;
-  }
-
-  // The page-scroll combos, matching [scrollShortcutsFor]: PageUp/PageDown with
-  // Shift (every platform) or with Cmd on macOS. Used by [_bypassKey] to release
-  // them to our Shortcuts on the alternate screen.
-  @visibleForTesting
-  static bool isPageScrollKey(KeyEvent event) {
-    final k = event.logicalKey;
-    if (k != LogicalKeyboardKey.pageUp && k != LogicalKeyboardKey.pageDown) {
-      return false;
-    }
-    final hw = HardwareKeyboard.instance;
-    if (hw.isShiftPressed) return true;
-    return hw.isMetaPressed && defaultTargetPlatform == TargetPlatform.macOS;
+    return false;
   }
 
   // The zoom modifier is Cmd on macOS, Ctrl elsewhere — matching each
@@ -322,6 +243,42 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         k == LogicalKeyboardKey.numpadAdd ||
         k == LogicalKeyboardKey.numpadSubtract ||
         k == LogicalKeyboardKey.numpad0;
+  }
+
+  // Right-click context menu for the terminal. The browser's native Copy
+  // doesn't work with flterm's canvas selection, so we provide our own.
+  void _showTerminalContextMenu(BuildContext ctx, Offset position) {
+    // coverage:ignore-start
+    final hasSelection = _terminal.selectedText().isNotEmpty;
+    final overlay = Overlay.of(ctx).context.findRenderObject() as RenderBox;
+    showMenu<String>(
+      context: ctx,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        overlay.size.width - position.dx,
+        overlay.size.height - position.dy,
+      ),
+      items: [
+        if (hasSelection)
+          const PopupMenuItem(value: 'copy', child: Text('Copy')),
+        const PopupMenuItem(value: 'paste', child: Text('Paste')),
+      ],
+    ).then((value) {
+      if (value == 'copy') {
+        final text = _terminal.selectedText();
+        if (text.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: text));
+        }
+      } else if (value == 'paste') {
+        Clipboard.getData(Clipboard.kTextPlain).then((data) {
+          if (data?.text != null && data!.text!.isNotEmpty) {
+            _terminal.paste(data.text!);
+          }
+        });
+      }
+    });
+    // coverage:ignore-end
   }
 
   // Native-only font zoom (Ctrl +/-/0). On web these shortcuts are not bound,
@@ -439,32 +396,6 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       // key propagates to the textarea and the browser pastes natively.
       actions: <Type, Action<Intent>>{
         DoNothingIntent: DoNothingAction(consumesKey: false),
-        // Page-scroll shortcuts (Shift+PgUp/PgDn everywhere, Cmd+PgUp/PgDn on
-        // macOS) are the terminal's own, so they must ALWAYS be consumed here —
-        // never leak to the browser (which would scroll the page) or fall back
-        // to the PTY as a raw key. The action is always enabled and returns null
-        // (handled); [_scrollByPage] pages the scrollback on the primary screen
-        // and pages the running app (vim/less/pi) on the alternate screen, and
-        // is a no-op only when the view has no clients yet.
-        _ScrollPageUpIntent: CallbackAction<_ScrollPageUpIntent>(
-          onInvoke: (_) {
-            _scrollByPage(-1);
-            return null;
-          },
-        ),
-        _ScrollPageDownIntent: CallbackAction<_ScrollPageDownIntent>(
-          onInvoke: (_) {
-            _scrollByPage(1);
-            return null;
-          },
-        ),
-        // Swallow WidgetsApp's default PageUp/PageDown -> ScrollIntent in the
-        // terminal subtree when we want the browser to handle them (web +
-        // primary screen). Without this, returning ignored from flterm's
-        // bypassKey would let the default ScrollAction scroll the scrollback
-        // instead of letting the key reach the browser. Disabled otherwise, so
-        // it falls through to the default ScrollAction (wheel, etc. unaffected).
-        ScrollIntent: _SwallowPageScrollAction(_passPlainPageKeyToBrowser),
         _ZoomInIntent: CallbackAction<_ZoomInIntent>(
           onInvoke: (_) => _zoomBy(_zoomStep),
         ),
@@ -475,67 +406,77 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           onInvoke: (_) => _zoomReset(),
         ),
       },
-      child: Listener(
-        // Copy-on-select: when the user finishes a mouse selection
-        // (pointerUp after drag), copy the selected text to the
-        // clipboard immediately — the pointerUp provides a valid
-        // user activation that Firefox accepts for writeText().
-        onPointerUp: (_) {
-          // coverage:ignore-start
-          final text = _terminal.selectedText();
-          if (text.isNotEmpty) {
-            Clipboard.setData(ClipboardData(text: text));
-            if (mounted) {
-              ScaffoldMessenger.of(context)
-                ..hideCurrentSnackBar()
-                ..showSnackBar(const SnackBar(
-                  content: Text('Copied'),
-                  duration: Duration(seconds: 1),
-                  behavior: SnackBarBehavior.floating,
-                  width: 100,
-                ));
+      child: SuppressBrowserContextMenu(
+        child: Listener(
+          // Right-click context menu for Copy/Paste. Use Listener (not
+          // GestureDetector) to avoid gesture arena conflicts that block
+          // mouse wheel scrollback in flterm's Scrollable.
+          onPointerSignal: (event) {
+            // On the alternate screen (tmux), convert wheel events to
+            // PgUp/PgDn key sequences so tmux can handle scrollback via
+            // copy-mode. flterm has no local scrollback on the alt screen.
+            if (event is PointerScrollEvent &&
+                _scrollController.hasClients &&
+                _scrollController.activeScreen == TerminalScreen.alternate) {
+              if (event.scrollDelta.dy < 0) {
+                // Wheel up → PgUp (ESC [5~)
+                widget.wsClient.sendTerminalInput('\x1b[5~');
+              } else if (event.scrollDelta.dy > 0) {
+                // Wheel down → PgDn (ESC [6~)
+                widget.wsClient.sendTerminalInput('\x1b[6~');
+              }
             }
-          }
-          // coverage:ignore-end
-        },
-        child: TerminalView(
-          controller: _terminal,
-          theme: _theme,
-          fontData: _fontData,
-          focusNode: _focusNode,
-          scrollController: _scrollController,
-          autofocus: false,
-          padding: EdgeInsets.zero,
-          // On web, let plain PgUp/PgDn on the primary screen and the browser
-          // zoom combos (Cmd/Ctrl +/-/0) reach the browser (see [_bypassKey]);
-          // on the alt screen and on native they go to the PTY as usual.
-          bypassKey: _bypassKey,
-          // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
-          // Clipboard.getData, which fails on Firefox). These override flterm's
-          // platform defaults, so paste flows solely through the native
-          // `paste` event in [installPasteListener] — one path, no double-paste.
-          //
-          // Adds the page-scroll shortcuts xterm.dart used to provide for free
-          // (Shift+PgUp/PgDn everywhere, Cmd+PgUp/PgDn on macOS) — see
-          // [scrollShortcutsFor]. Native-only font zoom is added via
-          // [zoomShortcutsFor]; on web the browser zooms.
-          shortcuts: {
-            ..._disableFltermPaste,
-            ...scrollShortcutsFor(defaultTargetPlatform),
-            if (!isWebOverride) ...zoomShortcutsFor(defaultTargetPlatform),
           },
-          // Keep mouse selection (drag/word/line/long-press) but drop the
-          // keyboard select-all gesture, so Ctrl+A falls through to the shell
-          // (readline beginning-of-line / tmux prefix) instead of selecting the
-          // buffer. Ctrl+C already passes through (flterm's copy is selection-
-          // conditional); copy stays on Ctrl+Shift+C and the right-click menu.
-          gestureSettings: const TerminalGestureSettings(
-            enabledSelections: {
-              SelectionGesture.drag,
-              SelectionGesture.word,
-              SelectionGesture.line,
-              SelectionGesture.longPress,
+          onPointerDown: (event) {
+            // coverage:ignore-start
+            if (event.buttons == kSecondaryMouseButton) {
+              // Show context menu on right-click release. Schedule after
+              // the pointer down so the menu appears at the click location.
+              Future.delayed(const Duration(milliseconds: 50), () {
+                if (mounted) {
+                  _showTerminalContextMenu(context, event.position);
+                }
+              });
+            }
+            // coverage:ignore-end
+          },
+          child: TerminalView(
+            controller: _terminal,
+            theme: _theme,
+            fontData: _fontData,
+            focusNode: _focusNode,
+            scrollController: _scrollController,
+            autofocus: false,
+            padding: EdgeInsets.zero,
+            // On web, let plain PgUp/PgDn on the primary screen and the browser
+            // zoom combos (Cmd/Ctrl +/-/0) reach the browser (see [_bypassKey]);
+            // on the alt screen and on native they go to the PTY as usual.
+            bypassKey: _bypassKey,
+            // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
+            // Clipboard.getData, which fails on Firefox). These override flterm's
+            // platform defaults, so paste flows solely through the native
+            // `paste` event in [installPasteListener] — one path, no double-paste.
+            //
+            // Native-only font zoom is added via [zoomShortcutsFor]; on web
+            // the browser zooms. Page-scroll keys go to the PTY where tmux
+            // handles scrollback; alt-screen scroll is handled in [_bypassKey].
+            shortcuts: {
+              ..._disableFltermPaste,
+              if (!isWebOverride) ...zoomShortcutsFor(defaultTargetPlatform),
             },
+            // Keep mouse selection (drag/word/line/long-press) but drop the
+            // keyboard select-all gesture, so Ctrl+A falls through to the shell
+            // (readline beginning-of-line / tmux prefix) instead of selecting the
+            // buffer. Ctrl+C already passes through (flterm's copy is selection-
+            // conditional); copy stays on Ctrl+Shift+C and the right-click menu.
+            gestureSettings: const TerminalGestureSettings(
+              enabledSelections: {
+                SelectionGesture.drag,
+                SelectionGesture.word,
+                SelectionGesture.line,
+                SelectionGesture.longPress,
+              },
+            ),
           ),
         ),
       ),
@@ -553,38 +494,6 @@ const Map<ShortcutActivator, Intent> _disableFltermPaste = {
   SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true):
       DoNothingIntent(),
 };
-
-/// Page-scroll shortcuts: Shift+PgUp/PgDn page the terminal a viewport at a
-/// time. xterm.dart bound these natively (`keytab_default.dart`); flterm does
-/// not, so we wire them at the app layer. They page the scrollback on the
-/// primary screen and page the running app (vim/less/pi) on the alternate
-/// screen — see [GhosttyTerminalState._scrollByPage].
-class _ScrollPageUpIntent extends Intent {
-  const _ScrollPageUpIntent();
-}
-
-class _ScrollPageDownIntent extends Intent {
-  const _ScrollPageDownIntent();
-}
-
-/// Builds the page-scroll shortcuts for [platform]. Shift+PgUp/PgDn is the
-/// cross-platform standard and is bound everywhere (including Linux/Windows);
-/// macOS additionally binds Cmd+PgUp/PgDn, matching the platform convention.
-@visibleForTesting
-Map<ShortcutActivator, Intent> scrollShortcutsFor(TargetPlatform platform) {
-  return {
-    const SingleActivator(LogicalKeyboardKey.pageUp, shift: true):
-        const _ScrollPageUpIntent(),
-    const SingleActivator(LogicalKeyboardKey.pageDown, shift: true):
-        const _ScrollPageDownIntent(),
-    if (platform == TargetPlatform.macOS) ...{
-      const SingleActivator(LogicalKeyboardKey.pageUp, meta: true):
-          const _ScrollPageUpIntent(),
-      const SingleActivator(LogicalKeyboardKey.pageDown, meta: true):
-          const _ScrollPageDownIntent(),
-    },
-  };
-}
 
 /// Native-only font zoom. Bound only when not on web; on web the browser's own
 /// zoom handles these (flterm reports them ignored via [_bypassKey], so the
@@ -623,24 +532,6 @@ Map<ShortcutActivator, Intent> zoomShortcutsFor(TargetPlatform platform) {
     SingleActivator(LogicalKeyboardKey.digit0, meta: meta, control: ctrl):
         const _ZoomResetIntent(),
   };
-}
-
-/// Swallows WidgetsApp's default `PageUp/PageDown -> ScrollIntent` inside the
-/// terminal subtree when [enabledFn] is true (web + primary screen), so the key
-/// is not consumed by Flutter and reaches the browser's own page scroll. When
-/// disabled — or for non-page scrolls (arrows, wheel) — it reports itself
-/// disabled and the lookup falls through to the default [ScrollAction].
-class _SwallowPageScrollAction extends Action<ScrollIntent> {
-  _SwallowPageScrollAction(this.enabledFn);
-
-  final bool Function() enabledFn;
-
-  @override
-  bool isEnabled(ScrollIntent intent) =>
-      enabledFn() && intent.type == ScrollIncrementType.page;
-
-  @override
-  Object? invoke(ScrollIntent intent) => null;
 }
 
 /// klangk's terminal theme at the given [fontSize] (palette matches the xterm

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flterm/flterm.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -82,38 +83,29 @@ void main() {
   setUp(() => testBaseUrlOverride = 'http://localhost:8997');
   tearDown(() => testBaseUrlOverride = null);
 
-  group('GhosttyTerminal scrollback shortcuts', () {
-    testWidgets('Shift+PgUp scrolls up in primary scrollback', (tester) async {
+  group('GhosttyTerminal scrollback shortcuts (tmux-handled)', () {
+    // Primary-screen scrollback is now handled by tmux (copy-mode via PgUp
+    // bindings in tmux.conf). These tests verify that page keys reach the PTY
+    // rather than being intercepted by Flutter.
+
+    testWidgets('Shift+PgUp on primary screen reaches the PTY', (tester) async {
       final client = _MockWsClient();
       final key = GlobalKey<GhosttyTerminalState>();
       await _pumpReady(tester, client, key);
 
-      // Fill the buffer well beyond a screen so scrollback exists.
       final lines = List.generate(200, (i) => 'line $i').join('\r\n');
       client.emitTerminal('$lines\r\n');
       await tester.pumpAndSettle();
-
-      final scroll = key.currentState!.scrollController;
-      expect(
-        scroll.position.maxScrollExtent,
-        greaterThan(0),
-        reason: 'scrollback must exist for PgUp to have anywhere to go',
-      );
-      final before = scroll.position.pixels;
+      client.sentCommands.clear();
 
       await _sendShiftPageKey(tester, LogicalKeyboardKey.pageUp);
 
-      expect(
-        scroll.position.pixels,
-        lessThan(before),
-        reason:
-            'Shift+PgUp should scroll toward older scrollback (lower pixels)',
-      );
+      expect(client.sentCommands, isNotEmpty,
+          reason: 'Shift+PgUp goes to PTY where tmux handles scrollback');
       client.close();
     });
 
-    testWidgets('Shift+PgDn scrolls down in primary scrollback',
-        (tester) async {
+    testWidgets('Shift+PgDn on primary screen reaches the PTY', (tester) async {
       final client = _MockWsClient();
       final key = GlobalKey<GhosttyTerminalState>();
       await _pumpReady(tester, client, key);
@@ -121,32 +113,22 @@ void main() {
       final lines = List.generate(200, (i) => 'line $i').join('\r\n');
       client.emitTerminal('$lines\r\n');
       await tester.pumpAndSettle();
-
-      final scroll = key.currentState!.scrollController;
-      // Jump to the top of scrollback so PgDn has somewhere to go.
-      scroll.jumpTo(0);
-      await tester.pump();
-      final before = scroll.position.pixels;
+      client.sentCommands.clear();
 
       await _sendShiftPageKey(tester, LogicalKeyboardKey.pageDown);
 
-      expect(
-        scroll.position.pixels,
-        greaterThan(before),
-        reason: 'Shift+PgDn should scroll toward newer rows (higher pixels)',
-      );
+      expect(client.sentCommands, isNotEmpty,
+          reason: 'Shift+PgDn goes to PTY where tmux handles scrollback');
       client.close();
     });
 
-    testWidgets('Shift+PgUp does not scroll on alternate screen',
-        (tester) async {
-      // Matches xterm.dart's "-AppScreen" keytab: scrollback shortcuts only
-      // act on the primary screen so vim/less still see PgUp themselves.
+    testWidgets('Shift+PgUp on alternate screen pages the app', (tester) async {
+      // On the alt screen, Shift+PgUp is converted to mouse-wheel scroll
+      // for apps like Pi that need that input type.
       final client = _MockWsClient();
       final key = GlobalKey<GhosttyTerminalState>();
       await _pumpReady(tester, client, key);
 
-      // Fill primary, then switch to alt screen via CSI ?1049h.
       final lines = List.generate(200, (i) => 'line $i').join('\r\n');
       client.emitTerminal('$lines\r\n\x1b[?1049h');
       await tester.pumpAndSettle();
@@ -162,6 +144,61 @@ void main() {
         before,
         reason:
             'scroll position must not change while the alt screen is active',
+      );
+      client.close();
+    });
+  });
+
+  group('mouse wheel on alternate screen', () {
+    testWidgets('wheel up sends PgUp to PTY on alt screen', (tester) async {
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+
+      // Switch to alt screen (tmux uses this)
+      client.emitTerminal('\x1b[?1049h');
+      await tester.pumpAndSettle();
+      expect(key.currentState!.scrollController.activeScreen,
+          TerminalScreen.alternate);
+      client.sentCommands.clear();
+
+      // Send wheel up event
+      final center = tester.getCenter(find.byType(TerminalView));
+      await tester.sendEventToBinding(
+        PointerScrollEvent(
+            position: center, scrollDelta: const Offset(0, -100)),
+      );
+      await tester.pumpAndSettle();
+
+      // Should have sent PgUp (ESC [5~) to the PTY
+      expect(
+        client.sentCommands.any((c) => c.contains('\x1b[5~')),
+        isTrue,
+        reason: 'wheel up on alt screen sends PgUp to PTY for tmux scrollback',
+      );
+      client.close();
+    });
+
+    testWidgets('wheel down sends PgDn to PTY on alt screen', (tester) async {
+      final client = _MockWsClient();
+      final key = GlobalKey<GhosttyTerminalState>();
+      await _pumpReady(tester, client, key);
+
+      client.emitTerminal('\x1b[?1049h');
+      await tester.pumpAndSettle();
+      client.sentCommands.clear();
+
+      final center = tester.getCenter(find.byType(TerminalView));
+      await tester.sendEventToBinding(
+        PointerScrollEvent(position: center, scrollDelta: const Offset(0, 100)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        client.sentCommands.any((c) => c.contains('\x1b[6~')),
+        isTrue,
+        reason:
+            'wheel down on alt screen sends PgDn to PTY for tmux scrollback',
       );
       client.close();
     });
