@@ -71,6 +71,3 @@ RUN ln -sf /bin/bash /bin/sh
 
 RUN mkdir -p /home/klangk/work && chown -R klangk:klangk /home/klangk
 WORKDIR /home/klangk/work
-
-# Allow klangk user to sudo without a password (for installing packages, etc.)
-RUN echo "klangk ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/klangk
