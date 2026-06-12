@@ -580,14 +580,39 @@ class Connection:
         # Clear any stale pending_status_msg from a prior connect/restart.
         self.pending_status_msg = None
 
-        # Resolve per-user handle for HOME directory.
+        # Resolve or auto-create per-user handle for HOME directory.
         handle = workspaces.get_user_handle(
             self.user["id"], workspace_id, self.user["id"]
         )
         if handle is not None:
             self._user_home = f"/home/{handle}"
         else:
-            self._user_home = None
+            # Auto-create handle from email on first connection.
+            try:
+                suggested = workspaces.suggest_handle(
+                    self.user.get("email", "")
+                )
+                try:
+                    container_home = workspaces.set_user_handle(
+                        self.user["id"],
+                        workspace_id,
+                        self.user["id"],
+                        suggested,
+                    )
+                except ValueError:
+                    alt = workspaces.suggest_alternative(
+                        self.user["id"], workspace_id, suggested
+                    )
+                    container_home = workspaces.set_user_handle(
+                        self.user["id"],
+                        workspace_id,
+                        self.user["id"],
+                        alt,
+                    )
+                self._user_home = container_home
+            except Exception:
+                logger.exception("Failed to auto-create handle")
+                self._user_home = None
 
         logger.info("Container ready for workspace %s", workspace_id)
 
@@ -973,32 +998,6 @@ class Connection:
                 sess.browser_subscribers.add(self.sock)
         status_msg = self.pending_status_msg
         self.pending_status_msg = None
-        if self._user_home is None and self.workspace_id:
-            # Auto-create handle from email on first connection.
-            try:
-                suggested = workspaces.suggest_handle(
-                    self.user.get("email", "")
-                )
-                try:
-                    container_home = workspaces.set_user_handle(
-                        self.user["id"],
-                        self.workspace_id,
-                        self.user["id"],
-                        suggested,
-                    )
-                except ValueError:
-                    alt = workspaces.suggest_alternative(
-                        self.user["id"], self.workspace_id, suggested
-                    )
-                    container_home = workspaces.set_user_handle(
-                        self.user["id"],
-                        self.workspace_id,
-                        self.user["id"],
-                        alt,
-                    )
-                self._user_home = container_home
-            except Exception:
-                logger.exception("Failed to auto-create handle")
         if status_msg:
             _send_event(self.sock, "container_ready", status_msg)
 
