@@ -517,7 +517,18 @@ class TestListWindows:
 
 
 class TestNewWindow:
-    async def test_creates_window(self):
+    async def test_creates_window_auto_name(self):
+        call_count = [0]
+
+        async def fake_list(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [{"index": 0, "name": "bash", "active": True}]
+            return [
+                {"index": 0, "name": "bash", "active": False},
+                {"index": 1, "name": "shell", "active": True},
+            ]
+
         with (
             patch(
                 "klangk_backend.terminal.tmux_command",
@@ -525,17 +536,46 @@ class TestNewWindow:
             ) as mock_cmd,
             patch(
                 "klangk_backend.terminal.list_windows",
-                return_value=[
-                    {"index": 0, "name": "bash", "active": False},
-                    {"index": 1, "name": "bash", "active": True},
-                ],
+                side_effect=fake_list,
             ),
         ):
             result = await new_window("cid", "sess")
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["new-window", "-t", "sess"]
+            "cid", "sess", ["new-window", "-t", "sess", "-n", "shell"]
         )
         assert len(result) == 2
+
+    async def test_auto_name_skips_existing(self):
+        call_count = [0]
+
+        async def fake_list(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [
+                    {"index": 0, "name": "bash", "active": True},
+                    {"index": 1, "name": "shell", "active": False},
+                ]
+            return [
+                {"index": 0, "name": "bash", "active": False},
+                {"index": 1, "name": "shell", "active": False},
+                {"index": 2, "name": "shell-2", "active": True},
+            ]
+
+        with (
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                side_effect=fake_list,
+            ),
+        ):
+            result = await new_window("cid", "sess")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["new-window", "-t", "sess", "-n", "shell-2"]
+        )
+        assert len(result) == 3
 
     async def test_creates_named_window(self):
         call_count = [0]

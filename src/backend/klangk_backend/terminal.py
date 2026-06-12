@@ -154,15 +154,25 @@ async def new_window(
 ) -> list[dict]:
     """Create a new tmux window and return the updated window list.
 
+    If *name* is not provided, auto-generates a unique name like
+    ``shell``, ``shell-2``, ``shell-3``, etc.
+
     Raises ``ValueError`` if *name* duplicates an existing window name.
     """
-    if name:
-        existing = await list_windows(container_id, session_name)
-        if any(w["name"] == name for w in existing):
-            raise ValueError(f"Window name '{name}' already exists")
-    args = ["new-window", "-t", session_name]
-    if name:
-        args += ["-n", name]
+    existing = await list_windows(container_id, session_name)
+    existing_names = {w["name"] for w in existing}
+
+    if name is None:
+        # Auto-generate a unique name.
+        name = "shell"
+        counter = 2
+        while name in existing_names:
+            name = f"shell-{counter}"
+            counter += 1
+    elif name in existing_names:
+        raise ValueError(f"Window name '{name}' already exists")
+
+    args = ["new-window", "-t", session_name, "-n", name]
     await tmux_command(container_id, session_name, args)
     return await list_windows(container_id, session_name)
 
