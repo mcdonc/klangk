@@ -743,6 +743,43 @@ class Connection:
             workspace_id,
         )
 
+    async def handle_shutdown_container(self) -> None:
+        """Explicitly shut down the workspace container."""
+        if not self.workspace_id:
+            send_error(self.sock, "Not connected to a workspace")
+            return
+        if not self.container_id:
+            send_error(self.sock, "No container running")
+            return
+
+        workspace_id = self.workspace_id
+        container_id = self.container_id
+
+        # Notify all subscribers before stopping.
+        session = state.get_session(workspace_id)
+        if session:
+            session.broadcast(
+                {
+                    "type": "event",
+                    "event": {
+                        "type": "CUSTOM",
+                        "name": "container_stopped",
+                        "value": {"reason": "shut down by user"},
+                    },
+                }
+            )
+
+        try:
+            await container.registry.stop_and_remove_container(container_id)
+        except Exception as e:
+            logger.warning("Error stopping container: %s", e)
+
+        await container.registry._notify_workspace_killed(workspace_id)
+
+        logger.info(
+            "Container shut down by user for workspace %s", workspace_id
+        )
+
     async def handle_terminal_start(self, msg: dict) -> None:
         if not self.container_id:
             return
@@ -1108,6 +1145,8 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_terminal_stop()
             elif cmd == "restart_container":
                 await conn.handle_restart_container()
+            elif cmd == "shutdown_container":
+                await conn.handle_shutdown_container()
             elif cmd == "exec_start":
                 await conn.handle_exec_start(msg)
             elif cmd == "exec_input":

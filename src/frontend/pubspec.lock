@@ -341,7 +341,7 @@ packages:
   klangk_plugins:
     dependency: "direct main"
     description:
-      path: "/home/chrism/projects/klangk/.claude/worktrees/285-tmux-initial-command/.devenv/state/klangk/plugins/.dart"
+      path: "/home/chrism/projects/klangk/.claude/worktrees/304-shutdown-button/.devenv/state/klangk/plugins/.dart"
       relative: false
     source: path
     version: "0.0.1"

@@ -117,6 +117,7 @@ void main() {
       client.disconnectWorkspace();
       client.sendUiReady();
       client.sendRestartContainer();
+      client.sendShutdownContainer();
       client.sendTerminalStart();
       client.sendTerminalInput('ls\n');
       client.sendTerminalResize(120, 40);
@@ -582,6 +583,7 @@ void main() {
 
     test('send methods produce correct JSON', () {
       client.sendRestartContainer();
+      client.sendShutdownContainer();
       client.sendTerminalStart(cols: 100, rows: 30);
       client.sendTerminalInput('ls\n');
       client.sendTerminalResize(120, 40);
@@ -594,13 +596,14 @@ void main() {
           .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
           .toList();
       expect(msgs[0], {'cmd': 'restart_container'});
-      expect(msgs[1], {'cmd': 'terminal_start', 'cols': 100, 'rows': 30});
-      expect(msgs[2], {'cmd': 'terminal_input', 'data': 'ls\n'});
-      expect(msgs[3], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
-      expect(msgs[4], {'cmd': 'terminal_stop'});
-      expect(msgs[5], {'cmd': 'ui_ready'});
-      expect(msgs[6], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
-      expect(msgs[7], {'cmd': 'workspace_disconnect'});
+      expect(msgs[1], {'cmd': 'shutdown_container'});
+      expect(msgs[2], {'cmd': 'terminal_start', 'cols': 100, 'rows': 30});
+      expect(msgs[3], {'cmd': 'terminal_input', 'data': 'ls\n'});
+      expect(msgs[4], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
+      expect(msgs[5], {'cmd': 'terminal_stop'});
+      expect(msgs[6], {'cmd': 'ui_ready'});
+      expect(msgs[7], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
+      expect(msgs[8], {'cmd': 'workspace_disconnect'});
     });
 
     test('sendTerminalStart uses default cols/rows', () {

@@ -2342,6 +2342,107 @@ class TestHandleRestartContainer:
         assert len(ready) == 1
 
 
+class TestHandleShutdownContainer:
+    async def test_shutdown_not_connected(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        await conn.handle_shutdown_container()
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and "Not connected" in m.get("message", "")
+            for m in sent
+        )
+
+    async def test_shutdown_no_container(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.workspace_id = "ws"
+        conn.container_id = None
+        await conn.handle_shutdown_container()
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and "No container" in m.get("message", "")
+            for m in sent
+        )
+
+    async def test_shutdown_broadcasts_stopped(self, user):
+        sock1 = _mock_sock()
+        sock2 = _mock_sock()
+        conn = _base_conn(user=user, ws=sock1)
+        ws = await _create_workspace_with_acl(user["id"], "shutdown-ws")
+        conn.workspace_id = ws["id"]
+        conn.container_id = "cid"
+
+        session = wshandler.state.get_or_create_session(ws["id"])
+        await session.add_subscriber(sock1, "cid")
+        await session.add_subscriber(sock2, "cid")
+
+        with patch.object(
+            container.registry,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
+        ):
+            await conn.handle_shutdown_container()
+
+        # Both subscribers should receive container_stopped
+        for sock in (sock1, sock2):
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(
+                isinstance(m, dict)
+                and m.get("type") == "event"
+                and m.get("event", {}).get("name") == "container_stopped"
+                and "shut down"
+                in m.get("event", {}).get("value", {}).get("reason", "")
+                for m in sent
+            ), "container_stopped not sent to subscriber"
+
+        wshandler.state.sessions.pop(ws["id"], None)
+
+    async def test_shutdown_handles_stop_error(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        ws = await _create_workspace_with_acl(user["id"], "shutdown-err")
+        conn.workspace_id = ws["id"]
+        conn.container_id = "cid"
+
+        session = wshandler.state.get_or_create_session(ws["id"])
+        await session.add_subscriber(sock, "cid")
+
+        with patch.object(
+            container.registry,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("podman broke"),
+        ):
+            await conn.handle_shutdown_container()
+
+        # Should not raise; container_stopped event still sent
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict)
+            and m.get("event", {}).get("name") == "container_stopped"
+            for m in sent
+        )
+        wshandler.state.sessions.pop(ws["id"], None)
+
+    async def test_shutdown_dispatch(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "shutdown_container"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        await handle_websocket(websocket)
+        sent = [c[0][0] for c in websocket.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and "Not connected" in str(m) for m in sent
+        )
+
+
 class TestFractionalTimeout:
     async def test_fractional_timeout_display(self, user, monkeypatch):
         monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)

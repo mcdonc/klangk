@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../ws/ws_client.dart';
 
 /// Workspace settings panel: config editing only.
 /// Used as a tab in the IDE layout.
@@ -443,11 +444,60 @@ class _SettingsFormState extends State<_SettingsForm> {
                       label: const Text('Save'),
                     ),
                   ),
+                  const SizedBox(height: 32),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Danger Zone',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Colors.red,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => _confirmShutdown(context),
+                    icon: const Icon(Icons.power_settings_new,
+                        size: 18, color: Colors.red),
+                    label: const Text('Shut Down Container'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                  ),
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _confirmShutdown(BuildContext context) {
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Shut Down Container'),
+        content: const Text(
+          'This will stop the container and end all terminal '
+          'sessions for all users in this workspace.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              context.read<WsClient>().sendShutdownContainer();
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Shut Down'),
+          ),
+        ],
       ),
     );
   }
