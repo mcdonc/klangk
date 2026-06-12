@@ -332,7 +332,7 @@ in
     # Podman config lives outside the storage directory so
     # `podman system reset` doesn't delete it.
     _PODMAN_CONF="$DEVENV_STATE/klangk/podman"
-    _PODMAN_STORE="$DEVENV_STATE/klangk/containers"
+    _PODMAN_STORE="$HOME/.local/share/containers"
     # KLANGK_PODMAN_STORAGE: custom path for podman image storage.
     # Use an ext4 filesystem (not ZFS) for --userns=keep-id support.
     # ZFS lacks idmapped mounts, causing storage-chown-by-maps to hang.
