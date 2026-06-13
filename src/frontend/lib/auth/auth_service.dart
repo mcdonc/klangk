@@ -15,8 +15,6 @@ class AuthService extends ChangeNotifier {
 
   http.Client get _client => testAuthHttpClientOverride ?? http.Client();
 
-  static const _permissionRefreshSeconds = 60;
-
   String? _token;
   bool _loading = false;
   bool _initialized = false;
@@ -96,15 +94,15 @@ class AuthService extends ChangeNotifier {
 
     if (_token != null) {
       await _fetchPermissions();
-      _startPermissionRefresh();
     }
 
     _initialized = true;
     notifyListeners();
   }
 
-  /// Fetch permissions from the server and cache them.
+  /// Fetch permissions from the server.
   Future<void> _fetchPermissions() async {
+    debugPrint('[AuthService] fetching /api/my-permissions');
     try {
       final resp = await _client.get(
         Uri.parse('$_baseUrl/api/my-permissions'),
@@ -131,17 +129,6 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _startPermissionRefresh() {
-    _permissionTimer?.cancel();
-    // Add jitter (0-15s) to avoid thundering herd when many users
-    // are logged in simultaneously.
-    final jitter = Random().nextInt(15);
-    _permissionTimer = Timer.periodic(
-      Duration(seconds: _permissionRefreshSeconds + jitter),
-      (_) => refreshPermissions(),
-    );
-  }
-
   void _stopPermissionRefresh() {
     _permissionTimer?.cancel();
     _permissionTimer = null;
@@ -161,7 +148,6 @@ class AuthService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, token);
     await _fetchPermissions();
-    _startPermissionRefresh();
     notifyListeners();
   }
 

@@ -519,15 +519,12 @@ class Connection:
         self, workspace_id: str, workspace: dict
     ) -> None:
         """Start/restart container for a workspace."""
+        owner_id = workspace.get("user_id", self.user["id"])
         host_path = str(
-            workspaces.get_workspace_host_path(self.user["id"], workspace_id)
+            workspaces.get_workspace_host_path(owner_id, workspace_id)
         )
-        home_path = str(
-            workspaces.get_home_host_path(self.user["id"], workspace_id)
-        )
-        cfg_path = str(
-            workspaces.get_config_host_path(self.user["id"], workspace_id)
-        )
+        home_path = str(workspaces.get_home_host_path(owner_id, workspace_id))
+        cfg_path = str(workspaces.get_config_host_path(owner_id, workspace_id))
 
         hosting_hostname, hosting_proto, hosting_base_path = (
             derive_hosting_info(self.sock.headers)
@@ -581,8 +578,11 @@ class Connection:
         self.pending_status_msg = None
 
         # Resolve or auto-create per-user handle for HOME directory.
+        # Use the workspace owner's ID for path lookups (the home dir
+        # is under the owner's data directory), but the connecting
+        # user's ID for the handle itself.
         handle = workspaces.get_user_handle(
-            self.user["id"], workspace_id, self.user["id"]
+            owner_id, workspace_id, self.user["id"]
         )
         if handle is not None:
             self._user_home = f"/home/{handle}"
@@ -594,17 +594,17 @@ class Connection:
                 )
                 try:
                     container_home = workspaces.set_user_handle(
-                        self.user["id"],
+                        owner_id,
                         workspace_id,
                         self.user["id"],
                         suggested,
                     )
                 except ValueError:
                     alt = workspaces.suggest_alternative(
-                        self.user["id"], workspace_id, suggested
+                        owner_id, workspace_id, suggested
                     )
                     container_home = workspaces.set_user_handle(
-                        self.user["id"],
+                        owner_id,
                         workspace_id,
                         self.user["id"],
                         alt,
@@ -761,6 +761,13 @@ class Connection:
         await self.start_workspace_container(workspace_id, workspace)
         container.registry.record_activity(self.container_id)
 
+        # Update container_id on ALL connections to this workspace
+        # so they don't try to exec into the old (removed) container.
+        new_cid = self.container_id
+        for sock, conn in state.connections.items():
+            if conn.workspace_id == workspace_id and conn is not self:
+                conn.container_id = new_cid
+
         ports = await container.registry.get_workspace_ports(workspace_id)
         container_name, ports_str = _format_container_info(workspace_id, ports)
         status_msg = f"Container restarted {container_name}{ports_str}"
@@ -804,6 +811,11 @@ class Connection:
                 }
             )
 
+        # Clear container_id on ALL connections to prevent stale exec attempts.
+        for sock, conn in state.connections.items():
+            if conn.workspace_id == workspace_id:
+                conn.container_id = None
+
         try:
             await container.registry.stop_and_remove_container(container_id)
         except Exception as e:
@@ -816,10 +828,41 @@ class Connection:
         )
 
     async def handle_terminal_start(self, msg: dict) -> None:
+        logger.info(
+            "handle_terminal_start: user=%s workspace=%s container=%s user_home=%s",
+            self.user.get("email"),
+            self.workspace_id,
+            self.container_id,
+            self._user_home,
+        )
         if not self.container_id:
+            logger.info("handle_terminal_start: no container_id, skipping")
             return
+        # Debounce: if the last terminal start was very recent, skip.
+        # This prevents rapid retry loops when the PTY exits immediately.
+        import time as _time
+
+        now = _time.monotonic()
+        if hasattr(self, "_last_terminal_start"):
+            if now - self._last_terminal_start < 2.0:
+                logger.warning(
+                    "Ignoring rapid terminal_start (%.1fs since last)",
+                    now - self._last_terminal_start,
+                )
+                return
+        self._last_terminal_start = now
         if self._user_home is None:
             send_error(self.sock, "Handle not set")
+            return
+        if not await self._has_perm("code-in-isolation"):
+            # Spectators can't start isolated terminals but still need
+            # the terminal pane. Send terminal_started (no session) so
+            # the frontend renders shared tabs.
+            logger.info(
+                "Skipping isolated terminal for user=%s (no code-in-isolation)",
+                self.user.get("email"),
+            )
+            self.sock.send_json({"type": "terminal_started"})
             return
         # Stop existing terminal if any
         await self.stop_terminal()
@@ -844,6 +887,11 @@ class Connection:
 
         async def _start_terminal() -> None:
             try:
+                logger.info(
+                    "_start_terminal: starting for user=%s container=%s",
+                    conn.user.get("email"),
+                    conn.container_id,
+                )
                 await session.start(
                     cols,
                     rows,
@@ -865,7 +913,7 @@ class Connection:
                     from .terminal import (
                         _session_name,
                         list_windows,
-                        rename_window,
+                        tmux_command,
                     )
 
                     sname = _session_name(conn._user_home)
@@ -880,11 +928,15 @@ class Connection:
                                 while str(num) in used:
                                     num += 1
                                 try:
-                                    await rename_window(
+                                    await tmux_command(
                                         conn.container_id,
                                         sname,
-                                        w["index"],
-                                        str(num),
+                                        [
+                                            "rename-window",
+                                            "-t",
+                                            f"{sname}:{w['index']}",
+                                            str(num),
+                                        ],
                                     )
                                 except Exception:
                                     pass
@@ -897,6 +949,16 @@ class Connection:
                         )
                 except Exception:
                     pass  # Non-critical; tabs update on next window op
+                # Also send the shared terminal list.
+                try:
+                    from .terminal import list_shared_terminals
+
+                    shared = await list_shared_terminals(conn.container_id)
+                    conn.sock.send_json(
+                        {"type": "shared_terminals", "terminals": shared}
+                    )
+                except Exception:
+                    pass
             except asyncio.CancelledError:
                 await session.stop()
                 container.registry.revoke_connection_token(conn.sock)
@@ -912,8 +974,12 @@ class Connection:
         self.terminal_task = asyncio.create_task(_start_terminal())
 
     async def handle_terminal_input(self, msg: dict) -> None:
+        import time as _time
+
+        t0 = _time.monotonic()
         session = self.terminal_session
         if session is None or not session.is_alive:
+            logger.warning("terminal_input: no session or not alive")
             return
         data = msg.get("data", "")
         if len(data) > _MAX_INPUT_SIZE:
@@ -923,6 +989,9 @@ class Connection:
             return
         container.registry.record_activity(self.container_id)
         await session.write(data)
+        elapsed = _time.monotonic() - t0
+        if elapsed > 0.1:
+            logger.warning("terminal_input SLOW: %.3fs", elapsed)
 
     async def handle_terminal_resize(self, msg: dict) -> None:
         session = self.terminal_session
@@ -940,6 +1009,9 @@ class Connection:
         return _session_name(self._user_home)
 
     async def handle_terminal_new_window(self, msg: dict) -> None:
+        import time as _time
+
+        t0 = _time.monotonic()
         if not self.container_id or not self._user_home:
             return
         from .terminal import new_window
@@ -950,6 +1022,10 @@ class Connection:
             windows = await new_window(
                 self.container_id, session_name, name=name
             )
+            logger.info(
+                "handle_terminal_new_window: %.3fs",
+                _time.monotonic() - t0,
+            )
             self.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
             )
@@ -957,6 +1033,9 @@ class Connection:
             send_error(self.sock, f"Failed to create window: {e}")
 
     async def handle_terminal_select_window(self, msg: dict) -> None:
+        import time as _time
+
+        t0 = _time.monotonic()
         if not self.container_id or not self._user_home:
             return
         from .terminal import select_window
@@ -965,6 +1044,11 @@ class Connection:
         index = msg.get("index", 0)
         try:
             await select_window(self.container_id, session_name, index)
+            logger.info(
+                "handle_terminal_select_window: index=%s %.3fs",
+                index,
+                _time.monotonic() - t0,
+            )
         except Exception as e:
             send_error(self.sock, f"Failed to select window: {e}")
 
@@ -1018,6 +1102,141 @@ class Connection:
             )
         except Exception as e:
             send_error(self.sock, f"Failed to list windows: {e}")
+
+    async def _has_perm(self, perm: str) -> bool:
+        """Check if the connected user has a workspace permission."""
+        from . import acl as _acl
+
+        if not self.workspace_id:
+            return False
+        principals = await _acl.get_principals(self.user["id"])
+        return await _acl.check_permission(
+            f"/workspaces/{self.workspace_id}", principals, perm
+        )
+
+    async def handle_create_shared_terminal(self, msg: dict) -> None:
+        if not self.container_id:
+            return
+        if not await self._has_perm("share-terminals"):
+            send_error(self.sock, "Permission denied")
+            return
+        from .terminal import create_shared_terminal, list_shared_terminals
+
+        name = msg.get("name", "").strip()
+        if not name:
+            send_error(self.sock, "Name required")
+            return
+        try:
+            await create_shared_terminal(self.container_id, name)
+            terminals = await list_shared_terminals(self.container_id)
+            session = state.get_session(self.workspace_id)
+            if session:
+                session.broadcast(
+                    {"type": "shared_terminals", "terminals": terminals}
+                )
+        except Exception as e:
+            send_error(self.sock, f"Failed to create shared terminal: {e}")
+
+    async def handle_join_shared_terminal(self, msg: dict) -> None:
+        if not self.container_id or not self._user_home:
+            return
+        if not await self._has_perm("spectate-on-shared-terminals"):
+            send_error(self.sock, "Permission denied")
+            return
+        from .terminal import shared_socket_path
+
+        name = msg.get("name", "").strip()
+        if not name:
+            send_error(self.sock, "Name required")
+            return
+
+        read_only = not (
+            await self._has_perm("code-in-shared-terminals")
+            or await self._has_perm("share-terminals")
+        )
+
+        # Stop the current terminal session and start a new one
+        # attached to the shared terminal's tmux socket.
+        await self.stop_terminal()
+        sock_path = shared_socket_path(name)
+        session = TerminalSession(
+            self.container_id,
+            user_home=self._user_home,
+            socket_path=sock_path,
+            join_session=name,
+            read_only=read_only,
+        )
+        self.terminal_session = session
+        conn = self
+
+        async def _start_shared() -> None:
+            try:
+                await session.start()
+                if conn.terminal_session is not session:
+                    await session.stop()
+                    return
+                conn.terminal_task = asyncio.create_task(
+                    conn.forward_terminal_output(session)
+                )
+                container.registry.record_activity(conn.container_id)
+                conn.sock.send_json(
+                    {
+                        "type": "terminal_started",
+                        "shared": name,
+                        "readOnly": read_only,
+                    }
+                )
+            except asyncio.CancelledError:
+                await session.stop()
+                raise
+            except Exception as e:
+                await session.stop()
+                logger.exception("Shared terminal join failed: %s", e)
+                send_error(conn.sock, f"Failed to join shared terminal: {e}")
+
+        self.terminal_task = asyncio.create_task(_start_shared())
+
+    async def handle_delete_shared_terminal(self, msg: dict) -> None:
+        if not self.container_id:
+            return
+        if not await self._has_perm("share-terminals"):
+            send_error(self.sock, "Permission denied")
+            return
+        from .terminal import delete_shared_terminal, list_shared_terminals
+
+        name = msg.get("name", "").strip()
+        if not name:
+            send_error(self.sock, "Name required")
+            return
+        try:
+            await delete_shared_terminal(self.container_id, name)
+            terminals = await list_shared_terminals(self.container_id)
+            session = state.get_session(self.workspace_id)
+            if session:
+                session.broadcast(
+                    {"type": "shared_terminal_deleted", "name": name}
+                )
+                session.broadcast(
+                    {"type": "shared_terminals", "terminals": terminals}
+                )
+        except Exception as e:
+            send_error(self.sock, f"Failed to delete shared terminal: {e}")
+
+    async def handle_list_shared_terminals(self) -> None:
+        if not self.container_id:
+            return
+        if not await self._has_perm("spectate-on-shared-terminals"):
+            send_error(self.sock, "Permission denied")
+            return
+        from .terminal import list_shared_terminals
+
+        try:
+            terminals = await list_shared_terminals(self.container_id)
+            self.sock.send_json(
+                {"type": "shared_terminals", "terminals": terminals}
+            )
+        except Exception as e:
+            send_error(self.sock, f"Failed to list shared terminals: {e}")
 
     async def handle_exec_start(self, msg: dict) -> None:
         if not self.container_id:
@@ -1123,6 +1342,17 @@ class Connection:
         self.pending_status_msg = None
         if status_msg:
             _send_event(self.sock, "container_ready", status_msg)
+        # Send shared terminal list so tabs appear on initial load.
+        if self.container_id:
+            try:
+                from .terminal import list_shared_terminals
+
+                shared = await list_shared_terminals(self.container_id)
+                self.sock.send_json(
+                    {"type": "shared_terminals", "terminals": shared}
+                )
+            except Exception:
+                pass
 
     async def handle_set_handle(self, msg: dict) -> None:
         handle = msg.get("handle", "").strip()
@@ -1219,16 +1449,28 @@ class Connection:
                 pass
             self.terminal_task = None
         await self._claim_and_stop_terminal()
+        # Reset debounce so the next explicit start isn't blocked.
+        self._last_terminal_start = 0
 
     async def forward_terminal_output(self, session: TerminalSession) -> None:
         """Forward terminal output to the frontend via WebSocket."""
+        logger.info(
+            "forward_terminal_output: starting for user=%s container=%s",
+            self.user.get("email"),
+            self.container_id,
+        )
         try:
             async for data in session.output():
                 self.sock.send_json({"type": "terminal_output", "data": data})
                 if self.container_id:
                     container.registry.record_activity(self.container_id)
-            # Stream ended without cancellation — container likely died
-            _send_event(self.sock, "container_stopped")
+            # Stream ended — the tmux session exited (not necessarily the
+            # container). Don't send container_stopped; the idle timeout
+            # or shutdown button handles actual container death.
+            logger.info(
+                "forward_terminal_output: stream ended for user=%s",
+                self.user.get("email"),
+            )
         except asyncio.CancelledError:
             raise  # Normal cleanup, don't send event
         except _WS_ERRORS as e:
@@ -1348,6 +1590,14 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_terminal_rename_window(msg)
             elif cmd == "terminal_list_windows":
                 await conn.handle_terminal_list_windows()
+            elif cmd == "create_shared_terminal":
+                await conn.handle_create_shared_terminal(msg)
+            elif cmd == "join_shared_terminal":
+                await conn.handle_join_shared_terminal(msg)
+            elif cmd == "delete_shared_terminal":
+                await conn.handle_delete_shared_terminal(msg)
+            elif cmd == "list_shared_terminals":
+                await conn.handle_list_shared_terminals()
             elif cmd == "restart_container":
                 await conn.handle_restart_container()
             elif cmd == "shutdown_container":

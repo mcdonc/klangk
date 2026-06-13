@@ -252,6 +252,8 @@ async def create_workspace(
     work.mkdir(parents=True, exist_ok=True)
     users_dir = home / ".users"
     users_dir.mkdir(exist_ok=True)
+    terminals_dir = home / ".terminals"
+    terminals_dir.mkdir(exist_ok=True)
     if default_command:
         write_default_command(user_id, workspace["id"], default_command)
     # Allocate ports at creation time so ranges are sequential

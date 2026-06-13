@@ -623,43 +623,6 @@ void main() {
       await service.refreshPermissions();
       expect(service.isAdmin, isTrue);
     });
-
-    test('periodic timer refreshes permissions', () {
-      fakeAsync((async) {
-        var fetchCount = 0;
-        testAuthHttpClientOverride = MockClient((request) {
-          if (request.url.path.contains('/api/config')) {
-            return Future.value(http.Response(
-              jsonEncode({'login_banner_title': '', 'login_banner': ''}),
-              200,
-            ));
-          }
-          if (request.url.path.contains('/api/my-permissions')) {
-            fetchCount++;
-            return Future.value(http.Response(
-              jsonEncode({
-                'user_id': 'u',
-                'email': 'u',
-                'permissions': {},
-                'groups': [],
-              }),
-              200,
-            ));
-          }
-          return Future.value(http.Response('Not found', 404));
-        });
-        final token = makeJwt({'sub': 'user-1'});
-        SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-        final service = AuthService();
-        async.elapse(Duration.zero);
-        // Initial fetch
-        final initialCount = fetchCount;
-        // Advance past the refresh interval (60-75s with jitter)
-        async.elapse(const Duration(seconds: 80));
-        expect(fetchCount, greaterThan(initialCount));
-        service.dispose();
-      });
-    });
   });
 
   group('AuthService authenticated requests', () {

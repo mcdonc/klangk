@@ -6,8 +6,7 @@ import '../auth/auth_service.dart';
 import '../theme/colors.dart';
 import '../widgets/acl_editor.dart';
 
-/// Simple workspace sharing panel: add/remove users by email.
-/// Used as a tab in the IDE layout for users with share permission.
+/// Workspace sharing panel with role-based buckets.
 class WorkspaceSharingPanel extends StatefulWidget {
   final String workspaceId;
 
@@ -18,72 +17,60 @@ class WorkspaceSharingPanel extends StatefulWidget {
 }
 
 class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
-  List<Map<String, dynamic>> _members = [];
-  List<Map<String, dynamic>> _sharedGroups = [];
-  List<Map<String, dynamic>> _allGroups = [];
+  List<Map<String, dynamic>> _roles = [];
   bool _loading = true;
   bool _aclExpanded = false;
-  final _shareCtrl = TextEditingController();
   final _aclEditorKey = GlobalKey<AclEditorState>();
-  List<Map<String, dynamic>> _searchResults = [];
-  Timer? _searchDebounce;
+
+  static const _roleDescriptions = {
+    'owners': 'Full admin access',
+    'coders': 'Isolated terminals, files, chat',
+    'collaborators': 'Shared terminal collaboration, files, chat',
+    'spectators': 'Watch shared terminals, chat',
+  };
+
+  static const _roleIcons = {
+    'owners': Icons.shield,
+    'coders': Icons.code,
+    'collaborators': Icons.people,
+    'spectators': Icons.visibility,
+  };
+
+  static const _roleColors = {
+    'owners': KColors.accentAmber,
+    'coders': KColors.accentGreen,
+    'collaborators': KColors.accentCyan,
+    'spectators': KColors.accentBlue,
+  };
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadRoles();
   }
 
-  @override
-  void dispose() {
-    _shareCtrl.dispose();
-    _searchDebounce?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _loadData() async {
+  Future<void> _loadRoles() async {
     setState(() => _loading = true);
     final auth = context.read<AuthService>();
-
-    // Load members
-    final membersResp = await auth.authGet(
-      '/workspaces/${widget.workspaceId}/members',
+    final resp = await auth.authGet(
+      '/workspaces/${widget.workspaceId}/roles',
     );
     if (!mounted) return;
-    if (membersResp.statusCode == 200) {
-      _members = List<Map<String, dynamic>>.from(jsonDecode(membersResp.body));
+    if (resp.statusCode == 200) {
+      _roles = List<Map<String, dynamic>>.from(jsonDecode(resp.body));
     }
-
-    // Load shared groups
-    final groupsResp = await auth.authGet(
-      '/workspaces/${widget.workspaceId}/groups',
-    );
-    if (!mounted) return;
-    if (groupsResp.statusCode == 200) {
-      _sharedGroups =
-          List<Map<String, dynamic>>.from(jsonDecode(groupsResp.body));
-    }
-
-    // Load all groups for the dropdown
-    try {
-      final allResp = await auth.authGet('/admin/groups');
-      if (mounted && allResp.statusCode == 200) {
-        _allGroups = List<Map<String, dynamic>>.from(jsonDecode(allResp.body));
-      }
-    } catch (_) {} // coverage:ignore-line
-
-    if (mounted) setState(() => _loading = false);
+    setState(() => _loading = false);
   }
 
-  Future<void> _addMember(String email) async {
+  Future<void> _addToRole(String role, String email) async {
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/workspaces/${widget.workspaceId}/members',
+      '/workspaces/${widget.workspaceId}/roles/$role',
       body: jsonEncode({'email': email}),
     );
     if (!mounted) return;
     if (resp.statusCode == 200) {
-      _loadData();
+      _loadRoles();
       _aclEditorKey.currentState?.reload();
     } else {
       String detail;
@@ -92,83 +79,110 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
       } catch (_) {
         detail = 'Error';
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(detail)),
-      );
-    }
-  }
-
-  Future<void> _removeMember(String memberId) async {
-    final auth = context.read<AuthService>();
-    await auth.authDelete(
-      '/workspaces/${widget.workspaceId}/members/$memberId',
-    );
-    if (mounted) {
-      _loadData();
-      _aclEditorKey.currentState?.reload();
-    }
-  }
-
-  Future<void> _addGroup(String groupId) async {
-    final auth = context.read<AuthService>();
-    final resp = await auth.authPost(
-      '/workspaces/${widget.workspaceId}/groups',
-      body: jsonEncode({'group_id': groupId}),
-    );
-    if (!mounted) return;
-    if (resp.statusCode == 200) {
-      _loadData();
-      _aclEditorKey.currentState?.reload();
-    } else {
-      String detail;
-      try {
-        detail = (jsonDecode(resp.body) as Map)['detail'] ?? resp.body;
-      } catch (_) {
-        detail = 'Error';
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(detail)),
-      );
-    }
-  }
-
-  Future<void> _removeGroup(String groupId) async {
-    final auth = context.read<AuthService>();
-    await auth.authDelete(
-      '/workspaces/${widget.workspaceId}/groups/$groupId',
-    );
-    if (mounted) {
-      _loadData();
-      _aclEditorKey.currentState?.reload();
-    }
-  }
-
-  List<Map<String, dynamic>> get _availableGroups {
-    final sharedIds = _sharedGroups.map((g) => g['id']).toSet();
-    return _allGroups.where((g) => !sharedIds.contains(g['id'])).toList();
-  }
-
-  void _searchUsers(String query) {
-    _searchDebounce?.cancel();
-    if (query.trim().isEmpty) {
-      setState(() => _searchResults = []);
-      return;
-    }
-    _searchDebounce = Timer(const Duration(milliseconds: 300), () async {
-      final auth = context.read<AuthService>();
-      try {
-        final resp = await auth.authGet(
-          '/users/search?q=${Uri.encodeQueryComponent(query.trim())}',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(detail)),
         );
-        if (mounted && resp.statusCode == 200) {
-          setState(() {
-            _searchResults = List<Map<String, dynamic>>.from(
-              jsonDecode(resp.body) as List,
-            );
-          });
-        }
-      } catch (_) {} // coverage:ignore-line
-    });
+      }
+    }
+  }
+
+  Future<void> _removeFromRole(String role, String memberId) async {
+    final auth = context.read<AuthService>();
+    await auth.authDelete(
+      '/workspaces/${widget.workspaceId}/roles/$role/$memberId',
+    );
+    if (mounted) {
+      _loadRoles();
+      _aclEditorKey.currentState?.reload();
+    }
+  }
+
+  void _showAddDialog(String role) {
+    final controller = TextEditingController();
+    final searchResults = ValueNotifier<List<Map<String, dynamic>>>([]);
+    Timer? debounce;
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Add to ${role}'),
+        content: SizedBox(
+          width: 300,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Type email...',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person_add, size: 18),
+                ),
+                onChanged: (q) {
+                  debounce?.cancel();
+                  if (q.trim().isEmpty) {
+                    searchResults.value = [];
+                    return;
+                  }
+                  debounce = Timer(
+                    const Duration(milliseconds: 300),
+                    () async {
+                      final auth = context.read<AuthService>();
+                      try {
+                        final resp = await auth.authGet(
+                          '/users/search?q=${Uri.encodeQueryComponent(q.trim())}',
+                        );
+                        if (resp.statusCode == 200) {
+                          searchResults.value = List<Map<String, dynamic>>.from(
+                            jsonDecode(resp.body) as List,
+                          );
+                        }
+                      } catch (_) {}
+                    },
+                  );
+                },
+                onSubmitted: (value) {
+                  final email = value.trim();
+                  if (email.isNotEmpty) {
+                    Navigator.of(ctx).pop();
+                    _addToRole(role, email);
+                  }
+                },
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<List<Map<String, dynamic>>>(
+                valueListenable: searchResults,
+                builder: (_, results, __) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: results
+                      .map((r) => ListTile(
+                            dense: true,
+                            title: Text(r['email'] as String,
+                                style: const TextStyle(fontSize: 13)),
+                            onTap: () {
+                              Navigator.of(ctx).pop();
+                              _addToRole(role, r['email'] as String);
+                            },
+                          ))
+                      .toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              debounce?.cancel();
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -180,168 +194,10 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Group sharing card (first — encourage group-based sharing)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border.all(color: KColors.borderDefault),
-                borderRadius: BorderRadius.circular(8),
-                color: KColors.bgSurface,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.group,
-                          size: 18, color: KColors.textSecondary),
-                      const SizedBox(width: 8),
-                      const Text('Shared Groups',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (_sharedGroups.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text('No shared groups',
-                          style: TextStyle(color: KColors.textSecondary)),
-                    )
-                  else
-                    ..._sharedGroups.map((g) => Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Row(
-                            children: [
-                              CircleAvatar(
-                                radius: 14,
-                                backgroundColor: KColors.accentAmber,
-                                child: const Icon(Icons.group,
-                                    size: 14, color: Colors.white),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(g['name'] as String,
-                                    style: const TextStyle(fontSize: 13)),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () =>
-                                    _removeGroup(g['id'] as String),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                tooltip: 'Remove group access',
-                              ),
-                            ],
-                          ),
-                        )),
-                  if (_availableGroups.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    DropdownButton<String>(
-                      isExpanded: true,
-                      hint: const Text('Add group...'),
-                      items: _availableGroups.map((g) {
-                        return DropdownMenuItem(
-                          value: g['id'] as String,
-                          child: Text(g['name'] as String),
-                        );
-                      }).toList(),
-                      onChanged: (groupId) {
-                        if (groupId != null) _addGroup(groupId);
-                      },
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Share-to-user section
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border.all(color: KColors.borderDefault),
-                borderRadius: BorderRadius.circular(8),
-                color: KColors.bgSurface,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.people_outline,
-                          size: 18, color: KColors.textSecondary),
-                      const SizedBox(width: 8),
-                      const Text('Shared Users',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (_loading)
-                    const Center(child: CircularProgressIndicator())
-                  else if (_members.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text('No shared users',
-                          style: TextStyle(color: KColors.textSecondary)),
-                    )
-                  else
-                    ..._members.map((m) => Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Row(
-                            children: [
-                              CircleAvatar(
-                                radius: 14,
-                                backgroundColor: KColors.accentBlue,
-                                child: Text(
-                                  (m['email'] as String)[0].toUpperCase(),
-                                  style: const TextStyle(
-                                      color: Colors.white, fontSize: 12),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(m['email'] as String,
-                                    style: const TextStyle(fontSize: 13)),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () =>
-                                    _removeMember(m['id'] as String),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                tooltip: 'Remove access',
-                              ),
-                            ],
-                          ),
-                        )),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _shareCtrl,
-                    decoration: const InputDecoration(
-                      hintText: 'Type email to share...',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.person_add, size: 18),
-                    ),
-                    style: const TextStyle(fontSize: 13),
-                    onChanged: _searchUsers,
-                  ),
-                  ..._searchResults.map((r) => ListTile(
-                        dense: true,
-                        title: Text(r['email'] as String,
-                            style: const TextStyle(fontSize: 13)),
-                        onTap: () {
-                          _addMember(r['email'] as String);
-                          setState(() {
-                            _searchResults = [];
-                            _shareCtrl.clear();
-                          });
-                        },
-                      )),
-                ],
-              ),
-            ),
+            if (_loading)
+              const Center(child: CircularProgressIndicator())
+            else
+              for (final role in _roles) _buildRoleBucket(role),
             const SizedBox(height: 16),
             // Collapsible ACL editor
             GestureDetector(
@@ -372,6 +228,91 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
               AclEditor(
                 key: _aclEditorKey,
                 resource: '/workspaces/${widget.workspaceId}',
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRoleBucket(Map<String, dynamic> role) {
+    final roleName = role['role'] as String;
+    final members = role['members'] as List? ?? [];
+    final icon = _roleIcons[roleName] ?? Icons.group;
+    final color = _roleColors[roleName] ?? KColors.accentBlue;
+    final desc = _roleDescriptions[roleName] ?? '';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: KColors.borderDefault),
+          borderRadius: BorderRadius.circular(8),
+          color: KColors.bgSurface,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 16, color: color),
+                const SizedBox(width: 8),
+                Text(
+                  roleName[0].toUpperCase() + roleName.substring(1),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    desc,
+                    style: const TextStyle(
+                      color: KColors.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.person_add, size: 16),
+                  onPressed: () => _showAddDialog(roleName),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 28, minHeight: 28),
+                  tooltip: 'Add user',
+                ),
+              ],
+            ),
+            if (members.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'No members',
+                  style: TextStyle(color: KColors.textMuted, fontSize: 12),
+                ),
+              )
+            else
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  for (final m in members)
+                    Chip(
+                      label: Text(
+                        m['email'] as String,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      deleteIcon: const Icon(Icons.close, size: 14),
+                      onDeleted: () => _removeFromRole(
+                        roleName,
+                        m['id'] as String,
+                      ),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                ],
               ),
           ],
         ),

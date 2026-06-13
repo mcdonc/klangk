@@ -69,7 +69,14 @@ export default defineConfig({
     },
     {
       name: "chromium",
-      testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
+      testMatch: [
+        "klangk.spec.ts",
+        "terminal-keymap.spec.ts",
+        "per-user-home.spec.ts",
+        "terminal-tabs.spec.ts",
+        "shared-terminals.spec.ts",
+        "tab-speed.spec.ts",
+      ],
       use: chromiumUse,
     },
     {

@@ -160,9 +160,12 @@ class KlangkClient:
         return resp.json()
 
     def resolve_workspace(self, name: str) -> Workspace:
-        """Find a workspace by name. Raises WorkspaceNotFoundError if not found."""
-        ws = self.list_workspaces()
-        match = next((w for w in ws if w.name == name), None)
+        """Find a workspace by name (owned or shared).
+
+        Raises WorkspaceNotFoundError if not found.
+        """
+        all_ws = self.list_workspaces() + self.list_shared_workspaces()
+        match = next((w for w in all_ws if w.name == name), None)
         if match is None:
             raise WorkspaceNotFoundError(name)
         return match
