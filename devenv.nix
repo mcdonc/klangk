@@ -46,11 +46,18 @@ in
       podman
       sqlite.bin
       rsync
-      su
-      util-linux
       zensical
     ]
-    ++ (if pkgs.stdenv.isDarwin then [ iproute2mac ] else [ iproute2 ]);
+    ++ (
+      if pkgs.stdenv.isDarwin then
+        [ iproute2mac ]
+      else
+        [
+          iproute2
+          su
+          util-linux
+        ]
+    );
 
   env.PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
   env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
