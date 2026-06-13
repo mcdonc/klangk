@@ -103,9 +103,9 @@ def _build_shell_command(
         # Force a screen redraw so the client sees pre-existing content
         # (e.g. a bash prompt printed before the client attached).
         cmd += [";", "refresh-client"]
-    # Read-only is enforced at the application level (terminal_input
-    # is not forwarded when the session is read-only) rather than via
-    # tmux's switch-client -r, which caused display issues.
+    # Read-only is enforced in handle_terminal_input (wshandler.py),
+    # which drops input when session.read_only is True.  tmux's
+    # switch-client -r is not used because it caused display issues.
     return cmd
 
 
@@ -543,7 +543,10 @@ class TerminalSession:
                     break
                 text = decoder.decode(data)
                 if text:
-                    await self._output_queue.put(text)
+                    try:
+                        self._output_queue.put_nowait(text)
+                    except asyncio.QueueFull:
+                        pass  # drop output; don't block the PTY read
             # Flush any trailing partial sequence (a stream that ends
             # mid-character yields a single replacement char rather than
             # dropping bytes).
@@ -569,7 +572,15 @@ class TerminalSession:
         """Write user input to the terminal."""
         if self._shell is not None:
             try:
-                await self._shell.write(data.encode("utf-8"))
+                await asyncio.wait_for(
+                    self._shell.write(data.encode("utf-8")),
+                    timeout=30.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "PTY write timed out after 30s, stopping session"
+                )
+                await self.stop()
             except OSError:
                 logger.debug("Write to terminal failed", exc_info=True)
 

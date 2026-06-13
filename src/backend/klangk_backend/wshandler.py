@@ -978,6 +978,8 @@ class Connection:
         if session is None or not session.is_alive:
             logger.warning("terminal_input: no session or not alive")
             return
+        if session.read_only:
+            return
         data = msg.get("data", "")
         if len(data) > _MAX_INPUT_SIZE:
             logger.warning(
