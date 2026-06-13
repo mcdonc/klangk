@@ -405,11 +405,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
                               : null,
                         ),
                       // "+" for new isolated terminal
-                      _TabIconButton(
-                        icon: Icons.add,
-                        tooltip: 'New terminal',
-                        onTap: () => wsClient.sendTerminalNewWindow(),
-                      ),
+                      if (_hasPerm('code-in-isolation'))
+                        _TabIconButton(
+                          icon: Icons.add,
+                          tooltip: 'New terminal',
+                          onTap: () => wsClient.sendTerminalNewWindow(),
+                        ),
                       // Separator
                       if (shared.isNotEmpty || _hasPerm('share-terminals'))
                         Container(
