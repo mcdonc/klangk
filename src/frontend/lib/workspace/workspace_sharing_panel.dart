@@ -22,6 +22,8 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   bool _aclExpanded = false;
   final _aclEditorKey = GlobalKey<AclEditorState>();
 
+  static const _roleOrder = ['owners', 'collaborators', 'coders', 'spectators'];
+
   static const _roleDescriptions = {
     'owners': 'Full admin access',
     'coders':
@@ -43,6 +45,15 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     'collaborators': KColors.accentCyan,
     'spectators': KColors.accentBlue,
   };
+
+  List<Map<String, dynamic>> get _sortedRoles {
+    final order = {
+      for (var i = 0; i < _roleOrder.length; i++) _roleOrder[i]: i
+    };
+    return List.of(_roles)
+      ..sort(
+          (a, b) => (order[a['role']] ?? 99).compareTo(order[b['role']] ?? 99));
+  }
 
   @override
   void initState() {
@@ -198,7 +209,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
             if (_loading)
               const Center(child: CircularProgressIndicator())
             else
-              for (final role in _roles) _buildRoleBucket(role),
+              for (final role in _sortedRoles) _buildRoleBucket(role),
             const SizedBox(height: 16),
             // Collapsible ACL editor
             GestureDetector(
