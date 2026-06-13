@@ -577,7 +577,7 @@ class TerminalSession:
                 if text:
                     try:
                         self._output_queue.put_nowait(text)
-                    except asyncio.QueueFull:
+                    except asyncio.QueueFull:  # pragma: no cover
                         pass  # drop output; don't block the PTY read
             # Flush any trailing partial sequence (a stream that ends
             # mid-character yields a single replacement char rather than
@@ -608,7 +608,7 @@ class TerminalSession:
                     self._shell.write(data.encode("utf-8")),
                     timeout=30.0,
                 )
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # pragma: no cover
                 logger.warning(
                     "PTY write timed out after 30s, stopping session"
                 )
@@ -686,7 +686,7 @@ class TerminalSession:
                     env=podman.subprocess_env(),
                 )
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except Exception:
+            except Exception:  # pragma: no cover
                 logger.debug(
                     "Failed to kill tmux session %s",
                     self._tmux_session_name,

@@ -638,16 +638,17 @@ class TestSharedSocketPath:
 
 class TestBuildShellCommandShared:
     def test_socket_path(self):
-        cmd = _build_shell_command(
+        cmd, unique = _build_shell_command(
             user_home="/home/alice",
             socket_path="/home/.terminals/dev.sock",
         )
         assert "-S" in cmd
         idx = cmd.index("-S")
         assert cmd[idx + 1] == "/home/.terminals/dev.sock"
+        assert unique is None
 
     def test_join_session(self):
-        cmd = _build_shell_command(
+        cmd, unique = _build_shell_command(
             user_home="/home/bob",
             socket_path="/home/.terminals/dev.sock",
             join_session="dev",
@@ -658,11 +659,12 @@ class TestBuildShellCommandShared:
         # Session name starts with handle + unique suffix
         s_idx = cmd.index("-s")
         assert cmd[s_idx + 1].startswith("bob-")
+        assert unique == cmd[s_idx + 1]
         # Should NOT have -A (that's for isolated sessions)
         assert "-A" not in cmd
 
     def test_read_only(self):
-        cmd = _build_shell_command(
+        cmd, unique = _build_shell_command(
             user_home="/home/ceo",
             socket_path="/home/.terminals/dev.sock",
             join_session="dev",
@@ -672,6 +674,7 @@ class TestBuildShellCommandShared:
         # The tmux command is the same as read-write (new-session into group).
         assert "new-session" in cmd
         assert "switch-client" not in cmd
+        assert unique is not None
 
 
 class TestCreateSharedTerminal:

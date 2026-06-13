@@ -332,6 +332,18 @@ class TestHandleTerminalInput:
         await conn.handle_terminal_input({"data": "ls\n"})
         t.write.assert_not_awaited()
 
+    async def test_read_only_input_dropped(self):
+        t = _mock_terminal()
+        t.read_only = True
+        conn = _base_conn()
+        conn.terminal_session = t
+        conn.container_id = "cid"
+        container.registry.track_activity("cid", "ws")
+
+        await conn.handle_terminal_input({"data": "ls\n"})
+        t.write.assert_not_awaited()
+        container.registry.states.pop("ws", None)
+
     async def test_oversized_input_dropped(self):
         t = _mock_terminal()
         conn = _base_conn()
