@@ -208,14 +208,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // Listen for shared terminal deletions
     _sharedDeletedSub = wsClient.sharedTerminalDeleted.listen((name) {
       if (!mounted) return;
+      final wasViewing = _activeSharedTerminal == name;
       // Switch away if we were viewing the deleted terminal.
-      if (_activeSharedTerminal == name) {
+      if (wasViewing) {
         setState(() => _activeSharedTerminal = null);
       }
-      // Show snackbar for everyone except the user who deleted it.
+      // Show persistent snackbar only if the user was viewing the
+      // deleted terminal (and didn't initiate the delete themselves).
       if (wsClient.lastDeletedSharedTerminal == name) {
         wsClient.lastDeletedSharedTerminal = null;
-      } else {
+      } else if (wasViewing) {
+        // User was actively viewing the deleted terminal — persistent.
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
@@ -223,6 +226,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
               content: Text('Shared terminal "$name" was deleted'),
               duration: const Duration(days: 1),
               showCloseIcon: true,
+            ),
+          );
+      } else {
+        // User wasn't viewing it — brief notification.
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Shared terminal "$name" was deleted'),
             ),
           );
       }
