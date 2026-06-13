@@ -701,16 +701,27 @@ class TestCreateSharedTerminal:
 
 class TestDeleteSharedTerminal:
     async def test_deletes_terminal(self):
-        with patch(
-            "klangk_backend.terminal.tmux_command",
-            return_value="",
-        ) as mock_cmd:
+        with (
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+            patch("asyncio.create_subprocess_exec") as mock_exec,
+        ):
+            proc = AsyncMock()
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_exec.return_value = proc
             await delete_shared_terminal("cid", "dev")
         mock_cmd.assert_called_once_with(
             "cid",
             "dev",
             ["-S", "/home/.terminals/dev.sock", "kill-server"],
         )
+        # Verify socket file is removed after kill
+        mock_exec.assert_called_once()
+        rm_args = mock_exec.call_args[0]
+        assert "rm" in rm_args
+        assert "/home/.terminals/dev.sock" in rm_args
 
 
 class TestListSharedTerminals:

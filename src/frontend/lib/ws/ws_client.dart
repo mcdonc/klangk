@@ -367,7 +367,12 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'join_shared_terminal', 'name': name});
   }
 
+  /// Name of the terminal we just requested deletion for, so the UI
+  /// can skip the "deleted" snackbar for the user who initiated it.
+  String? lastDeletedSharedTerminal;
+
   void sendDeleteSharedTerminal(String name) {
+    lastDeletedSharedTerminal = name;
     _send({'cmd': 'delete_shared_terminal', 'name': name});
   }
 

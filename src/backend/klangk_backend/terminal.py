@@ -381,13 +381,23 @@ async def create_shared_terminal(container_id: str, name: str) -> None:
 
 
 async def delete_shared_terminal(container_id: str, name: str) -> None:
-    """Kill a shared tmux server."""
+    """Kill a shared tmux server and remove its socket file."""
     sock = shared_socket_path(name)
     await tmux_command(
         container_id,
         name,
         ["-S", sock, "kill-server"],
     )
+    # Remove the socket file so list_shared_terminals doesn't revive it.
+    rm_argv = ["exec", "-u", "klangk", container_id, "rm", "-f", sock]
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        *rm_argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
+    )
+    await asyncio.wait_for(proc.communicate(), timeout=10)
 
 
 class ShellProcess:
