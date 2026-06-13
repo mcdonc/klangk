@@ -950,14 +950,54 @@ async def create_workspace(
     except OSError as e:  # pragma: no cover
         raise HTTPException(status_code=400, detail=str(e))
     # Grant owner full access via ACL
+    resource = f"/workspaces/{ws['id']}"
     await model.add_acl_entry(
-        f"/workspaces/{ws['id']}",
-        0,
-        ACTION_ALLOW,
-        "*",
-        PRINCIPAL_USER,
-        user_id=user["id"],
+        resource, 0, ACTION_ALLOW, "*", PRINCIPAL_USER, user_id=user["id"]
     )
+
+    # Create workspace role groups and their ACL entries.
+    role_groups = {
+        f"owners-{ws['id']}": ["*"],
+        f"coders-{ws['id']}": [
+            "terminal",
+            "code-in-isolation",
+            "spectate-on-shared-terminals",
+            "files",
+            "chat",
+        ],
+        f"collaborators-{ws['id']}": [
+            "terminal",
+            "code-in-isolation",
+            "code-in-shared-terminals",
+            "spectate-on-shared-terminals",
+            "files",
+            "chat",
+        ],
+        f"spectators-{ws['id']}": [
+            "terminal",
+            "spectate-on-shared-terminals",
+            "chat",
+        ],
+    }
+    pos = 1
+    for group_name, perms in role_groups.items():
+        group = await model.create_group(
+            group_name, description=f"{group_name} for workspace {ws['name']}"
+        )
+        for perm in perms:
+            await model.add_acl_entry(
+                resource,
+                pos,
+                ACTION_ALLOW,
+                perm,
+                PRINCIPAL_GROUP,
+                group_id=group["id"],
+            )
+            pos += 1
+        # Add the creator to the owners group.
+        if group_name.startswith("owners-"):
+            await model.add_user_to_group(user["id"], group["id"])
+
     return ws
 
 
@@ -1425,6 +1465,78 @@ async def remove_workspace_member(
     await model.replace_acl_entries(resource, remaining)
     await _broadcast_workspace_members(workspace_id)
     return {"status": "removed"}
+
+
+ROLE_GROUP_SUFFIXES = ["owners", "coders", "collaborators", "spectators"]
+
+
+@router.get("/workspaces/{workspace_id}/roles")
+async def get_workspace_roles(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("share")),
+):
+    """Return the workspace's role groups with their members."""
+    roles = []
+    for suffix in ROLE_GROUP_SUFFIXES:
+        group_name = f"{suffix}-{workspace_id}"
+        group = await model.get_group_by_name(group_name)
+        if group is None:
+            continue
+        members = await model.get_group_members(group["id"])
+        roles.append(
+            {
+                "role": suffix,
+                "group_id": group["id"],
+                "group_name": group_name,
+                "members": [
+                    {"id": m["id"], "email": m["email"]} for m in members
+                ],
+            }
+        )
+    return roles
+
+
+class AddToRoleRequest(BaseModel):
+    email: str
+
+
+@router.post("/workspaces/{workspace_id}/roles/{role}")
+async def add_to_workspace_role(
+    workspace_id: str,
+    role: str,
+    body: AddToRoleRequest,
+    user: dict = Depends(acl.has_permission("share")),
+):
+    """Add a user to a workspace role group."""
+    if role not in ROLE_GROUP_SUFFIXES:
+        raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
+    group_name = f"{role}-{workspace_id}"
+    group = await model.get_group_by_name(group_name)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Role group not found")
+    target = await model.get_user_by_email(body.email)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    await model.add_user_to_group(target["id"], group["id"])
+    return {"ok": True}
+
+
+@router.delete("/workspaces/{workspace_id}/roles/{role}/{member_id}")
+async def remove_from_workspace_role(
+    workspace_id: str,
+    role: str,
+    member_id: str,
+    user: dict = Depends(acl.has_permission("share")),
+):
+    """Remove a user from a workspace role group."""
+    if role not in ROLE_GROUP_SUFFIXES:
+        raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
+    group_name = f"{role}-{workspace_id}"
+    group = await model.get_group_by_name(group_name)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Role group not found")
+    await model.remove_user_from_group(member_id, group["id"])
+    return {"ok": True}
 
 
 @router.get("/workspaces/{workspace_id}/groups")
@@ -2228,6 +2340,10 @@ ALL_PERMISSIONS = [
     "edit",
     "delete",
     "terminal",
+    "code-in-isolation",
+    "spectate-on-shared-terminals",
+    "code-in-shared-terminals",
+    "share-terminals",
     "files",
     "chat",
     "share",

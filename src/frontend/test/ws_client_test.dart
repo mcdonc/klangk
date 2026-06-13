@@ -127,6 +127,10 @@ void main() {
       client.sendTerminalCloseWindow(1);
       client.sendTerminalRenameWindow(0, 'test');
       client.sendTerminalListWindows();
+      client.sendCreateSharedTerminal('dev');
+      client.sendJoinSharedTerminal('dev');
+      client.sendDeleteSharedTerminal('dev');
+      client.sendListSharedTerminals();
       client.sendTerminalStop();
       client.sendHeartbeat();
       client.sendBrowserResponse('req-1', {'status': 'ok'});
@@ -598,6 +602,10 @@ void main() {
       client.sendTerminalCloseWindow(1);
       client.sendTerminalRenameWindow(0, 'main');
       client.sendTerminalListWindows();
+      client.sendCreateSharedTerminal('dev');
+      client.sendJoinSharedTerminal('dev');
+      client.sendDeleteSharedTerminal('dev');
+      client.sendListSharedTerminals();
       client.sendTerminalStop();
       client.sendUiReady();
       client.connectWorkspace('ws-1');
@@ -617,10 +625,14 @@ void main() {
       expect(msgs[8],
           {'cmd': 'terminal_rename_window', 'index': 0, 'name': 'main'});
       expect(msgs[9], {'cmd': 'terminal_list_windows'});
-      expect(msgs[10], {'cmd': 'terminal_stop'});
-      expect(msgs[11], {'cmd': 'ui_ready'});
-      expect(msgs[12], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
-      expect(msgs[13], {'cmd': 'workspace_disconnect'});
+      expect(msgs[10], {'cmd': 'create_shared_terminal', 'name': 'dev'});
+      expect(msgs[11], {'cmd': 'join_shared_terminal', 'name': 'dev'});
+      expect(msgs[12], {'cmd': 'delete_shared_terminal', 'name': 'dev'});
+      expect(msgs[13], {'cmd': 'list_shared_terminals'});
+      expect(msgs[14], {'cmd': 'terminal_stop'});
+      expect(msgs[15], {'cmd': 'ui_ready'});
+      expect(msgs[16], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
+      expect(msgs[17], {'cmd': 'workspace_disconnect'});
     });
 
     test('sendTerminalNewWindow without name omits name field', () {
@@ -644,11 +656,37 @@ void main() {
       expect(client.terminalWindows[1]['name'], 'build');
     });
 
-    test('sendTerminalStart uses default cols/rows', () {
+    test('shared_terminals message updates sharedTerminals', () async {
+      channel.serverSend({
+        'type': 'shared_terminals',
+        'terminals': [
+          {
+            'name': 'dev',
+            'sessions': ['alice']
+          },
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.sharedTerminals.length, 1);
+      expect(client.sharedTerminals[0]['name'], 'dev');
+    });
+
+    test('shared_terminal_deleted fires stream', () async {
+      final deleted = <String>[];
+      client.sharedTerminalDeleted.listen(deleted.add);
+      channel.serverSend({
+        'type': 'shared_terminal_deleted',
+        'name': 'dev',
+      });
+      await Future.delayed(Duration.zero);
+      expect(deleted, ['dev']);
+    });
+
+    test('sendTerminalStart omits cols/rows when not provided', () {
       client.sendTerminalStart();
       final msg = jsonDecode(channel.sentMessages.last as String);
-      expect(msg['cols'], 80);
-      expect(msg['rows'], 24);
+      expect(msg.containsKey('cols'), isFalse);
+      expect(msg.containsKey('rows'), isFalse);
     });
 
     test('receives workspace_ready from server', () async {

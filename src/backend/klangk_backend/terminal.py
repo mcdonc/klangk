@@ -13,6 +13,7 @@ import fcntl
 import logging
 import os
 import pty
+import uuid
 import signal
 import struct
 import termios
@@ -52,27 +53,70 @@ def _build_environment(
     return env
 
 
-def _build_shell_command(user_home: str | None = None) -> list[str]:
+_SHARED_TERMINALS_DIR = "/home/.terminals"
+_SHARED_TMUX_CONF = "/etc/tmux-shared.conf"
+
+
+def _build_shell_command(
+    user_home: str | None = None,
+    socket_path: str | None = None,
+    join_session: str | None = None,
+    read_only: bool = False,
+) -> tuple[list[str], str | None]:
+    """Build the tmux command for a terminal session.
+
+    *socket_path*: use ``-S`` for shared terminal sockets.
+    *join_session*: join an existing session group (for shared terminals).
+    *read_only*: attach with ``-r`` for spy mode.
+
+    Returns ``(command, unique_session_name)``.  *unique_session_name* is
+    set only for shared terminal joins so ``stop()`` can kill the tmux
+    session inside the container (preventing stale clients that deadlock
+    the tmux server).
+    """
     unset_args: list[str] = []
     for key in os.environ:
         if key.startswith(_SENSITIVE_ENV_PREFIXES):
             unset_args.extend(["-u", key])
     tmux_env: list[str] = []
     session_args: list[str] = []
+    socket_args: list[str] = []
+    unique: str | None = None
+    if socket_path is not None:
+        socket_args = ["-S", socket_path]
     if user_home is not None:
         tmux_env = ["-e", f"HOME={user_home}"]
-        # Name the session after the handle so reconnects reattach.
-        # -A attaches if the session exists, creates if not.
         handle = user_home.rsplit("/", 1)[-1]
-        session_args = ["-A", "-s", handle]
-    return [
+        if join_session is not None:
+            # Join an existing session group.  Use a unique session name
+            # so rapid re-joins don't collide with a stale session.
+            unique = f"{handle}-{uuid.uuid4().hex[:8]}"
+            session_args = ["-t", join_session, "-s", unique]
+        else:
+            # Create or reattach to own session.
+            session_args = ["-A", "-s", handle]
+    cmd = [
         "env",
         *unset_args,
         "tmux",
+        *socket_args,
         "new-session",
         *session_args,
         *tmux_env,
     ]
+    if join_session is not None:
+        # Force a screen redraw so the client sees pre-existing content
+        # (e.g. a bash prompt printed before the client attached).
+        cmd += [";", "refresh-client"]
+    # Read-only is enforced in handle_terminal_input (wshandler.py),
+    # which drops input when session.read_only is True.  tmux's
+    # switch-client -r is not used because it caused display issues.
+    return cmd, unique
+
+
+def shared_socket_path(name: str) -> str:
+    """Return the container-side socket path for a shared terminal."""
+    return f"{_SHARED_TERMINALS_DIR}/{name}.sock"
 
 
 def _build_exec_argv(
@@ -154,26 +198,68 @@ async def new_window(
 ) -> list[dict]:
     """Create a new tmux window and return the updated window list.
 
-    If *name* is not provided, auto-generates a unique name like
-    ``shell``, ``shell-2``, ``shell-3``, etc.
-
+    If *name* is not provided, auto-generates a unique name.
     Raises ``ValueError`` if *name* duplicates an existing window name.
+
+    Uses a single podman exec with a shell script to minimize
+    round-trips (list + create + list in one call).
     """
-    existing = await list_windows(container_id, session_name)
-    existing_names = {w["name"] for w in existing}
-
-    if name is None:
-        # Auto-generate a unique numeric name.
-        counter = 1
-        while str(counter) in existing_names:
-            counter += 1
-        name = str(counter)
-    elif name in existing_names:
-        raise ValueError(f"Window name '{name}' already exists")
-
-    args = ["new-window", "-t", session_name, "-n", name]
-    await tmux_command(container_id, session_name, args)
-    return await list_windows(container_id, session_name)
+    if name is not None:
+        # Explicit name — check + create + list in one exec.
+        script = (
+            f"existing=$(tmux list-windows -t {session_name}"
+            f" -F '#{{window_name}}' 2>/dev/null);"
+            f" echo \"$existing\" | grep -qx '{name}'"
+            f" && echo 'DUPLICATE' && exit 1;"
+            f" tmux new-window -t {session_name} -n '{name}';"
+            f" tmux list-windows -t {session_name}"
+            f" -F '#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
+        )
+    else:
+        # Auto-name — find next number, create, list.
+        script = (
+            f"names=$(tmux list-windows -t {session_name}"
+            f" -F '#{{window_name}}' 2>/dev/null);"
+            f' n=1; while echo "$names" | grep -qx "$n"; do n=$((n+1)); done;'
+            f' tmux new-window -t {session_name} -n "$n";'
+            f" tmux list-windows -t {session_name}"
+            f" -F '#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
+        )
+    argv = [
+        "exec",
+        "-u",
+        "klangk",
+        container_id,
+        "bash",
+        "-c",
+        script,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    output = stdout.decode("utf-8", errors="replace")
+    if proc.returncode != 0:
+        if "DUPLICATE" in output:
+            raise ValueError(f"Window name '{name}' already exists")
+        err = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"new_window failed: {err}")
+    windows = []
+    for line in output.strip().splitlines():
+        parts = line.split("|||")
+        if len(parts) >= 3:
+            windows.append(
+                {
+                    "index": int(parts[0]),
+                    "name": parts[1],
+                    "active": parts[2] == "1",
+                }
+            )
+    return windows
 
 
 async def rename_window(
@@ -216,12 +302,123 @@ async def close_window(
     return await list_windows(container_id, session_name)
 
 
+async def list_shared_terminals(container_id: str) -> list[dict]:
+    """List shared terminals by scanning socket files.
+
+    Returns ``[{name, sessions}, ...]`` where *sessions* is the number
+    of attached tmux sessions (users).
+
+    Uses a single podman exec with a shell script to minimize
+    round-trips.
+    """
+    script = (
+        f"for sock in {_SHARED_TERMINALS_DIR}/*.sock; do "
+        '[ -S "$sock" ] || continue; '
+        'name=$(basename "$sock" .sock); '
+        'sessions=$(tmux -S "$sock" list-sessions '
+        "-F '#{session_name}' 2>/dev/null | tr '\\n' ','); "
+        # If tmux server is dead, restart it (survives container restarts).
+        # Uses tmux-shared.conf which sets destroy-unattached off.
+        'if [ -z "$sessions" ]; then '
+        'rm -f "$sock"; '
+        f'tmux -f {_SHARED_TMUX_CONF} -S "$sock" new-session -d -s "$name" -c /home/work 2>/dev/null; '
+        'sessions="$name,"; '
+        "fi; "
+        'echo "$name|||$sessions"; '
+        "done"
+    )
+    argv = [
+        "exec",
+        "-u",
+        "klangk",
+        container_id,
+        "bash",
+        "-c",
+        script,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
+    )
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+    output = stdout.decode("utf-8", errors="replace").strip()
+
+    terminals = []
+    for line in output.splitlines():
+        parts = line.split("|||", 1)
+        if len(parts) < 2:
+            continue
+        name = parts[0]
+        sessions_str = parts[1].rstrip(",")
+        sessions = [s for s in sessions_str.split(",") if s]
+        terminals.append({"name": name, "sessions": sessions})
+    return terminals
+
+
+async def create_shared_terminal(container_id: str, name: str) -> None:
+    """Create a new shared tmux server with a named socket.
+
+    The server starts with a detached session so no PTY is needed.
+    Users join later via ``join_shared_terminal``.
+    The global ``/etc/tmux.conf`` sets ``destroy-unattached off``
+    so sessions survive client disconnects.
+    """
+    sock = shared_socket_path(name)
+    await tmux_command(
+        container_id,
+        name,
+        [
+            "-f",
+            _SHARED_TMUX_CONF,
+            "-S",
+            sock,
+            "new-session",
+            "-d",
+            "-s",
+            name,
+            "-c",
+            "/home/work",
+        ],
+    )
+
+
+async def delete_shared_terminal(container_id: str, name: str) -> None:
+    """Kill a shared tmux server and remove its socket file."""
+    sock = shared_socket_path(name)
+    await tmux_command(
+        container_id,
+        name,
+        ["-S", sock, "kill-server"],
+    )
+    # Remove the socket file so list_shared_terminals doesn't revive it.
+    rm_argv = ["exec", "-u", "klangk", container_id, "rm", "-f", sock]
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        *rm_argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
+    )
+    await asyncio.wait_for(proc.communicate(), timeout=10)
+
+
 class ShellProcess:
-    """Owns the PTY + ``podman exec`` subprocess for one shell."""
+    """Owns the PTY + ``podman exec`` subprocess for one shell.
+
+    The master fd is set to non-blocking mode and registered with the
+    asyncio event loop via ``add_reader``.  This avoids the default
+    thread-pool executor whose limited threads (typically 6) are
+    easily exhausted by blocking PTY I/O, causing cascading stalls
+    across all terminal sessions.
+    """
 
     def __init__(self) -> None:
         self._master_fd: int | None = None
         self._proc: asyncio.subprocess.Process | None = None
+        self._read_event: asyncio.Event | None = None
 
     async def start(  # pragma: no cover
         self, argv: list[str], rows: int, cols: int
@@ -242,19 +439,31 @@ class ShellProcess:
         finally:
             os.close(slave_fd)
         self._master_fd = master_fd
+        # Set non-blocking and register with the event loop so reads
+        # and writes never consume a thread-pool slot.
+        os.set_blocking(master_fd, False)
+        self._read_event = asyncio.Event()
+        asyncio.get_running_loop().add_reader(master_fd, self._read_event.set)
 
     async def read(self) -> bytes:  # pragma: no cover
-        loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(
-                None, os.read, self._master_fd, _READ_CHUNK
-            )
+            while True:
+                try:
+                    return os.read(self._master_fd, _READ_CHUNK)
+                except BlockingIOError:
+                    self._read_event.clear()
+                    await self._read_event.wait()
         except OSError:
             return b""
 
     async def write(self, data: bytes) -> None:  # pragma: no cover
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, os.write, self._master_fd, data)
+        try:
+            os.write(self._master_fd, data)
+        except BlockingIOError:
+            # Buffer full — run in executor as fallback so we don't
+            # spin.  This is rare; normally the buffer accepts input.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, os.write, self._master_fd, data)
 
     def resize(self, rows: int, cols: int) -> None:  # pragma: no cover
         _set_winsize(self._master_fd, rows, cols)
@@ -268,6 +477,12 @@ class ShellProcess:
             except ProcessLookupError:
                 pass
         if self._master_fd is not None:
+            try:
+                asyncio.get_running_loop().remove_reader(self._master_fd)
+            except Exception:
+                pass
+            if self._read_event is not None:
+                self._read_event.set()  # unblock any pending read
             try:
                 os.close(self._master_fd)
             except OSError:
@@ -286,15 +501,26 @@ def _make_shell_process() -> ShellProcess:
 class TerminalSession:
     """Manages an interactive shell session over a PTY."""
 
-    def __init__(self, container_id: str, user_home: str | None = None):
+    def __init__(
+        self,
+        container_id: str,
+        user_home: str | None = None,
+        socket_path: str | None = None,
+        join_session: str | None = None,
+        read_only: bool = False,
+    ):
         self.container_id = container_id
         self.user_home = user_home
+        self.socket_path = socket_path
+        self.join_session = join_session
+        self.read_only = read_only
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
         )
         self._running = False
         self._read_task: asyncio.Task | None = None
+        self._tmux_session_name: str | None = None
 
     async def start(
         self,
@@ -308,10 +534,16 @@ class TerminalSession:
         env = _build_environment(
             command_override, bridge_token, self.user_home
         )
-        shell_cmd = _build_shell_command(self.user_home)
+        shell_cmd, self._tmux_session_name = _build_shell_command(
+            self.user_home,
+            socket_path=self.socket_path,
+            join_session=self.join_session,
+            read_only=self.read_only,
+        )
         work_dir = "/home"
         argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)
 
+        logger.info("Terminal exec argv: %s", argv)
         shell = _make_shell_process()
         try:
             await shell.start(argv, rows, cols)
@@ -339,10 +571,14 @@ class TerminalSession:
             while self._running and self._shell is not None:
                 data = await self._shell.read()
                 if not data:
+                    logger.info("Terminal read loop: EOF from PTY")
                     break
                 text = decoder.decode(data)
                 if text:
-                    await self._output_queue.put(text)
+                    try:
+                        self._output_queue.put_nowait(text)
+                    except asyncio.QueueFull:  # pragma: no cover
+                        pass  # drop output; don't block the PTY read
             # Flush any trailing partial sequence (a stream that ends
             # mid-character yields a single replacement char rather than
             # dropping bytes).
@@ -368,7 +604,15 @@ class TerminalSession:
         """Write user input to the terminal."""
         if self._shell is not None:
             try:
-                await self._shell.write(data.encode("utf-8"))
+                await asyncio.wait_for(
+                    self._shell.write(data.encode("utf-8")),
+                    timeout=30.0,
+                )
+            except asyncio.TimeoutError:  # pragma: no cover
+                logger.warning(
+                    "PTY write timed out after 30s, stopping session"
+                )
+                await self.stop()
             except OSError:
                 logger.debug("Write to terminal failed", exc_info=True)
 
@@ -415,6 +659,39 @@ class TerminalSession:
             except OSError:
                 logger.debug("Error closing terminal shell", exc_info=True)
             self._shell = None
+
+        # Kill the tmux session inside the container so the client
+        # doesn't stay attached after the host-side process is gone.
+        # Stale clients block the tmux server's event loop (it tries
+        # to write output to PTYs nobody is reading).
+        if self._tmux_session_name and self.socket_path:
+            try:
+                argv = [
+                    "exec",
+                    "-u",
+                    "klangk",
+                    self.container_id,
+                    "tmux",
+                    "-S",
+                    self.socket_path,
+                    "kill-session",
+                    "-t",
+                    self._tmux_session_name,
+                ]
+                proc = await asyncio.create_subprocess_exec(
+                    podman.PODMAN_BIN,
+                    *argv,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=podman.subprocess_env(),
+                )
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except Exception:  # pragma: no cover
+                logger.debug(
+                    "Failed to kill tmux session %s",
+                    self._tmux_session_name,
+                    exc_info=True,
+                )
 
         logger.info(
             "Terminal session stopped for container %s", self.container_id

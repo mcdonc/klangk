@@ -933,11 +933,11 @@ test.describe("Klangk E2E", () => {
     expect(wsResp.ok()).toBeTruthy();
     const workspaceId = (await wsResp.json()).id;
 
-    // Share with member
-    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
-      headers: ownerHeaders,
-      data: { email: memberEmail },
-    });
+    // Add member as collaborator (needs code-in-isolation for bridge token)
+    await request.post(
+      `${API_BASE}/workspaces/${workspaceId}/roles/collaborators`,
+      { headers: ownerHeaders, data: { email: memberEmail } },
+    );
 
     // Inject auto-responder into both browser contexts: when a
     // browser_request arrives over the WebSocket, immediately send
@@ -982,12 +982,20 @@ test.describe("Klangk E2E", () => {
       waitForTerminal: true,
     });
 
-    // Get bridge tokens for each connection
-    const tokensResp = await request.get(
-      `${API_BASE}/api/test/bridge-tokens/${workspaceId}`,
-    );
-    expect(tokensResp.ok()).toBeTruthy();
-    const tokens = await tokensResp.json();
+    // Poll for bridge tokens until both connections have registered.
+    // openWorkspace waits for the terminal to appear, but the bridge
+    // token may not be created until terminal_start completes.
+    let tokens: Array<{ email: string; token: string }> = [];
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const tokensResp = await request.get(
+        `${API_BASE}/api/test/bridge-tokens/${workspaceId}`,
+      );
+      expect(tokensResp.ok()).toBeTruthy();
+      tokens = await tokensResp.json();
+      if (tokens.length >= 2) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
     expect(tokens.length).toBeGreaterThanOrEqual(2);
 
     const ownerToken = tokens.find(

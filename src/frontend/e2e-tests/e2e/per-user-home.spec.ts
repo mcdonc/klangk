@@ -120,7 +120,8 @@ test.describe("per-user HOME directory", () => {
       // The exec session starts in $HOME (the user's handle dir)
       const cwd = (await execInContainer(token, workspaceId, ["pwd"])).trim();
 
-      expect(cwd).toMatch(/^\/home\/[a-z0-9._-]+$/);
+      // pwd may resolve to the handle symlink or the underlying .users/UUID path
+      expect(cwd).toMatch(/^\/home\/(\.users\/)?[a-z0-9._-]+$/);
       expect(cwd).not.toBe("/home/work");
     } finally {
       await cleanup();

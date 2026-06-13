@@ -1272,7 +1272,7 @@ class TestWorkspaceACL:
         group = await model.create_group("test-acl-group")
         await model.add_acl_entry(
             f"/workspaces/{ws_id}",
-            1,
+            100,
             model.ACTION_ALLOW,
             "view",
             model.PRINCIPAL_GROUP,
@@ -1321,6 +1321,187 @@ class TestWorkspaceACL:
         assert entries[1]["principal"] == "Authenticated"
 
 
+class TestWorkspaceRoles:
+    async def test_role_groups_created_on_workspace_create(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "roles-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        assert resp.status_code == 200
+        roles = resp.json()
+        role_names = [r["role"] for r in roles]
+        assert "owners" in role_names
+        assert "coders" in role_names
+        assert "collaborators" in role_names
+        assert "spectators" in role_names
+
+    async def test_creator_in_owners_group(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "owner-role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        roles = {r["role"]: r for r in resp.json()}
+        owner_members = [m["id"] for m in roles["owners"]["members"]]
+        assert user["id"] in owner_members
+
+    async def test_add_user_to_role(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "add-role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        # Create a second user
+        target = await model.create_user("role-target@test.com", "pass")
+        resp = await client.post(
+            f"/workspaces/{ws_id}/roles/spectators",
+            headers=headers,
+            json={"email": "role-target@test.com"},
+        )
+        assert resp.status_code == 200
+        # Verify user is in the role
+        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        roles = {r["role"]: r for r in resp.json()}
+        member_ids = [m["id"] for m in roles["spectators"]["members"]]
+        assert target["id"] in member_ids
+
+    async def test_remove_user_from_role(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "rm-role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        target = await model.create_user("role-rm@test.com", "pass")
+        # Add then remove
+        await client.post(
+            f"/workspaces/{ws_id}/roles/coders",
+            headers=headers,
+            json={"email": "role-rm@test.com"},
+        )
+        resp = await client.delete(
+            f"/workspaces/{ws_id}/roles/coders/{target['id']}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        # Verify removed
+        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        roles = {r["role"]: r for r in resp.json()}
+        member_ids = [m["id"] for m in roles["coders"]["members"]]
+        assert target["id"] not in member_ids
+
+    async def test_add_to_invalid_role(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "bad-role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/workspaces/{ws_id}/roles/invalid",
+            headers=headers,
+            json={"email": "x@test.com"},
+        )
+        assert resp.status_code == 400
+
+    async def test_add_nonexistent_user_to_role(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "nouser-role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/workspaces/{ws_id}/roles/spectators",
+            headers=headers,
+            json={"email": "nobody@nowhere.com"},
+        )
+        assert resp.status_code == 404
+
+    async def test_roles_on_nonexistent_workspace(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/workspaces/fake-id/roles", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_remove_from_invalid_role(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "bad-rm-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.delete(
+            f"/workspaces/{ws_id}/roles/invalid/some-id",
+            headers=headers,
+        )
+        assert resp.status_code == 400
+
+    async def test_remove_from_nonexistent_workspace(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.delete(
+            "/workspaces/fake-id/roles/coders/some-id",
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_add_to_nonexistent_workspace(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces/fake-id/roles/coders",
+            headers=headers,
+            json={"email": "x@test.com"},
+        )
+        assert resp.status_code == 403
+
+    async def test_role_group_not_found_add(self, client, user):
+        """Adding to a role when the group was deleted returns 404."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "norole-add-ws"}
+        )
+        ws_id = resp.json()["id"]
+        # Delete the spectators group to simulate missing role group
+        group = await model.get_group_by_name(f"spectators-{ws_id}")
+        await model.delete_group(group["id"])
+        resp = await client.post(
+            f"/workspaces/{ws_id}/roles/spectators",
+            headers=headers,
+            json={"email": "x@test.com"},
+        )
+        assert resp.status_code == 404
+        assert "Role group" in resp.json()["detail"]
+
+    async def test_role_group_not_found_remove(self, client, user):
+        """Removing from a role when the group was deleted returns 404."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "norole-rm-ws"}
+        )
+        ws_id = resp.json()["id"]
+        group = await model.get_group_by_name(f"coders-{ws_id}")
+        await model.delete_group(group["id"])
+        resp = await client.delete(
+            f"/workspaces/{ws_id}/roles/coders/some-id",
+            headers=headers,
+        )
+        assert resp.status_code == 404
+        assert "Role group" in resp.json()["detail"]
+
+    async def test_roles_with_missing_group(self, client, user):
+        """Listing roles skips groups that were deleted."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "missing-grp-ws"}
+        )
+        ws_id = resp.json()["id"]
+        group = await model.get_group_by_name(f"spectators-{ws_id}")
+        await model.delete_group(group["id"])
+        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        roles = resp.json()
+        role_names = [r["role"] for r in roles]
+        assert "spectators" not in role_names
+        assert "owners" in role_names
+
+
 class TestWorkspaceGroupSharing:
     async def test_share_with_group(self, client, admin_user, user):
         headers = await _auth_headers(client)
@@ -1342,8 +1523,8 @@ class TestWorkspaceGroupSharing:
         resp = await client.get(f"/workspaces/{ws_id}/groups", headers=headers)
         assert resp.status_code == 200
         groups = resp.json()
-        assert len(groups) == 1
-        assert groups[0]["name"] == "devs"
+        group_names = [g["name"] for g in groups]
+        assert "devs" in group_names
 
     async def test_remove_group(self, client, user):
         headers = await _auth_headers(client)
@@ -1364,7 +1545,8 @@ class TestWorkspaceGroupSharing:
         assert resp.status_code == 200
 
         resp = await client.get(f"/workspaces/{ws_id}/groups", headers=headers)
-        assert resp.json() == []
+        group_names = [g["name"] for g in resp.json()]
+        assert "temp-devs" not in group_names
 
     async def test_share_with_nonexistent_group(self, client, user):
         headers = await _auth_headers(client)

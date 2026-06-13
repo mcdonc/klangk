@@ -940,11 +940,19 @@ async def list_workspaces(user_id: str) -> list[dict]:
 async def list_shared_workspaces(user_id: str) -> list[dict]:
     """List workspaces shared with (but not owned by) this user via ACL.
 
-    Finds workspaces where the user has a direct user-level ACE on
-    /workspaces/{id} but is not the owner.
+    Finds workspaces where the user has access through either a direct
+    user-level ACE or a group-level ACE on ``/workspaces/{id}``.
     """
     db = await get_db()
     try:
+        group_ids = await get_user_group_ids(user_id)
+        group_placeholders = ",".join("?" for _ in group_ids)
+        group_clause = (
+            f" OR (ae.principal_type = {PRINCIPAL_GROUP}"
+            f" AND ae.group_id IN ({group_placeholders}))"
+            if group_ids
+            else ""
+        )
         cursor = await db.execute(
             "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
             " w.default_command, w.mounts, w.env, w.created_at,"
@@ -952,10 +960,13 @@ async def list_shared_workspaces(user_id: str) -> list[dict]:
             " FROM workspaces w"
             " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
             " JOIN users u ON w.user_id = u.id"
-            " WHERE ae.principal_type = ? AND ae.user_id = ?"
-            "   AND ae.action = ? AND w.user_id != ?"
+            " WHERE ae.action = ? AND w.user_id != ?"
+            "   AND ("
+            f"    (ae.principal_type = {PRINCIPAL_USER} AND ae.user_id = ?)"
+            f"    {group_clause}"
+            "   )"
             " ORDER BY w.created_at",
-            (PRINCIPAL_USER, user_id, ACTION_ALLOW, user_id),
+            (ACTION_ALLOW, user_id, user_id, *group_ids),
         )
         rows = await cursor.fetchall()
         return [

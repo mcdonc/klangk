@@ -79,6 +79,7 @@ class WsClient extends ChangeNotifier {
   final _customEventController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _chatController = StreamController<Map<String, dynamic>>.broadcast();
+  final _sharedTerminalDeletedController = StreamController<String>.broadcast();
   final _debugLogController = StreamController<WsDebugEntry>.broadcast();
 
   Stream<String> get errors => _errorController.stream;
@@ -98,6 +99,9 @@ class WsClient extends ChangeNotifier {
   /// Terminal windows in the current tmux session.
   List<Map<String, dynamic>> terminalWindows = [];
 
+  /// Shared terminals available in the workspace.
+  List<Map<String, dynamic>> sharedTerminals = [];
+
   /// Chat messages (individual and history) from the backend.
   Stream<Map<String, dynamic>> get chatMessages => _chatController.stream;
 
@@ -110,6 +114,10 @@ class WsClient extends ChangeNotifier {
   /// Custom events from the backend (container_ready, container_stopped, etc.)
   Stream<Map<String, dynamic>> get customEvents =>
       _customEventController.stream;
+
+  /// Fires when a shared terminal is deleted (name of the deleted terminal).
+  Stream<String> get sharedTerminalDeleted =>
+      _sharedTerminalDeletedController.stream;
 
   /// Debug log of all WebSocket messages (sent and received).
   Stream<WsDebugEntry> get debugLog => _debugLogController.stream;
@@ -220,8 +228,19 @@ class WsClient extends ChangeNotifier {
               notifyListeners();
             }
           } else if (type == 'terminal_windows') {
+            debugPrint(
+                '[WsClient] terminal_windows received: ${DateTime.now()}');
             final windows = json['windows'] as List? ?? [];
             terminalWindows = windows.cast<Map<String, dynamic>>();
+            notifyListeners();
+          } else if (type == 'shared_terminals') {
+            final terminals = json['terminals'] as List? ?? [];
+            sharedTerminals = terminals.cast<Map<String, dynamic>>();
+            notifyListeners();
+          } else if (type == 'shared_terminal_deleted') {
+            _sharedTerminalDeletedController.add(
+              json['name'] as String? ?? '',
+            );
             notifyListeners();
           } else if (type == 'event') {
             _customEventController.add(json);
@@ -302,8 +321,11 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'shutdown_container'});
   }
 
-  void sendTerminalStart({int cols = 80, int rows = 24}) {
-    _send({'cmd': 'terminal_start', 'cols': cols, 'rows': rows});
+  void sendTerminalStart({int? cols, int? rows}) {
+    final msg = <String, dynamic>{'cmd': 'terminal_start'};
+    if (cols != null) msg['cols'] = cols;
+    if (rows != null) msg['rows'] = rows;
+    _send(msg);
   }
 
   void sendTerminalInput(String data) {
@@ -315,6 +337,7 @@ class WsClient extends ChangeNotifier {
   }
 
   void sendTerminalNewWindow({String? name}) {
+    debugPrint('[WsClient] sendTerminalNewWindow: ${DateTime.now()}');
     final msg = <String, dynamic>{'cmd': 'terminal_new_window'};
     if (name != null) msg['name'] = name;
     _send(msg);
@@ -334,6 +357,27 @@ class WsClient extends ChangeNotifier {
 
   void sendTerminalListWindows() {
     _send({'cmd': 'terminal_list_windows'});
+  }
+
+  void sendCreateSharedTerminal(String name) {
+    _send({'cmd': 'create_shared_terminal', 'name': name});
+  }
+
+  void sendJoinSharedTerminal(String name) {
+    _send({'cmd': 'join_shared_terminal', 'name': name});
+  }
+
+  /// Name of the terminal we just requested deletion for, so the UI
+  /// can skip the "deleted" snackbar for the user who initiated it.
+  String? lastDeletedSharedTerminal;
+
+  void sendDeleteSharedTerminal(String name) {
+    lastDeletedSharedTerminal = name;
+    _send({'cmd': 'delete_shared_terminal', 'name': name});
+  }
+
+  void sendListSharedTerminals() {
+    _send({'cmd': 'list_shared_terminals'});
   }
 
   void sendTerminalStop() {
@@ -431,6 +475,7 @@ class WsClient extends ChangeNotifier {
     _chatController.close();
     _chatHistoryPageController.close();
     _customEventController.close();
+    _sharedTerminalDeletedController.close();
     _debugLogController.close();
     super.dispose();
   }
