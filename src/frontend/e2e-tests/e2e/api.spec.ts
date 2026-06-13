@@ -742,8 +742,10 @@ test.describe("API", () => {
     // Last entry should now be the original first (owner *)
     expect(saved[saved.length - 1].permission).toBe("*");
 
-    // Remove the Authenticated view ACE (now at position 0)
-    const withoutFirst = reordered.slice(1);
+    // Remove the Authenticated view ACE
+    const withoutFirst = reordered.filter(
+      (ace: any) => !(ace.system_principal === 1 && ace.permission === "view"),
+    );
     putResp = await request.put(`${API_BASE}/workspaces/${workspaceId}/acl`, {
       headers: ownerHeaders,
       data: withoutFirst,
