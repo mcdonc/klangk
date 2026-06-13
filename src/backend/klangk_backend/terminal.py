@@ -89,6 +89,133 @@ def _build_exec_argv(
     return argv
 
 
+def _session_name(user_home: str | None) -> str | None:
+    """Extract the tmux session name from a user_home path."""
+    if user_home is None:
+        return None
+    return user_home.rsplit("/", 1)[-1]
+
+
+async def tmux_command(
+    container_id: str, session_name: str, args: list[str]
+) -> str:
+    """Run a tmux command in the container and return stdout."""
+    argv = [
+        "exec",
+        "-u",
+        "klangk",
+        container_id,
+        "tmux",
+        *args,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    if proc.returncode != 0:
+        err = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"tmux command failed: {err}")
+    return stdout.decode("utf-8", errors="replace")
+
+
+async def list_windows(container_id: str, session_name: str) -> list[dict]:
+    """List tmux windows for a session. Returns [{index, name}, ...]."""
+    output = await tmux_command(
+        container_id,
+        session_name,
+        [
+            "list-windows",
+            "-t",
+            session_name,
+            "-F",
+            "#{window_index}|||#{window_name}|||#{window_active}",
+        ],
+    )
+    windows = []
+    for line in output.strip().splitlines():
+        parts = line.split("|||")
+        if len(parts) >= 3:
+            windows.append(
+                {
+                    "index": int(parts[0]),
+                    "name": parts[1],
+                    "active": parts[2] == "1",
+                }
+            )
+    return windows
+
+
+async def new_window(
+    container_id: str, session_name: str, name: str | None = None
+) -> list[dict]:
+    """Create a new tmux window and return the updated window list.
+
+    If *name* is not provided, auto-generates a unique name like
+    ``shell``, ``shell-2``, ``shell-3``, etc.
+
+    Raises ``ValueError`` if *name* duplicates an existing window name.
+    """
+    existing = await list_windows(container_id, session_name)
+    existing_names = {w["name"] for w in existing}
+
+    if name is None:
+        # Auto-generate a unique numeric name.
+        counter = 1
+        while str(counter) in existing_names:
+            counter += 1
+        name = str(counter)
+    elif name in existing_names:
+        raise ValueError(f"Window name '{name}' already exists")
+
+    args = ["new-window", "-t", session_name, "-n", name]
+    await tmux_command(container_id, session_name, args)
+    return await list_windows(container_id, session_name)
+
+
+async def rename_window(
+    container_id: str, session_name: str, index: int, name: str
+) -> None:
+    """Rename a tmux window.
+
+    Raises ``ValueError`` if *name* duplicates another window's name.
+    """
+    existing = await list_windows(container_id, session_name)
+    if any(w["name"] == name and w["index"] != index for w in existing):
+        raise ValueError(f"Window name '{name}' already exists")
+    await tmux_command(
+        container_id,
+        session_name,
+        ["rename-window", "-t", f"{session_name}:{index}", name],
+    )
+
+
+async def select_window(
+    container_id: str, session_name: str, index: int
+) -> None:
+    """Switch the active tmux window."""
+    await tmux_command(
+        container_id,
+        session_name,
+        ["select-window", "-t", f"{session_name}:{index}"],
+    )
+
+
+async def close_window(
+    container_id: str, session_name: str, index: int
+) -> list[dict]:
+    """Close a tmux window and return the updated window list."""
+    await tmux_command(
+        container_id,
+        session_name,
+        ["kill-window", "-t", f"{session_name}:{index}"],
+    )
+    return await list_windows(container_id, session_name)
+
+
 class ShellProcess:
     """Owns the PTY + ``podman exec`` subprocess for one shell."""
 

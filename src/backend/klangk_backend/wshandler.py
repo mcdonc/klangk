@@ -860,6 +860,43 @@ class Connection:
                 )
                 container.registry.record_activity(conn.container_id)
                 conn.sock.send_json({"type": "terminal_started"})
+                # Rename the initial window to "1" and send the list.
+                try:
+                    from .terminal import (
+                        _session_name,
+                        list_windows,
+                        rename_window,
+                    )
+
+                    sname = _session_name(conn._user_home)
+                    if sname:
+                        windows = await list_windows(conn.container_id, sname)
+                        # Rename any window still called "bash" to
+                        # the next available number.
+                        for w in windows:
+                            if w["name"] == "bash":
+                                num = 1
+                                used = {x["name"] for x in windows}
+                                while str(num) in used:
+                                    num += 1
+                                try:
+                                    await rename_window(
+                                        conn.container_id,
+                                        sname,
+                                        w["index"],
+                                        str(num),
+                                    )
+                                except Exception:
+                                    pass
+                        windows = await list_windows(conn.container_id, sname)
+                        conn.sock.send_json(
+                            {
+                                "type": "terminal_windows",
+                                "windows": windows,
+                            }
+                        )
+                except Exception:
+                    pass  # Non-critical; tabs update on next window op
             except asyncio.CancelledError:
                 await session.stop()
                 container.registry.revoke_connection_token(conn.sock)
@@ -895,6 +932,92 @@ class Connection:
 
     async def handle_terminal_stop(self) -> None:
         await self.stop_terminal()
+
+    def _tmux_session_name(self) -> str | None:
+        """Get the tmux session name from user_home."""
+        from .terminal import _session_name
+
+        return _session_name(self._user_home)
+
+    async def handle_terminal_new_window(self, msg: dict) -> None:
+        if not self.container_id or not self._user_home:
+            return
+        from .terminal import new_window
+
+        session_name = self._tmux_session_name()
+        name = msg.get("name")
+        try:
+            windows = await new_window(
+                self.container_id, session_name, name=name
+            )
+            self.sock.send_json(
+                {"type": "terminal_windows", "windows": windows}
+            )
+        except Exception as e:
+            send_error(self.sock, f"Failed to create window: {e}")
+
+    async def handle_terminal_select_window(self, msg: dict) -> None:
+        if not self.container_id or not self._user_home:
+            return
+        from .terminal import select_window
+
+        session_name = self._tmux_session_name()
+        index = msg.get("index", 0)
+        try:
+            await select_window(self.container_id, session_name, index)
+        except Exception as e:
+            send_error(self.sock, f"Failed to select window: {e}")
+
+    async def handle_terminal_close_window(self, msg: dict) -> None:
+        if not self.container_id or not self._user_home:
+            return
+        from .terminal import close_window
+
+        session_name = self._tmux_session_name()
+        index = msg.get("index", 0)
+        try:
+            windows = await close_window(
+                self.container_id, session_name, index
+            )
+            self.sock.send_json(
+                {"type": "terminal_windows", "windows": windows}
+            )
+        except Exception as e:
+            send_error(self.sock, f"Failed to close window: {e}")
+
+    async def handle_terminal_rename_window(self, msg: dict) -> None:
+        if not self.container_id or not self._user_home:
+            return
+        from .terminal import list_windows, rename_window
+
+        session_name = self._tmux_session_name()
+        index = msg.get("index", 0)
+        name = msg.get("name", "")
+        if not name:
+            send_error(self.sock, "Name required")
+            return
+        try:
+            await rename_window(self.container_id, session_name, index, name)
+            windows = await list_windows(self.container_id, session_name)
+            self.sock.send_json(
+                {"type": "terminal_windows", "windows": windows}
+            )
+        except Exception as e:
+            send_error(self.sock, f"Failed to rename window: {e}")
+
+    async def handle_terminal_list_windows(self) -> None:
+        if not self.container_id or not self._user_home:
+            return
+        from .terminal import list_windows
+
+        session_name = self._tmux_session_name()
+        try:
+            windows = await list_windows(self.container_id, session_name)
+            self.sock.send_json(
+                {"type": "terminal_windows", "windows": windows}
+            )
+        except Exception as e:
+            send_error(self.sock, f"Failed to list windows: {e}")
 
     async def handle_exec_start(self, msg: dict) -> None:
         if not self.container_id:
@@ -1215,6 +1338,16 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_terminal_resize(msg)
             elif cmd == "terminal_stop":
                 await conn.handle_terminal_stop()
+            elif cmd == "terminal_new_window":
+                await conn.handle_terminal_new_window(msg)
+            elif cmd == "terminal_select_window":
+                await conn.handle_terminal_select_window(msg)
+            elif cmd == "terminal_close_window":
+                await conn.handle_terminal_close_window(msg)
+            elif cmd == "terminal_rename_window":
+                await conn.handle_terminal_rename_window(msg)
+            elif cmd == "terminal_list_windows":
+                await conn.handle_terminal_list_windows()
             elif cmd == "restart_container":
                 await conn.handle_restart_container()
             elif cmd == "shutdown_container":

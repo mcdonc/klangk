@@ -121,6 +121,12 @@ void main() {
       client.sendTerminalStart();
       client.sendTerminalInput('ls\n');
       client.sendTerminalResize(120, 40);
+      client.sendTerminalNewWindow();
+      client.sendTerminalNewWindow(name: 'build');
+      client.sendTerminalSelectWindow(1);
+      client.sendTerminalCloseWindow(1);
+      client.sendTerminalRenameWindow(0, 'test');
+      client.sendTerminalListWindows();
       client.sendTerminalStop();
       client.sendHeartbeat();
       client.sendBrowserResponse('req-1', {'status': 'ok'});
@@ -587,6 +593,11 @@ void main() {
       client.sendTerminalStart(cols: 100, rows: 30);
       client.sendTerminalInput('ls\n');
       client.sendTerminalResize(120, 40);
+      client.sendTerminalNewWindow(name: 'build');
+      client.sendTerminalSelectWindow(2);
+      client.sendTerminalCloseWindow(1);
+      client.sendTerminalRenameWindow(0, 'main');
+      client.sendTerminalListWindows();
       client.sendTerminalStop();
       client.sendUiReady();
       client.connectWorkspace('ws-1');
@@ -600,10 +611,37 @@ void main() {
       expect(msgs[2], {'cmd': 'terminal_start', 'cols': 100, 'rows': 30});
       expect(msgs[3], {'cmd': 'terminal_input', 'data': 'ls\n'});
       expect(msgs[4], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
-      expect(msgs[5], {'cmd': 'terminal_stop'});
-      expect(msgs[6], {'cmd': 'ui_ready'});
-      expect(msgs[7], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
-      expect(msgs[8], {'cmd': 'workspace_disconnect'});
+      expect(msgs[5], {'cmd': 'terminal_new_window', 'name': 'build'});
+      expect(msgs[6], {'cmd': 'terminal_select_window', 'index': 2});
+      expect(msgs[7], {'cmd': 'terminal_close_window', 'index': 1});
+      expect(msgs[8],
+          {'cmd': 'terminal_rename_window', 'index': 0, 'name': 'main'});
+      expect(msgs[9], {'cmd': 'terminal_list_windows'});
+      expect(msgs[10], {'cmd': 'terminal_stop'});
+      expect(msgs[11], {'cmd': 'ui_ready'});
+      expect(msgs[12], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
+      expect(msgs[13], {'cmd': 'workspace_disconnect'});
+    });
+
+    test('sendTerminalNewWindow without name omits name field', () {
+      client.sendTerminalNewWindow();
+      final msg = jsonDecode(channel.sentMessages.last as String);
+      expect(msg['cmd'], 'terminal_new_window');
+      expect(msg.containsKey('name'), isFalse);
+    });
+
+    test('terminal_windows message updates terminalWindows', () async {
+      channel.serverSend({
+        'type': 'terminal_windows',
+        'windows': [
+          {'index': 0, 'name': 'bash', 'active': true},
+          {'index': 1, 'name': 'build', 'active': false},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.terminalWindows.length, 2);
+      expect(client.terminalWindows[0]['name'], 'bash');
+      expect(client.terminalWindows[1]['name'], 'build');
     });
 
     test('sendTerminalStart uses default cols/rows', () {

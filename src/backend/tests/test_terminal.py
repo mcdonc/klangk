@@ -6,9 +6,21 @@ lifecycle/queue logic against an injected fake shell.
 """
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-from klangk_backend.terminal import TerminalSession, _make_shell_process
+import pytest
+
+from klangk_backend.terminal import (
+    TerminalSession,
+    _make_shell_process,
+    _session_name,
+    close_window,
+    list_windows,
+    new_window,
+    rename_window,
+    select_window,
+    tmux_command,
+)
 
 SHELL_FACTORY = "klangk_backend.terminal._make_shell_process"
 
@@ -458,3 +470,209 @@ class TestIsAlive:
             await s.start()
         await s.stop()
         assert s.is_alive is False
+
+
+class TestSessionName:
+    def test_extracts_handle(self):
+        assert _session_name("/home/alice") == "alice"
+
+    def test_none(self):
+        assert _session_name(None) is None
+
+
+class TestTmuxCommand:
+    async def test_returns_stdout(self):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"output\n", b""))
+        proc.returncode = 0
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            result = await tmux_command("cid", "sess", ["list-windows"])
+        assert result == "output\n"
+
+    async def test_raises_on_failure(self):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", b"error msg"))
+        proc.returncode = 1
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            with pytest.raises(RuntimeError, match="error msg"):
+                await tmux_command("cid", "sess", ["bad-cmd"])
+
+
+class TestListWindows:
+    async def test_parses_output(self):
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+            return_value="0|||bash|||1\n1|||build|||0\n",
+        ):
+            result = await list_windows("cid", "sess")
+        assert result == [
+            {"index": 0, "name": "bash", "active": True},
+            {"index": 1, "name": "build", "active": False},
+        ]
+
+    async def test_empty_session(self):
+        with patch("klangk_backend.terminal.tmux_command", return_value=""):
+            result = await list_windows("cid", "sess")
+        assert result == []
+
+
+class TestNewWindow:
+    async def test_creates_window_auto_name(self):
+        call_count = [0]
+
+        async def fake_list(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [{"index": 0, "name": "bash", "active": True}]
+            return [
+                {"index": 0, "name": "bash", "active": False},
+                {"index": 1, "name": "1", "active": True},
+            ]
+
+        with (
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                side_effect=fake_list,
+            ),
+        ):
+            result = await new_window("cid", "sess")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["new-window", "-t", "sess", "-n", "1"]
+        )
+        assert len(result) == 2
+
+    async def test_auto_name_skips_existing(self):
+        call_count = [0]
+
+        async def fake_list(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [
+                    {"index": 0, "name": "bash", "active": True},
+                    {"index": 1, "name": "1", "active": False},
+                ]
+            return [
+                {"index": 0, "name": "bash", "active": False},
+                {"index": 1, "name": "1", "active": False},
+                {"index": 2, "name": "2", "active": True},
+            ]
+
+        with (
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                side_effect=fake_list,
+            ),
+        ):
+            result = await new_window("cid", "sess")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["new-window", "-t", "sess", "-n", "2"]
+        )
+        assert len(result) == 3
+
+    async def test_creates_named_window(self):
+        call_count = [0]
+
+        async def fake_list(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: duplicate check — no existing "build"
+                return [{"index": 0, "name": "bash", "active": True}]
+            # Second call: after creation
+            return [
+                {"index": 0, "name": "bash", "active": False},
+                {"index": 1, "name": "build", "active": True},
+            ]
+
+        with (
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                side_effect=fake_list,
+            ),
+        ):
+            result = await new_window("cid", "sess", name="build")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["new-window", "-t", "sess", "-n", "build"]
+        )
+        assert len(result) == 2
+
+    async def test_rejects_duplicate_name(self):
+        with patch(
+            "klangk_backend.terminal.list_windows",
+            return_value=[{"index": 0, "name": "build", "active": True}],
+        ):
+            with pytest.raises(ValueError, match="already exists"):
+                await new_window("cid", "sess", name="build")
+
+
+class TestSelectWindow:
+    async def test_selects_window(self):
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+            return_value="",
+        ) as mock_cmd:
+            await select_window("cid", "sess", 2)
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["select-window", "-t", "sess:2"]
+        )
+
+
+class TestCloseWindow:
+    async def test_closes_window(self):
+        with (
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[{"index": 0, "name": "bash", "active": True}],
+            ),
+        ):
+            result = await close_window("cid", "sess", 1)
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["kill-window", "-t", "sess:1"]
+        )
+        assert len(result) == 1
+
+
+class TestRenameWindow:
+    async def test_renames_window(self):
+        with (
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[
+                    {"index": 0, "name": "bash", "active": True},
+                ],
+            ),
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+        ):
+            await rename_window("cid", "sess", 0, "build")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["rename-window", "-t", "sess:0", "build"]
+        )
+
+    async def test_rejects_duplicate_name(self):
+        with patch(
+            "klangk_backend.terminal.list_windows",
+            return_value=[
+                {"index": 0, "name": "bash", "active": True},
+                {"index": 1, "name": "build", "active": False},
+            ],
+        ):
+            with pytest.raises(ValueError, match="already exists"):
+                await rename_window("cid", "sess", 0, "build")
