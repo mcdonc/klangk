@@ -895,6 +895,12 @@ void main() {
       expect(msg, {'cmd': 'chat_delete', 'message_id': 'msg-42'});
     });
 
+    test('sendChatAgentAbort sends correct command', () {
+      client.sendChatAgentAbort();
+      final msg = jsonDecode(channel.sentMessages.last as String);
+      expect(msg, {'cmd': 'chat_agent_abort'});
+    });
+
     test('chatMessages stream is broadcast', () {
       expect(client.chatMessages.isBroadcast, isTrue);
     });

@@ -96,6 +96,7 @@ ${CONTAINER_ACL}
       proxy_pass \$llm_backend;
       proxy_set_header Authorization \"Bearer ${KLANGK_LLM_API_KEY:-}\";
       proxy_set_header Host \$proxy_host;
+      proxy_ssl_server_name on;
       proxy_http_version 1.1;
       proxy_set_header Connection \"\";
       proxy_buffering off;

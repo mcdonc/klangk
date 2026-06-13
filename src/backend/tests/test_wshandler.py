@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
@@ -3874,6 +3875,199 @@ class TestSendQueueBehavior:
         # Should not raise
 
 
+class TestMentionsAgent:
+    def test_detects_mention(self):
+        from klangk_backend.wshandler import _mentions_agent
+
+        assert _mentions_agent("@MrBoops hello")
+        assert _mentions_agent("hey @MrBoops what's up")
+        assert _mentions_agent("@MRBOOPS help")
+        assert _mentions_agent("@MrBoops@klangk.local hello")
+        assert _mentions_agent("hey @MrBoops@klangk.local")
+
+    def test_no_false_positives(self):
+        from klangk_backend.wshandler import _mentions_agent
+
+        assert not _mentions_agent("hello everyone")
+        assert not _mentions_agent("@someone else")
+        assert not _mentions_agent("MrBoops without at sign")
+        assert not _mentions_agent("@MrBoopsy partial match")
+
+
+class TestAddressesOtherUser:
+    def test_starts_with_other_mention(self):
+        from klangk_backend.wshandler import _addresses_other_user
+
+        assert _addresses_other_user("@bob hello")
+        assert _addresses_other_user("@alice@test.com what do you think?")
+
+    def test_starts_with_agent_mention(self):
+        from klangk_backend.wshandler import _addresses_other_user
+
+        assert not _addresses_other_user("@MrBoops hello")
+        assert not _addresses_other_user("@MRBOOPS help")
+
+    def test_no_mention(self):
+        from klangk_backend.wshandler import _addresses_other_user
+
+        assert not _addresses_other_user("hello everyone")
+
+    def test_mention_in_middle(self):
+        from klangk_backend.wshandler import _addresses_other_user
+
+        assert not _addresses_other_user("I think @bob is right")
+
+
+class TestChatFollowUp:
+    async def test_same_user_no_interjection(self, workspace, user):
+        """Same user's follow-up routes without timer."""
+        from klangk_backend.wshandler import state, _agent_conversations
+
+        mock_session = AsyncMock()
+        mock_session.send_prompt = AsyncMock(return_value="reply")
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            _agent_conversations[workspace["id"]] = {
+                "user_id": user["id"],
+                "time": time.monotonic(),
+                "interjected": False,
+            }
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_session,
+            ):
+                await conn.handle_chat_send({"message": "what about now?"})
+                await asyncio.sleep(0.1)
+            agent_msgs = [
+                c[0][0]
+                for c in sock.send_json.call_args_list
+                if c[0][0].get("type") == "chat_message"
+                and c[0][0].get("message_type") == 1
+            ]
+            assert len(agent_msgs) == 1
+        finally:
+            _agent_conversations.pop(workspace["id"], None)
+            await session.remove_subscriber(sock)
+
+    async def test_interjection_within_window(self, workspace, user):
+        """After interjection, follow-up within 30s still routes."""
+        from klangk_backend.wshandler import state, _agent_conversations
+
+        mock_session = AsyncMock()
+        mock_session.send_prompt = AsyncMock(return_value="reply")
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            _agent_conversations[workspace["id"]] = {
+                "user_id": user["id"],
+                "time": time.monotonic(),
+                "interjected": True,
+            }
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_session,
+            ):
+                await conn.handle_chat_send({"message": "still here?"})
+                await asyncio.sleep(0.1)
+            agent_msgs = [
+                c[0][0]
+                for c in sock.send_json.call_args_list
+                if c[0][0].get("type") == "chat_message"
+                and c[0][0].get("message_type") == 1
+            ]
+            assert len(agent_msgs) == 1
+        finally:
+            _agent_conversations.pop(workspace["id"], None)
+            await session.remove_subscriber(sock)
+
+    async def test_interjection_expired(self, workspace, user):
+        """After interjection + 30s, follow-up does NOT route."""
+        from klangk_backend.wshandler import state, _agent_conversations
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            _agent_conversations[workspace["id"]] = {
+                "user_id": user["id"],
+                "time": time.monotonic() - 60,
+                "interjected": True,
+            }
+            await conn.handle_chat_send({"message": "hello?"})
+            await asyncio.sleep(0.1)
+            agent_msgs = [
+                c[0][0]
+                for c in sock.send_json.call_args_list
+                if c[0][0].get("type") == "chat_message"
+                and c[0][0].get("message_type") == 1
+            ]
+            assert len(agent_msgs) == 0
+        finally:
+            _agent_conversations.pop(workspace["id"], None)
+            await session.remove_subscriber(sock)
+
+    async def test_different_user_marks_interjection(self, workspace, user):
+        """A different user's message marks interjection."""
+        from klangk_backend.wshandler import state, _agent_conversations
+
+        sock = _mock_sock()
+        other_user = {"id": "other-uid", "email": "other@test.com"}
+        conn = _base_conn(user=other_user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            _agent_conversations[workspace["id"]] = {
+                "user_id": user["id"],
+                "time": time.monotonic(),
+                "interjected": False,
+            }
+            await conn.handle_chat_send({"message": "hey everyone"})
+            await asyncio.sleep(0.1)
+            assert _agent_conversations[workspace["id"]]["interjected"]
+        finally:
+            _agent_conversations.pop(workspace["id"], None)
+            await session.remove_subscriber(sock)
+
+    async def test_addressed_to_other_breaks(self, workspace, user):
+        """Message starting with @someone else breaks conversation."""
+        from klangk_backend.wshandler import state, _agent_conversations
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            _agent_conversations[workspace["id"]] = {
+                "user_id": user["id"],
+                "time": time.monotonic(),
+                "interjected": False,
+            }
+            await conn.handle_chat_send({"message": "@bob hey"})
+            await asyncio.sleep(0.1)
+            assert workspace["id"] not in _agent_conversations
+        finally:
+            _agent_conversations.pop(workspace["id"], None)
+            await session.remove_subscriber(sock)
+
+
 class TestChatSend:
     async def test_chat_send_broadcasts(self, workspace, user):
         sock1 = _mock_sock()
@@ -3927,6 +4121,190 @@ class TestChatSend:
         conn.workspace_id = workspace["id"]
         await conn.handle_chat_send({"message": "   "})
         sock.send_json.assert_not_called()
+
+    async def test_chat_send_agent_mention(self, workspace, user):
+        """@MrBoops sends thinking event + agent response."""
+        from klangk_backend.wshandler import state
+
+        # Seed a prior agent message so context filtering is exercised
+        await model.add_chat_message(
+            workspace["id"],
+            model.AGENT_USER_ID,
+            model.AGENT_EMAIL,
+            "I was here before",
+            message_type=model.MSG_AGENT,
+        )
+        # Add a message from another user (interjection context)
+        await model.add_chat_message(
+            workspace["id"],
+            "other-uid",
+            "bob@test.com",
+            "hey everyone check this out",
+        )
+
+        mock_session = AsyncMock()
+        mock_session.send_prompt = AsyncMock(return_value="The time is now.")
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_session,
+            ):
+                await conn.handle_chat_send(
+                    {"message": "@MrBoops what time is it?"}
+                )
+                await asyncio.sleep(0.1)
+            # Prompt was sent with the user's question
+            mock_session.send_prompt.assert_awaited_once()
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            # Should have: user msg, thinking=True, thinking=False, agent msg
+            thinking_on = [
+                c
+                for c in calls
+                if c.get("type") == "agent_thinking" and c.get("thinking")
+            ]
+            thinking_off = [
+                c
+                for c in calls
+                if c.get("type") == "agent_thinking" and not c.get("thinking")
+            ]
+            assert len(thinking_on) == 1
+            assert len(thinking_off) == 1
+            agent_msgs = [
+                c
+                for c in calls
+                if c.get("type") == "chat_message"
+                and c.get("message_type") == 1
+            ]
+            assert len(agent_msgs) == 1
+            assert agent_msgs[0]["message"] == "The time is now."
+        finally:
+            await session.remove_subscriber(sock)
+
+    async def test_chat_send_agent_mention_empty_prompt(self, workspace, user):
+        """@MrBoops with no prompt uses default greeting."""
+        from klangk_backend.wshandler import state
+
+        mock_session = AsyncMock()
+        mock_session.send_prompt = AsyncMock(return_value="Hi there!")
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_session,
+            ):
+                await conn.handle_chat_send({"message": "@MrBoops"})
+                await asyncio.sleep(0.1)
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            agent_msgs = [
+                c
+                for c in calls
+                if c.get("type") == "chat_message"
+                and c.get("message_type") == 1
+            ]
+            assert len(agent_msgs) == 1
+            assert agent_msgs[0]["message"] == "Hi there!"
+        finally:
+            await session.remove_subscriber(sock)
+
+    async def test_chat_send_agent_error(self, workspace, user):
+        """Agent error posts error message."""
+        from klangk_backend.wshandler import state
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            with patch(
+                "klangk_backend.agent.get_session",
+                side_effect=RuntimeError("boom"),
+            ):
+                await conn.handle_chat_send({"message": "@MrBoops help"})
+                await asyncio.sleep(0.1)
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            agent_msgs = [
+                c
+                for c in calls
+                if c.get("type") == "chat_message"
+                and c.get("message_type") == 1
+            ]
+            assert len(agent_msgs) == 1
+            assert "error" in agent_msgs[0]["message"].lower()
+        finally:
+            await session.remove_subscriber(sock)
+
+    async def test_chat_send_agent_process_died(self, workspace, user):
+        """Agent process death posts system message."""
+        from klangk_backend.wshandler import state
+        from klangk_backend.agent import AgentProcessDied
+
+        mock_session = AsyncMock()
+        mock_session.send_prompt = AsyncMock(
+            side_effect=AgentProcessDied("exited")
+        )
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_session,
+            ):
+                await conn.handle_chat_send({"message": "@MrBoops hello"})
+                await asyncio.sleep(0.1)
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            sys_msgs = [
+                c
+                for c in calls
+                if c.get("type") == "chat_message"
+                and c.get("message_type") == 2
+            ]
+            assert len(sys_msgs) == 1
+            assert "disconnected" in sys_msgs[0]["message"]
+        finally:
+            await session.remove_subscriber(sock)
+
+    async def test_chat_send_no_agent_mention(self, workspace, user):
+        """Messages without @MrBoops don't trigger agent response."""
+        from klangk_backend.wshandler import state
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        try:
+            await conn.handle_chat_send({"message": "hello everyone"})
+            await asyncio.sleep(0.1)
+            calls = sock.send_json.call_args_list
+            agent_msgs = [
+                c[0][0]
+                for c in calls
+                if c[0][0].get("type") == "chat_message"
+                and c[0][0].get("message_type") == 1
+            ]
+            assert len(agent_msgs) == 0
+        finally:
+            await session.remove_subscriber(sock)
 
     async def test_chat_history_on_connect(self, user):
         from klangk_backend import model

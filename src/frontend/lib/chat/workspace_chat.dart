@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show HardwareKeyboard, KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:markdown/markdown.dart' as md;
 import '../ws/ws_client.dart';
 import '../theme/colors.dart';
 import '../auth/auth_service.dart';
@@ -43,6 +44,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   bool _isVisible = false;
   bool _hasMention = false;
   bool _loadingOlder = false;
+
+  bool _agentThinking = false;
+  String _agentName = 'agent';
   bool _hasMore = true;
 
   // Expanded message IDs (for long message truncation)
@@ -73,6 +77,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     _textController.addListener(_onTextChanged);
     widget.wsClient.addListener(_onPresenceChanged);
     _inputFocusNode.onKeyEvent = _handleKeyEvent;
+    // Scroll to bottom after initial history renders
+    if (_messages.isNotEmpty) {
+      _scrollToBottom();
+    }
   }
 
   /// Focuses the message input. Called by the parent when the Chat tab is
@@ -94,6 +102,16 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     if (!mounted) return;
     final type = msg['type'] as String?;
 
+    if (type == 'agent_thinking') {
+      setState(() {
+        _agentThinking = msg['thinking'] as bool? ?? false;
+        if (_agentThinking) {
+          _agentName = msg['name'] as String? ?? 'agent';
+        }
+      });
+      return;
+    }
+
     if (type == 'chat_updated') {
       final updatedId = msg['message_id'] as String?;
       final newText = msg['message'] as String?;
@@ -111,7 +129,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     // Regular chat_message or chat_history item
     setState(() => _messages.add(msg));
 
-    if (!_isVisible) {
+    // Don't count system messages (join/leave) as unread.
+    final isSystem = (msg['message_type'] as int? ?? 0) == 2;
+    if (!_isVisible && !isSystem) {
       _unreadCount++;
       widget.onUnreadChanged?.call(_unreadCount);
 
@@ -125,15 +145,19 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       }
     }
 
-    // Auto-scroll to bottom after frame renders
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
+    // Double post-frame to ensure layout is fully settled before jumping.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 150),
-          curve: Curves.easeOut,
-        );
-      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(
+            _scrollController.position.maxScrollExtent,
+          );
+        }
+      });
     });
   }
 
@@ -166,9 +190,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     }
 
     // Preserve scroll position: measure before prepending, restore after.
-    final scrollBefore = _scrollController.hasClients
-        ? _scrollController.position.pixels
-        : 0.0;
+    final scrollBefore =
+        _scrollController.hasClients ? _scrollController.position.pixels : 0.0;
     final maxBefore = _scrollController.hasClients
         ? _scrollController.position.maxScrollExtent
         : 0.0;
@@ -237,9 +260,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             _inputKey.currentContext?.findRenderObject() as RenderBox?;
         if (renderBox == null) return const SizedBox.shrink();
         final offset = renderBox.localToGlobal(Offset.zero);
-        final visibleCount = _filteredMembers.length > 5
-            ? 5
-            : _filteredMembers.length;
+        final visibleCount =
+            _filteredMembers.length > 5 ? 5 : _filteredMembers.length;
         final height = visibleCount * 36.0;
         return Positioned(
           left: offset.dx,
@@ -468,6 +490,73 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   // --- Message rendering ---
 
+  Widget _buildMessageContent(
+    BuildContext context, {
+    required String email,
+    required String text,
+    required bool isAgent,
+    required bool isDeleted,
+  }) {
+    final nameColor = isAgent ? KColors.accentCyan : _colorForEmail(email);
+
+    if (isDeleted) {
+      return Text.rich(
+        TextSpan(children: [
+          TextSpan(
+            text: '$email  ',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: nameColor,
+              fontSize: 13,
+            ),
+          ),
+          TextSpan(
+            text: text,
+            style: const TextStyle(
+              color: KColors.textMuted,
+              fontSize: 13,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ]),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          email,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: nameColor,
+            fontSize: 13,
+          ),
+        ),
+        MarkdownBody(
+          data: _highlightMentions(text),
+          selectable: true,
+          // Use gitHubWeb without autolink to avoid mailto-linking emails
+          extensionSet: md.ExtensionSet(
+            md.ExtensionSet.gitHubWeb.blockSyntaxes,
+            [
+              ...md.ExtensionSet.gitHubWeb.inlineSyntaxes.where((s) =>
+                  s is! md.AutolinkSyntax && s is! md.AutolinkExtensionSyntax),
+            ],
+          ),
+          styleSheet: _chatMarkdownStyle(context),
+          // coverage:ignore-start
+          onTapLink: (text, href, title) {
+            if (href != null && href.isNotEmpty) {
+              openUrl(href);
+            }
+          },
+          // coverage:ignore-end
+        ),
+      ],
+    );
+  }
+
   static String _formatTime(String raw) {
     if (raw.isEmpty) return '';
     try {
@@ -564,15 +653,21 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     final users = widget.wsClient.presenceUsers;
     if (users.isEmpty) return const SizedBox.shrink();
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: KColors.borderDefault)),
+        color: KColors.bgAppBar,
+        border: Border(bottom: BorderSide(color: KColors.borderMuted)),
       ),
       child: Row(
         children: [
-          const Text(
-            'Online ',
-            style: TextStyle(color: KColors.textMuted, fontSize: 11),
+          Container(
+            width: 6,
+            height: 6,
+            margin: const EdgeInsets.only(right: 6),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: KColors.accentGreen,
+            ),
           ),
           ...users.map((u) {
             final email = u['user_email'] as String? ?? '';
@@ -585,12 +680,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                 message: email,
                 child: CircleAvatar(
                   radius: 10,
-                  backgroundColor: isSelf
-                      ? Colors.transparent
-                      : _colorForEmail(email),
-                  foregroundColor: isSelf
-                      ? _colorForEmail(email)
-                      : Colors.white,
+                  backgroundColor:
+                      isSelf ? Colors.transparent : _colorForEmail(email),
+                  foregroundColor:
+                      isSelf ? _colorForEmail(email) : Colors.white,
                   child: isSelf
                       ? DecoratedBox(
                           decoration: BoxDecoration(
@@ -691,28 +784,59 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                       final isDeleted = text == '<message deleted by author>';
                       final messageType = msg['message_type'] as int? ?? 0;
 
-                      // System messages: centered, muted, no sender
+                      // System messages: compact divider style
                       if (messageType == 2) {
                         return Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Center(
-                            child: Text(
-                              text,
-                              style: const TextStyle(
-                                color: KColors.textMuted,
-                                fontSize: 11,
-                                fontStyle: FontStyle.italic,
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            children: [
+                              const Expanded(
+                                child: Divider(
+                                  color: KColors.borderMuted,
+                                  height: 1,
+                                ),
                               ),
-                            ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                child: Text(
+                                  text,
+                                  style: const TextStyle(
+                                    color: KColors.textMuted,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ),
+                              const Expanded(
+                                child: Divider(
+                                  color: KColors.borderMuted,
+                                  height: 1,
+                                ),
+                              ),
+                            ],
                           ),
                         );
                       }
 
-                      // Agent messages: robot icon prefix, subtle tint
+                      // Agent messages: robot icon prefix, left accent
                       final isAgent = messageType == 1;
 
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: isAgent
+                            ? const EdgeInsets.only(left: 8)
+                            : EdgeInsets.zero,
+                        decoration: isAgent
+                            ? const BoxDecoration(
+                                border: Border(
+                                  left: BorderSide(
+                                    color: KColors.accentCyan,
+                                    width: 2,
+                                  ),
+                                ),
+                              )
+                            : null,
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -741,42 +865,12 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                                     }
                                   });
                                 },
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      email,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: isAgent
-                                            ? KColors.accentCyan
-                                            : _colorForEmail(email),
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                    if (isDeleted)
-                                      Text(
-                                        text,
-                                        style: const TextStyle(
-                                          color: KColors.textMuted,
-                                          fontSize: 13,
-                                          fontStyle: FontStyle.italic,
-                                        ),
-                                      )
-                                    else
-                                      MarkdownBody(
-                                        data: _highlightMentions(text),
-                                        selectable: true,
-                                        styleSheet: _chatMarkdownStyle(context),
-                                        // coverage:ignore-start
-                                        onTapLink: (text, href, title) {
-                                          if (href != null && href.isNotEmpty) {
-                                            openUrl(href);
-                                          }
-                                        },
-                                        // coverage:ignore-end
-                                      ),
-                                  ],
+                                child: _buildMessageContent(
+                                  context,
+                                  email: email,
+                                  text: text,
+                                  isAgent: isAgent,
+                                  isDeleted: isDeleted,
                                 ),
                               ),
                             ),
@@ -807,6 +901,31 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                     },
                   ),
           ),
+          if (_agentThinking)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: KColors.accentCyan,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$_agentName is thinking...',
+                    style: TextStyle(
+                      color: KColors.textMuted,
+                      fontSize: 12,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Container(
             key: _inputKey,
             decoration: const BoxDecoration(
@@ -839,6 +958,13 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                     ),
                   ),
                 ),
+                if (_agentThinking)
+                  IconButton(
+                    icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                    color: KColors.accentRed,
+                    tooltip: 'Stop agent',
+                    onPressed: () => widget.wsClient.sendChatAgentAbort(),
+                  ),
                 IconButton(
                   icon: const Icon(Icons.send, size: 18),
                   color: KColors.accentBlue,
