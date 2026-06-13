@@ -400,21 +400,22 @@ class _WorkspacePageState extends State<WorkspacePage> {
                   child: ListView(
                     scrollDirection: Axis.horizontal,
                     children: [
-                      for (final w in windows)
-                        _TerminalTab(
-                          name: w['name'] as String? ?? '?',
-                          active: _activeSharedTerminal == null &&
-                              (w['active'] as bool? ?? false),
-                          onTap: () => _switchToIsolated(
-                            wsClient,
-                            w['index'] as int,
+                      if (_hasPerm('code-in-isolation'))
+                        for (final w in windows)
+                          _TerminalTab(
+                            name: w['name'] as String? ?? '?',
+                            active: _activeSharedTerminal == null &&
+                                (w['active'] as bool? ?? false),
+                            onTap: () => _switchToIsolated(
+                              wsClient,
+                              w['index'] as int,
+                            ),
+                            onClose: windows.length > 1
+                                ? () => wsClient.sendTerminalCloseWindow(
+                                      w['index'] as int,
+                                    )
+                                : null,
                           ),
-                          onClose: windows.length > 1
-                              ? () => wsClient.sendTerminalCloseWindow(
-                                    w['index'] as int,
-                                  )
-                              : null,
-                        ),
                       // "+" for new isolated terminal
                       if (_hasPerm('code-in-isolation'))
                         _TabIconButton(
