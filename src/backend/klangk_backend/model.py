@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import socket
 from contextlib import asynccontextmanager
@@ -21,6 +22,12 @@ DB_PATH = _data_dir / "klangk.db"
 MSG_USER = 0
 MSG_AGENT = 1
 MSG_SYSTEM = 2
+
+# Agent identity
+AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
+_AGENT_NAME = os.environ.get("KLANGK_CHAT_AGENT_NAME", "MrBoops")
+AGENT_EMAIL = _AGENT_NAME
+AGENT_MENTION = _AGENT_NAME
 
 
 async def get_db() -> aiosqlite.Connection:

@@ -203,6 +203,8 @@ class WsClient extends ChangeNotifier {
             _chatHistoryPageController.add(json);
           } else if (type == 'chat_updated') {
             _chatController.add(json);
+          } else if (type == 'agent_thinking') {
+            _chatController.add(json);
           } else if (type == 'workspace_members') {
             final members = json['members'] as List? ?? [];
             workspaceMembers = members.cast<Map<String, dynamic>>();
@@ -398,6 +400,10 @@ class WsClient extends ChangeNotifier {
 
   void sendChatDelete(String messageId) {
     _send({'cmd': 'chat_delete', 'message_id': messageId});
+  }
+
+  void sendChatAgentAbort() {
+    _send({'cmd': 'chat_agent_abort'});
   }
 
   void sendBrowserResponse(String id, Map<String, dynamic> result) {

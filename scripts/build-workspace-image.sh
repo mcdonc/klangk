@@ -14,7 +14,12 @@ CURRENT_HASH=$(find \
   -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
 
 # Skip rebuild if the image exists and the hash hasn't changed.
-if "$PODMAN" image exists "${KLANGK_IMAGE_NAME}" 2>/dev/null && [ -f "$STAMP" ]; then
+# --no-cache and --force bypass the hash check.
+FORCE_BUILD=false
+for arg in "$@"; do
+  case "$arg" in --no-cache | --force) FORCE_BUILD=true ;; esac
+done
+if ! $FORCE_BUILD && "$PODMAN" image exists "${KLANGK_IMAGE_NAME}" 2>/dev/null && [ -f "$STAMP" ]; then
   OLD_HASH=$(cat "$STAMP" 2>/dev/null || true)
   if [ "$CURRENT_HASH" = "$OLD_HASH" ]; then
     echo "Image ${KLANGK_IMAGE_NAME} is up to date, skipping build."

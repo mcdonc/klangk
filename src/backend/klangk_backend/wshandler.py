@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 
@@ -494,6 +495,13 @@ def _get_presence_list(workspace_id: str) -> list[dict]:
             users.append(
                 {"user_id": conn.user["id"], "user_email": conn.user["email"]}
             )
+    # Include agent only if its RPC process is alive.
+    from . import agent  # pragma: no cover
+
+    if agent.any_running():  # pragma: no cover
+        users.append(
+            {"user_id": model.AGENT_USER_ID, "user_email": model.AGENT_EMAIL}
+        )
     return users
 
 
@@ -685,7 +693,13 @@ class Connection:
         owner = await model.get_user_by_id(workspace.get("user_id", ""))
         if owner and not any(m["id"] == owner["id"] for m in members):
             members.append({"id": owner["id"], "email": owner["email"]})
+        # Include the agent so @misterboops autocompletes
+        members.append({"id": model.AGENT_USER_ID, "email": model.AGENT_EMAIL})
         self.sock.send_json({"type": "workspace_members", "members": members})
+
+        # Start the agent eagerly so it shows as present immediately.
+        if self.container_id:
+            asyncio.create_task(self._start_agent_if_needed(self.container_id))
 
         # Send presence list to joining user and broadcast join to others
         presence = _get_presence_list(workspace_id)
@@ -1301,6 +1315,49 @@ class Connection:
         if session:
             session.broadcast({"type": "chat_message", **chat_msg})
 
+        # Route to agent on @mention or natural follow-up.
+        #
+        # After an @mention, the same user's messages route to the
+        # agent indefinitely until someone else speaks (interjection).
+        # After interjection, a 30s window applies — follow-ups from
+        # the original user still route within that window.  Messages
+        # starting with @someone-else always break the conversation.
+        should_route = False
+        user_id = self.user["id"]
+        conv = _agent_conversations.get(workspace_id)
+
+        if _mentions_agent(text):
+            should_route = True
+            _agent_conversations[workspace_id] = {
+                "user_id": user_id,
+                "time": time.monotonic(),
+                "interjected": False,
+            }
+        elif conv and not _addresses_other_user(text):
+            if user_id == conv["user_id"]:
+                if not conv["interjected"]:
+                    # No interjection — route indefinitely
+                    should_route = True
+                    conv["time"] = time.monotonic()
+                elif time.monotonic() - conv["time"] < 30:
+                    # Interjected but within 30s window
+                    should_route = True
+                    conv["time"] = time.monotonic()
+                else:
+                    # Window expired
+                    del _agent_conversations[workspace_id]
+            else:
+                # Different human speaking — mark interjection
+                conv["interjected"] = True
+        elif conv:
+            # Addressed to someone else — break conversation
+            del _agent_conversations[workspace_id]
+
+        if should_route and self.container_id:
+            _agent_tasks[workspace_id] = asyncio.create_task(
+                _handle_agent_mention(workspace_id, self.container_id, text)
+            )
+
     async def handle_chat_delete(self, msg: dict) -> None:
         workspace_id = self.workspace_id
         if not workspace_id:
@@ -1338,6 +1395,34 @@ class Connection:
                 "has_more": len(messages) == limit,
             }
         )
+
+    async def _start_agent_if_needed(  # pragma: no cover
+        self, container_id: str
+    ) -> None:
+        """Start the Pi RPC agent so it shows in presence."""
+        from . import agent
+
+        try:
+            session = await agent.get_session(container_id)
+            await session._ensure_started()
+            # Broadcast updated presence now that agent is alive
+            if self.workspace_id:
+                ws_session = state.get_session(self.workspace_id)
+                if ws_session:
+                    presence = _get_presence_list(self.workspace_id)
+                    ws_session.broadcast(
+                        {"type": "presence_list", "users": presence}
+                    )
+        except Exception:
+            logger.debug("Failed to start agent eagerly", exc_info=True)
+
+    async def handle_chat_agent_abort(self) -> None:  # pragma: no cover
+        workspace_id = self.workspace_id
+        if not workspace_id:
+            return
+        task = _agent_tasks.pop(workspace_id, None)
+        if task and not task.done():
+            task.cancel()
 
     async def handle_ui_ready(self) -> None:
         if self.workspace_id:
@@ -1561,6 +1646,131 @@ class Connection:
                 await state.remove_session(workspace_id)
 
 
+# Per-workspace agent conversation state.
+# user_id: who started the conversation
+# time: monotonic timestamp of the last agent exchange
+# interjected: True after a different human spoke
+_agent_conversations: dict[str, dict] = {}
+
+_AGENT_MENTION_RE = re.compile(
+    r"(?:^|(?<=\s))@" + re.escape(model.AGENT_MENTION) + r"(?:@\S+)?(?:\s|$)",
+    re.IGNORECASE,
+)
+
+_ANY_MENTION_RE = re.compile(r"(?:^|(?<=\s))@\S+")
+
+
+def _mentions_agent(text: str) -> bool:
+    """Return True if the message text mentions the agent."""
+    return bool(_AGENT_MENTION_RE.search(text))
+
+
+def _addresses_other_user(text: str) -> bool:
+    """Return True if the message is directed at someone else.
+
+    A message that *starts* with ``@someone`` (not the agent) is
+    considered addressed to that person, breaking the follow-up
+    conversation with the agent.
+    """
+    m = _ANY_MENTION_RE.match(text.lstrip())
+    if not m:
+        return False
+    mention = m.group().lstrip("@").split("@")[0].lower()
+    return mention != model.AGENT_MENTION.lower()
+
+
+# Active agent tasks per workspace, for abort support.
+_agent_tasks: dict[str, asyncio.Task] = {}
+
+
+async def _handle_agent_mention(
+    workspace_id: str, container_id: str, user_text: str
+) -> None:
+    """Handle an @misterboops mention by sending the prompt to Pi RPC."""
+    from . import agent
+
+    prompt = _AGENT_MENTION_RE.sub("", user_text).strip()
+    if not prompt:
+        prompt = "Hello!"
+
+    # Include messages from OTHER users since the agent's last response
+    # as context.  The current user's message is already the prompt;
+    # we only need to show interjections from other participants that
+    # Pi hasn't seen (since Pi's multi-turn history only has the
+    # conversation between the mentioning user and itself).
+    recent = await model.get_chat_messages(workspace_id, limit=50)
+    chronological = list(reversed(recent))
+    last_agent_idx = -1
+    for i, m in enumerate(chronological):
+        if m.get("message_type", 0) == model.MSG_AGENT:
+            last_agent_idx = i
+    # Messages from other users (not the current prompt sender)
+    other_msgs = [
+        m
+        for m in chronological[last_agent_idx + 1 :]
+        if m.get("message_type", 0) == model.MSG_USER
+        and m.get("message", "").strip() != user_text.strip()
+    ]
+    if other_msgs:  # pragma: no cover
+        context_lines = [
+            f"{m.get('user_email', 'unknown')}: {m.get('message', '')}"
+            for m in other_msgs
+        ]
+        context = "\n".join(context_lines)
+        prompt = f"[Other participants said:\n{context}]\n\n{prompt}"
+
+    # Notify clients the agent is thinking
+    session = state.get_session(workspace_id)
+    if session:
+        session.broadcast(
+            {
+                "type": "agent_thinking",
+                "thinking": True,
+                "name": model.AGENT_EMAIL,
+            }
+        )
+
+    try:
+        pi = await agent.get_session(container_id)
+        response_text = await pi.send_prompt(prompt)
+    except asyncio.CancelledError:  # pragma: no cover
+        response_text = "Stopped."
+    except agent.AgentProcessDied:
+        logger.warning("Agent process died for workspace %s", workspace_id)
+        # Post system message about the crash
+        sys_msg = await model.add_chat_message(
+            workspace_id,
+            model.AGENT_USER_ID,
+            model.AGENT_EMAIL,
+            f"{model.AGENT_EMAIL} has disconnected",
+            message_type=model.MSG_SYSTEM,
+        )
+        session = state.get_session(workspace_id)
+        if session:
+            session.broadcast({"type": "agent_thinking", "thinking": False})
+            session.broadcast({"type": "chat_message", **sys_msg})
+        _agent_tasks.pop(workspace_id, None)
+        return
+    except Exception:
+        logger.exception("Agent error for workspace %s", workspace_id)
+        response_text = (
+            "Sorry, I encountered an error processing your request."
+        )
+
+    agent_msg = await model.add_chat_message(
+        workspace_id,
+        model.AGENT_USER_ID,
+        model.AGENT_EMAIL,
+        response_text,
+        message_type=model.MSG_AGENT,
+    )
+    session = state.get_session(workspace_id)
+    if session:
+        session.broadcast({"type": "agent_thinking", "thinking": False})
+        session.broadcast({"type": "chat_message", **agent_msg})
+    _agent_tasks.pop(workspace_id, None)
+
+
 async def handle_websocket(websocket: WebSocket) -> None:
     """Main WebSocket handler."""
     # Authenticate via query param
@@ -1646,6 +1856,8 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_chat_delete(msg)
             elif cmd == "chat_load_more":
                 await conn.handle_chat_load_more(msg)
+            elif cmd == "chat_agent_abort":  # pragma: no cover
+                await conn.handle_chat_agent_abort()
             elif cmd == "browser_response":
                 state.handle_browser_response(msg, safe_ws)
             elif cmd == "browser_chunk":
