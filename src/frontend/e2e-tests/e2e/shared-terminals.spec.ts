@@ -245,7 +245,8 @@ test.describe("workspace roles", () => {
       try {
         client.send({ cmd: "terminal_start", cols: 80, rows: 24 });
         const msg = await client.recvUntil(
-          (m) => m.type === "terminal_started",
+          (m) => m.type === "terminal_started" || m.type === "error",
+          60_000,
         );
         expect(msg.type).toBe("terminal_started");
 
