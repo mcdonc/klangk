@@ -655,7 +655,9 @@ class TestBuildShellCommandShared:
         assert "-t" in cmd
         assert "dev" in cmd
         assert "-s" in cmd
-        assert "bob" in cmd
+        # Session name starts with handle + unique suffix
+        s_idx = cmd.index("-s")
+        assert cmd[s_idx + 1].startswith("bob-")
         # Should NOT have -A (that's for isolated sessions)
         assert "-A" not in cmd
 
@@ -666,9 +668,10 @@ class TestBuildShellCommandShared:
             join_session="dev",
             read_only=True,
         )
-        assert ";" in cmd
-        assert "attach-session" in cmd
-        assert "-r" in cmd
+        # Read-only is enforced at the application level, not by tmux.
+        # The tmux command is the same as read-write (new-session into group).
+        assert "new-session" in cmd
+        assert "switch-client" not in cmd
 
 
 class TestCreateSharedTerminal:
@@ -682,6 +685,8 @@ class TestCreateSharedTerminal:
             "cid",
             "dev",
             [
+                "-f",
+                "/etc/tmux-shared.conf",
                 "-S",
                 "/home/.terminals/dev.sock",
                 "new-session",
@@ -729,14 +734,17 @@ class TestListSharedTerminals:
             result = await list_shared_terminals("cid")
         assert result == []
 
-    async def test_no_sessions(self):
+    async def test_dead_server_revived(self):
+        """Dead tmux servers are restarted and returned with anchor session."""
         proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"dev|||\n", b""))
+        # Shell script restarts dead servers; output includes revived terminal.
+        proc.communicate = AsyncMock(return_value=(b"dev|||dev,\n", b""))
         proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
             result = await list_shared_terminals("cid")
         assert len(result) == 1
-        assert result[0]["sessions"] == []
+        assert result[0]["name"] == "dev"
+        assert result[0]["sessions"] == ["dev"]
 
     async def test_malformed_line_skipped(self):
         proc = AsyncMock()
@@ -779,5 +787,7 @@ class TestTerminalSessionShared:
                 read_only=True,
             )
             await s.start(80, 24)
-        assert "-r" in fake.argv
+        # Read-only is enforced at the application level, not tmux.
+        assert "switch-client" not in fake.argv
+        assert s.read_only is True
         await s.stop()

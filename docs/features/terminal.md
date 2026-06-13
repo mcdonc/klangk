@@ -11,3 +11,33 @@
 - Scrollbar for terminal history
 - Overlay with restart button when container stops (idle timeout or unexpected), auto-reconnects terminal session after restart
 - Cleaned up on workspace disconnect or WebSocket close
+
+## Shared Terminals
+
+Shared terminals are visible to all workspace members with appropriate permissions.
+Each shared terminal runs as an independent tmux server with a named socket at
+`/home/.terminals/<name>.sock` inside the container. Users join via tmux session
+groups, so each user has an independent view (scroll position, etc.) of the same
+terminal.
+
+### Role Permissions
+
+| Permission                     | Owners | Coders | Collaborators | Spectators |
+| ------------------------------ | ------ | ------ | ------------- | ---------- |
+| `terminal`                     | ✓\*    | ✓      | ✓             | ✓          |
+| `code-in-isolation`            | ✓\*    | ✓      | ✓             |            |
+| `share-terminals`              | ✓\*    |        |               |            |
+| `code-in-shared-terminals`     | ✓\*    |        | ✓             |            |
+| `spectate-on-shared-terminals` | ✓\*    | ✓      | ✓             | ✓          |
+| `files`                        | ✓\*    | ✓      | ✓             |            |
+| `chat`                         | ✓\*    | ✓      | ✓             | ✓          |
+
+\* Owners have the wildcard (`*`) permission which implies all permissions.
+
+- **Owners** can create, delete, and type in shared terminals.
+- **Coders** can watch shared terminals (spy mode) but not create or type in them.
+  They have full isolated terminal and file access.
+- **Collaborators** can type in shared terminals but not create or delete them.
+  They have full isolated terminal and file access.
+- **Spectators** can watch shared terminals in read-only mode. They cannot start
+  isolated terminals or access files.

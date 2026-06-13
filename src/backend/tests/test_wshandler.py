@@ -70,6 +70,7 @@ def _mock_terminal(alive=True):
     t.write = AsyncMock()
     t.resize = AsyncMock()
     t.stop = AsyncMock()
+    t.read_only = False
     return t
 
 

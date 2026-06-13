@@ -22,7 +22,11 @@ from .model import (
 from .util import resolve_env_secret
 from .wshandler import handle_websocket
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 

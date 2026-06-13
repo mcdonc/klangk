@@ -514,6 +514,8 @@ class Connection:
         self.pending_status_msg: str | None = None
         self._bridge_token: str | None = None
         self._user_home: str | None = None
+        self._terminal_cols: int = 80
+        self._terminal_rows: int = 24
 
     async def start_workspace_container(
         self, workspace_id: str, workspace: dict
@@ -990,14 +992,16 @@ class Connection:
         container.registry.record_activity(self.container_id)
         await session.write(data)
         elapsed = _time.monotonic() - t0
-        if elapsed > 0.1:
+        if elapsed > 0.1:  # pragma: no cover
             logger.warning("terminal_input SLOW: %.3fs", elapsed)
 
     async def handle_terminal_resize(self, msg: dict) -> None:
+        self._terminal_cols = msg.get("cols", 80)
+        self._terminal_rows = msg.get("rows", 24)
         session = self.terminal_session
         if session is None:
             return
-        await session.resize(msg.get("cols", 80), msg.get("rows", 24))
+        await session.resize(self._terminal_cols, self._terminal_rows)
 
     async def handle_terminal_stop(self) -> None:
         await self.stop_terminal()
@@ -1169,15 +1173,22 @@ class Connection:
         self.terminal_session = session
         conn = self
 
+        cols = self._terminal_cols
+        rows = self._terminal_rows
+
         async def _start_shared() -> None:
             try:
-                await session.start()
+                await session.start(cols, rows)
                 if conn.terminal_session is not session:
                     await session.stop()
                     return
                 conn.terminal_task = asyncio.create_task(
                     conn.forward_terminal_output(session)
                 )
+                # Resize to match the client's terminal size. This forces
+                # tmux to redraw the window content at the correct size,
+                # ensuring the bash prompt is visible on attach.
+                await session.resize(cols, rows)
                 container.registry.record_activity(conn.container_id)
                 conn.sock.send_json(
                     {

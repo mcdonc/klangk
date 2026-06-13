@@ -13,6 +13,7 @@ import fcntl
 import logging
 import os
 import pty
+import uuid
 import signal
 import struct
 import termios
@@ -53,6 +54,7 @@ def _build_environment(
 
 
 _SHARED_TERMINALS_DIR = "/home/.terminals"
+_SHARED_TMUX_CONF = "/etc/tmux-shared.conf"
 
 
 def _build_shell_command(
@@ -74,14 +76,17 @@ def _build_shell_command(
     tmux_env: list[str] = []
     session_args: list[str] = []
     socket_args: list[str] = []
+    unique: str | None = None
     if socket_path is not None:
         socket_args = ["-S", socket_path]
     if user_home is not None:
         tmux_env = ["-e", f"HOME={user_home}"]
         handle = user_home.rsplit("/", 1)[-1]
         if join_session is not None:
-            # Join an existing session group.
-            session_args = ["-t", join_session, "-s", handle]
+            # Join an existing session group.  Use a unique session name
+            # so rapid re-joins don't collide with a stale session.
+            unique = f"{handle}-{uuid.uuid4().hex[:8]}"
+            session_args = ["-t", join_session, "-s", unique]
         else:
             # Create or reattach to own session.
             session_args = ["-A", "-s", handle]
@@ -94,10 +99,13 @@ def _build_shell_command(
         *session_args,
         *tmux_env,
     ]
-    if read_only:
-        # Append attach -r after new-session to enforce read-only.
-        # tmux processes the semicolon-separated command.
-        cmd += [";", "attach-session", "-r"]
+    if join_session is not None:
+        # Force a screen redraw so the client sees pre-existing content
+        # (e.g. a bash prompt printed before the client attached).
+        cmd += [";", "refresh-client"]
+    # Read-only is enforced at the application level (terminal_input
+    # is not forwarded when the session is read-only) rather than via
+    # tmux's switch-client -r, which caused display issues.
     return cmd
 
 
@@ -304,6 +312,13 @@ async def list_shared_terminals(container_id: str) -> list[dict]:
         'name=$(basename "$sock" .sock); '
         'sessions=$(tmux -S "$sock" list-sessions '
         "-F '#{session_name}' 2>/dev/null | tr '\\n' ','); "
+        # If tmux server is dead, restart it (survives container restarts).
+        # Uses tmux-shared.conf which sets destroy-unattached off.
+        'if [ -z "$sessions" ]; then '
+        'rm -f "$sock"; '
+        f'tmux -f {_SHARED_TMUX_CONF} -S "$sock" new-session -d -s "$name" 2>/dev/null; '
+        'sessions="$name,"; '
+        "fi; "
         'echo "$name|||$sessions"; '
         "done"
     )
@@ -343,13 +358,14 @@ async def create_shared_terminal(container_id: str, name: str) -> None:
 
     The server starts with a detached session so no PTY is needed.
     Users join later via ``join_shared_terminal``.
+    The global ``/etc/tmux.conf`` sets ``destroy-unattached off``
+    so sessions survive client disconnects.
     """
     sock = shared_socket_path(name)
-    # Ensure the directory exists.
     await tmux_command(
         container_id,
         name,
-        ["-S", sock, "new-session", "-d", "-s", name],
+        ["-f", _SHARED_TMUX_CONF, "-S", sock, "new-session", "-d", "-s", name],
     )
 
 

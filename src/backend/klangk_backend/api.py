@@ -961,6 +961,7 @@ async def create_workspace(
         f"coders-{ws['id']}": [
             "terminal",
             "code-in-isolation",
+            "spectate-on-shared-terminals",
             "files",
             "chat",
         ],

@@ -370,6 +370,63 @@ test.describe("shared terminal visibility", () => {
     }
   });
 
+  test("coder can see and join shared terminals", async ({ page, request }) => {
+    const ownerEmail = `coder-vis-owner-${Date.now()}@test.example.com`;
+    const owner = await registerUser(request, ownerEmail);
+    const { workspaceId, cleanup } = await createWorkspace(
+      request,
+      owner.headers,
+      "coder-vis",
+    );
+    try {
+      const coderEmail = `coder-vis-user-${Date.now()}@test.example.com`;
+      const coder = await registerUser(request, coderEmail);
+      await addToRole(
+        request,
+        owner.headers,
+        workspaceId,
+        "coders",
+        coderEmail,
+      );
+
+      // Owner starts container
+      await openWorkspace(page, ownerEmail, workspaceId, {
+        waitForTerminal: true,
+      });
+
+      const ownerWs = await connectWs(owner.token, workspaceId);
+      const coderWs = await connectWs(coder.token, workspaceId);
+      try {
+        // Owner creates a shared terminal
+        ownerWs.send({ cmd: "create_shared_terminal", name: "dev-session" });
+        await ownerWs.recvUntil((m) => m.type === "shared_terminals");
+
+        // Coder should receive the shared_terminals broadcast
+        const coderUpdate = await coderWs.recvUntil(
+          (m) => m.type === "shared_terminals",
+        );
+        const terminals = coderUpdate.terminals as Array<
+          Record<string, unknown>
+        >;
+        expect(terminals.some((t) => t.name === "dev-session")).toBe(true);
+
+        // Coder can join the shared terminal (read-only — no code-in-shared-terminals)
+        coderWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+        await coderWs.recvUntil((m) => m.type === "terminal_started");
+        coderWs.send({ cmd: "join_shared_terminal", name: "dev-session" });
+        const joined = await coderWs.recvUntil(
+          (m) => m.type === "terminal_started" && m.shared === "dev-session",
+        );
+        expect(joined.readOnly).toBe(true);
+      } finally {
+        ownerWs.close();
+        coderWs.close();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("deleted shared terminal disappears for other users", async ({
     page,
     request,
@@ -420,6 +477,61 @@ test.describe("shared terminal visibility", () => {
       } finally {
         ownerWs.close();
         specWs.close();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("rapid shared terminal switching does not produce duplicate session", async ({
+    page,
+    request,
+  }) => {
+    const ownerEmail = `rapid-switch-${Date.now()}@test.example.com`;
+    const owner = await registerUser(request, ownerEmail);
+    const { workspaceId, cleanup } = await createWorkspace(
+      request,
+      owner.headers,
+      "rapid-switch",
+    );
+    try {
+      await openWorkspace(page, ownerEmail, workspaceId, {
+        waitForTerminal: true,
+      });
+
+      const client = await connectWs(owner.token, workspaceId);
+      try {
+        // Create two shared terminals
+        client.send({ cmd: "create_shared_terminal", name: "term-a" });
+        await client.recvUntil((m) => m.type === "shared_terminals");
+        client.send({ cmd: "create_shared_terminal", name: "term-b" });
+        await client.recvUntil((m) => m.type === "shared_terminals");
+
+        // Start isolated terminal first
+        client.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+        await client.recvUntil((m) => m.type === "terminal_started");
+
+        // Rapidly switch between shared terminals
+        for (let i = 0; i < 3; i++) {
+          client.send({ cmd: "join_shared_terminal", name: "term-a" });
+          await client.recvUntil(
+            (m) => m.type === "terminal_started" && m.shared === "term-a",
+          );
+          client.send({ cmd: "join_shared_terminal", name: "term-b" });
+          await client.recvUntil(
+            (m) => m.type === "terminal_started" && m.shared === "term-b",
+          );
+        }
+
+        // Collect terminal output — should not contain "duplicate session"
+        const output = await client.collectUntilQuiet(
+          (m) => m.type === "terminal_output",
+          1000,
+        );
+        const allOutput = output.map((m) => (m.data as string) || "").join("");
+        expect(allOutput).not.toContain("duplicate session");
+      } finally {
+        client.close();
       }
     } finally {
       await cleanup();

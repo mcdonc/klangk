@@ -277,10 +277,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   void _switchToIsolated(WsClient wsClient, int index) {
-    if (_activeSharedTerminal != null) {
-      // Reconnect to isolated session by restarting the terminal.
-      setState(() => _activeSharedTerminal = null);
-      // The terminal widget handles reconnection via terminal_start.
+    final wasShared = _activeSharedTerminal != null;
+    setState(() => _activeSharedTerminal = null);
+    if (wasShared) {
+      // Restart the isolated terminal session — the shared terminal
+      // handler stopped it.  terminal_start uses -A to reattach to
+      // the existing tmux session, preserving all windows.
+      wsClient.sendTerminalStart();
     }
     wsClient.sendTerminalSelectWindow(index);
   }
@@ -385,6 +388,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
                           active:
                               _activeSharedTerminal == (s['name'] as String?),
                           shared: true,
+                          readOnly: !_hasPerm('code-in-shared-terminals') &&
+                              !_hasPerm('share-terminals'),
                           onTap: () => _joinShared(
                             wsClient,
                             s['name'] as String,
@@ -635,6 +640,7 @@ class _TerminalTab extends StatefulWidget {
   final String name;
   final bool active;
   final bool shared;
+  final bool readOnly;
   final VoidCallback onTap;
   final VoidCallback? onClose;
 
@@ -643,6 +649,7 @@ class _TerminalTab extends StatefulWidget {
     required this.active,
     required this.onTap,
     this.shared = false,
+    this.readOnly = false,
     this.onClose,
   });
 
@@ -683,7 +690,9 @@ class _TerminalTabState extends State<_TerminalTab> {
             children: [
               if (widget.shared) ...[
                 Icon(
-                  Icons.people_outline,
+                  widget.readOnly
+                      ? Icons.visibility_outlined
+                      : Icons.people_outline,
                   size: 12,
                   color: widget.active ? accentColor : Colors.white38,
                 ),
