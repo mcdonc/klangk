@@ -341,20 +341,11 @@ test.describe("shared terminal visibility", () => {
       const ownerWs = await connectWs(owner.token, workspaceId);
       const collabWs = await connectWs(collab.token, workspaceId);
       try {
-        // Drain initial shared_terminals from ui_ready (empty list)
-        await ownerWs.collectUntilQuiet(
-          (m) => m.type === "shared_terminals",
-          500,
-        );
-        await collabWs.collectUntilQuiet(
-          (m) => m.type === "shared_terminals",
-          500,
-        );
-
         // Owner creates shared terminal
         ownerWs.send({ cmd: "create_shared_terminal", name: "pair-dev" });
 
         // Both should receive shared_terminals update with pair-dev
+        // (recvUntil skips the empty list from ui_ready)
         const ownerUpdate = await ownerWs.recvUntil(
           (m) =>
             m.type === "shared_terminals" &&
@@ -415,16 +406,6 @@ test.describe("shared terminal visibility", () => {
       const ownerWs = await connectWs(owner.token, workspaceId);
       const coderWs = await connectWs(coder.token, workspaceId);
       try {
-        // Drain initial shared_terminals from ui_ready
-        await ownerWs.collectUntilQuiet(
-          (m) => m.type === "shared_terminals",
-          500,
-        );
-        await coderWs.collectUntilQuiet(
-          (m) => m.type === "shared_terminals",
-          500,
-        );
-
         // Owner creates a shared terminal
         ownerWs.send({ cmd: "create_shared_terminal", name: "dev-session" });
 
@@ -494,16 +475,6 @@ test.describe("shared terminal visibility", () => {
       const ownerWs = await connectWs(owner.token, workspaceId);
       const specWs = await connectWs(spec.token, workspaceId);
       try {
-        // Drain initial shared_terminals from ui_ready
-        await ownerWs.collectUntilQuiet(
-          (m) => m.type === "shared_terminals",
-          500,
-        );
-        await specWs.collectUntilQuiet(
-          (m) => m.type === "shared_terminals",
-          500,
-        );
-
         // Create then delete
         ownerWs.send({ cmd: "create_shared_terminal", name: "temp" });
         await ownerWs.recvUntil(
@@ -561,12 +532,6 @@ test.describe("shared terminal visibility", () => {
 
       const client = await connectWs(owner.token, workspaceId);
       try {
-        // Drain initial shared_terminals from ui_ready
-        await client.collectUntilQuiet(
-          (m) => m.type === "shared_terminals",
-          500,
-        );
-
         // Create two shared terminals
         client.send({ cmd: "create_shared_terminal", name: "term-a" });
         await client.recvUntil(
