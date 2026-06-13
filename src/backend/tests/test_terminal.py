@@ -693,6 +693,8 @@ class TestCreateSharedTerminal:
                 "-d",
                 "-s",
                 "dev",
+                "-c",
+                "/home/work",
             ],
         )
 

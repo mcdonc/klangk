@@ -316,7 +316,7 @@ async def list_shared_terminals(container_id: str) -> list[dict]:
         # Uses tmux-shared.conf which sets destroy-unattached off.
         'if [ -z "$sessions" ]; then '
         'rm -f "$sock"; '
-        f'tmux -f {_SHARED_TMUX_CONF} -S "$sock" new-session -d -s "$name" 2>/dev/null; '
+        f'tmux -f {_SHARED_TMUX_CONF} -S "$sock" new-session -d -s "$name" -c /home/work 2>/dev/null; '
         'sessions="$name,"; '
         "fi; "
         'echo "$name|||$sessions"; '
@@ -365,7 +365,18 @@ async def create_shared_terminal(container_id: str, name: str) -> None:
     await tmux_command(
         container_id,
         name,
-        ["-f", _SHARED_TMUX_CONF, "-S", sock, "new-session", "-d", "-s", name],
+        [
+            "-f",
+            _SHARED_TMUX_CONF,
+            "-S",
+            sock,
+            "new-session",
+            "-d",
+            "-s",
+            name,
+            "-c",
+            "/home/work",
+        ],
     )
 
 
