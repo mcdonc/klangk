@@ -896,11 +896,14 @@ class Connection:
                     conn.user.get("email"),
                     conn.container_id,
                 )
-                await session.start(
-                    cols,
-                    rows,
-                    command_override=command_override,
-                    bridge_token=bridge_token,
+                await asyncio.wait_for(
+                    session.start(
+                        cols,
+                        rows,
+                        command_override=command_override,
+                        bridge_token=bridge_token,
+                    ),
+                    timeout=30,
                 )
                 if not await conn._activate_session(session, cols, rows):
                     return
