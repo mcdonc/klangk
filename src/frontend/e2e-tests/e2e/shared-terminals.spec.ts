@@ -341,15 +341,33 @@ test.describe("shared terminal visibility", () => {
       const ownerWs = await connectWs(owner.token, workspaceId);
       const collabWs = await connectWs(collab.token, workspaceId);
       try {
+        // Drain initial shared_terminals from ui_ready (empty list)
+        await ownerWs.collectUntilQuiet(
+          (m) => m.type === "shared_terminals",
+          500,
+        );
+        await collabWs.collectUntilQuiet(
+          (m) => m.type === "shared_terminals",
+          500,
+        );
+
         // Owner creates shared terminal
         ownerWs.send({ cmd: "create_shared_terminal", name: "pair-dev" });
 
-        // Both should receive shared_terminals update
+        // Both should receive shared_terminals update with pair-dev
         const ownerUpdate = await ownerWs.recvUntil(
-          (m) => m.type === "shared_terminals",
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.name === "pair-dev",
+            ),
         );
         const collabUpdate = await collabWs.recvUntil(
-          (m) => m.type === "shared_terminals",
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.name === "pair-dev",
+            ),
         );
 
         const ownerTerminals = ownerUpdate.terminals as Array<
@@ -397,13 +415,33 @@ test.describe("shared terminal visibility", () => {
       const ownerWs = await connectWs(owner.token, workspaceId);
       const coderWs = await connectWs(coder.token, workspaceId);
       try {
+        // Drain initial shared_terminals from ui_ready
+        await ownerWs.collectUntilQuiet(
+          (m) => m.type === "shared_terminals",
+          500,
+        );
+        await coderWs.collectUntilQuiet(
+          (m) => m.type === "shared_terminals",
+          500,
+        );
+
         // Owner creates a shared terminal
         ownerWs.send({ cmd: "create_shared_terminal", name: "dev-session" });
-        await ownerWs.recvUntil((m) => m.type === "shared_terminals");
 
-        // Coder should receive the shared_terminals broadcast
+        // Both should receive broadcast with dev-session
+        await ownerWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.name === "dev-session",
+            ),
+        );
         const coderUpdate = await coderWs.recvUntil(
-          (m) => m.type === "shared_terminals",
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.name === "dev-session",
+            ),
         );
         const terminals = coderUpdate.terminals as Array<
           Record<string, unknown>
@@ -456,10 +494,32 @@ test.describe("shared terminal visibility", () => {
       const ownerWs = await connectWs(owner.token, workspaceId);
       const specWs = await connectWs(spec.token, workspaceId);
       try {
+        // Drain initial shared_terminals from ui_ready
+        await ownerWs.collectUntilQuiet(
+          (m) => m.type === "shared_terminals",
+          500,
+        );
+        await specWs.collectUntilQuiet(
+          (m) => m.type === "shared_terminals",
+          500,
+        );
+
         // Create then delete
         ownerWs.send({ cmd: "create_shared_terminal", name: "temp" });
-        await ownerWs.recvUntil((m) => m.type === "shared_terminals");
-        await specWs.recvUntil((m) => m.type === "shared_terminals");
+        await ownerWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.name === "temp",
+            ),
+        );
+        await specWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.name === "temp",
+            ),
+        );
 
         ownerWs.send({ cmd: "delete_shared_terminal", name: "temp" });
 
@@ -501,11 +561,29 @@ test.describe("shared terminal visibility", () => {
 
       const client = await connectWs(owner.token, workspaceId);
       try {
+        // Drain initial shared_terminals from ui_ready
+        await client.collectUntilQuiet(
+          (m) => m.type === "shared_terminals",
+          500,
+        );
+
         // Create two shared terminals
         client.send({ cmd: "create_shared_terminal", name: "term-a" });
-        await client.recvUntil((m) => m.type === "shared_terminals");
+        await client.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.name === "term-a",
+            ),
+        );
         client.send({ cmd: "create_shared_terminal", name: "term-b" });
-        await client.recvUntil((m) => m.type === "shared_terminals");
+        await client.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.name === "term-b",
+            ),
+        );
 
         // Start isolated terminal first
         client.send({ cmd: "terminal_start", cols: 80, rows: 24 });
