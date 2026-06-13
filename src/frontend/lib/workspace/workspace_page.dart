@@ -215,10 +215,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
       }
     });
 
-    // Listen for errors
+    // Listen for errors — only show the full-page error screen for
+    // permission/auth errors.  Connection errors are handled by the
+    // reconnecting overlay (_disconnected path).
     _errorSub = wsClient.errors.listen((error) {
       if (mounted) {
-        setState(() => _error = error);
+        final lower = error.toLowerCase();
+        if (lower.contains('permission') || lower.contains('denied')) {
+          setState(() => _error = error);
+        }
       }
     });
   }

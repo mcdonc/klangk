@@ -321,8 +321,11 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'shutdown_container'});
   }
 
-  void sendTerminalStart({int cols = 80, int rows = 24}) {
-    _send({'cmd': 'terminal_start', 'cols': cols, 'rows': rows});
+  void sendTerminalStart({int? cols, int? rows}) {
+    final msg = <String, dynamic>{'cmd': 'terminal_start'};
+    if (cols != null) msg['cols'] = cols;
+    if (rows != null) msg['rows'] = rows;
+    _send(msg);
   }
 
   void sendTerminalInput(String data) {

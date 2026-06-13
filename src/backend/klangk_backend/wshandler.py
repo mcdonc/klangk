@@ -868,8 +868,10 @@ class Connection:
             return
         # Stop existing terminal if any
         await self.stop_terminal()
-        cols = msg.get("cols", 80)
-        rows = msg.get("rows", 24)
+        cols = msg.get("cols", self._terminal_cols)
+        rows = msg.get("rows", self._terminal_rows)
+        self._terminal_cols = cols
+        self._terminal_rows = rows
         command_override = msg.get("commandOverride")
         session = TerminalSession(self.container_id, user_home=self._user_home)
 
@@ -900,15 +902,8 @@ class Connection:
                     command_override=command_override,
                     bridge_token=bridge_token,
                 )
-                # Check we're still the active session — stop_terminal may have
-                # replaced us while session.start() was awaited.
-                if conn.terminal_session is not session:
-                    await session.stop()
+                if not await conn._activate_session(session, cols, rows):
                     return
-                conn.terminal_task = asyncio.create_task(
-                    conn.forward_terminal_output(session)
-                )
-                container.registry.record_activity(conn.container_id)
                 conn.sock.send_json({"type": "terminal_started"})
                 # Rename the initial window to "1" and send the list.
                 try:
@@ -1179,17 +1174,8 @@ class Connection:
         async def _start_shared() -> None:
             try:
                 await session.start(cols, rows)
-                if conn.terminal_session is not session:
-                    await session.stop()
+                if not await conn._activate_session(session, cols, rows):
                     return
-                conn.terminal_task = asyncio.create_task(
-                    conn.forward_terminal_output(session)
-                )
-                # Resize to match the client's terminal size. This forces
-                # tmux to redraw the window content at the correct size,
-                # ensuring the bash prompt is visible on attach.
-                await session.resize(cols, rows)
-                container.registry.record_activity(conn.container_id)
                 conn.sock.send_json(
                     {
                         "type": "terminal_started",
@@ -1449,6 +1435,28 @@ class Connection:
             logger.error("Exec output forwarding error: %s", e)
         finally:
             await self._claim_and_stop_exec()
+
+    async def _activate_session(
+        self, session: TerminalSession, cols: int, rows: int
+    ) -> bool:
+        """Wire up a started session for output forwarding.
+
+        Checks the session is still current, creates the output task,
+        resizes to force a tmux redraw, and records activity.
+        Returns False if the session was superseded.
+        """
+        if self.terminal_session is not session:
+            await session.stop()
+            return False
+        self.terminal_task = asyncio.create_task(
+            self.forward_terminal_output(session)
+        )
+        # Resize to force tmux to redraw at the client's terminal size.
+        # Without this, reattaching shows a blank screen because tmux
+        # skips the redraw when the PTY size matches the default.
+        await session.resize(cols, rows)
+        container.registry.record_activity(self.container_id)
+        return True
 
     async def stop_terminal(self) -> None:
         task = self.terminal_task
