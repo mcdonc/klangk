@@ -978,9 +978,13 @@ class Connection:
         if session is None or not session.is_alive:
             logger.warning("terminal_input: no session or not alive")
             return
-        if session.read_only:
-            return
         data = msg.get("data", "")
+        if session.read_only:
+            # Allow terminal protocol responses (DA queries, color
+            # reports) through so tmux can complete initialization.
+            # Block user-typed input.
+            if not data.startswith("\x1b"):
+                return
         if len(data) > _MAX_INPUT_SIZE:
             logger.warning(
                 "terminal_input too large (%d bytes), dropping", len(data)
