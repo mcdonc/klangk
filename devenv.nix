@@ -47,6 +47,7 @@ in
       sqlite.bin
       rsync
       su
+      util-linux
       zensical
     ]
     ++ (if pkgs.stdenv.isDarwin then [ iproute2mac ] else [ iproute2 ]);
