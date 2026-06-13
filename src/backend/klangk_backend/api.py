@@ -1473,12 +1473,9 @@ ROLE_GROUP_SUFFIXES = ["owners", "coders", "collaborators", "spectators"]
 @router.get("/workspaces/{workspace_id}/roles")
 async def get_workspace_roles(
     workspace_id: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("share")),
 ):
     """Return the workspace's role groups with their members."""
-    ws = await model.get_workspace(workspace_id, user["id"])
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
     roles = []
     for suffix in ROLE_GROUP_SUFFIXES:
         group_name = f"{suffix}-{workspace_id}"
@@ -1508,14 +1505,11 @@ async def add_to_workspace_role(
     workspace_id: str,
     role: str,
     body: AddToRoleRequest,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("share")),
 ):
     """Add a user to a workspace role group."""
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
-    ws = await model.get_workspace(workspace_id, user["id"])
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
     group_name = f"{role}-{workspace_id}"
     group = await model.get_group_by_name(group_name)
     if group is None:
@@ -1532,14 +1526,11 @@ async def remove_from_workspace_role(
     workspace_id: str,
     role: str,
     member_id: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("share")),
 ):
     """Remove a user from a workspace role group."""
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
-    ws = await model.get_workspace(workspace_id, user["id"])
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
     group_name = f"{role}-{workspace_id}"
     group = await model.get_group_by_name(group_name)
     if group is None:

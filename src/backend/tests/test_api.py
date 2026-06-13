@@ -1421,7 +1421,7 @@ class TestWorkspaceRoles:
     async def test_roles_on_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get("/workspaces/fake-id/roles", headers=headers)
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_remove_from_invalid_role(self, client, user):
         headers = await _auth_headers(client)
@@ -1441,7 +1441,7 @@ class TestWorkspaceRoles:
             "/workspaces/fake-id/roles/coders/some-id",
             headers=headers,
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_add_to_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
@@ -1450,7 +1450,7 @@ class TestWorkspaceRoles:
             headers=headers,
             json={"email": "x@test.com"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     async def test_role_group_not_found_add(self, client, user):
         """Adding to a role when the group was deleted returns 404."""
