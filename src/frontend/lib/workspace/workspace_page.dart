@@ -348,10 +348,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
     return Column(
       children: [
         if (hasContent)
-          SizedBox(
-            height: 28,
+          Container(
+            height: 32,
+            decoration: const BoxDecoration(
+              color: KColors.bgAppBar,
+              border: Border(
+                bottom: BorderSide(color: KColors.borderMuted),
+              ),
+            ),
             child: Row(
               children: [
+                const SizedBox(width: 4),
                 // Isolated terminal tabs
                 Expanded(
                   child: ListView(
@@ -382,9 +389,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
                       if (shared.isNotEmpty || _hasPerm('share-terminals'))
                         Container(
                           width: 1,
-                          height: 20,
-                          margin: const EdgeInsets.symmetric(horizontal: 6),
-                          color: KColors.borderMuted,
+                          height: 16,
+                          margin: const EdgeInsets.symmetric(horizontal: 8),
+                          color: KColors.borderDefault,
                         ),
                       // Shared terminal tabs
                       for (final s in shared)
@@ -669,66 +676,73 @@ class _TerminalTabState extends State<_TerminalTab> {
   Widget build(BuildContext context) {
     final accentColor =
         widget.shared ? KColors.accentCyan : KColors.accentGreen;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: widget.active
-                ? KColors.bgSurface
-                : _hovered
-                    ? KColors.bgOverlay
-                    : Colors.transparent,
-            border: Border(
-              bottom: BorderSide(
-                color: widget.active ? accentColor : Colors.transparent,
-                width: 2,
-              ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: widget.active
+                  ? KColors.bgSurface
+                  : _hovered
+                      ? KColors.bgOverlay
+                      : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+              border: widget.active
+                  ? Border.all(color: KColors.borderMuted, width: 0.5)
+                  : null,
             ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.shared) ...[
-                Icon(
-                  widget.readOnly
-                      ? Icons.visibility_outlined
-                      : Icons.people_outline,
-                  size: 12,
-                  color: widget.active ? accentColor : Colors.white38,
-                ),
-                const SizedBox(width: 4),
-              ],
-              Text(
-                widget.name,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: widget.active ? Colors.white : Colors.white60,
-                ),
-              ),
-              if (widget.onClose != null) ...[
-                const SizedBox(width: 4),
-                MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: widget.onClose,
-                    child: Icon(
-                      Icons.close,
-                      size: 12,
-                      color: _hovered
-                          ? Colors.white70
-                          : widget.active
-                              ? Colors.white54
-                              : Colors.white30,
-                    ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.shared) ...[
+                  Icon(
+                    widget.readOnly
+                        ? Icons.visibility_outlined
+                        : Icons.people_outline,
+                    size: 12,
+                    color: widget.active ? accentColor : Colors.white38,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  widget.name,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight:
+                        widget.active ? FontWeight.w600 : FontWeight.normal,
+                    color: widget.active
+                        ? KColors.textPrimary
+                        : _hovered
+                            ? Colors.white70
+                            : KColors.textSecondary,
                   ),
                 ),
+                if (widget.onClose != null) ...[
+                  const SizedBox(width: 6),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: widget.onClose,
+                      child: Icon(
+                        Icons.close,
+                        size: 12,
+                        color: _hovered
+                            ? Colors.white70
+                            : widget.active
+                                ? Colors.white38
+                                : Colors.transparent,
+                      ),
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
