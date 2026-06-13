@@ -48,7 +48,6 @@ in
       rsync
       su
       zensical
-      su
     ]
     ++ (if pkgs.stdenv.isDarwin then [ iproute2mac ] else [ iproute2 ]);
 
