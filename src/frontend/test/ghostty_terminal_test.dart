@@ -33,7 +33,7 @@ class _MockWsClient extends WsClient {
   void emitTerminal(String data) => _output.add(data);
 
   @override
-  void sendTerminalStart({int cols = 80, int rows = 24}) =>
+  void sendTerminalStart({int? cols, int? rows}) =>
       sentCommands.add('terminal_start:${cols}x$rows');
 
   @override

@@ -682,11 +682,11 @@ void main() {
       expect(deleted, ['dev']);
     });
 
-    test('sendTerminalStart uses default cols/rows', () {
+    test('sendTerminalStart omits cols/rows when not provided', () {
       client.sendTerminalStart();
       final msg = jsonDecode(channel.sentMessages.last as String);
-      expect(msg['cols'], 80);
-      expect(msg['rows'], 24);
+      expect(msg.containsKey('cols'), isFalse);
+      expect(msg.containsKey('rows'), isFalse);
     });
 
     test('receives workspace_ready from server', () async {
