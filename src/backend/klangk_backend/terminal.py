@@ -62,12 +62,17 @@ def _build_shell_command(
     socket_path: str | None = None,
     join_session: str | None = None,
     read_only: bool = False,
-) -> list[str]:
+) -> tuple[list[str], str | None]:
     """Build the tmux command for a terminal session.
 
     *socket_path*: use ``-S`` for shared terminal sockets.
     *join_session*: join an existing session group (for shared terminals).
     *read_only*: attach with ``-r`` for spy mode.
+
+    Returns ``(command, unique_session_name)``.  *unique_session_name* is
+    set only for shared terminal joins so ``stop()`` can kill the tmux
+    session inside the container (preventing stale clients that deadlock
+    the tmux server).
     """
     unset_args: list[str] = []
     for key in os.environ:
@@ -106,7 +111,7 @@ def _build_shell_command(
     # Read-only is enforced in handle_terminal_input (wshandler.py),
     # which drops input when session.read_only is True.  tmux's
     # switch-client -r is not used because it caused display issues.
-    return cmd
+    return cmd, unique
 
 
 def shared_socket_path(name: str) -> str:
@@ -401,11 +406,19 @@ async def delete_shared_terminal(container_id: str, name: str) -> None:
 
 
 class ShellProcess:
-    """Owns the PTY + ``podman exec`` subprocess for one shell."""
+    """Owns the PTY + ``podman exec`` subprocess for one shell.
+
+    The master fd is set to non-blocking mode and registered with the
+    asyncio event loop via ``add_reader``.  This avoids the default
+    thread-pool executor whose limited threads (typically 6) are
+    easily exhausted by blocking PTY I/O, causing cascading stalls
+    across all terminal sessions.
+    """
 
     def __init__(self) -> None:
         self._master_fd: int | None = None
         self._proc: asyncio.subprocess.Process | None = None
+        self._read_event: asyncio.Event | None = None
 
     async def start(  # pragma: no cover
         self, argv: list[str], rows: int, cols: int
@@ -426,19 +439,31 @@ class ShellProcess:
         finally:
             os.close(slave_fd)
         self._master_fd = master_fd
+        # Set non-blocking and register with the event loop so reads
+        # and writes never consume a thread-pool slot.
+        os.set_blocking(master_fd, False)
+        self._read_event = asyncio.Event()
+        asyncio.get_running_loop().add_reader(master_fd, self._read_event.set)
 
     async def read(self) -> bytes:  # pragma: no cover
-        loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(
-                None, os.read, self._master_fd, _READ_CHUNK
-            )
+            while True:
+                try:
+                    return os.read(self._master_fd, _READ_CHUNK)
+                except BlockingIOError:
+                    self._read_event.clear()
+                    await self._read_event.wait()
         except OSError:
             return b""
 
     async def write(self, data: bytes) -> None:  # pragma: no cover
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, os.write, self._master_fd, data)
+        try:
+            os.write(self._master_fd, data)
+        except BlockingIOError:
+            # Buffer full — run in executor as fallback so we don't
+            # spin.  This is rare; normally the buffer accepts input.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, os.write, self._master_fd, data)
 
     def resize(self, rows: int, cols: int) -> None:  # pragma: no cover
         _set_winsize(self._master_fd, rows, cols)
@@ -452,6 +477,12 @@ class ShellProcess:
             except ProcessLookupError:
                 pass
         if self._master_fd is not None:
+            try:
+                asyncio.get_running_loop().remove_reader(self._master_fd)
+            except Exception:
+                pass
+            if self._read_event is not None:
+                self._read_event.set()  # unblock any pending read
             try:
                 os.close(self._master_fd)
             except OSError:
@@ -489,6 +520,7 @@ class TerminalSession:
         )
         self._running = False
         self._read_task: asyncio.Task | None = None
+        self._tmux_session_name: str | None = None
 
     async def start(
         self,
@@ -502,7 +534,7 @@ class TerminalSession:
         env = _build_environment(
             command_override, bridge_token, self.user_home
         )
-        shell_cmd = _build_shell_command(
+        shell_cmd, self._tmux_session_name = _build_shell_command(
             self.user_home,
             socket_path=self.socket_path,
             join_session=self.join_session,
@@ -627,6 +659,39 @@ class TerminalSession:
             except OSError:
                 logger.debug("Error closing terminal shell", exc_info=True)
             self._shell = None
+
+        # Kill the tmux session inside the container so the client
+        # doesn't stay attached after the host-side process is gone.
+        # Stale clients block the tmux server's event loop (it tries
+        # to write output to PTYs nobody is reading).
+        if self._tmux_session_name and self.socket_path:
+            try:
+                argv = [
+                    "exec",
+                    "-u",
+                    "klangk",
+                    self.container_id,
+                    "tmux",
+                    "-S",
+                    self.socket_path,
+                    "kill-session",
+                    "-t",
+                    self._tmux_session_name,
+                ]
+                proc = await asyncio.create_subprocess_exec(
+                    podman.PODMAN_BIN,
+                    *argv,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=podman.subprocess_env(),
+                )
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except Exception:
+                logger.debug(
+                    "Failed to kill tmux session %s",
+                    self._tmux_session_name,
+                    exc_info=True,
+                )
 
         logger.info(
             "Terminal session stopped for container %s", self.container_id
