@@ -422,8 +422,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
                           tooltip: 'New terminal',
                           onTap: () => wsClient.sendTerminalNewWindow(),
                         ),
-                      // Separator
-                      if (shared.isNotEmpty || _hasPerm('share-terminals'))
+                      // Separator between isolated and shared tabs
+                      if (_hasPerm('code-in-isolation') &&
+                          (shared.isNotEmpty || _hasPerm('share-terminals')))
                         Container(
                           width: 1,
                           height: 16,
