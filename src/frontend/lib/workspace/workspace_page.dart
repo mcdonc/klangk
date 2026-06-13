@@ -288,6 +288,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
         !identical(wsClient.sharedTerminals, _prevSharedTerminals)) {
       _prevTerminalWindows = wsClient.terminalWindows;
       _prevSharedTerminals = wsClient.sharedTerminals;
+      // Auto-join the first shared terminal for spectators (no
+      // code-in-isolation) so they don't see a blank cursor.
+      if (_activeSharedTerminal == null &&
+          !_hasPerm('code-in-isolation') &&
+          wsClient.sharedTerminals.isNotEmpty) {
+        final name = wsClient.sharedTerminals[0]['name'] as String?;
+        if (name != null) {
+          _activeSharedTerminal = name;
+          wsClient.sendJoinSharedTerminal(name);
+        }
+      }
       if (mounted) setState(() {});
     }
     // Detect WebSocket disconnect after we were connected
