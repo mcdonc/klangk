@@ -3022,6 +3022,73 @@ class TestHandleShutdownContainer:
         wshandler.state.connections.pop(sock2, None)
         wshandler.state.sessions.pop(ws["id"], None)
 
+    async def test_shutdown_saves_terminal_state(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        ws = await _create_workspace_with_acl(user["id"], "shutdown-save")
+        conn.workspace_id = ws["id"]
+        conn.container_id = "cid"
+
+        session = wshandler.state.get_or_create_session(ws["id"])
+        session.terminal_windows[user["id"]] = [
+            {"name": "bash", "index": 0, "id": "@0", "shared": False},
+        ]
+        await session.add_subscriber(sock, "cid")
+
+        with (
+            patch.object(
+                container.registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "klangk_backend.terminal.save_workspace_state",
+                new_callable=AsyncMock,
+            ) as mock_save,
+        ):
+            await conn.handle_shutdown_container()
+
+        mock_save.assert_awaited_once()
+        saved_snapshot = mock_save.call_args[0][1]
+        assert user["id"] in saved_snapshot
+        wshandler.state.sessions.pop(ws["id"], None)
+
+    async def test_shutdown_state_save_failure_does_not_block(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        ws = await _create_workspace_with_acl(user["id"], "shutdown-savefail")
+        conn.workspace_id = ws["id"]
+        conn.container_id = "cid"
+
+        session = wshandler.state.get_or_create_session(ws["id"])
+        session.terminal_windows[user["id"]] = [
+            {"name": "bash", "index": 0, "id": "@0", "shared": False},
+        ]
+        await session.add_subscriber(sock, "cid")
+
+        with (
+            patch.object(
+                container.registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "klangk_backend.terminal.save_workspace_state",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("write failed"),
+            ),
+        ):
+            await conn.handle_shutdown_container()
+
+        # Should not raise; container_stopped event still sent
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict)
+            and m.get("event", {}).get("name") == "container_stopped"
+            for m in sent
+        )
+        wshandler.state.sessions.pop(ws["id"], None)
+
     async def test_shutdown_handles_stop_error(self, user):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)

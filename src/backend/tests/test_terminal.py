@@ -525,6 +525,26 @@ class TestTmuxCommand:
             with pytest.raises(RuntimeError, match="error msg"):
                 await tmux_command("cid", "sess", ["bad-cmd"])
 
+    async def test_retries_on_socket_not_found(self):
+        fail_proc = AsyncMock()
+        fail_proc.communicate = AsyncMock(
+            return_value=(b"", b"No such file or directory")
+        )
+        fail_proc.returncode = 1
+        ok_proc = AsyncMock()
+        ok_proc.communicate = AsyncMock(return_value=(b"ok\n", b""))
+        ok_proc.returncode = 0
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                side_effect=[fail_proc, ok_proc],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            result = await tmux_command("cid", "sess", ["list-windows"])
+        assert result == "ok\n"
+        mock_sleep.assert_awaited_once_with(0.5)
+
 
 class TestListWindows:
     async def test_parses_output(self):

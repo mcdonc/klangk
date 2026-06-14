@@ -1385,6 +1385,7 @@ class Connection:
         Callers must ensure ``container_id`` is set.
         Uses the session's _save_lock so concurrent saves don't overlap.
         """
+        return  # temporarily disabled for debugging
         from .terminal import save_workspace_state
 
         container_id = self.container_id

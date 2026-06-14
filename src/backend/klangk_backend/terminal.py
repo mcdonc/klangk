@@ -166,7 +166,7 @@ async def tmux_command(
             await asyncio.sleep(0.5)
             continue
         raise RuntimeError(f"tmux command failed: {err}")
-    return ""  # unreachable
+    return ""  # pragma: no cover
 
 
 async def list_windows(container_id: str, session_name: str) -> list[dict]:
