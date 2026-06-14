@@ -127,9 +127,10 @@ void main() {
       client.sendTerminalCloseWindow(1);
       client.sendTerminalRenameWindow(0, 'test');
       client.sendTerminalListWindows();
-      client.sendCreateSharedTerminal('dev');
-      client.sendJoinSharedTerminal('dev');
-      client.sendDeleteSharedTerminal('dev');
+      client.sendShareWindow(0);
+      client.sendUnshareWindow(0);
+      client.sendJoinSharedTerminal('uid', 0);
+      client.sendDeleteSharedTerminal('uid', 0);
       client.sendListSharedTerminals();
       client.sendTerminalStop();
       client.sendHeartbeat();
@@ -602,9 +603,10 @@ void main() {
       client.sendTerminalCloseWindow(1);
       client.sendTerminalRenameWindow(0, 'main');
       client.sendTerminalListWindows();
-      client.sendCreateSharedTerminal('dev');
-      client.sendJoinSharedTerminal('dev');
-      client.sendDeleteSharedTerminal('dev');
+      client.sendShareWindow(0);
+      client.sendUnshareWindow(0);
+      client.sendJoinSharedTerminal('uid', 0);
+      client.sendDeleteSharedTerminal('uid', 0);
       client.sendListSharedTerminals();
       client.sendTerminalStop();
       client.sendUiReady();
@@ -625,14 +627,23 @@ void main() {
       expect(msgs[8],
           {'cmd': 'terminal_rename_window', 'index': 0, 'name': 'main'});
       expect(msgs[9], {'cmd': 'terminal_list_windows'});
-      expect(msgs[10], {'cmd': 'create_shared_terminal', 'name': 'dev'});
-      expect(msgs[11], {'cmd': 'join_shared_terminal', 'name': 'dev'});
-      expect(msgs[12], {'cmd': 'delete_shared_terminal', 'name': 'dev'});
-      expect(msgs[13], {'cmd': 'list_shared_terminals'});
-      expect(msgs[14], {'cmd': 'terminal_stop'});
-      expect(msgs[15], {'cmd': 'ui_ready'});
-      expect(msgs[16], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
-      expect(msgs[17], {'cmd': 'workspace_disconnect'});
+      expect(msgs[10], {'cmd': 'share_window', 'index': 0});
+      expect(msgs[11], {'cmd': 'unshare_window', 'index': 0});
+      expect(msgs[12], {
+        'cmd': 'join_shared_terminal',
+        'user_id': 'uid',
+        'window_index': 0,
+      });
+      expect(msgs[13], {
+        'cmd': 'delete_shared_terminal',
+        'user_id': 'uid',
+        'window_index': 0,
+      });
+      expect(msgs[14], {'cmd': 'list_shared_terminals'});
+      expect(msgs[15], {'cmd': 'terminal_stop'});
+      expect(msgs[16], {'cmd': 'ui_ready'});
+      expect(msgs[17], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
+      expect(msgs[18], {'cmd': 'workspace_disconnect'});
     });
 
     test('sendTerminalNewWindow without name omits name field', () {
@@ -672,14 +683,17 @@ void main() {
     });
 
     test('shared_terminal_deleted fires stream', () async {
-      final deleted = <String>[];
+      final deleted = <Map<String, dynamic>>[];
       client.sharedTerminalDeleted.listen(deleted.add);
       channel.serverSend({
         'type': 'shared_terminal_deleted',
-        'name': 'dev',
+        'user_id': 'uid',
+        'window_name': 'dev',
+        'window_index': 0,
       });
       await Future.delayed(Duration.zero);
-      expect(deleted, ['dev']);
+      expect(deleted.length, 1);
+      expect(deleted[0]['window_name'], 'dev');
     });
 
     test('sendTerminalStart omits cols/rows when not provided', () {
@@ -696,11 +710,13 @@ void main() {
       channel.serverSend({
         'type': 'workspace_ready',
         'workspaceId': 'ws-42',
+        'userId': 'user-42',
         'defaultCommand': 'pi',
       });
       await Future.delayed(Duration.zero);
 
       expect(client.currentWorkspaceId, 'ws-42');
+      expect(client.currentUserId, 'user-42');
       expect(client.defaultCommand, 'pi');
       expect(notified, isTrue);
     });

@@ -14,7 +14,7 @@ class WsDebugEntry {
   final Map<String, dynamic>? data;
 
   WsDebugEntry({required this.direction, required this.summary, this.data})
-    : timestamp = DateTime.now();
+      : timestamp = DateTime.now();
 }
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
@@ -229,9 +229,8 @@ class WsClient extends ChangeNotifier {
           } else if (type == 'presence_leave') {
             final uid = json['user_id'] as String?;
             if (uid != null) {
-              presenceUsers = presenceUsers
-                  .where((u) => u['user_id'] != uid)
-                  .toList();
+              presenceUsers =
+                  presenceUsers.where((u) => u['user_id'] != uid).toList();
               notifyListeners();
             }
           } else if (type == 'terminal_windows') {
@@ -373,11 +372,11 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'unshare_window', 'index': index});
   }
 
-  void sendJoinSharedTerminal(String userId, String windowName) {
+  void sendJoinSharedTerminal(String userId, int windowIndex) {
     _send({
       'cmd': 'join_shared_terminal',
       'user_id': userId,
-      'window_name': windowName,
+      'window_index': windowIndex,
     });
   }
 
@@ -385,12 +384,15 @@ class WsClient extends ChangeNotifier {
   /// can skip the "deleted" snackbar for the user who initiated it.
   Map<String, String>? lastDeletedSharedTerminal;
 
-  void sendDeleteSharedTerminal(String userId, String windowName) {
-    lastDeletedSharedTerminal = {'user_id': userId, 'window_name': windowName};
+  void sendDeleteSharedTerminal(String userId, int windowIndex) {
+    lastDeletedSharedTerminal = {
+      'user_id': userId,
+      'window_index': windowIndex.toString(),
+    };
     _send({
       'cmd': 'delete_shared_terminal',
       'user_id': userId,
-      'window_name': windowName,
+      'window_index': windowIndex,
     });
   }
 

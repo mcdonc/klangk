@@ -157,6 +157,7 @@ class TestWsShell:
                                 "user_id": "u1",
                                 "handle": "alice",
                                 "window_name": "dev",
+                                "window_index": 1,
                             },
                         ],
                     }
@@ -297,6 +298,7 @@ class TestWsShell:
                                 "user_id": "u1",
                                 "handle": "alice",
                                 "window_name": "dev",
+                                "window_index": 1,
                             },
                         ],
                     }
@@ -329,7 +331,7 @@ class TestWsShell:
         join_msgs = [s for s in sent if s.get("cmd") == "join_shared_terminal"]
         assert len(join_msgs) == 1
         assert join_msgs[0]["user_id"] == "u1"
-        assert join_msgs[0]["window_name"] == "dev"
+        assert join_msgs[0]["window_index"] == 1
 
     @pytest.mark.asyncio
     async def test_ws_shell_join_shared_not_found(self):
@@ -389,6 +391,7 @@ class TestWsShell:
                                 "user_id": "u1",
                                 "handle": "alice",
                                 "window_name": "dev",
+                                "window_index": 1,
                             },
                         ],
                     }

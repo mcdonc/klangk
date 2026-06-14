@@ -402,7 +402,7 @@ async def _ws_shell(
                         {
                             "cmd": "join_shared_terminal",
                             "user_id": match["user_id"],
-                            "window_name": win_name,
+                            "window_index": match["window_index"],
                         }
                     )
                 )

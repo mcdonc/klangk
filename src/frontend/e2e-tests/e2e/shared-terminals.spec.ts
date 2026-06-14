@@ -445,7 +445,7 @@ test.describe("shared terminal visibility", () => {
         coderWs.send({
           cmd: "join_shared_terminal",
           user_id: devTerminal.user_id,
-          window_name: "dev-session",
+          window_index: devTerminal.window_index as number,
         });
         const joined = await coderWs.recvUntil(
           (m) =>
@@ -513,7 +513,7 @@ test.describe("shared terminal visibility", () => {
         ownerWs.send({
           cmd: "delete_shared_terminal",
           user_id: tempTerminal.user_id,
-          window_name: "temp",
+          window_index: tempTerminal.window_index as number,
         });
 
         // Spectator gets deletion notification + empty list
@@ -571,9 +571,16 @@ test.describe("shared terminal visibility", () => {
               (t) => t.window_name === "term-b",
             ),
         );
-        const ownerUserId = (
-          sharedMsg.terminals as Array<Record<string, unknown>>
-        )[0].user_id as string;
+        const sharedTerminals = sharedMsg.terminals as Array<
+          Record<string, unknown>
+        >;
+        const ownerUserId = sharedTerminals[0].user_id as string;
+        const termA = sharedTerminals.find(
+          (t) => t.window_name === "term-a",
+        ) as Record<string, unknown>;
+        const termB = sharedTerminals.find(
+          (t) => t.window_name === "term-b",
+        ) as Record<string, unknown>;
 
         // Start isolated terminal first
         client.send({ cmd: "terminal_start", cols: 80, rows: 24 });
@@ -584,7 +591,7 @@ test.describe("shared terminal visibility", () => {
           client.send({
             cmd: "join_shared_terminal",
             user_id: ownerUserId,
-            window_name: "term-a",
+            window_index: termA.window_index,
           });
           await client.recvUntil(
             (m) =>
@@ -593,7 +600,7 @@ test.describe("shared terminal visibility", () => {
           client.send({
             cmd: "join_shared_terminal",
             user_id: ownerUserId,
-            window_name: "term-b",
+            window_index: termB.window_index,
           });
           await client.recvUntil(
             (m) =>
@@ -740,7 +747,7 @@ test.describe("shared terminal visibility", () => {
         specWs.send({
           cmd: "join_shared_terminal",
           user_id: terminal.user_id,
-          window_name: "watch-me",
+          window_index: terminal.window_index,
         });
         const joined = await specWs.recvUntil(
           (m) =>
