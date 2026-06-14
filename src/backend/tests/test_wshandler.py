@@ -3151,6 +3151,38 @@ class TestTerminalWindowHandlers:
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "terminal_windows"
 
+    async def test_close_shared_window_broadcasts(self, user):
+        """Closing a shared window broadcasts updated shared_terminals."""
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "ws-1"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[user["id"]] = [
+            {"name": "bash", "shared": True},
+            {"name": "1", "shared": False},
+        ]
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+        try:
+            with patch(
+                "klangk_backend.terminal.close_window",
+                return_value=[{"index": 0, "name": "1", "active": True}],
+            ):
+                await conn.handle_terminal_close_window({"index": 0})
+            # shared "bash" was removed — broadcast should have fired
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            shared_msgs = [
+                c for c in calls if c.get("type") == "shared_terminals"
+            ]
+            assert len(shared_msgs) >= 1
+            # The remaining window "1" is not shared
+            assert shared_msgs[-1]["terminals"] == []
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+            wshandler.state.connections.pop(sock, None)
+
     async def test_close_window_error(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)

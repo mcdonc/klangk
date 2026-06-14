@@ -1051,10 +1051,19 @@ class Connection:
         old = ws_session.terminal_windows.get(user_id, [])
         # Build a map of shared state by window name from old data
         shared_by_name = {w["name"]: w.get("shared", False) for w in old}
+        old_shared = {w["name"] for w in old if w.get("shared")}
         ws_session.terminal_windows[user_id] = [
             {"name": w["name"], "shared": shared_by_name.get(w["name"], False)}
             for w in windows
         ]
+        new_shared = {
+            w["name"]
+            for w in ws_session.terminal_windows[user_id]
+            if w.get("shared")
+        }
+        # Broadcast if shared set changed (window closed/renamed)
+        if old_shared != new_shared:
+            self._broadcast_shared_terminals(ws_session)
         self._save_state_snapshot(ws_session)
 
     async def handle_terminal_new_window(self, msg: dict) -> None:
