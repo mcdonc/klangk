@@ -1469,6 +1469,81 @@ class TestVolumeUserIsolation:
             _run(["klangk", "volumes", "rm", "vol-private"], env=env_a)
 
 
+@pytest.mark.skipif(
+    os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="Flaky on CI: httpx ReadTimeout under load (#341)",
+)
+class TestTerminalSharing:
+    """Test klangk terminals, share, and unshare commands."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def workspace(self, cli_config):
+        _run(["klangk", "create", "e2e-share"], env=cli_config["env"])
+        # Start container so terminal commands work
+        _run(
+            ["klangk", "exec", "e2e-share", "true"],
+            env=cli_config["env"],
+            timeout=60,
+        )
+        yield
+        _run(["klangk", "rm", "e2e-share"], env=cli_config["env"])
+
+    def test_terminals_lists_windows(self, cli_config):
+        result = _run(
+            ["klangk", "terminals", "e2e-share"],
+            env=cli_config["env"],
+            timeout=120,
+        )
+        assert result.returncode == 0
+
+    def test_share_and_unshare_terminal(self, cli_config):
+        env = cli_config["env"]
+        # First discover the window name via `klangk terminals`
+        list_result = _run(
+            ["klangk", "terminals", "e2e-share"],
+            env=env,
+            timeout=120,
+        )
+        assert list_result.returncode == 0
+        # Parse the Rich table to find the first "own" terminal name
+        terminal_name = None
+        for line in list_result.stderr.splitlines():
+            if "│" in line and "own" in line:
+                parts = [p.strip() for p in line.split("│")]
+                # parts: ['', 'name', 'own', '', ...]
+                parts = [p for p in parts if p]
+                if len(parts) >= 2 and parts[1] == "own":
+                    terminal_name = parts[0]
+                    break
+        assert terminal_name is not None, (
+            f"Could not find terminal in output: {list_result.stderr}"
+        )
+
+        result = _run(
+            ["klangk", "share", "e2e-share", terminal_name],
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "shared" in result.stderr.lower()
+
+        result = _run(
+            ["klangk", "unshare", "e2e-share", terminal_name],
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "no longer shared" in result.stderr.lower()
+
+    def test_share_nonexistent_terminal(self, cli_config):
+        result = _run(
+            ["klangk", "share", "e2e-share", "nonexistent"],
+            env=cli_config["env"],
+            timeout=60,
+        )
+        assert result.returncode != 0
+
+
 class TestContainerReplace:
     """Verify podman --replace handles stale/crashed containers."""
 

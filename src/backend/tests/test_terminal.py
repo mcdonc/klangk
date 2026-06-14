@@ -14,16 +14,15 @@ from klangk_backend.terminal import (
     TerminalSession,
     _build_shell_command,
     _make_shell_process,
-    _session_name,
     close_window,
-    create_shared_terminal,
-    delete_shared_terminal,
-    list_shared_terminals,
+    kill_joiner_sessions,
     list_windows,
+    load_workspace_state,
     new_window,
     rename_window,
+    restore_windows,
+    save_workspace_state,
     select_window,
-    shared_socket_path,
     tmux_command,
 )
 
@@ -188,9 +187,17 @@ class TestStart:
     async def test_user_home_sets_home_env(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid", user_home="/home/alice")
+            s = TerminalSession(
+                "cid",
+                session_name="uid-123",
+                user_home="/home/alice",
+                user_id="uid-123",
+                user_handle="alice",
+            )
             await s.start(120, 40)
         assert "HOME=/home/alice" in fake.argv
+        assert "KLANGK_USER_ID=uid-123" in fake.argv
+        assert "KLANGK_USER_HANDLE=alice" in fake.argv
         # Work dir is always /home (bash cd's to $HOME on login)
         assert fake.argv[fake.argv.index("-w") + 1] == "/home"
         # HOME is also passed to tmux via -e so child shells inherit it
@@ -198,9 +205,9 @@ class TestStart:
         tmux_tail = fake.argv[tmux_idx:]
         assert "-e" in tmux_tail
         assert "HOME=/home/alice" in tmux_tail
-        # Session named after handle; -A reattaches on reconnect
+        # Session named by user_id; -A reattaches on reconnect
         assert "-A" in tmux_tail
-        assert tmux_tail[tmux_tail.index("-s") + 1] == "alice"
+        assert tmux_tail[tmux_tail.index("-s") + 1] == "uid-123"
         await s.stop()
 
     async def test_no_user_home_by_default(self):
@@ -394,6 +401,30 @@ class TestStop:
         s = TerminalSession("cid")
         await s.stop()
 
+    async def test_stop_kills_tmux_session_with_socket(self):
+        """When socket_path is set, stop() kills the tmux session."""
+        fake = FakeShell(block_after_chunks=True)
+        with _patch(fake):
+            s = TerminalSession(
+                "cid", session_name="uid", socket_path="/tmp/s.sock"
+            )
+            await s.start()
+        # Manually set tmux session name (normally set by _build_shell_command
+        # when join_session is used with a socket path)
+        s._tmux_session_name = "uid-abc123"
+        proc_mock = AsyncMock()
+        proc_mock.wait = AsyncMock(return_value=0)
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc_mock,
+        ) as mock_exec:
+            await s.stop()
+        mock_exec.assert_called_once()
+        argv = mock_exec.call_args[0]
+        assert "kill-session" in argv
+        assert "-t" in argv
+        assert "uid-abc123" in argv
+
 
 class TestOutput:
     async def test_output_yields_data(self):
@@ -477,14 +508,6 @@ class TestIsAlive:
         assert s.is_alive is False
 
 
-class TestSessionName:
-    def test_extracts_handle(self):
-        assert _session_name("/home/alice") == "alice"
-
-    def test_none(self):
-        assert _session_name(None) is None
-
-
 class TestTmuxCommand:
     async def test_returns_stdout(self):
         proc = AsyncMock()
@@ -502,17 +525,37 @@ class TestTmuxCommand:
             with pytest.raises(RuntimeError, match="error msg"):
                 await tmux_command("cid", "sess", ["bad-cmd"])
 
+    async def test_retries_on_socket_not_found(self):
+        fail_proc = AsyncMock()
+        fail_proc.communicate = AsyncMock(
+            return_value=(b"", b"No such file or directory")
+        )
+        fail_proc.returncode = 1
+        ok_proc = AsyncMock()
+        ok_proc.communicate = AsyncMock(return_value=(b"ok\n", b""))
+        ok_proc.returncode = 0
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                side_effect=[fail_proc, ok_proc],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            result = await tmux_command("cid", "sess", ["list-windows"])
+        assert result == "ok\n"
+        mock_sleep.assert_awaited_once_with(0.5)
+
 
 class TestListWindows:
     async def test_parses_output(self):
         with patch(
             "klangk_backend.terminal.tmux_command",
-            return_value="0|||bash|||1\n1|||build|||0\n",
+            return_value="@0|||0|||bash|||1\n@1|||1|||build|||0\n",
         ):
             result = await list_windows("cid", "sess")
         assert result == [
-            {"index": 0, "name": "bash", "active": True},
-            {"index": 1, "name": "build", "active": False},
+            {"id": "@0", "index": 0, "name": "bash", "active": True},
+            {"id": "@1", "index": 1, "name": "build", "active": False},
         ]
 
     async def test_empty_session(self):
@@ -524,7 +567,7 @@ class TestListWindows:
 class TestNewWindow:
     async def test_creates_window_auto_name(self):
         proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"0|||1|||1\n", b""))
+        proc.communicate = AsyncMock(return_value=(b"@0|||0|||1|||1\n", b""))
         proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
             result = await new_window("cid", "sess")
@@ -534,7 +577,7 @@ class TestNewWindow:
     async def test_auto_name_skips_existing(self):
         proc = AsyncMock()
         proc.communicate = AsyncMock(
-            return_value=(b"0|||1|||0\n1|||2|||1\n", b"")
+            return_value=(b"@0|||0|||1|||0\n@1|||1|||2|||1\n", b"")
         )
         proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
@@ -544,7 +587,7 @@ class TestNewWindow:
     async def test_creates_named_window(self):
         proc = AsyncMock()
         proc.communicate = AsyncMock(
-            return_value=(b"0|||bash|||0\n1|||build|||1\n", b"")
+            return_value=(b"@0|||0|||bash|||0\n@1|||1|||build|||1\n", b"")
         )
         proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
@@ -580,6 +623,15 @@ class TestSelectWindow:
             "cid", "sess", ["select-window", "-t", "sess:2"]
         )
 
+    async def test_selects_by_window_id(self):
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+        ) as mock_cmd:
+            await select_window("cid", "sess", "@5")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["select-window", "-t", "@5"]
+        )
+
 
 class TestCloseWindow:
     async def test_closes_window(self):
@@ -598,6 +650,22 @@ class TestCloseWindow:
             "cid", "sess", ["kill-window", "-t", "sess:1"]
         )
         assert len(result) == 1
+
+    async def test_closes_by_window_id(self):
+        with (
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[],
+            ),
+        ):
+            await close_window("cid", "sess", "@3")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["kill-window", "-t", "@3"]
+        )
 
 
 class TestRenameWindow:
@@ -631,179 +699,202 @@ class TestRenameWindow:
                 await rename_window("cid", "sess", 0, "build")
 
 
-class TestSharedSocketPath:
-    def test_returns_socket_path(self):
-        assert shared_socket_path("dev") == "/home/.terminals/dev.sock"
-
-
-class TestBuildShellCommandShared:
-    def test_socket_path(self):
-        cmd, unique = _build_shell_command(
-            user_home="/home/alice",
-            socket_path="/home/.terminals/dev.sock",
+class TestBuildShellCommandSocketPath:
+    def test_socket_path_sets_dash_s(self):
+        cmd, _ = _build_shell_command(
+            session_name="uid", socket_path="/tmp/test.sock"
         )
         assert "-S" in cmd
-        idx = cmd.index("-S")
-        assert cmd[idx + 1] == "/home/.terminals/dev.sock"
-        assert unique is None
+        assert "/tmp/test.sock" in cmd
 
-    def test_join_session(self):
+
+class TestBuildShellCommandJoinSession:
+    def test_join_session_no_socket(self):
+        """Joining a session group on the default server (no -S)."""
         cmd, unique = _build_shell_command(
+            session_name="joiner-uid",
             user_home="/home/bob",
-            socket_path="/home/.terminals/dev.sock",
-            join_session="dev",
+            join_session="owner-uid",
         )
         assert "-t" in cmd
-        assert "dev" in cmd
-        assert "-s" in cmd
-        # Session name starts with handle + unique suffix
+        assert "owner-uid" in cmd
+        assert "-S" not in cmd
         s_idx = cmd.index("-s")
-        assert cmd[s_idx + 1].startswith("bob-")
+        assert cmd[s_idx + 1].startswith("joiner-uid-")
         assert unique == cmd[s_idx + 1]
-        # Should NOT have -A (that's for isolated sessions)
         assert "-A" not in cmd
 
-    def test_read_only(self):
+    def test_read_only_join(self):
         cmd, unique = _build_shell_command(
+            session_name="joiner-uid",
             user_home="/home/ceo",
-            socket_path="/home/.terminals/dev.sock",
-            join_session="dev",
+            join_session="owner-uid",
             read_only=True,
         )
-        # Read-only is enforced at the application level, not by tmux.
-        # The tmux command is the same as read-write (new-session into group).
         assert "new-session" in cmd
+        assert "-S" not in cmd
         assert "switch-client" not in cmd
         assert unique is not None
 
 
-class TestCreateSharedTerminal:
-    async def test_creates_terminal(self):
-        with patch(
-            "klangk_backend.terminal.tmux_command",
-            return_value="",
-        ) as mock_cmd:
-            await create_shared_terminal("cid", "dev")
-        mock_cmd.assert_called_once_with(
-            "cid",
-            "dev",
-            [
-                "-f",
-                "/etc/tmux-shared.conf",
-                "-S",
-                "/home/.terminals/dev.sock",
-                "new-session",
-                "-d",
-                "-s",
-                "dev",
-                "-c",
-                "/home/work",
-            ],
-        )
+class TestLoadWorkspaceState:
+    async def test_loads_state(self):
+        import json
 
-
-class TestDeleteSharedTerminal:
-    async def test_deletes_terminal(self):
-        with (
-            patch(
-                "klangk_backend.terminal.tmux_command",
-                return_value="",
-            ) as mock_cmd,
-            patch("asyncio.create_subprocess_exec") as mock_exec,
-        ):
-            proc = AsyncMock()
-            proc.communicate = AsyncMock(return_value=(b"", b""))
-            mock_exec.return_value = proc
-            await delete_shared_terminal("cid", "dev")
-        mock_cmd.assert_called_once_with(
-            "cid",
-            "dev",
-            ["-S", "/home/.terminals/dev.sock", "kill-server"],
-        )
-        # Verify socket file is removed after kill
-        mock_exec.assert_called_once()
-        rm_args = mock_exec.call_args[0]
-        assert "rm" in rm_args
-        assert "/home/.terminals/dev.sock" in rm_args
-
-
-class TestListSharedTerminals:
-    async def test_lists_terminals(self):
+        state = {"admin": [{"name": "1", "shared": False}]}
         proc = AsyncMock()
         proc.communicate = AsyncMock(
-            return_value=(b"dev|||alice,bob,\ntest|||carol,\n", b"")
+            return_value=(json.dumps(state).encode(), b"")
         )
         proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            result = await list_shared_terminals("cid")
-        assert len(result) == 2
-        assert result[0]["name"] == "dev"
-        assert result[0]["sessions"] == ["alice", "bob"]
-        assert result[1]["name"] == "test"
-        assert result[1]["sessions"] == ["carol"]
+            result = await load_workspace_state("cid")
+        assert result == state
 
-    async def test_empty(self):
+    async def test_missing_file(self):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", b"No such file"))
+        proc.returncode = 1
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            result = await load_workspace_state("cid")
+        assert result == {}
+
+    async def test_corrupt_json(self):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"not json{", b""))
+        proc.returncode = 0
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            result = await load_workspace_state("cid")
+        assert result == {}
+
+
+class TestSaveWorkspaceState:
+    async def test_saves_state(self):
         proc = AsyncMock()
         proc.communicate = AsyncMock(return_value=(b"", b""))
-        proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            result = await list_shared_terminals("cid")
-        assert result == []
-
-    async def test_dead_server_revived(self):
-        """Dead tmux servers are restarted and returned with anchor session."""
-        proc = AsyncMock()
-        # Shell script restarts dead servers; output includes revived terminal.
-        proc.communicate = AsyncMock(return_value=(b"dev|||dev,\n", b""))
-        proc.returncode = 0
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
-            result = await list_shared_terminals("cid")
-        assert len(result) == 1
-        assert result[0]["name"] == "dev"
-        assert result[0]["sessions"] == ["dev"]
-
-    async def test_malformed_line_skipped(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(
-            return_value=(b"badline\ndev|||alice,\n", b"")
-        )
-        proc.returncode = 0
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
-            result = await list_shared_terminals("cid")
-        assert len(result) == 1
-        assert result[0]["name"] == "dev"
-        assert result[0]["sessions"] == ["alice"]
+            await save_workspace_state(
+                "cid", {"admin": [{"name": "1", "shared": False}]}
+            )
+        proc.communicate.assert_awaited_once()
 
 
-class TestTerminalSessionShared:
-    async def test_shared_session_passes_socket(self):
+class TestRestoreWindows:
+    async def test_creates_missing_windows(self):
+        with patch(
+            "klangk_backend.terminal.list_windows",
+            return_value=[{"name": "1", "index": 0, "active": True}],
+        ):
+            with patch(
+                "klangk_backend.terminal.new_window",
+                return_value=[],
+            ) as mock_new:
+                await restore_windows(
+                    "cid",
+                    "admin",
+                    [
+                        {"name": "1", "shared": False},
+                        {"name": "build", "shared": True},
+                    ],
+                )
+        # Only "build" should be created (1 already exists)
+        mock_new.assert_called_once_with("cid", "admin", name="build")
+
+    async def test_no_missing_windows(self):
+        with patch(
+            "klangk_backend.terminal.list_windows",
+            return_value=[
+                {"name": "1", "index": 0, "active": True},
+                {"name": "build", "index": 1, "active": False},
+            ],
+        ):
+            with patch(
+                "klangk_backend.terminal.new_window",
+            ) as mock_new:
+                await restore_windows(
+                    "cid",
+                    "admin",
+                    [
+                        {"name": "1", "shared": False},
+                        {"name": "build", "shared": True},
+                    ],
+                )
+        mock_new.assert_not_called()
+
+
+class TestKillJoinerSessions:
+    async def test_kills_non_owner_sessions(self):
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+            side_effect=[
+                "admin\nbob-abc123\ncarol-def456\n",  # list-sessions
+                "",  # kill bob
+                "",  # kill carol
+            ],
+        ) as mock_cmd:
+            await kill_joiner_sessions("cid", "admin")
+        # Should have called list-sessions + kill for bob and carol
+        assert mock_cmd.call_count == 3
+
+    async def test_no_joiners(self):
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+            return_value="admin\n",
+        ) as mock_cmd:
+            await kill_joiner_sessions("cid", "admin")
+        # Only list-sessions, no kills
+        assert mock_cmd.call_count == 1
+
+    async def test_kill_session_error_ignored(self):
+        """If kill-session fails for a joiner, continue with others."""
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+            side_effect=[
+                "admin\nbob-abc\ncarol-def\n",  # list-sessions
+                RuntimeError("already exited"),  # kill bob fails
+                "",  # kill carol succeeds
+            ],
+        ) as mock_cmd:
+            await kill_joiner_sessions("cid", "admin")
+        assert mock_cmd.call_count == 3
+
+    async def test_no_sessions(self):
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+            side_effect=RuntimeError("no sessions"),
+        ):
+            # Should not raise
+            await kill_joiner_sessions("cid", "admin")
+
+
+class TestTerminalSessionJoin:
+    async def test_join_session_no_socket(self):
+        """Joining a session group on default server."""
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
             s = TerminalSession(
                 "cid",
-                user_home="/home/alice",
-                socket_path="/home/.terminals/dev.sock",
-                join_session="dev",
+                session_name="joiner-uid",
+                user_home="/home/bob",
+                join_session="owner-uid",
             )
             await s.start(80, 24)
-        # Verify socket path is in the argv
-        assert "-S" in fake.argv
-        idx = fake.argv.index("-S")
-        assert fake.argv[idx + 1] == "/home/.terminals/dev.sock"
+        assert "-S" not in fake.argv
+        assert "-t" in fake.argv
+        assert "owner-uid" in fake.argv
         await s.stop()
 
-    async def test_read_only_session(self):
+    async def test_read_only_join(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
             s = TerminalSession(
                 "cid",
+                session_name="joiner-uid",
                 user_home="/home/ceo",
-                socket_path="/home/.terminals/dev.sock",
-                join_session="dev",
+                join_session="owner-uid",
                 read_only=True,
             )
             await s.start(80, 24)
-        # Read-only is enforced at the application level, not tmux.
         assert "switch-client" not in fake.argv
         assert s.read_only is True
         await s.stop()

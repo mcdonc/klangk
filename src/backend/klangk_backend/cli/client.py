@@ -57,7 +57,7 @@ class KlangkClient:
         return httpx.get(
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=15.0,
+            timeout=30.0,
             **kwargs,
         )
 
@@ -65,7 +65,7 @@ class KlangkClient:
         return httpx.post(
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=15.0,
+            timeout=30.0,
             **kwargs,
         )
 
@@ -73,7 +73,7 @@ class KlangkClient:
         return httpx.put(
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=15.0,
+            timeout=30.0,
             **kwargs,
         )
 
@@ -83,7 +83,7 @@ class KlangkClient:
         return httpx.delete(
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=15.0,
+            timeout=30.0,
             **kwargs,
         )
 
@@ -319,12 +319,15 @@ async def _ws_shell(
     workspace_id: str,
     raw_mode: bool = True,
     command_override: str | None = None,
+    window: str | None = None,
 ) -> None:
     """Run the interactive PTY shell over WebSocket.
 
     raw_mode controls whether stdin is placed in raw (cbreak) mode.
     Pass False in tests or when stdin is not a real terminal.
     command_override, if set, overrides the workspace default command.
+    window, if set, selects a specific window by name. Use
+    ``handle:window_name`` to join another user's shared window.
     """
     async with websockets.connect(
         f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
@@ -341,13 +344,16 @@ async def _ws_shell(
 
         # 2. Start terminal
         cols, rows = _get_terminal_size()
-        start_msg = {"cmd": "terminal_start", "cols": cols, "rows": rows}
+        start_msg: dict = {"cmd": "terminal_start", "cols": cols, "rows": rows}
         if command_override is not None:
             start_msg["commandOverride"] = command_override
         await ws.send(json.dumps(start_msg))
 
         # 3. Drain messages until the first terminal_output (the shell prompt).
-        # Timeout prevents hanging if the container fails to start a shell.
+        # Along the way, collect terminal_windows and shared_terminals for
+        # window selection.
+        own_windows: list[dict] = []
+        shared_terminals: list[dict] = []
         try:
             deadline = asyncio.get_event_loop().time() + 30
             while True:
@@ -356,11 +362,15 @@ async def _ws_shell(
                     raise asyncio.TimeoutError
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                 msg = json.loads(raw)
-                if msg.get("type") == "terminal_output":
+                if msg.get("type") == "terminal_windows":
+                    own_windows = msg.get("windows", [])
+                elif msg.get("type") == "shared_terminals":
+                    shared_terminals = msg.get("terminals", [])
+                elif msg.get("type") == "terminal_output":
                     sys.stdout.write(msg.get("data", ""))
                     sys.stdout.flush()
                     break
-                if msg.get("type") == "error":  # pragma: no cover
+                elif msg.get("type") == "error":  # pragma: no cover
                     raise ConnectionError(
                         f"Server error: {msg.get('message', 'unknown')}"
                     )
@@ -368,6 +378,67 @@ async def _ws_shell(
             raise ConnectionError(
                 "Terminal did not start within 30 seconds"
             ) from None
+
+        # 3b. Select window if requested.
+        if window is not None:
+            if ":" in window:
+                # Shared terminal: "handle:window_name"
+                owner_handle, win_name = window.split(":", 1)
+                match = next(
+                    (
+                        t
+                        for t in shared_terminals
+                        if t.get("handle") == owner_handle
+                        and t.get("window_name") == win_name
+                    ),
+                    None,
+                )
+                if match is None:
+                    raise ConnectionError(
+                        f"Shared terminal '{window}' not found"
+                    )
+                await ws.send(
+                    json.dumps(
+                        {
+                            "cmd": "join_shared_terminal",
+                            "user_id": match["user_id"],
+                            "window_id": match["window_id"],
+                        }
+                    )
+                )
+                # Wait for terminal_started confirmation
+                deadline = asyncio.get_event_loop().time() + 10
+                while True:
+                    remaining = deadline - asyncio.get_event_loop().time()
+                    if remaining <= 0:  # pragma: no cover
+                        raise asyncio.TimeoutError
+                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                    msg = json.loads(raw)
+                    if msg.get("type") == "terminal_started":
+                        break
+                    if msg.get("type") == "terminal_output":
+                        sys.stdout.write(msg.get("data", ""))
+                        sys.stdout.flush()
+                    if msg.get("type") == "error":
+                        raise ConnectionError(
+                            f"Failed to join: {msg.get('message')}"
+                        )
+            else:
+                # Own window by name
+                match = next(
+                    (w for w in own_windows if w.get("name") == window),
+                    None,
+                )
+                if match is None:
+                    raise ConnectionError(f"Window '{window}' not found")
+                await ws.send(
+                    json.dumps(
+                        {
+                            "cmd": "terminal_select_window",
+                            "index": match["index"],
+                        }
+                    )
+                )
 
         # 4. Put terminal in raw mode, run shell, restore
         # raw_mode path: tcgetattr + tty.setraw + _raw_mode_exit + terminal_stop  # pragma: no cover

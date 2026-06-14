@@ -152,143 +152,29 @@ class TestHostPaths:
         assert str(home).startswith(str(temp_data_dir))
 
 
-class TestSuggestHandle:
-    def test_email_local_part(self):
-        assert ws_mod.suggest_handle("alice@example.com") == "alice"
-
-    def test_sanitizes_special_chars(self):
-        assert ws_mod.suggest_handle("Alice+Dev@foo.com") == "alicedev"
-
-    def test_preserves_dots_dashes_underscores(self):
-        assert ws_mod.suggest_handle("bob.smith@foo.com") == "bob.smith"
-        assert ws_mod.suggest_handle("bob-smith@foo.com") == "bob-smith"
-        assert ws_mod.suggest_handle("bob_smith@foo.com") == "bob_smith"
-
-    def test_empty_local_part_fallback(self):
-        assert ws_mod.suggest_handle("@foo.com") == "user"
-
-    def test_no_at_sign(self):
-        assert ws_mod.suggest_handle("admin") == "admin"
-
-    def test_truncates_long_handle(self):
-        result = ws_mod.suggest_handle("a" * 100 + "@foo.com")
-        assert len(result) <= ws_mod._MAX_HANDLE_LEN
-
-
-class TestSetUserHandle:
-    async def test_creates_handle(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws")
-        result = ws_mod.set_user_handle(
-            user["id"], ws["id"], "user-uuid-1", "alice"
-        )
-        assert result == "/home/alice"
+class TestEnsureHomeSymlink:
+    async def test_creates_symlink(self, user):
+        ws = await ws_mod.create_workspace(user["id"], "symlink-ws")
         home = ws_mod.home_path(user["id"], ws["id"])
+        result = ws_mod.ensure_home_symlink(home, "alice", "uid-1")
+        assert result == "/home/alice"
         symlink = home / "alice"
         assert symlink.is_symlink()
-        assert os.readlink(symlink) == ".users/user-uuid-1"
-        assert (home / ".users" / "user-uuid-1").is_dir()
+        assert os.readlink(symlink) == ".users/uid-1"
+        assert (home / ".users" / "uid-1").is_dir()
 
     async def test_idempotent(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws2")
-        ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "bob")
-        result = ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "bob")
+        ws = await ws_mod.create_workspace(user["id"], "symlink-ws2")
+        home = ws_mod.home_path(user["id"], ws["id"])
+        ws_mod.ensure_home_symlink(home, "bob", "uid-1")
+        result = ws_mod.ensure_home_symlink(home, "bob", "uid-1")
         assert result == "/home/bob"
 
-    async def test_conflict_raises(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws3")
-        ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "alice")
-        with pytest.raises(ValueError, match="already taken"):
-            ws_mod.set_user_handle(user["id"], ws["id"], "uid-2", "alice")
-
-    async def test_rename_handle(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws4")
-        ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "alice")
-        result = ws_mod.set_user_handle(
-            user["id"], ws["id"], "uid-1", "alicia"
-        )
-        assert result == "/home/alicia"
+    async def test_rename_removes_old_symlink(self, user):
+        ws = await ws_mod.create_workspace(user["id"], "symlink-ws3")
         home = ws_mod.home_path(user["id"], ws["id"])
+        ws_mod.ensure_home_symlink(home, "alice", "uid-1")
+        result = ws_mod.ensure_home_symlink(home, "alicia", "uid-1")
+        assert result == "/home/alicia"
         assert not (home / "alice").exists()
         assert (home / "alicia").is_symlink()
-
-    async def test_reserved_name_rejected(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws5")
-        with pytest.raises(ValueError, match="reserved"):
-            ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "work")
-
-    async def test_dot_prefix_rejected(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws6")
-        with pytest.raises(ValueError, match="dot"):
-            ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", ".hidden")
-
-    async def test_invalid_chars_rejected(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws7")
-        with pytest.raises(ValueError, match="lowercase"):
-            ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "Alice")
-        with pytest.raises(ValueError, match="lowercase"):
-            ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "a b")
-
-    async def test_empty_handle_rejected(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws8")
-        with pytest.raises(ValueError, match="empty"):
-            ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "")
-
-    async def test_too_long_handle_rejected(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws9")
-        with pytest.raises(ValueError, match="characters"):
-            ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "a" * 100)
-
-    async def test_file_conflict_rejected(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "handle-ws10")
-        home = ws_mod.home_path(user["id"], ws["id"])
-        (home / "taken").mkdir()
-        with pytest.raises(ValueError, match="conflicts"):
-            ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "taken")
-
-
-class TestGetUserHandle:
-    async def test_returns_handle(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "get-handle")
-        ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "alice")
-        handle = ws_mod.get_user_handle(user["id"], ws["id"], "uid-1")
-        assert handle == "alice"
-
-    async def test_returns_none_when_absent(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "get-handle2")
-        handle = ws_mod.get_user_handle(user["id"], ws["id"], "uid-1")
-        assert handle is None
-
-    async def test_returns_none_for_nonexistent_workspace(self, user):
-        handle = ws_mod.get_user_handle(user["id"], "fake-ws", "uid-1")
-        assert handle is None
-
-
-class TestSuggestAlternative:
-    async def test_suggests_suffixed_name(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "alt-ws")
-        ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "alice")
-        alt = ws_mod.suggest_alternative(user["id"], ws["id"], "alice")
-        assert alt == "alice-2"
-
-    async def test_skips_taken_suffixes(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "alt-ws2")
-        ws_mod.set_user_handle(user["id"], ws["id"], "uid-1", "alice")
-        ws_mod.set_user_handle(user["id"], ws["id"], "uid-2", "alice-2")
-        alt = ws_mod.suggest_alternative(user["id"], ws["id"], "alice")
-        assert alt == "alice-3"
-
-    async def test_truncates_long_handle(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "alt-ws3")
-        long_handle = "a" * ws_mod._MAX_HANDLE_LEN
-        # Create a symlink with the long handle to force suffix
-        ws_mod.set_user_handle(
-            user["id"],
-            ws["id"],
-            "uid-1",
-            long_handle[: ws_mod._MAX_HANDLE_LEN],
-        )
-        alt = ws_mod.suggest_alternative(
-            user["id"], ws["id"], long_handle[: ws_mod._MAX_HANDLE_LEN]
-        )
-        assert len(alt) <= ws_mod._MAX_HANDLE_LEN
-        assert alt.endswith("-2")

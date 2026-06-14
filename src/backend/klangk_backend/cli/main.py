@@ -13,10 +13,15 @@ from rich.console import Console
 from rich.table import Table
 
 from .auth import login, logout as do_logout
+import json
+
 from .client import (
     AuthError,
     KlangkClient,
     WorkspaceNotFoundError,
+    _WS_MAX_SIZE,
+    _get_terminal_size,
+    _send_ignore_closed,
     _ws_exec,
     _ws_shell,
 )
@@ -583,6 +588,10 @@ def shell(
     workspace: str | None = typer.Argument(
         None, help="Workspace name (or select interactively)"
     ),
+    terminal: str | None = typer.Argument(
+        None,
+        help="Terminal name to select (or handle:name for shared)",
+    ),
     command: str | None = typer.Option(
         None,
         "--command",
@@ -638,7 +647,293 @@ def shell(
 
     token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
-    asyncio.run(_ws_shell(ws_url, token, ws.id, command_override=command))
+    asyncio.run(
+        _ws_shell(
+            ws_url,
+            token,
+            ws.id,
+            command_override=command,
+            window=terminal,
+        )
+    )
+
+
+def _resolve_workspace_and_url(
+    workspace_name: str,
+) -> tuple:
+    """Resolve a workspace by name and return (ws, ws_url, token)."""
+    cfg = _cfg()
+    _require_auth()
+    client = _client()
+    try:
+        ws = client.resolve_workspace(workspace_name)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{workspace_name}'")
+        raise typer.Exit(code=1) from None
+    server_url = cfg.server.url.rstrip("/")
+    if server_url.startswith("http://"):
+        ws_url = server_url.replace("http://", "ws://") + "/ws"
+    elif server_url.startswith("https://"):  # pragma: no cover
+        ws_url = server_url.replace("https://", "wss://") + "/ws"
+    else:  # pragma: no cover
+        ws_url = f"ws://{server_url}/ws"
+    return ws, ws_url, cfg.auth.token
+
+
+@app.command("terminals")
+def terminals(
+    workspace: str = typer.Argument(help="Workspace name"),
+) -> None:
+    """List all terminals (own + shared) in a workspace."""
+    ws, ws_url, token = _resolve_workspace_and_url(workspace)
+
+    # We need to start a terminal to get the window list, then also
+    # get shared terminals. Use _ws_command to get each.
+    async def _list() -> None:
+        async with websockets.connect(
+            f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+        ) as conn:
+            await conn.send(
+                json.dumps({"cmd": "workspace_connect", "workspaceId": ws.id})
+            )
+            resp = json.loads(await conn.recv())
+            if resp.get("type") != "workspace_ready":
+                raise ConnectionError(f"Connection failed: {resp}")
+
+            await conn.send(json.dumps({"cmd": "ui_ready"}))
+
+            # Wait for container_ready, collecting shared_terminals along
+            # the way (sent during ui_ready).
+            shared: list[dict] = []
+            deadline = asyncio.get_event_loop().time() + 60
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    raise asyncio.TimeoutError
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "shared_terminals":
+                    shared = msg.get("terminals", [])
+                if (
+                    msg.get("type") == "event"
+                    and isinstance(msg.get("event"), dict)
+                    and msg["event"].get("name") == "container_ready"
+                ):
+                    break
+
+            # Start terminal to get own windows.
+            # terminal_windows arrives after terminal_started — skip
+            # terminal_output and other messages until we get it.
+            cols, rows = _get_terminal_size()
+            await conn.send(
+                json.dumps(
+                    {"cmd": "terminal_start", "cols": cols, "rows": rows}
+                )
+            )
+            own_windows: list[dict] = []
+            deadline = asyncio.get_event_loop().time() + 30
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "terminal_windows":
+                    own_windows = msg.get("windows", [])
+                    break
+
+            # Print results
+            table = Table(title=f"Terminals in {ws.name}")
+            table.add_column("Name")
+            table.add_column("Type")
+            table.add_column("Owner")
+            for w in own_windows:
+                table.add_row(w["name"], "own", "")
+            for t in shared:
+                table.add_row(
+                    t["window_name"],
+                    "shared",
+                    t.get("handle", ""),
+                )
+            _err.print(table)
+
+            await _send_ignore_closed(
+                conn, json.dumps({"cmd": "terminal_stop"})
+            )
+
+    asyncio.run(_list())
+
+
+@app.command("share")
+def share(
+    workspace: str = typer.Argument(help="Workspace name"),
+    terminal: str = typer.Argument(help="Terminal name to share"),
+) -> None:
+    """Share a terminal with other workspace members."""
+    ws, ws_url, token = _resolve_workspace_and_url(workspace)
+
+    async def _share() -> None:
+        async with websockets.connect(
+            f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+        ) as conn:
+            await conn.send(
+                json.dumps({"cmd": "workspace_connect", "workspaceId": ws.id})
+            )
+            resp = json.loads(await conn.recv())
+            if resp.get("type") != "workspace_ready":
+                raise ConnectionError(f"Connection failed: {resp}")
+
+            await conn.send(json.dumps({"cmd": "ui_ready"}))
+
+            # Wait for container_ready
+            deadline = asyncio.get_event_loop().time() + 60
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    raise asyncio.TimeoutError
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if (
+                    msg.get("type") == "event"
+                    and isinstance(msg.get("event"), dict)
+                    and msg["event"].get("name") == "container_ready"
+                ):
+                    break
+
+            # Start terminal to get window list
+            cols, rows = _get_terminal_size()
+            await conn.send(
+                json.dumps(
+                    {"cmd": "terminal_start", "cols": cols, "rows": rows}
+                )
+            )
+            own_windows: list[dict] = []
+            deadline = asyncio.get_event_loop().time() + 30
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "terminal_windows":
+                    own_windows = msg.get("windows", [])
+                    break
+            match = next(
+                (w for w in own_windows if w["name"] == terminal), None
+            )
+            if match is None:
+                _err.print(f"[red]Terminal '{terminal}' not found[/red]")
+                raise typer.Exit(code=1)
+
+            await conn.send(
+                json.dumps({"cmd": "share_window", "window_id": match["id"]})
+            )
+            # Wait for shared_terminals confirmation
+            deadline = asyncio.get_event_loop().time() + 10
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "shared_terminals":
+                    _err.print(
+                        f"[green]Terminal '{terminal}' is now shared[/green]"
+                    )
+                    break
+
+            await _send_ignore_closed(
+                conn, json.dumps({"cmd": "terminal_stop"})
+            )
+
+    asyncio.run(_share())
+
+
+@app.command("unshare")
+def unshare(
+    workspace: str = typer.Argument(help="Workspace name"),
+    terminal: str = typer.Argument(help="Terminal name to unshare"),
+) -> None:
+    """Stop sharing a terminal."""
+    ws, ws_url, token = _resolve_workspace_and_url(workspace)
+
+    async def _unshare() -> None:
+        async with websockets.connect(
+            f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+        ) as conn:
+            await conn.send(
+                json.dumps({"cmd": "workspace_connect", "workspaceId": ws.id})
+            )
+            resp = json.loads(await conn.recv())
+            if resp.get("type") != "workspace_ready":
+                raise ConnectionError(f"Connection failed: {resp}")
+
+            await conn.send(json.dumps({"cmd": "ui_ready"}))
+
+            # Wait for container_ready
+            deadline = asyncio.get_event_loop().time() + 60
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    raise asyncio.TimeoutError
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if (
+                    msg.get("type") == "event"
+                    and isinstance(msg.get("event"), dict)
+                    and msg["event"].get("name") == "container_ready"
+                ):
+                    break
+
+            # Start terminal to get window list
+            cols, rows = _get_terminal_size()
+            await conn.send(
+                json.dumps(
+                    {"cmd": "terminal_start", "cols": cols, "rows": rows}
+                )
+            )
+            own_windows: list[dict] = []
+            deadline = asyncio.get_event_loop().time() + 30
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "terminal_windows":
+                    own_windows = msg.get("windows", [])
+                    break
+
+            match = next(
+                (w for w in own_windows if w["name"] == terminal), None
+            )
+            if match is None:
+                _err.print(f"[red]Terminal '{terminal}' not found[/red]")
+                raise typer.Exit(code=1)
+
+            await conn.send(
+                json.dumps({"cmd": "unshare_window", "window_id": match["id"]})
+            )
+            # Wait for shared_terminals confirmation
+            deadline = asyncio.get_event_loop().time() + 10
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "shared_terminals":
+                    _err.print(
+                        f"[green]Terminal '{terminal}' is no longer"
+                        " shared[/green]"
+                    )
+                    break
+
+            await _send_ignore_closed(
+                conn, json.dumps({"cmd": "terminal_stop"})
+            )
+
+    asyncio.run(_unshare())
 
 
 @app.command(

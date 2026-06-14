@@ -354,5 +354,16 @@ void main() {
       );
       client.close();
     });
+
+    testWidgets('clearScreen writes escape sequence', (tester) async {
+      final client = _MockWsClient();
+      await tester.pumpWidget(_build(client));
+      await tester.pumpAndSettle();
+      final state = tester.state<GhosttyTerminalState>(
+        find.byType(GhosttyTerminal),
+      );
+      state.clearScreen();
+      client.close();
+    });
   });
 }

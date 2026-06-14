@@ -1,7 +1,8 @@
 """Tests for klangk CLI commands (main.py)."""
 
+import json
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -514,6 +515,399 @@ class TestMainCLI:
                     main.shell("target-ws")
 
         client.resolve_workspace.assert_called_once_with("target-ws")
+
+    def test_shell_with_terminal_arg(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="target" + "0" * 52,
+            name="target-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        captured_kwargs = {}
+
+        async def fake_shell(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(main, "_ws_shell", fake_shell):
+                os.environ["TERM"] = "xterm-256color"
+                with patch("termios.tcgetattr", return_value=None):
+                    main.shell("target-ws", "build")
+
+        assert captured_kwargs["window"] == "build"
+
+    def test_terminals_command(self, logged_in_cfg, monkeypatch, reset_env):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        messages = [
+            json.dumps({"type": "workspace_ready"}),
+            json.dumps(
+                {
+                    "type": "shared_terminals",
+                    "terminals": [
+                        {
+                            "user_id": "u1",
+                            "handle": "alice",
+                            "window_name": "dev",
+                        },
+                    ],
+                }
+            ),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "terminal_started"}),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
+                        {
+                            "id": "@1",
+                            "index": 1,
+                            "name": "build",
+                            "active": False,
+                        },
+                    ],
+                }
+            ),
+        ]
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("websockets.connect", return_value=mock_ws),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            main.terminals("my-ws")
+
+    def test_share_command(self, logged_in_cfg, monkeypatch, reset_env):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        messages = [
+            json.dumps({"type": "workspace_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "terminal_started"}),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
+                        {
+                            "id": "@1",
+                            "index": 1,
+                            "name": "build",
+                            "active": False,
+                        },
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "shared_terminals",
+                    "terminals": [
+                        {
+                            "user_id": "u1",
+                            "handle": "me",
+                            "window_name": "build",
+                        },
+                    ],
+                }
+            ),
+        ]
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("websockets.connect", return_value=mock_ws),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            main.share("my-ws", "build")
+
+        # Should have sent share_window command
+        sent = [
+            json.loads(c[0][0])
+            for c in mock_ws.send.call_args_list
+            if isinstance(c[0][0], str)
+        ]
+        assert any(s.get("cmd") == "share_window" for s in sent)
+
+    def test_unshare_command(self, logged_in_cfg, monkeypatch, reset_env):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        messages = [
+            json.dumps({"type": "workspace_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "terminal_started"}),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
+                        {
+                            "id": "@1",
+                            "index": 1,
+                            "name": "build",
+                            "active": False,
+                        },
+                    ],
+                }
+            ),
+            json.dumps({"type": "shared_terminals", "terminals": []}),
+        ]
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("websockets.connect", return_value=mock_ws),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            main.unshare("my-ws", "build")
+
+        sent = [
+            json.loads(c[0][0])
+            for c in mock_ws.send.call_args_list
+            if isinstance(c[0][0], str)
+        ]
+        assert any(s.get("cmd") == "unshare_window" for s in sent)
+
+    def test_share_terminal_not_found(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        messages = [
+            json.dumps({"type": "workspace_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "terminal_started"}),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
+                    ],
+                }
+            ),
+        ]
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("websockets.connect", return_value=mock_ws),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(typer.Exit):
+                main.share("my-ws", "nonexistent")
+
+    def test_terminals_workspace_not_found(self, logged_in_cfg, monkeypatch):
+        from klangk_backend.cli import main
+
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
+
+        with patch.object(main, "_client", return_value=client):
+            with pytest.raises(typer.Exit):
+                main.terminals("nope")
+
+    def test_terminals_connection_failure(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        messages = [
+            json.dumps({"type": "error", "message": "fail"}),
+        ]
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("websockets.connect", return_value=mock_ws),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(ConnectionError):
+                main.terminals("my-ws")
+
+    def test_share_connection_failure(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        messages = [
+            json.dumps({"type": "error", "message": "fail"}),
+        ]
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("websockets.connect", return_value=mock_ws),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(ConnectionError):
+                main.share("my-ws", "build")
+
+    def test_unshare_connection_failure(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        messages = [
+            json.dumps({"type": "error", "message": "fail"}),
+        ]
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("websockets.connect", return_value=mock_ws),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(ConnectionError):
+                main.unshare("my-ws", "build")
+
+    def test_unshare_terminal_not_found(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        from klangk_backend.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        messages = [
+            json.dumps({"type": "workspace_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "terminal_started"}),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
+                    ],
+                }
+            ),
+        ]
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("websockets.connect", return_value=mock_ws),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(typer.Exit):
+                main.unshare("my-ws", "nonexistent")
 
     def test_edit_with_flags(self, logged_in_cfg, monkeypatch):
         from klangk_backend.cli import main

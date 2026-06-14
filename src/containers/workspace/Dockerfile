@@ -36,7 +36,6 @@ RUN chmod +x /opt/klangk/entrypoint.sh \
       /opt/klangk/bin/setup-user-pi
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
-COPY tmux-shared.conf /etc/tmux-shared.conf
 
 # Fix non-root group ownership that causes crun fchownat errors with
 # --userns=keep-id. crun cannot remap groups like utmp, shadow, adm, ssh
