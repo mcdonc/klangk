@@ -715,8 +715,6 @@ class _TerminalTabState extends State<_TerminalTab> {
 
   @override
   Widget build(BuildContext context) {
-    final accentColor =
-        widget.shared ? KColors.accentCyan : KColors.accentGreen;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
       child: MouseRegion(
@@ -746,9 +744,9 @@ class _TerminalTabState extends State<_TerminalTab> {
                   Icon(
                     widget.readOnly
                         ? Icons.visibility_outlined
-                        : Icons.people_outline,
+                        : Icons.edit_outlined,
                     size: 12,
-                    color: widget.active ? accentColor : Colors.white38,
+                    color: widget.active ? KColors.accentAmber : Colors.white38,
                   ),
                   const SizedBox(width: 4),
                 ],
@@ -775,7 +773,9 @@ class _TerminalTabState extends State<_TerminalTab> {
                       child: Tooltip(
                         message: widget.isShared ? 'Unshare' : 'Share',
                         child: Icon(
-                          widget.isShared ? Icons.people : Icons.share_outlined,
+                          widget.isShared
+                              ? Icons.cell_tower
+                              : Icons.share_outlined,
                           size: 12,
                           color: widget.isShared
                               ? KColors.accentCyan
