@@ -32,7 +32,6 @@ class WorkspaceChat extends StatefulWidget {
   State<WorkspaceChat> createState() => WorkspaceChatState();
 }
 
-@visibleForTesting
 class WorkspaceChatState extends State<WorkspaceChat> {
   final List<Map<String, dynamic>> _messages = [];
   final _scrollController = ScrollController();
