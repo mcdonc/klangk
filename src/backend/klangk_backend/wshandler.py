@@ -161,6 +161,7 @@ class WorkspaceSession:
         # This is the in-memory authority; snapshots are persisted
         # to /home/.workspace-state.json for crash recovery.
         self.terminal_windows: dict[str, list[dict]] = {}
+        self._save_lock = asyncio.Lock()
 
     async def reset(self) -> None:
         self.subscribers.clear()
@@ -1352,17 +1353,25 @@ class Connection:
         )
 
     def _save_state_snapshot(self, ws_session) -> None:
-        """Fire-and-forget save of workspace state to the container.
+        """Schedule a serialized save of workspace state to the container.
 
         Callers must ensure ``container_id`` is set.
+        Uses the session's _save_lock so concurrent saves don't overlap.
         """
         from .terminal import save_workspace_state
 
-        asyncio.create_task(
-            save_workspace_state(
-                self.container_id, ws_session.terminal_windows
-            )
-        )
+        container_id = self.container_id
+        # Snapshot the state now — the dict may mutate before the task runs.
+        snapshot = {
+            uid: [dict(w) for w in wins]
+            for uid, wins in ws_session.terminal_windows.items()
+        }
+
+        async def _do_save() -> None:
+            async with ws_session._save_lock:
+                await save_workspace_state(container_id, snapshot)
+
+        asyncio.create_task(_do_save())
 
     # Keep old handler name for backwards compat with existing E2E tests
     async def handle_create_shared_terminal(self, msg: dict) -> None:

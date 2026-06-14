@@ -329,15 +329,18 @@ async def load_workspace_state(container_id: str) -> dict:
 
 
 async def save_workspace_state(container_id: str, state: dict) -> None:
-    """Fire-and-forget snapshot of per-user workspace state.
+    """Snapshot per-user workspace state.
 
     Writes atomically to /home/.workspace-state.json via temp + rename.
+    Callers should serialize access via WorkspaceSession._save_lock.
     """
     import json
 
-    tmp_path = f"{_STATE_PATH}.tmp"
+    tmp_path = f"{_STATE_PATH}.{uuid.uuid4().hex[:8]}.tmp"
     data = json.dumps(state, indent=2)
-    script = f"cat > {tmp_path} && mv {tmp_path} {_STATE_PATH}"
+    script = (
+        f"cat > {tmp_path} && mv {tmp_path} {_STATE_PATH} || rm -f {tmp_path}"
+    )
     argv = [
         "exec",
         "-i",
