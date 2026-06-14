@@ -3402,13 +3402,27 @@ class TestShareWindowHandlers:
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
                 ),
-                patch("klangk_backend.terminal.new_window", return_value=[]),
+                patch(
+                    "klangk_backend.terminal.new_window",
+                    return_value=[
+                        {"id": "@0", "index": 0, "name": "1", "active": False},
+                        {
+                            "id": "@1",
+                            "index": 1,
+                            "name": "dev",
+                            "active": True,
+                        },
+                    ],
+                ),
             ):
                 await conn.handle_create_shared_terminal({"name": "dev"})
             windows = session.terminal_windows[user["id"]]
             assert len(windows) == 2
-            assert windows[1]["name"] == "dev"
-            assert windows[1]["shared"] is True
+            dev = next(w for w in windows if w["name"] == "dev")
+            assert dev["shared"] is True
+            assert dev["id"] == "@1"
+            orig = next(w for w in windows if w["name"] == "1")
+            assert orig["shared"] is False
         finally:
             wshandler.state.sessions.pop("ws-1", None)
             wshandler.state.connections.pop(sock, None)
