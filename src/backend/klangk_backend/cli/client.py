@@ -57,7 +57,7 @@ class KlangkClient:
         return httpx.get(
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=15.0,
+            timeout=30.0,
             **kwargs,
         )
 
@@ -65,7 +65,7 @@ class KlangkClient:
         return httpx.post(
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=15.0,
+            timeout=30.0,
             **kwargs,
         )
 
@@ -73,7 +73,7 @@ class KlangkClient:
         return httpx.put(
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=15.0,
+            timeout=30.0,
             **kwargs,
         )
 
@@ -83,7 +83,7 @@ class KlangkClient:
         return httpx.delete(
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=15.0,
+            timeout=30.0,
             **kwargs,
         )
 
