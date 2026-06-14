@@ -1494,9 +1494,29 @@ class TestTerminalSharing:
 
     def test_share_and_unshare_terminal(self, cli_config):
         env = cli_config["env"]
-        # The initial tmux window is named "bash"
+        # First discover the window name via `klangk terminals`
+        list_result = _run(
+            ["klangk", "terminals", "e2e-share"],
+            env=env,
+            timeout=60,
+        )
+        assert list_result.returncode == 0
+        # Parse the Rich table to find the first "own" terminal name
+        terminal_name = None
+        for line in list_result.stderr.splitlines():
+            if "│" in line and "own" in line:
+                parts = [p.strip() for p in line.split("│")]
+                # parts: ['', 'name', 'own', '', ...]
+                parts = [p for p in parts if p]
+                if len(parts) >= 2 and parts[1] == "own":
+                    terminal_name = parts[0]
+                    break
+        assert terminal_name is not None, (
+            f"Could not find terminal in output: {list_result.stderr}"
+        )
+
         result = _run(
-            ["klangk", "share", "e2e-share", "bash"],
+            ["klangk", "share", "e2e-share", terminal_name],
             env=env,
             timeout=60,
         )
@@ -1504,7 +1524,7 @@ class TestTerminalSharing:
         assert "shared" in result.stderr.lower()
 
         result = _run(
-            ["klangk", "unshare", "e2e-share", "bash"],
+            ["klangk", "unshare", "e2e-share", terminal_name],
             env=env,
             timeout=60,
         )
