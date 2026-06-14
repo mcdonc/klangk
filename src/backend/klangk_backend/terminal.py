@@ -276,24 +276,30 @@ async def rename_window(
 
 
 async def select_window(
-    container_id: str, session_name: str, index: int
+    container_id: str, session_name: str, target: int | str
 ) -> None:
-    """Switch the active tmux window."""
+    """Switch the active tmux window.
+
+    *target* can be a window index (int) or window name (str).
+    """
     await tmux_command(
         container_id,
         session_name,
-        ["select-window", "-t", f"{session_name}:{index}"],
+        ["select-window", "-t", f"{session_name}:{target}"],
     )
 
 
 async def close_window(
-    container_id: str, session_name: str, index: int
+    container_id: str, session_name: str, target: int | str
 ) -> list[dict]:
-    """Close a tmux window and return the updated window list."""
+    """Close a tmux window and return the updated window list.
+
+    *target* can be a window index (int) or window name (str).
+    """
     await tmux_command(
         container_id,
         session_name,
-        ["kill-window", "-t", f"{session_name}:{index}"],
+        ["kill-window", "-t", f"{session_name}:{target}"],
     )
     return await list_windows(container_id, session_name)
 

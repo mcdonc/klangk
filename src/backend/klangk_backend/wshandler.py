@@ -1260,12 +1260,11 @@ class Connection:
         if not ws_session:
             return
         owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
-        window_index = None
-        for i, w in enumerate(owner_windows):
-            if w.get("name") == window_name and w.get("shared"):
-                window_index = i
-                break
-        if window_index is None:
+        found = any(
+            w.get("name") == window_name and w.get("shared")
+            for w in owner_windows
+        )
+        if not found:
             send_error(self.sock, "Shared terminal not found")
             return
 
@@ -1306,10 +1305,10 @@ class Connection:
                 logger.info(
                     "_start_shared: selecting window %s:%s",
                     owner_user_id,
-                    window_index,
+                    window_name,
                 )
                 await select_window(
-                    conn.container_id, owner_user_id, window_index
+                    conn.container_id, owner_user_id, window_name
                 )
                 logger.info("_start_shared: sending terminal_started")
                 conn.sock.send_json(
@@ -1424,21 +1423,19 @@ class Connection:
         if not ws_session:
             return
         owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
-        window_index = None
-        for i, w in enumerate(owner_windows):
-            if w.get("name") == window_name:
-                window_index = i
-                break
-        if window_index is None:
+        found = any(w.get("name") == window_name for w in owner_windows)
+        if not found:
             send_error(self.sock, "Terminal not found")
             return
         try:
             await kill_joiner_sessions(self.container_id, owner_user_id)
-            await close_window(self.container_id, owner_user_id, window_index)
+            await close_window(self.container_id, owner_user_id, window_name)
         except Exception as e:
             send_error(self.sock, f"Failed to delete shared terminal: {e}")
             return
-        owner_windows.pop(window_index)
+        owner_windows[:] = [
+            w for w in owner_windows if w.get("name") != window_name
+        ]
         ws_session.broadcast(
             {
                 "type": "shared_terminal_deleted",
