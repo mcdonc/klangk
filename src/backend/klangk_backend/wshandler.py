@@ -931,10 +931,12 @@ class Connection:
                     ),
                     timeout=30,
                 )
+                logger.info("_start_terminal: activating session")
                 if not await conn._activate_session(session, cols, rows):
+                    logger.info("_start_terminal: session superseded")
                     return
+                logger.info("_start_terminal: sending terminal_started")
                 conn.sock.send_json({"type": "terminal_started"})
-                # Rename the initial window to "1" and send the list.
                 try:
                     from .terminal import (
                         list_windows,
@@ -968,7 +970,9 @@ class Connection:
                                         uid, wins
                                     )
 
+                    logger.info("_start_terminal: listing windows")
                     windows = await list_windows(conn.container_id, sname)
+                    logger.info("_start_terminal: windows=%s", windows)
                     conn._sync_terminal_windows(windows)
                     conn.sock.send_json(
                         {
@@ -977,7 +981,7 @@ class Connection:
                         }
                     )
                 except Exception:
-                    pass  # Non-critical; tabs update on next window op
+                    logger.exception("_start_terminal: window list failed")
                 # Also send the shared terminal list from in-memory state.
                 ws_session = state.get_session(conn.workspace_id)
                 if ws_session:

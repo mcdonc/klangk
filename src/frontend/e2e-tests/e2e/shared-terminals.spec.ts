@@ -862,12 +862,26 @@ test.describe("shared terminal visibility", () => {
       const coadminWs = await connectWs(coadmin.token, workspaceId);
 
       try {
-        // Admin starts terminal and waits for window list
+        // Admin starts terminal — collect all messages until we have
+        // both terminal_started and terminal_windows.
         adminWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
-        await adminWs.recvUntil((m) => m.type === "terminal_started");
-        const adminInitWindows = await adminWs.recvUntil(
-          (m) => m.type === "terminal_windows",
-        );
+        let adminInitWindows: WsMessage = { type: "none" };
+        let gotStarted = false;
+        const debugMsgs: string[] = [];
+        await adminWs
+          .recvUntil((m) => {
+            debugMsgs.push((m.type as string) ?? "?");
+            if (m.type === "terminal_started") gotStarted = true;
+            if (m.type === "terminal_windows") adminInitWindows = m;
+            return gotStarted && adminInitWindows.type === "terminal_windows";
+          }, 60_000)
+          .catch((e) => {
+            console.error(
+              "DEBUG: recvUntil failed, messages seen:",
+              debugMsgs.join(", "),
+            );
+            throw e;
+          });
         const firstWindow = (
           adminInitWindows.windows as Array<Record<string, unknown>>
         )[0];
