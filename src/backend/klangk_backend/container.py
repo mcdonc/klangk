@@ -206,8 +206,16 @@ class ContainerRegistry:
         self._bridge_tokens: dict[str, tuple[str, object | None]] = {}
         self.cleanup_task: asyncio.Task | None = None
         self.port_lock: asyncio.Lock = asyncio.Lock()
+        # Per-workspace locks to serialize container creation.
+        self._workspace_locks: dict[str, asyncio.Lock] = {}
         self.on_workspace_killed = None
         self._cleanup_wake: asyncio.Event | None = None
+
+    def _get_workspace_lock(self, workspace_id: str) -> asyncio.Lock:
+        """Get or create a per-workspace lock for container operations."""
+        if workspace_id not in self._workspace_locks:
+            self._workspace_locks[workspace_id] = asyncio.Lock()
+        return self._workspace_locks[workspace_id]
 
     def get_cleanup_wake(self) -> asyncio.Event:
         if self._cleanup_wake is None:
@@ -342,7 +350,44 @@ class ContainerRegistry:
 
         Returns (container_id, status) where status is one of:
         'connected' (already running), 'restarted', or 'created'.
+
+        Serialized per workspace so concurrent WebSocket connections
+        don't race to create the same container.
         """
+        async with self._get_workspace_lock(workspace_id):
+            return await self._start_container_inner(
+                workspace_id,
+                host_path,
+                home_path,
+                existing_container_id=existing_container_id,
+                num_ports=num_ports,
+                hosting_hostname=hosting_hostname,
+                hosting_proto=hosting_proto,
+                hosting_base_path=hosting_base_path,
+                image=image,
+                config_path=config_path,
+                extra_mounts=extra_mounts,
+                extra_env=extra_env,
+                user_id=user_id,
+            )
+
+    async def _start_container_inner(
+        self,
+        workspace_id: str,
+        host_path: str,
+        home_path: str,
+        existing_container_id: str | None = None,
+        num_ports: int = DEFAULT_PORTS_PER_WORKSPACE,
+        hosting_hostname: str = "localhost",
+        hosting_proto: str = "http",
+        hosting_base_path: str = "",
+        image: str | None = None,
+        config_path: str | None = None,
+        extra_mounts: list[str] | None = None,
+        extra_env: dict[str, str] | None = None,
+        user_id: str | None = None,
+    ) -> tuple[str, str]:
+        """Inner implementation of start_container (called under lock)."""
         t_start = time.monotonic()
         resolved_image = image or IMAGE_NAME
         if resolved_image not in ALLOWED_IMAGES:
