@@ -1238,6 +1238,11 @@ class Connection:
 
     async def handle_join_shared_terminal(self, msg: dict) -> None:
         """Join another user's shared window via session group."""
+        logger.info(
+            "handle_join_shared_terminal: user=%s msg=%s",
+            self.user.get("email"),
+            msg,
+        )
         if not self.container_id or not self._user_home:
             return
         if not await self._has_perm("spectate-on-shared-terminals"):
