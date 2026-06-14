@@ -487,170 +487,183 @@ test.describe("Klangk E2E", () => {
     }
   });
 
-  test("terminal works after WebSocket reconnect", async ({
-    page,
-    request,
-  }) => {
-    // Regression: when the server goes down and comes back, the single
-    // terminal tab sometimes shows [exited] and stops accepting input.
-    // The terminal should automatically reattach after reconnect.
-    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
-      page,
-      request,
-      "term-reconnect",
-      { waitForTerminal: true },
-    );
-
-    let restartedPid: number | null = null;
-    try {
-      // 1. Verify terminal works before disconnect
-      await terminalType(
+  // Skip in CI — this test kills and restarts the shared E2E server,
+  // which breaks other tests running in parallel.
+  (process.env.CI ? test.skip : test)(
+    "terminal works after WebSocket reconnect",
+    async ({ page, request }) => {
+      // Regression: when the server goes down and comes back, the single
+      // terminal tab sometimes shows [exited] and stops accepting input.
+      // The terminal should automatically reattach after reconnect.
+      const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
         page,
-        "echo before-reconnect > /home/work/.reconnect-before",
-      );
-      await waitForFile(
         request,
-        workspaceId,
-        "work/.reconnect-before",
-        headers,
+        "term-reconnect",
+        { waitForTerminal: true },
       );
 
-      // 2. Set up listener for the reconnect's terminal_started BEFORE
-      //    we break the connection
-      const wsReconnected = new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(
-          () =>
-            reject(
-              new Error(
-                "terminal_started not received after reconnect within 60s",
-              ),
-            ),
-          60_000,
+      let restartedPid: number | null = null;
+      try {
+        // 1. Verify terminal works before disconnect
+        await terminalType(
+          page,
+          "echo before-reconnect > /home/work/.reconnect-before",
         );
-        page.on("websocket", (ws) => {
-          ws.on("framereceived", (frame: { payload: string | Buffer }) => {
-            if (frame.payload.toString().includes("terminal_started")) {
-              clearTimeout(timeout);
-              resolve();
-            }
+        await waitForFile(
+          request,
+          workspaceId,
+          "work/.reconnect-before",
+          headers,
+        );
+
+        // 2. Set up listener for the reconnect's terminal_started BEFORE
+        //    we break the connection
+        const wsReconnected = new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "terminal_started not received after reconnect within 60s",
+                ),
+              ),
+            60_000,
+          );
+          page.on("websocket", (ws) => {
+            ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+              if (frame.payload.toString().includes("terminal_started")) {
+                clearTimeout(timeout);
+                resolve();
+              }
+            });
           });
         });
-      });
 
-      // 3. Kill the backend server to simulate a real outage.
-      //    The E2E global setup stores the PID.
-      const pid = process.env.KLANGK_E2E_PID;
-      if (!pid) throw new Error("KLANGK_E2E_PID not set");
-      const { execSync, spawn: spawnProc } = await import("child_process");
-      const { join } = await import("path");
-      const { createWriteStream } = await import("fs");
+        // 3. Kill the backend server to simulate a real outage.
+        //    The E2E global setup stores the PID.
+        const pid = process.env.KLANGK_E2E_PID;
+        if (!pid) throw new Error("KLANGK_E2E_PID not set");
+        const { execSync, spawn: spawnProc } = await import("child_process");
+        const { join } = await import("path");
+        const { createWriteStream } = await import("fs");
 
-      // SIGKILL the uvicorn process — simulates a hard crash
-      process.kill(Number(pid), "SIGKILL");
-      // Wait for the process to die
-      for (let i = 0; i < 10; i++) {
-        try {
-          process.kill(Number(pid), 0); // check if alive
-          await page.waitForTimeout(500);
-        } catch {
-          break; // process is dead
+        // SIGKILL the uvicorn process — simulates a hard crash
+        process.kill(Number(pid), "SIGKILL");
+        // Wait for the process to die
+        for (let i = 0; i < 10; i++) {
+          try {
+            process.kill(Number(pid), 0); // check if alive
+            await page.waitForTimeout(500);
+          } catch {
+            break; // process is dead
+          }
         }
-      }
 
-      // Wait for the browser to notice the disconnect
-      await page.waitForTimeout(2000);
+        // Wait for the browser to notice the disconnect
+        await page.waitForTimeout(2000);
 
-      // 4. Restart the backend server with the same config.
-      //    Replicate the env from global-setup.ts.
-      const projectRoot = join(__dirname, "..", "..", "..", "..");
-      const backendPort = process.env.KLANGK_E2E_PORT || "18997";
-      const dataDir = process.env.KLANGK_E2E_DATA_DIR || "/tmp/klangk-e2e";
-      const backendProcess = spawnProc(
-        "uvicorn",
-        ["klangk_backend.main:app", "--host", "0.0.0.0", "--port", backendPort],
-        {
-          cwd: join(projectRoot, "src", "backend"),
-          detached: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: {
-            ...process.env,
-            KLANGK_PORT: backendPort,
-            KLANGK_DATA_DIR: dataDir,
-            KLANGK_JWT_SECRET: "e2e-test-secret",
-            KLANGK_DEFAULT_USER: "admin@example.com",
-            KLANGK_DEFAULT_PASSWORD: "admin",
-            KLANGK_TEST_MODE: "1",
-            KLANGK_INSTANCE_ID: "e2e-test",
-            KLANGK_PORT_RANGE_START: "19200",
-            LOGFIRE_TOKEN: "",
-            KLANGK_LOGIN_BANNER_TITLE: "",
-            KLANGK_LOGIN_BANNER: "",
-            KLANGK_OIDC_CONFIG: "",
-            KLANGK_AUTH_MODES: "",
-            KLANGK_OIDC_LOGIN_HOOK: "",
-            KLANGK_DISABLE_REGISTRATION: "",
-            KLANGK_DISABLE_INVITES: "",
+        // 4. Restart the backend server with the same config.
+        //    Replicate the env from global-setup.ts.
+        const projectRoot = join(__dirname, "..", "..", "..", "..");
+        const backendPort = process.env.KLANGK_E2E_PORT || "18997";
+        const dataDir = process.env.KLANGK_E2E_DATA_DIR || "/tmp/klangk-e2e";
+        const backendProcess = spawnProc(
+          "uvicorn",
+          [
+            "klangk_backend.main:app",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            backendPort,
+          ],
+          {
+            cwd: join(projectRoot, "src", "backend"),
+            detached: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: {
+              ...process.env,
+              KLANGK_PORT: backendPort,
+              KLANGK_DATA_DIR: dataDir,
+              KLANGK_JWT_SECRET: "e2e-test-secret",
+              KLANGK_DEFAULT_USER: "admin@example.com",
+              KLANGK_DEFAULT_PASSWORD: "admin",
+              KLANGK_TEST_MODE: "1",
+              KLANGK_INSTANCE_ID: "e2e-test",
+              KLANGK_PORT_RANGE_START: "19200",
+              LOGFIRE_TOKEN: "",
+              KLANGK_LOGIN_BANNER_TITLE: "",
+              KLANGK_LOGIN_BANNER: "",
+              KLANGK_OIDC_CONFIG: "",
+              KLANGK_AUTH_MODES: "",
+              KLANGK_OIDC_LOGIN_HOOK: "",
+              KLANGK_DISABLE_REGISTRATION: "",
+              KLANGK_DISABLE_INVITES: "",
+            },
           },
-        },
-      );
-      restartedPid = backendProcess.pid ?? null;
-      process.env.KLANGK_E2E_PID = String(backendProcess.pid);
+        );
+        restartedPid = backendProcess.pid ?? null;
+        process.env.KLANGK_E2E_PID = String(backendProcess.pid);
 
-      // Pipe output to log
-      const logPath = process.env.KLANGK_E2E_LOG;
-      if (logPath) {
-        const logStream = createWriteStream(logPath, { flags: "a" });
-        backendProcess.stdout?.pipe(logStream);
-        backendProcess.stderr?.pipe(logStream);
-      }
-
-      // Wait for the server to be ready
-      const baseUrl = `http://localhost:${backendPort}`;
-      for (let i = 0; i < 30; i++) {
-        try {
-          const resp = await fetch(`${baseUrl}/health`);
-          if (resp.ok) break;
-        } catch {
-          // Not ready yet
+        // Pipe output to log
+        const logPath = process.env.KLANGK_E2E_LOG;
+        if (logPath) {
+          const logStream = createWriteStream(logPath, { flags: "a" });
+          backendProcess.stdout?.pipe(logStream);
+          backendProcess.stderr?.pipe(logStream);
         }
+
+        // Wait for the server to be ready
+        const baseUrl = `http://localhost:${backendPort}`;
+        for (let i = 0; i < 30; i++) {
+          try {
+            const resp = await fetch(`${baseUrl}/health`);
+            if (resp.ok) break;
+          } catch {
+            // Not ready yet
+          }
+          await page.waitForTimeout(1000);
+        }
+
+        await wsReconnected;
+
+        // 5. Small delay for terminal to fully initialize after reconnect
         await page.waitForTimeout(1000);
-      }
 
-      await wsReconnected;
+        // 6. Type a command — terminal should be functional
+        await terminalType(
+          page,
+          "echo after-reconnect > /home/work/.reconnect-after",
+        );
+        await waitForFile(
+          request,
+          workspaceId,
+          "work/.reconnect-after",
+          headers,
+        );
 
-      // 5. Small delay for terminal to fully initialize after reconnect
-      await page.waitForTimeout(1000);
-
-      // 6. Type a command — terminal should be functional
-      await terminalType(
-        page,
-        "echo after-reconnect > /home/work/.reconnect-after",
-      );
-      await waitForFile(request, workspaceId, "work/.reconnect-after", headers);
-
-      const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.reconnect-after`,
-        { headers },
-      );
-      expect(readResp.ok()).toBeTruthy();
-      const data = await readResp.json();
-      expect(data.content).toContain("after-reconnect");
-    } finally {
-      // Cleanup workspace before killing the restarted server
-      try {
-        await cleanup();
-      } catch {
-        // Server may already be dead
-      }
-      if (restartedPid) {
+        const readResp = await request.get(
+          `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.reconnect-after`,
+          { headers },
+        );
+        expect(readResp.ok()).toBeTruthy();
+        const data = await readResp.json();
+        expect(data.content).toContain("after-reconnect");
+      } finally {
+        // Cleanup workspace before killing the restarted server
         try {
-          process.kill(restartedPid, "SIGKILL");
+          await cleanup();
         } catch {
-          // Already dead
+          // Server may already be dead
+        }
+        if (restartedPid) {
+          try {
+            process.kill(restartedPid, "SIGKILL");
+          } catch {
+            // Already dead
+          }
         }
       }
-    }
-  });
+    },
+  );
 
   test("logout returns to login page", async ({ page, request }) => {
     const email = `logout-${Date.now()}@test.example.com`;

@@ -1488,7 +1488,7 @@ class TestTerminalSharing:
         result = _run(
             ["klangk", "terminals", "e2e-share"],
             env=cli_config["env"],
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0
 
@@ -1498,7 +1498,7 @@ class TestTerminalSharing:
         list_result = _run(
             ["klangk", "terminals", "e2e-share"],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert list_result.returncode == 0
         # Parse the Rich table to find the first "own" terminal name

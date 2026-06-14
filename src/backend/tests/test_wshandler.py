@@ -3451,6 +3451,74 @@ class TestShareWindowHandlers:
             wshandler.state.sessions.pop("ws-1", None)
             wshandler.state.connections.pop(sock, None)
 
+    async def test_shared_terminals_include_viewers(self, user, temp_data_dir):
+        """shared_terminals response includes viewer list."""
+        owner_sock = _mock_sock()
+        owner_conn = _base_conn(user=user, ws=owner_sock)
+        owner_conn.workspace_id = "ws-v"
+        owner_conn.container_id = "cid"
+        owner_conn._user_home = "/home/admin"
+
+        viewer_user = {
+            "id": "viewer-1",
+            "email": "viewer@test.com",
+            "handle": "viewer",
+        }
+        viewer_sock = _mock_sock()
+        viewer_conn = _base_conn(user=viewer_user, ws=viewer_sock)
+        viewer_conn.workspace_id = "ws-v"
+        viewer_conn._viewing_shared = {
+            "user_id": user["id"],
+            "window_id": "@0",
+        }
+
+        session = wshandler.state.get_or_create_session("ws-v")
+        session.terminal_windows[user["id"]] = [
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
+        ]
+        await session.add_subscriber(owner_sock, "cid")
+        await session.add_subscriber(viewer_sock, "cid")
+        wshandler.state.connections[owner_sock] = owner_conn
+        wshandler.state.connections[viewer_sock] = viewer_conn
+        try:
+            with patch(
+                "klangk_backend.acl.check_permission", return_value=True
+            ):
+                await owner_conn.handle_list_shared_terminals()
+            calls = [c[0][0] for c in owner_sock.send_json.call_args_list]
+            shared = [c for c in calls if c.get("type") == "shared_terminals"]
+            assert len(shared) == 1
+            terminal = shared[0]["terminals"][0]
+            assert len(terminal["viewers"]) == 1
+            assert terminal["viewers"][0]["user_id"] == "viewer-1"
+            assert terminal["viewers"][0]["email"] == "viewer@test.com"
+        finally:
+            wshandler.state.sessions.pop("ws-v", None)
+            wshandler.state.connections.pop(owner_sock, None)
+            wshandler.state.connections.pop(viewer_sock, None)
+
+    async def test_stop_terminal_broadcasts_viewer_change(self, user):
+        """Stopping a terminal that was viewing shared broadcasts update."""
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-sv"
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn._viewing_shared = {"user_id": "owner-1", "window_id": "@0"}
+
+        session = wshandler.state.get_or_create_session("ws-sv")
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+        try:
+            await conn.stop_terminal()
+            assert conn._viewing_shared is None
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            shared = [c for c in calls if c.get("type") == "shared_terminals"]
+            assert len(shared) == 1
+        finally:
+            wshandler.state.sessions.pop("ws-sv", None)
+            wshandler.state.connections.pop(sock, None)
+
     async def test_create_shared_terminal_legacy(self, user, temp_data_dir):
         """Legacy create_shared_terminal creates a window and marks it shared."""
         sock = _mock_sock()
