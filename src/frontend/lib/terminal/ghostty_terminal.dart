@@ -156,6 +156,12 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     }
   }
 
+  /// Clear the terminal screen. Used when switching between sessions
+  /// so stale content from the previous session doesn't linger.
+  void clearScreen() {
+    _terminal.write(utf8.encode('\x1b[2J\x1b[H'));
+  }
+
   // Loads the bundled font's raw bytes. Overridable in tests so the
   // "container_ready before the first measurement" path can be driven
   // deterministically: a test holds this future pending while it emits the

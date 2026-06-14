@@ -339,6 +339,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
     final wasShared = _activeSharedTerminal != null;
     setState(() => _activeSharedTerminal = null);
     if (wasShared) {
+      // Clear stale shared terminal content before reattaching.
+      _terminalKey.currentState?.clearScreen();
       // Restart the isolated terminal session — the shared terminal
       // handler stopped it.  terminal_start uses -A to reattach to
       // the existing tmux session, preserving all windows.
@@ -354,6 +356,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
         'window_name': windowName,
       },
     );
+    // Clear the terminal so stale content from the previous session
+    // doesn't linger while the join is in progress.
+    _terminalKey.currentState?.clearScreen();
     wsClient.sendJoinSharedTerminal(userId, windowName);
   }
 
