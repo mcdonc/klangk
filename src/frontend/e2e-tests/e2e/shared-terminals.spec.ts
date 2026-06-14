@@ -862,49 +862,66 @@ test.describe("shared terminal visibility", () => {
       const coadminWs = await connectWs(coadmin.token, workspaceId);
 
       try {
-        // Admin starts terminal
+        // Admin starts terminal and waits for window list
         adminWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
         await adminWs.recvUntil((m) => m.type === "terminal_started");
+        const adminInitWindows = await adminWs.recvUntil(
+          (m) => m.type === "terminal_windows",
+        );
+        const firstWindow = (
+          adminInitWindows.windows as Array<Record<string, unknown>>
+        )[0];
+        const firstWindowName = firstWindow.name as string;
+        const firstWindowIdx = firstWindow.index as number;
 
-        // Admin shares bash (index 0)
-        adminWs.send({ cmd: "share_window", index: 0 });
+        // Admin shares the first terminal
+        adminWs.send({ cmd: "share_window", index: firstWindowIdx });
 
         // Coadmin sees the shared terminal
         const shared1 = await coadminWs.recvUntil(
           (m) =>
             m.type === "shared_terminals" &&
             (m.terminals as Array<Record<string, unknown>>).some(
-              (t) => t.window_name === "bash",
+              (t) => t.window_name === firstWindowName,
             ),
         );
-        const bashTerminal = (
+        const sharedFirst = (
           shared1.terminals as Array<Record<string, unknown>>
-        ).find((t) => t.window_name === "bash")!;
+        ).find((t) => t.window_name === firstWindowName)!;
 
         // Admin types in the shared bash terminal
         adminWs.send({ cmd: "terminal_input", data: "bashbashbash" });
 
-        // Coadmin starts their terminal and joins admin's bash
+        // Coadmin starts their terminal and joins admin's shared terminal
         coadminWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
         await coadminWs.recvUntil((m) => m.type === "terminal_started");
         coadminWs.send({
           cmd: "join_shared_terminal",
-          user_id: bashTerminal.user_id,
-          window_index: bashTerminal.window_index,
+          user_id: sharedFirst.user_id,
+          window_index: sharedFirst.window_index,
         });
-        await coadminWs.recvUntil(
-          (m) => m.type === "terminal_started" && m.shared_window === "bash",
-        );
 
-        // Coadmin should see bashbashbash
-        const bashOutput = await coadminWs.collectUntilQuiet(
+        // Wait for terminal_started + collect all terminal_output that
+        // arrives (the tmux refresh sends the screen content).
+        const joinOutput: string[] = [];
+        await coadminWs.recvUntil((m) => {
+          if (m.type === "terminal_output") {
+            joinOutput.push((m.data as string) ?? "");
+          }
+          return (
+            m.type === "terminal_started" && m.shared_window === firstWindowName
+          );
+        });
+        // Also collect any output that arrives after terminal_started
+        const moreOutput = await coadminWs.collectUntilQuiet(
           (m) => m.type === "terminal_output",
           2000,
         );
-        const bashText = bashOutput
-          .map((m) => (m.data as string) ?? "")
-          .join("");
-        expect(bashText).toContain("bashbashbash");
+        const firstText = [
+          ...joinOutput,
+          ...moreOutput.map((m) => (m.data as string) ?? ""),
+        ].join("");
+        expect(firstText).toContain("bashbashbash");
 
         // Coadmin types "abc" — admin should see it too
         coadminWs.send({ cmd: "terminal_input", data: "abc" });
@@ -938,7 +955,9 @@ test.describe("shared terminal visibility", () => {
           const terminals = lastUpdate.terminals as Array<
             Record<string, unknown>
           >;
-          expect(terminals.some((t) => t.window_name === "bash")).toBe(true);
+          expect(terminals.some((t) => t.window_name === firstWindowName)).toBe(
+            true,
+          );
         }
 
         // Also verify: no shared_terminal_deleted for bash should have fired
@@ -946,8 +965,10 @@ test.describe("shared terminal visibility", () => {
           (m) => m.type === "shared_terminal_deleted",
           500,
         );
-        const bashDeleted = deletions.filter((d) => d.window_name === "bash");
-        expect(bashDeleted.length).toBe(0);
+        const firstDeleted = deletions.filter(
+          (d) => d.window_name === firstWindowName,
+        );
+        expect(firstDeleted.length).toBe(0);
 
         // Admin shares the new window too
         adminWs.send({ cmd: "terminal_list_windows" });
@@ -955,7 +976,7 @@ test.describe("shared terminal visibility", () => {
           (m) => m.type === "terminal_windows",
         );
         const windows = windowList.windows as Array<Record<string, unknown>>;
-        const newWindow = windows.find((w) => w.name !== "bash");
+        const newWindow = windows.find((w) => w.name !== firstWindowName);
         expect(newWindow).toBeDefined();
 
         adminWs.send({ cmd: "share_window", index: newWindow!.index });
@@ -967,7 +988,9 @@ test.describe("shared terminal visibility", () => {
             (m.terminals as Array<Record<string, unknown>>).length >= 2,
         );
         const terminals2 = shared2.terminals as Array<Record<string, unknown>>;
-        expect(terminals2.some((t) => t.window_name === "bash")).toBe(true);
+        expect(terminals2.some((t) => t.window_name === firstWindowName)).toBe(
+          true,
+        );
         expect(terminals2.some((t) => t.window_name === newWindow!.name)).toBe(
           true,
         );
