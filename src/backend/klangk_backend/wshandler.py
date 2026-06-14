@@ -523,6 +523,13 @@ def _get_shared_terminals(ws_session) -> list[dict]:
                 handle = conn.user.get("handle")
                 break
         if not handle:
+            logger.debug(
+                "_get_shared_terminals: no handle for user_id=%s "
+                "(subscribers=%d, has_shared=%s)",
+                user_id,
+                len(ws_session.subscribers),
+                any(w.get("shared") for w in windows),
+            )
             continue
         for w in windows:
             if w.get("shared"):
