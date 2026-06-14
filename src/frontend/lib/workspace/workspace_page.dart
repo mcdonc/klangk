@@ -76,7 +76,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   BrowserDelegate? _browserDelegate;
   StreamSubscription<Map<String, dynamic>>? _customEventSub;
   StreamSubscription<String>? _errorSub;
-  StreamSubscription<String>? _sharedDeletedSub;
+  StreamSubscription<Map<String, dynamic>>? _sharedDeletedSub;
   late final ToolPluginRegistry _pluginRegistry;
   late final List<ToolPlugin> _plugins;
   late final FileRendererRegistry _fileRenderers;
@@ -219,8 +219,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (!mounted) return;
       final deletedUserId = msg['user_id'] as String? ?? '';
       final deletedWindow = msg['window_name'] as String? ?? '';
-      final wasViewing =
-          _activeSharedTerminal != null &&
+      final wasViewing = _activeSharedTerminal != null &&
           _activeSharedTerminal!['user_id'] == deletedUserId &&
           _activeSharedTerminal!['window_name'] == deletedWindow;
       if (wasViewing) {
@@ -399,8 +398,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         for (final w in windows)
                           _TerminalTab(
                             name: w['name'] as String? ?? '?',
-                            active:
-                                _activeSharedTerminal == null &&
+                            active: _activeSharedTerminal == null &&
                                 (w['active'] as bool? ?? false),
                             isShared: _isWindowShared(
                               wsClient,
@@ -410,8 +408,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
                                 _switchToIsolated(wsClient, w['index'] as int),
                             onClose: windows.length > 1
                                 ? () => wsClient.sendTerminalCloseWindow(
-                                    w['index'] as int,
-                                  )
+                                      w['index'] as int,
+                                    )
                                 : null,
                             onToggleShare: _hasPerm('share-terminals')
                                 ? () {
@@ -436,15 +434,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
                       for (final s in othersShared)
                         _TerminalTab(
                           name: '${s['handle']}:${s['window_name']}',
-                          active:
-                              _activeSharedTerminal != null &&
+                          active: _activeSharedTerminal != null &&
                               _activeSharedTerminal!['user_id'] ==
                                   s['user_id'] &&
                               _activeSharedTerminal!['window_name'] ==
                                   s['window_name'],
                           shared: true,
-                          readOnly:
-                              !_hasPerm('code-in-shared-terminals') &&
+                          readOnly: !_hasPerm('code-in-shared-terminals') &&
                               !_hasPerm('share-terminals'),
                           onTap: () => _joinShared(
                             wsClient,
@@ -713,9 +709,8 @@ class _TerminalTabState extends State<_TerminalTab> {
 
   @override
   Widget build(BuildContext context) {
-    final accentColor = widget.shared
-        ? KColors.accentCyan
-        : KColors.accentGreen;
+    final accentColor =
+        widget.shared ? KColors.accentCyan : KColors.accentGreen;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
       child: MouseRegion(
@@ -730,8 +725,8 @@ class _TerminalTabState extends State<_TerminalTab> {
               color: widget.active
                   ? KColors.bgSurface
                   : _hovered
-                  ? KColors.bgOverlay
-                  : Colors.transparent,
+                      ? KColors.bgOverlay
+                      : Colors.transparent,
               borderRadius: BorderRadius.circular(4),
               border: widget.active
                   ? Border.all(color: KColors.borderMuted, width: 0.5)
@@ -754,8 +749,8 @@ class _TerminalTabState extends State<_TerminalTab> {
                           color: widget.isShared
                               ? KColors.accentCyan
                               : widget.active
-                              ? Colors.white38
-                              : Colors.white24,
+                                  ? Colors.white38
+                                  : Colors.white24,
                         ),
                       ),
                     ),
@@ -777,14 +772,13 @@ class _TerminalTabState extends State<_TerminalTab> {
                   widget.name,
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight: widget.active
-                        ? FontWeight.w600
-                        : FontWeight.normal,
+                    fontWeight:
+                        widget.active ? FontWeight.w600 : FontWeight.normal,
                     color: widget.active
                         ? KColors.textPrimary
                         : _hovered
-                        ? Colors.white70
-                        : KColors.textSecondary,
+                            ? Colors.white70
+                            : KColors.textSecondary,
                   ),
                 ),
                 if (widget.onClose != null) ...[
@@ -799,8 +793,8 @@ class _TerminalTabState extends State<_TerminalTab> {
                         color: _hovered
                             ? Colors.white70
                             : widget.active
-                            ? Colors.white38
-                            : Colors.transparent,
+                                ? Colors.white38
+                                : Colors.transparent,
                       ),
                     ),
                   ),
