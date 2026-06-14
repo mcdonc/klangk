@@ -1617,7 +1617,13 @@ class Connection:
         # Send shared terminal list from in-memory state.
         ws_session = state.get_session(self.workspace_id)
         if ws_session:
+            logger.debug(
+                "ui_ready: terminal_windows keys=%s, subscribers=%d",
+                list(ws_session.terminal_windows.keys()),
+                len(ws_session.subscribers),
+            )
             terminals = _get_shared_terminals(ws_session)
+            logger.debug("ui_ready: shared_terminals=%s", terminals)
             self.sock.send_json(
                 {"type": "shared_terminals", "terminals": terminals}
             )
