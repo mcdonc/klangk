@@ -523,7 +523,7 @@ def _get_shared_terminals(ws_session) -> list[dict]:
                 handle = conn.user.get("handle")
                 break
         if not handle:
-            logger.debug(
+            logger.info(
                 "_get_shared_terminals: no handle for user_id=%s "
                 "(subscribers=%d, has_shared=%s)",
                 user_id,
@@ -1617,13 +1617,13 @@ class Connection:
         # Send shared terminal list from in-memory state.
         ws_session = state.get_session(self.workspace_id)
         if ws_session:
-            logger.debug(
+            logger.info(
                 "ui_ready: terminal_windows keys=%s, subscribers=%d",
                 list(ws_session.terminal_windows.keys()),
                 len(ws_session.subscribers),
             )
             terminals = _get_shared_terminals(ws_session)
-            logger.debug("ui_ready: shared_terminals=%s", terminals)
+            logger.info("ui_ready: shared_terminals=%s", terminals)
             self.sock.send_json(
                 {"type": "shared_terminals", "terminals": terminals}
             )
