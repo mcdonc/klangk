@@ -735,29 +735,7 @@ class _TerminalTabState extends State<_TerminalTab> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Share status icon for own tabs (clickable toggle)
-                if (!widget.shared && widget.onToggleShare != null) ...[
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: widget.onToggleShare,
-                      child: Tooltip(
-                        message: widget.isShared ? 'Unshare' : 'Share',
-                        child: Icon(
-                          widget.isShared ? Icons.people : Icons.lock_outline,
-                          size: 12,
-                          color: widget.isShared
-                              ? KColors.accentCyan
-                              : widget.active
-                                  ? Colors.white38
-                                  : Colors.white24,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                ],
-                // Icon for other users' shared tabs
+                // Icon for other users' shared tabs (left of name)
                 if (widget.shared) ...[
                   Icon(
                     widget.readOnly
@@ -781,6 +759,28 @@ class _TerminalTabState extends State<_TerminalTab> {
                             : KColors.textSecondary,
                   ),
                 ),
+                // Share toggle icon (right of name, only on hover)
+                if (!widget.shared && widget.onToggleShare != null) ...[
+                  const SizedBox(width: 6),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: widget.onToggleShare,
+                      child: Tooltip(
+                        message: widget.isShared ? 'Unshare' : 'Share',
+                        child: Icon(
+                          widget.isShared ? Icons.people : Icons.share_outlined,
+                          size: 12,
+                          color: widget.isShared
+                              ? KColors.accentCyan
+                              : _hovered
+                                  ? Colors.white70
+                                  : Colors.transparent,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 if (widget.onClose != null) ...[
                   const SizedBox(width: 6),
                   MouseRegion(
