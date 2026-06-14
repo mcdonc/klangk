@@ -1469,6 +1469,66 @@ class TestVolumeUserIsolation:
             _run(["klangk", "volumes", "rm", "vol-private"], env=env_a)
 
 
+class TestTerminalSharing:
+    """Test klangk terminals, share, and unshare commands."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def workspace(self, cli_config):
+        _run(["klangk", "create", "e2e-share"], env=cli_config["env"])
+        # Start container so terminal commands work
+        _run(
+            ["klangk", "exec", "e2e-share", "true"],
+            env=cli_config["env"],
+            timeout=60,
+        )
+        yield
+        _run(["klangk", "rm", "e2e-share"], env=cli_config["env"])
+
+    def test_terminals_lists_windows(self, cli_config):
+        result = _run(
+            ["klangk", "terminals", "e2e-share"],
+            env=cli_config["env"],
+            timeout=60,
+        )
+        assert result.returncode == 0
+
+    def test_share_and_unshare_terminal(self, cli_config):
+        env = cli_config["env"]
+        # Share the first terminal (named "1" by default)
+        result = _run(
+            ["klangk", "share", "e2e-share", "1"],
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0
+        assert "shared" in result.stderr.lower()
+
+        # Verify it shows as shared in terminals list
+        result = _run(
+            ["klangk", "terminals", "e2e-share"],
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0
+
+        # Unshare it
+        result = _run(
+            ["klangk", "unshare", "e2e-share", "1"],
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0
+        assert "no longer shared" in result.stderr.lower()
+
+    def test_share_nonexistent_terminal(self, cli_config):
+        result = _run(
+            ["klangk", "share", "e2e-share", "nonexistent"],
+            env=cli_config["env"],
+            timeout=60,
+        )
+        assert result.returncode != 0
+
+
 class TestContainerReplace:
     """Verify podman --replace handles stale/crashed containers."""
 
