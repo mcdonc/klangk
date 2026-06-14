@@ -830,4 +830,176 @@ test.describe("shared terminal visibility", () => {
       await cleanup();
     }
   });
+
+  test("shared terminal survives creating a new window", async ({
+    page,
+    request,
+  }) => {
+    const adminEmail = `share-sync-admin-${Date.now()}@test.example.com`;
+    const admin = await registerUser(request, adminEmail);
+    const { workspaceId, cleanup } = await createWorkspace(
+      request,
+      admin.headers,
+      "share-sync",
+    );
+    try {
+      const coadminEmail = `share-sync-coadmin-${Date.now()}@test.example.com`;
+      const coadmin = await registerUser(request, coadminEmail);
+      await addToRole(
+        request,
+        admin.headers,
+        workspaceId,
+        "owners",
+        coadminEmail,
+      );
+
+      // Admin opens workspace to start container
+      await openWorkspace(page, adminEmail, workspaceId, {
+        waitForTerminal: true,
+      });
+
+      const adminWs = await connectWs(admin.token, workspaceId);
+      const coadminWs = await connectWs(coadmin.token, workspaceId);
+
+      try {
+        // Admin starts terminal
+        adminWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+        await adminWs.recvUntil((m) => m.type === "terminal_started");
+
+        // Admin shares bash (index 0)
+        adminWs.send({ cmd: "share_window", index: 0 });
+
+        // Coadmin sees the shared terminal
+        const shared1 = await coadminWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.window_name === "bash",
+            ),
+        );
+        const bashTerminal = (
+          shared1.terminals as Array<Record<string, unknown>>
+        ).find((t) => t.window_name === "bash")!;
+
+        // Admin types in the shared bash terminal
+        adminWs.send({ cmd: "terminal_input", data: "bashbashbash" });
+
+        // Coadmin starts their terminal and joins admin's bash
+        coadminWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+        await coadminWs.recvUntil((m) => m.type === "terminal_started");
+        coadminWs.send({
+          cmd: "join_shared_terminal",
+          user_id: bashTerminal.user_id,
+          window_index: bashTerminal.window_index,
+        });
+        await coadminWs.recvUntil(
+          (m) => m.type === "terminal_started" && m.shared_window === "bash",
+        );
+
+        // Coadmin should see bashbashbash
+        const bashOutput = await coadminWs.collectUntilQuiet(
+          (m) => m.type === "terminal_output",
+          2000,
+        );
+        const bashText = bashOutput
+          .map((m) => (m.data as string) ?? "")
+          .join("");
+        expect(bashText).toContain("bashbashbash");
+
+        // Coadmin types "abc" — admin should see it too
+        coadminWs.send({ cmd: "terminal_input", data: "abc" });
+        const adminSees = await adminWs.collectUntilQuiet(
+          (m) => m.type === "terminal_output",
+          2000,
+        );
+        expect(
+          adminSees.map((m) => (m.data as string) ?? "").join(""),
+        ).toContain("abc");
+
+        // NOW: admin creates a second terminal window
+        adminWs.send({ cmd: "terminal_new_window" });
+        await adminWs.recvUntil((m) => m.type === "terminal_windows");
+
+        // Admin types in the new window
+        adminWs.send({ cmd: "terminal_input", data: "oneoneone" });
+
+        // After creating a new window, "bash" should STILL be shared.
+        // The shared_terminals list should still contain bash.
+        // Collect any shared_terminals updates that arrived.
+        const sharedUpdates = await coadminWs.collectUntilQuiet(
+          (m) => m.type === "shared_terminals",
+          2000,
+        );
+
+        // If we got updates, the LAST one is the current state.
+        // bash should still be in it.
+        if (sharedUpdates.length > 0) {
+          const lastUpdate = sharedUpdates[sharedUpdates.length - 1];
+          const terminals = lastUpdate.terminals as Array<
+            Record<string, unknown>
+          >;
+          expect(terminals.some((t) => t.window_name === "bash")).toBe(true);
+        }
+
+        // Also verify: no shared_terminal_deleted for bash should have fired
+        const deletions = await coadminWs.collectUntilQuiet(
+          (m) => m.type === "shared_terminal_deleted",
+          500,
+        );
+        const bashDeleted = deletions.filter((d) => d.window_name === "bash");
+        expect(bashDeleted.length).toBe(0);
+
+        // Admin shares the new window too
+        adminWs.send({ cmd: "terminal_list_windows" });
+        const windowList = await adminWs.recvUntil(
+          (m) => m.type === "terminal_windows",
+        );
+        const windows = windowList.windows as Array<Record<string, unknown>>;
+        const newWindow = windows.find((w) => w.name !== "bash");
+        expect(newWindow).toBeDefined();
+
+        adminWs.send({ cmd: "share_window", index: newWindow!.index });
+
+        // Coadmin should see both shared terminals
+        const shared2 = await coadminWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).length >= 2,
+        );
+        const terminals2 = shared2.terminals as Array<Record<string, unknown>>;
+        expect(terminals2.some((t) => t.window_name === "bash")).toBe(true);
+        expect(terminals2.some((t) => t.window_name === newWindow!.name)).toBe(
+          true,
+        );
+
+        // Coadmin joins the new shared terminal
+        const newShared = terminals2.find(
+          (t) => t.window_name === newWindow!.name,
+        )!;
+        coadminWs.send({
+          cmd: "join_shared_terminal",
+          user_id: newShared.user_id,
+          window_index: newShared.window_index,
+        });
+        await coadminWs.recvUntil(
+          (m) =>
+            m.type === "terminal_started" &&
+            m.shared_window === newWindow!.name,
+        );
+
+        // Coadmin should see "oneoneone"
+        const newOutput = await coadminWs.collectUntilQuiet(
+          (m) => m.type === "terminal_output",
+          2000,
+        );
+        const newText = newOutput.map((m) => (m.data as string) ?? "").join("");
+        expect(newText).toContain("oneoneone");
+      } finally {
+        adminWs.close();
+        coadminWs.close();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
 });
