@@ -437,7 +437,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
                       // Shared terminals from OTHER users
                       for (final s in othersShared)
                         _TerminalTab(
-                          name: '${s['handle']}:${s['window_name']}',
+                          name: () {
+                            final h = s['handle'] as String? ?? '?';
+                            final w = s['window_name'] as String? ?? '?';
+                            final he =
+                                h.length > 5 ? '${h.substring(0, 5)}…' : h;
+                            final we =
+                                w.length > 3 ? '${w.substring(0, 3)}…' : w;
+                            return '$he:$we';
+                          }(),
                           active: _activeSharedTerminal != null &&
                               _activeSharedTerminal!['user_id'] ==
                                   s['user_id'] &&
@@ -721,89 +729,96 @@ class _TerminalTabState extends State<_TerminalTab> {
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
           onTap: widget.onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-            decoration: BoxDecoration(
-              color: widget.active
-                  ? KColors.bgSurface
-                  : _hovered
-                      ? KColors.bgOverlay
-                      : Colors.transparent,
-              borderRadius: BorderRadius.circular(4),
-              border: widget.active
-                  ? Border.all(color: KColors.borderMuted, width: 0.5)
-                  : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Icon for other users' shared tabs (left of name)
-                if (widget.shared) ...[
-                  Icon(
-                    widget.readOnly
-                        ? Icons.visibility_outlined
-                        : Icons.edit_outlined,
-                    size: 12,
-                    color: widget.active ? KColors.accentAmber : Colors.white38,
-                  ),
-                  const SizedBox(width: 4),
-                ],
-                Text(
-                  widget.name,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight:
-                        widget.active ? FontWeight.w600 : FontWeight.normal,
-                    color: widget.active
-                        ? KColors.textPrimary
-                        : _hovered
-                            ? Colors.white70
-                            : KColors.textSecondary,
-                  ),
-                ),
-                // Share toggle icon (right of name, only on hover)
-                if (!widget.shared && widget.onToggleShare != null) ...[
-                  const SizedBox(width: 6),
+          child: SizedBox(
+            width: 120,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: widget.active
+                    ? KColors.bgSurface
+                    : _hovered
+                        ? KColors.bgOverlay
+                        : Colors.transparent,
+                borderRadius: BorderRadius.circular(4),
+                border: widget.active
+                    ? Border.all(color: KColors.borderMuted, width: 0.5)
+                    : null,
+              ),
+              child: Row(
+                children: [
+                  // Icon for other users' shared tabs (left of name)
+                  if (widget.shared) ...[
+                    Icon(
+                      widget.readOnly
+                          ? Icons.visibility_outlined
+                          : Icons.edit_outlined,
+                      size: 12,
+                      color:
+                          widget.active ? KColors.accentAmber : Colors.white38,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
                   MouseRegion(
                     cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: widget.onToggleShare,
-                      child: Tooltip(
-                        message: widget.isShared ? 'Unshare' : 'Share',
+                    child: Text(
+                      widget.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight:
+                            widget.active ? FontWeight.w600 : FontWeight.normal,
+                        color: widget.active
+                            ? KColors.textPrimary
+                            : _hovered
+                                ? Colors.white70
+                                : KColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  // Share toggle + close pushed to the right
+                  if (!widget.shared && widget.onToggleShare != null) ...[
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        onTap: widget.onToggleShare,
+                        child: Tooltip(
+                          message: widget.isShared ? 'Unshare' : 'Share',
+                          child: Icon(
+                            widget.isShared
+                                ? Icons.cell_tower
+                                : Icons.share_outlined,
+                            size: 12,
+                            color: widget.isShared
+                                ? KColors.accentCyan
+                                : _hovered
+                                    ? Colors.white70
+                                    : Colors.transparent,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (widget.onClose != null) ...[
+                    const SizedBox(width: 4),
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        onTap: widget.onClose,
                         child: Icon(
-                          widget.isShared
-                              ? Icons.cell_tower
-                              : Icons.share_outlined,
+                          Icons.close,
                           size: 12,
-                          color: widget.isShared
-                              ? KColors.accentCyan
-                              : _hovered
-                                  ? Colors.white70
+                          color: _hovered
+                              ? Colors.white70
+                              : widget.active
+                                  ? Colors.white38
                                   : Colors.transparent,
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
-                if (widget.onClose != null) ...[
-                  const SizedBox(width: 6),
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: widget.onClose,
-                      child: Icon(
-                        Icons.close,
-                        size: 12,
-                        color: _hovered
-                            ? Colors.white70
-                            : widget.active
-                                ? Colors.white38
-                                : Colors.transparent,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ),
