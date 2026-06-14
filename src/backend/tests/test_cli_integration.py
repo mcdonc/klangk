@@ -122,6 +122,291 @@ class TestWsShell:
         start_msgs = [json.loads(s) for s in sent if "terminal_start" in s]
         assert start_msgs[0]["commandOverride"] == "bash"
 
+    @pytest.mark.asyncio
+    async def test_ws_shell_collects_windows_and_shared(self):
+        """Drain loop collects terminal_windows and shared_terminals."""
+        from klangk_backend.cli.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {"index": 0, "name": "1", "active": True},
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "shared_terminals",
+                        "terminals": [
+                            {
+                                "user_id": "u1",
+                                "handle": "alice",
+                                "window_name": "dev",
+                            },
+                        ],
+                    }
+                ),
+                json.dumps({"type": "terminal_output", "data": "$ "}),
+                Exception("stop"),
+            ]
+        )
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with patch("termios.tcgetattr", return_value=None):
+                with patch("termios.tcsetattr"):
+                    with patch("tty.setraw"):
+                        try:
+                            await _ws_shell(
+                                "ws://localhost/ws", "token", "ws1"
+                            )
+                        except Exception:
+                            pass
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_select_own_window(self):
+        """window= selects an own window by name."""
+        from klangk_backend.cli.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {"index": 0, "name": "1", "active": True},
+                            {"index": 1, "name": "build", "active": False},
+                        ],
+                    }
+                ),
+                json.dumps({"type": "terminal_output", "data": "$ "}),
+                Exception("stop"),
+            ]
+        )
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with patch("termios.tcgetattr", return_value=None):
+                with patch("termios.tcsetattr"):
+                    with patch("tty.setraw"):
+                        try:
+                            await _ws_shell(
+                                "ws://localhost/ws",
+                                "token",
+                                "ws1",
+                                window="build",
+                            )
+                        except Exception:
+                            pass
+
+        sent = [json.loads(c[0][0]) for c in ws_mock.send.call_args_list]
+        select_msgs = [
+            s for s in sent if s.get("cmd") == "terminal_select_window"
+        ]
+        assert len(select_msgs) == 1
+        assert select_msgs[0]["index"] == 1
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_select_own_window_not_found(self):
+        from klangk_backend.cli.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {"index": 0, "name": "1", "active": True},
+                        ],
+                    }
+                ),
+                json.dumps({"type": "terminal_output", "data": "$ "}),
+            ]
+        )
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with pytest.raises(ConnectionError, match="not found"):
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    window="nonexistent",
+                )
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_join_shared_terminal(self):
+        """window=handle:name joins a shared terminal."""
+        from klangk_backend.cli.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                json.dumps(
+                    {
+                        "type": "shared_terminals",
+                        "terminals": [
+                            {
+                                "user_id": "u1",
+                                "handle": "alice",
+                                "window_name": "dev",
+                            },
+                        ],
+                    }
+                ),
+                json.dumps({"type": "terminal_output", "data": "$ "}),
+                # After join_shared_terminal is sent:
+                json.dumps({"type": "terminal_output", "data": "joining..."}),
+                json.dumps(
+                    {"type": "terminal_started", "shared_window": "dev"}
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with patch("termios.tcgetattr", return_value=None):
+                with patch("termios.tcsetattr"):
+                    with patch("tty.setraw"):
+                        try:
+                            await _ws_shell(
+                                "ws://localhost/ws",
+                                "token",
+                                "ws1",
+                                window="alice:dev",
+                            )
+                        except Exception:
+                            pass
+
+        sent = [json.loads(c[0][0]) for c in ws_mock.send.call_args_list]
+        join_msgs = [s for s in sent if s.get("cmd") == "join_shared_terminal"]
+        assert len(join_msgs) == 1
+        assert join_msgs[0]["user_id"] == "u1"
+        assert join_msgs[0]["window_name"] == "dev"
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_join_shared_not_found(self):
+        from klangk_backend.cli.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "shared_terminals", "terminals": []}),
+                json.dumps({"type": "terminal_output", "data": "$ "}),
+            ]
+        )
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with pytest.raises(ConnectionError, match="not found"):
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    window="alice:dev",
+                )
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_join_shared_error(self):
+        from klangk_backend.cli.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                json.dumps(
+                    {
+                        "type": "shared_terminals",
+                        "terminals": [
+                            {
+                                "user_id": "u1",
+                                "handle": "alice",
+                                "window_name": "dev",
+                            },
+                        ],
+                    }
+                ),
+                json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps({"type": "error", "message": "Permission denied"}),
+            ]
+        )
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with pytest.raises(ConnectionError, match="Permission denied"):
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    window="alice:dev",
+                )
+
 
 class TestRunShell:
     @pytest.mark.asyncio
