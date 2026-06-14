@@ -53,8 +53,7 @@ def _build_environment(
     return env
 
 
-_SHARED_TERMINALS_DIR = "/home/.terminals"
-_SHARED_TMUX_CONF = "/etc/tmux-shared.conf"
+_WORKSPACE_STATE_FILE = ".workspace-state.json"
 
 
 def _build_shell_command(
@@ -112,11 +111,6 @@ def _build_shell_command(
     # which drops input when session.read_only is True.  tmux's
     # switch-client -r is not used because it caused display issues.
     return cmd, unique
-
-
-def shared_socket_path(name: str) -> str:
-    """Return the container-side socket path for a shared terminal."""
-    return f"{_SHARED_TERMINALS_DIR}/{name}.sock"
 
 
 def _build_exec_argv(
@@ -302,33 +296,49 @@ async def close_window(
     return await list_windows(container_id, session_name)
 
 
-async def list_shared_terminals(container_id: str) -> list[dict]:
-    """List shared terminals by scanning socket files.
+_STATE_PATH = f"/home/{_WORKSPACE_STATE_FILE}"
 
-    Returns ``[{name, sessions}, ...]`` where *sessions* is the number
-    of attached tmux sessions (users).
 
-    Uses a single podman exec with a shell script to minimize
-    round-trips.
+async def load_workspace_state(container_id: str) -> dict:
+    """Read per-user workspace state from /home/.workspace-state.json.
+
+    Returns a dict keyed by handle, e.g.
+    ``{"admin": {"terminal_windows": [...], ...}, ...}``.
+    Returns empty dict if the file doesn't exist or is corrupt.
+    Used for restoring state after container restart.
     """
-    script = (
-        f"for sock in {_SHARED_TERMINALS_DIR}/*.sock; do "
-        '[ -S "$sock" ] || continue; '
-        'name=$(basename "$sock" .sock); '
-        'sessions=$(tmux -S "$sock" list-sessions '
-        "-F '#{session_name}' 2>/dev/null | tr '\\n' ','); "
-        # If tmux server is dead, restart it (survives container restarts).
-        # Uses tmux-shared.conf which sets destroy-unattached off.
-        'if [ -z "$sessions" ]; then '
-        'rm -f "$sock"; '
-        f'tmux -f {_SHARED_TMUX_CONF} -S "$sock" new-session -d -s "$name" -c /home/work 2>/dev/null; '
-        'sessions="$name,"; '
-        "fi; "
-        'echo "$name|||$sessions"; '
-        "done"
+    argv = ["exec", "-u", "klangk", container_id, "cat", _STATE_PATH]
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
     )
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+    if proc.returncode != 0:
+        return {}
+    try:
+        import json
+
+        return json.loads(stdout.decode("utf-8", errors="replace"))
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+async def save_workspace_state(container_id: str, state: dict) -> None:
+    """Fire-and-forget snapshot of per-user workspace state.
+
+    Writes atomically to /home/.workspace-state.json via temp + rename.
+    """
+    import json
+
+    tmp_path = f"{_STATE_PATH}.tmp"
+    data = json.dumps(state, indent=2)
+    script = f"cat > {tmp_path} && mv {tmp_path} {_STATE_PATH}"
     argv = [
         "exec",
+        "-i",
         "-u",
         "klangk",
         container_id,
@@ -339,70 +349,59 @@ async def list_shared_terminals(container_id: str) -> list[dict]:
     proc = await asyncio.create_subprocess_exec(
         podman.PODMAN_BIN,
         *argv,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=podman.subprocess_env(),
     )
-    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-    output = stdout.decode("utf-8", errors="replace").strip()
-
-    terminals = []
-    for line in output.splitlines():
-        parts = line.split("|||", 1)
-        if len(parts) < 2:
-            continue
-        name = parts[0]
-        sessions_str = parts[1].rstrip(",")
-        sessions = [s for s in sessions_str.split(",") if s]
-        terminals.append({"name": name, "sessions": sessions})
-    return terminals
+    await asyncio.wait_for(proc.communicate(input=data.encode()), timeout=10)
 
 
-async def create_shared_terminal(container_id: str, name: str) -> None:
-    """Create a new shared tmux server with a named socket.
+async def restore_windows(
+    container_id: str, session_name: str, saved_windows: list[dict]
+) -> None:
+    """Create any missing tmux windows from saved state.
 
-    The server starts with a detached session so no PTY is needed.
-    Users join later via ``join_shared_terminal``.
-    The global ``/etc/tmux.conf`` sets ``destroy-unattached off``
-    so sessions survive client disconnects.
+    Compares saved window names against existing windows and creates
+    any that are missing.
     """
-    sock = shared_socket_path(name)
-    await tmux_command(
-        container_id,
-        name,
-        [
-            "-f",
-            _SHARED_TMUX_CONF,
-            "-S",
-            sock,
-            "new-session",
-            "-d",
-            "-s",
-            name,
-            "-c",
-            "/home/work",
-        ],
-    )
+    existing = await list_windows(container_id, session_name)
+    existing_names = {w["name"] for w in existing}
+    for win in saved_windows:
+        name = win.get("name", "")
+        if name and name not in existing_names:
+            await new_window(container_id, session_name, name=name)
 
 
-async def delete_shared_terminal(container_id: str, name: str) -> None:
-    """Kill a shared tmux server and remove its socket file."""
-    sock = shared_socket_path(name)
-    await tmux_command(
-        container_id,
-        name,
-        ["-S", sock, "kill-server"],
-    )
-    # Remove the socket file so list_shared_terminals doesn't revive it.
-    rm_argv = ["exec", "-u", "klangk", container_id, "rm", "-f", sock]
-    proc = await asyncio.create_subprocess_exec(
-        podman.PODMAN_BIN,
-        *rm_argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=podman.subprocess_env(),
-    )
-    await asyncio.wait_for(proc.communicate(), timeout=10)
+async def kill_joiner_sessions(
+    container_id: str, owner_handle: str
+) -> None:
+    """Kill all session-group sessions except the owner's own session.
+
+    Used when unsharing to disconnect spectators/collaborators.
+    """
+    try:
+        output = await tmux_command(
+            container_id,
+            owner_handle,
+            [
+                "list-sessions",
+                "-F",
+                "#{session_name}",
+            ],
+        )
+        for session_name in output.strip().splitlines():
+            if session_name != owner_handle:
+                try:
+                    await tmux_command(
+                        container_id,
+                        owner_handle,
+                        ["kill-session", "-t", session_name],
+                    )
+                except RuntimeError:
+                    pass  # Session may have already exited
+    except RuntimeError:
+        pass  # No sessions
 
 
 class ShellProcess:
