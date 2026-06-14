@@ -55,6 +55,7 @@ class TestUsers:
         user = await model.create_user("alice@example.com", "hash123")
         assert user["email"] == "alice@example.com"
         assert "id" in user
+        assert user["handle"] == "alice"
 
     async def test_get_user_by_email(self, user):
         found = await model.get_user_by_email("testuser@example.com")
@@ -73,6 +74,125 @@ class TestUsers:
     async def test_get_user_by_id_not_found(self, db):
         found = await model.get_user_by_id("fake-id")
         assert found is None
+
+
+class TestHandles:
+    async def test_create_user_assigns_handle(self, db):
+        user = await model.create_user("alice@example.com", "hash")
+        assert user["handle"] == "alice"
+
+    async def test_create_user_handle_conflict_appends_suffix(self, db):
+        await model.create_user("alice@example.com", "hash")
+        user2 = await model.create_user("alice@other.com", "hash")
+        assert user2["handle"] == "alice-2"
+
+    async def test_create_user_handle_from_special_email(self, db):
+        user = await model.create_user("Alice+Dev@foo.com", "hash")
+        assert user["handle"] == "alicedev"
+
+    async def test_create_user_empty_local_part(self, db):
+        user = await model.create_user("@foo.com", "hash")
+        assert user["handle"] == "user"
+
+    async def test_create_user_long_email(self, db):
+        user = await model.create_user("a" * 100 + "@foo.com", "hash")
+        assert len(user["handle"]) <= model._MAX_HANDLE_LEN
+
+    async def test_get_user_handle(self, user):
+        handle = await model.get_user_handle(user["id"])
+        assert handle == user["handle"]
+
+    async def test_get_user_handle_not_found(self, db):
+        handle = await model.get_user_handle("fake-id")
+        assert handle is None
+
+    async def test_set_user_handle(self, user):
+        await model.set_user_handle(user["id"], "newname")
+        handle = await model.get_user_handle(user["id"])
+        assert handle == "newname"
+
+    async def test_set_user_handle_conflict(self, db):
+        u1 = await model.create_user("a@a.com", "hash")
+        await model.create_user("b@b.com", "hash")
+        with pytest.raises(ValueError, match="already taken"):
+            await model.set_user_handle(u1["id"], "b")
+
+    async def test_set_user_handle_invalid(self, user):
+        with pytest.raises(ValueError, match="empty"):
+            await model.set_user_handle(user["id"], "")
+        with pytest.raises(ValueError, match="characters"):
+            await model.set_user_handle(user["id"], "a" * 100)
+        with pytest.raises(ValueError, match="dot"):
+            await model.set_user_handle(user["id"], ".hidden")
+        with pytest.raises(ValueError, match="reserved"):
+            await model.set_user_handle(user["id"], "work")
+        with pytest.raises(ValueError, match="lowercase"):
+            await model.set_user_handle(user["id"], "Alice")
+
+    async def test_get_user_by_handle(self, user):
+        found = await model.get_user_by_handle(user["handle"])
+        assert found is not None
+        assert found["id"] == user["id"]
+        assert found["handle"] == user["handle"]
+
+    async def test_get_user_by_handle_not_found(self, db):
+        found = await model.get_user_by_handle("nonexistent")
+        assert found is None
+
+    async def test_derive_handle(self):
+        assert model.derive_handle("alice@example.com") == "alice"
+        assert model.derive_handle("Alice+Dev@foo.com") == "alicedev"
+        assert model.derive_handle("bob.smith@foo.com") == "bob.smith"
+        assert model.derive_handle("@foo.com") == "user"
+        assert model.derive_handle("admin") == "admin"
+
+    async def test_validate_handle(self):
+        assert model.validate_handle("alice") is None
+        assert model.validate_handle("") is not None
+        assert model.validate_handle("a" * 100) is not None
+        assert model.validate_handle(".hidden") is not None
+        assert model.validate_handle("work") is not None
+        assert model.validate_handle("Alice") is not None
+
+    async def test_handle_conflict_truncates_long_suffix(self, db):
+        """When base handle is near max length, suffix is truncated."""
+        long = "a" * model._MAX_HANDLE_LEN
+        u1 = await model.create_user(long + "@a.com", "hash")
+        assert u1["handle"] == long
+        u2 = await model.create_user(long + "@b.com", "hash")
+        assert len(u2["handle"]) <= model._MAX_HANDLE_LEN
+        assert u2["handle"].endswith("-2")
+
+    async def test_get_user_by_email_includes_handle(self, user):
+        found = await model.get_user_by_email(user["email"])
+        assert found["handle"] == user["handle"]
+
+    async def test_get_user_by_id_includes_handle(self, user):
+        found = await model.get_user_by_id(user["id"])
+        assert found["handle"] == user["handle"]
+
+    async def test_search_users_includes_handle(self, user):
+        results = await model.search_users("testuser")
+        assert len(results) > 0
+        assert results[0]["handle"] == user["handle"]
+
+    async def test_get_workspace_members_includes_handle(self, user):
+        ws = await model.create_workspace(user["id"], "member-ws")
+        other = await model.create_user(
+            "other@test.com", "hash", verified=True
+        )
+        resource = f"/workspaces/{ws['id']}"
+        await model.add_acl_entry(
+            resource,
+            0,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        members = await model.get_workspace_members(ws["id"])
+        assert len(members) == 1
+        assert members[0]["handle"] == other["handle"]
 
 
 class TestWorkspaces:

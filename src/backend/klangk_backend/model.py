@@ -51,10 +51,11 @@ async def init_db() -> None:
                 verified INTEGER NOT NULL DEFAULT 0,
                 provider TEXT NOT NULL DEFAULT 'local',
                 external_id TEXT,
+                handle TEXT UNIQUE,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
-        # Migration: make password_hash nullable and add OIDC columns.
+        # Migration: make password_hash nullable, add OIDC columns, add handle.
         # SQLite can't ALTER COLUMN, so we recreate the table if needed.
         cursor = await db.execute("PRAGMA table_info(users)")
         columns = {row[1]: row for row in await cursor.fetchall()}
@@ -63,6 +64,8 @@ async def init_db() -> None:
             # password_hash has NOT NULL — need to drop it for OIDC users
             needs_recreate = True
         if "provider" not in columns:
+            needs_recreate = True
+        if "handle" not in columns:
             needs_recreate = True
         if needs_recreate:
             await db.execute("""
@@ -73,6 +76,7 @@ async def init_db() -> None:
                     verified INTEGER NOT NULL DEFAULT 0,
                     provider TEXT NOT NULL DEFAULT 'local',
                     external_id TEXT,
+                    handle TEXT UNIQUE,
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
@@ -82,7 +86,14 @@ async def init_db() -> None:
                 c
                 for c in old_cols
                 if c
-                in ("id", "email", "password_hash", "verified", "created_at")
+                in (
+                    "id",
+                    "email",
+                    "password_hash",
+                    "verified",
+                    "created_at",
+                    "handle",
+                )
             ]
             cols_str = ", ".join(shared)
             await db.execute(
@@ -91,6 +102,8 @@ async def init_db() -> None:
             )
             await db.execute("DROP TABLE users")
             await db.execute("ALTER TABLE users_new RENAME TO users")
+        # Backfill handles for existing users that don't have one.
+        await _backfill_handles(db)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,
@@ -205,6 +218,81 @@ async def init_db() -> None:
         await db.close()
 
 
+# --- Handle helpers ---
+
+_HANDLE_RE = re.compile(r"^[a-z0-9._-]+$")
+_RESERVED_HANDLES = frozenset({"work", ".users"})
+_MAX_HANDLE_LEN = 32
+
+
+def derive_handle(email: str) -> str:
+    """Derive a handle from an email address local part."""
+    local = email.split("@")[0] if "@" in email else email
+    handle = re.sub(r"[^a-z0-9._-]", "", local.lower())
+    if not handle:
+        handle = "user"
+    return handle[:_MAX_HANDLE_LEN]
+
+
+def validate_handle(handle: str) -> str | None:
+    """Return an error message if the handle is invalid, else None."""
+    if not handle:
+        return "Handle cannot be empty"
+    if len(handle) > _MAX_HANDLE_LEN:
+        return f"Handle must be {_MAX_HANDLE_LEN} characters or fewer"
+    if handle.startswith("."):
+        return "Handle cannot start with a dot"
+    if handle in _RESERVED_HANDLES:
+        return f"'{handle}' is reserved"
+    if not _HANDLE_RE.match(handle):
+        return (
+            "Handle may only contain lowercase letters, digits,"
+            " dots, dashes, and underscores"
+        )
+    return None
+
+
+async def _unique_handle(db, base: str) -> str:
+    """Return *base* if available, else append -2, -3, … until unique."""
+    cursor = await db.execute("SELECT 1 FROM users WHERE handle = ?", (base,))
+    if await cursor.fetchone() is None:
+        return base
+    for i in range(2, 10000):
+        candidate = f"{base}-{i}"
+        if len(candidate) > _MAX_HANDLE_LEN:
+            candidate = f"{base[: _MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
+        cursor = await db.execute(
+            "SELECT 1 FROM users WHERE handle = ?", (candidate,)
+        )
+        if await cursor.fetchone() is None:
+            return candidate
+    return _hash_fallback_handle(base)  # pragma: no cover
+
+
+def _hash_fallback_handle(base: str) -> str:  # pragma: no cover
+    import hashlib
+
+    suffix = hashlib.sha256(base.encode()).hexdigest()[:8]
+    return f"{base[: _MAX_HANDLE_LEN - 9]}-{suffix}"
+
+
+async def _backfill_handles(db) -> None:
+    """Assign handles to any users that don't have one yet."""
+    cursor = await db.execute(
+        "SELECT id, email FROM users WHERE handle IS NULL"
+    )
+    rows = await cursor.fetchall()
+    for row in rows:
+        base = derive_handle(row["email"])
+        handle = await _unique_handle(db, base)
+        await db.execute(
+            "UPDATE users SET handle = ? WHERE id = ?",
+            (handle, row["id"]),
+        )
+    if rows:
+        await db.commit()
+
+
 # ACL constants
 ACTION_DENY = 0
 ACTION_ALLOW = 1
@@ -244,9 +332,11 @@ async def create_user(
     db = await get_db()
     try:
         user_id = str(uuid.uuid4())
+        base = derive_handle(email)
+        handle = await _unique_handle(db, base)
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified,"
-            " provider, external_id) VALUES (?, ?, ?, ?, ?, ?)",
+            " provider, external_id, handle) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id,
                 email,
@@ -254,10 +344,71 @@ async def create_user(
                 int(verified),
                 provider,
                 external_id,
+                handle,
             ),
         )
         await db.commit()
-        return {"id": user_id, "email": email, "verified": verified}
+        return {
+            "id": user_id,
+            "email": email,
+            "handle": handle,
+            "verified": verified,
+        }
+    finally:
+        await db.close()
+
+
+async def get_user_handle(user_id: str) -> str | None:
+    """Return the handle for a user, or None if not found."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT handle FROM users WHERE id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return row["handle"] if row else None
+    finally:
+        await db.close()
+
+
+async def set_user_handle(user_id: str, handle: str) -> None:
+    """Update a user's handle. Raises ValueError on invalid or conflict."""
+    error = validate_handle(handle)
+    if error:
+        raise ValueError(error)
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE handle = ? AND id != ?",
+            (handle, user_id),
+        )
+        if await cursor.fetchone():
+            raise ValueError(f"'{handle}' is already taken")
+        await db.execute(
+            "UPDATE users SET handle = ? WHERE id = ?",
+            (handle, user_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_user_by_handle(handle: str) -> dict | None:
+    """Find a user by handle."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, email, handle FROM users WHERE handle = ?",
+            (handle,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "handle": row["handle"],
+        }
     finally:
         await db.close()
 
@@ -269,7 +420,8 @@ async def get_user_by_external_id(
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT id, email, password_hash, verified, provider, external_id"
+            "SELECT id, email, password_hash, verified, provider,"
+            " external_id, handle"
             " FROM users WHERE provider = ? AND external_id = ?",
             (provider, external_id),
         )
@@ -283,6 +435,7 @@ async def get_user_by_external_id(
             "verified": bool(row["verified"]),
             "provider": row["provider"],
             "external_id": row["external_id"],
+            "handle": row["handle"],
         }
     finally:
         await db.close()
@@ -747,7 +900,8 @@ async def get_user_by_email(email: str) -> dict | None:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT id, email, password_hash, verified, provider, external_id"
+            "SELECT id, email, password_hash, verified, provider,"
+            " external_id, handle"
             " FROM users WHERE email = ?",
             (email,),
         )
@@ -761,6 +915,7 @@ async def get_user_by_email(email: str) -> dict | None:
             "verified": bool(row["verified"]),
             "provider": row["provider"],
             "external_id": row["external_id"],
+            "handle": row["handle"],
         }
     finally:
         await db.close()
@@ -839,13 +994,17 @@ async def get_user_by_id(user_id: str) -> dict | None:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT id, email FROM users WHERE id = ?",
+            "SELECT id, email, handle FROM users WHERE id = ?",
             (user_id,),
         )
         row = await cursor.fetchone()
         if row is None:
             return None
-        return {"id": row["id"], "email": row["email"]}
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "handle": row["handle"],
+        }
     finally:
         await db.close()
 
@@ -855,11 +1014,12 @@ async def search_users(query: str, limit: int = 10) -> list[dict]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT id, email FROM users WHERE email LIKE ? ORDER BY email LIMIT ?",
+            "SELECT id, email, handle FROM users"
+            " WHERE email LIKE ? ORDER BY email LIMIT ?",
             (f"{query}%", limit),
         )
         return [
-            {"id": row["id"], "email": row["email"]}
+            {"id": row["id"], "email": row["email"], "handle": row["handle"]}
             for row in await cursor.fetchall()
         ]
     finally:
@@ -1073,7 +1233,7 @@ async def get_workspace_members(workspace_id: str) -> list[dict]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT DISTINCT u.id, u.email FROM users u"
+            "SELECT DISTINCT u.id, u.email, u.handle FROM users u"
             " JOIN acl_entries ae ON ae.user_id = u.id"
             " JOIN workspaces w ON w.id = ?"
             " WHERE ae.resource = ? AND ae.principal_type = ?"
@@ -1087,7 +1247,7 @@ async def get_workspace_members(workspace_id: str) -> list[dict]:
             ),
         )
         return [
-            {"id": row["id"], "email": row["email"]}
+            {"id": row["id"], "email": row["email"], "handle": row["handle"]}
             for row in await cursor.fetchall()
         ]
     finally:

@@ -42,10 +42,16 @@ def _build_environment(
     command_override: str | None,
     bridge_token: str | None,
     user_home: str | None = None,
+    user_id: str | None = None,
+    user_handle: str | None = None,
 ) -> list[str]:
     env = ["TERM=xterm-256color"]
     if user_home is not None:
         env.append(f"HOME={user_home}")
+    if user_id is not None:
+        env.append(f"KLANGK_USER_ID={user_id}")
+    if user_handle is not None:
+        env.append(f"KLANGK_USER_HANDLE={user_handle}")
     if command_override is not None:
         env.append(f"KLANGK_CMD_OVERRIDE={command_override}")
     if bridge_token is not None:
@@ -57,6 +63,7 @@ _WORKSPACE_STATE_FILE = ".workspace-state.json"
 
 
 def _build_shell_command(
+    session_name: str | None = None,
     user_home: str | None = None,
     socket_path: str | None = None,
     join_session: str | None = None,
@@ -64,6 +71,8 @@ def _build_shell_command(
 ) -> tuple[list[str], str | None]:
     """Build the tmux command for a terminal session.
 
+    *session_name*: tmux session name (typically the user_id).
+    *user_home*: sets ``HOME`` env var inside the session.
     *socket_path*: use ``-S`` for shared terminal sockets.
     *join_session*: join an existing session group (for shared terminals).
     *read_only*: attach with ``-r`` for spy mode.
@@ -85,15 +94,15 @@ def _build_shell_command(
         socket_args = ["-S", socket_path]
     if user_home is not None:
         tmux_env = ["-e", f"HOME={user_home}"]
-        handle = user_home.rsplit("/", 1)[-1]
+    if session_name is not None:
         if join_session is not None:
             # Join an existing session group.  Use a unique session name
             # so rapid re-joins don't collide with a stale session.
-            unique = f"{handle}-{uuid.uuid4().hex[:8]}"
+            unique = f"{session_name}-{uuid.uuid4().hex[:8]}"
             session_args = ["-t", join_session, "-s", unique]
         else:
             # Create or reattach to own session.
-            session_args = ["-A", "-s", handle]
+            session_args = ["-A", "-s", session_name]
     cmd = [
         "env",
         *unset_args,
@@ -125,13 +134,6 @@ def _build_exec_argv(
     argv.append(container_id)
     argv += shell_cmd
     return argv
-
-
-def _session_name(user_home: str | None) -> str | None:
-    """Extract the tmux session name from a user_home path."""
-    if user_home is None:
-        return None
-    return user_home.rsplit("/", 1)[-1]
 
 
 async def tmux_command(
@@ -373,9 +375,7 @@ async def restore_windows(
             await new_window(container_id, session_name, name=name)
 
 
-async def kill_joiner_sessions(
-    container_id: str, owner_handle: str
-) -> None:
+async def kill_joiner_sessions(container_id: str, owner_handle: str) -> None:
     """Kill all session-group sessions except the owner's own session.
 
     Used when unsharing to disconnect spectators/collaborators.
@@ -503,16 +503,22 @@ class TerminalSession:
     def __init__(
         self,
         container_id: str,
+        session_name: str | None = None,
         user_home: str | None = None,
         socket_path: str | None = None,
         join_session: str | None = None,
         read_only: bool = False,
+        user_id: str | None = None,
+        user_handle: str | None = None,
     ):
         self.container_id = container_id
+        self.session_name = session_name
         self.user_home = user_home
         self.socket_path = socket_path
         self.join_session = join_session
         self.read_only = read_only
+        self.user_id = user_id
+        self.user_handle = user_handle
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -531,10 +537,15 @@ class TerminalSession:
         """Start a shell session via ``podman exec`` over a PTY."""
         self._running = True
         env = _build_environment(
-            command_override, bridge_token, self.user_home
+            command_override,
+            bridge_token,
+            self.user_home,
+            user_id=self.user_id,
+            user_handle=self.user_handle,
         )
         shell_cmd, self._tmux_session_name = _build_shell_command(
-            self.user_home,
+            session_name=self.session_name,
+            user_home=self.user_home,
             socket_path=self.socket_path,
             join_session=self.join_session,
             read_only=self.read_only,

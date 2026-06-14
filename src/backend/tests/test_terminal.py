@@ -14,7 +14,6 @@ from klangk_backend.terminal import (
     TerminalSession,
     _build_shell_command,
     _make_shell_process,
-    _session_name,
     close_window,
     kill_joiner_sessions,
     list_windows,
@@ -188,9 +187,17 @@ class TestStart:
     async def test_user_home_sets_home_env(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid", user_home="/home/alice")
+            s = TerminalSession(
+                "cid",
+                session_name="uid-123",
+                user_home="/home/alice",
+                user_id="uid-123",
+                user_handle="alice",
+            )
             await s.start(120, 40)
         assert "HOME=/home/alice" in fake.argv
+        assert "KLANGK_USER_ID=uid-123" in fake.argv
+        assert "KLANGK_USER_HANDLE=alice" in fake.argv
         # Work dir is always /home (bash cd's to $HOME on login)
         assert fake.argv[fake.argv.index("-w") + 1] == "/home"
         # HOME is also passed to tmux via -e so child shells inherit it
@@ -198,9 +205,9 @@ class TestStart:
         tmux_tail = fake.argv[tmux_idx:]
         assert "-e" in tmux_tail
         assert "HOME=/home/alice" in tmux_tail
-        # Session named after handle; -A reattaches on reconnect
+        # Session named by user_id; -A reattaches on reconnect
         assert "-A" in tmux_tail
-        assert tmux_tail[tmux_tail.index("-s") + 1] == "alice"
+        assert tmux_tail[tmux_tail.index("-s") + 1] == "uid-123"
         await s.stop()
 
     async def test_no_user_home_by_default(self):
@@ -394,6 +401,30 @@ class TestStop:
         s = TerminalSession("cid")
         await s.stop()
 
+    async def test_stop_kills_tmux_session_with_socket(self):
+        """When socket_path is set, stop() kills the tmux session."""
+        fake = FakeShell(block_after_chunks=True)
+        with _patch(fake):
+            s = TerminalSession(
+                "cid", session_name="uid", socket_path="/tmp/s.sock"
+            )
+            await s.start()
+        # Manually set tmux session name (normally set by _build_shell_command
+        # when join_session is used with a socket path)
+        s._tmux_session_name = "uid-abc123"
+        proc_mock = AsyncMock()
+        proc_mock.wait = AsyncMock(return_value=0)
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc_mock,
+        ) as mock_exec:
+            await s.stop()
+        mock_exec.assert_called_once()
+        argv = mock_exec.call_args[0]
+        assert "kill-session" in argv
+        assert "-t" in argv
+        assert "uid-abc123" in argv
+
 
 class TestOutput:
     async def test_output_yields_data(self):
@@ -475,14 +506,6 @@ class TestIsAlive:
             await s.start()
         await s.stop()
         assert s.is_alive is False
-
-
-class TestSessionName:
-    def test_extracts_handle(self):
-        assert _session_name("/home/alice") == "alice"
-
-    def test_none(self):
-        assert _session_name(None) is None
 
 
 class TestTmuxCommand:
@@ -631,25 +654,36 @@ class TestRenameWindow:
                 await rename_window("cid", "sess", 0, "build")
 
 
+class TestBuildShellCommandSocketPath:
+    def test_socket_path_sets_dash_s(self):
+        cmd, _ = _build_shell_command(
+            session_name="uid", socket_path="/tmp/test.sock"
+        )
+        assert "-S" in cmd
+        assert "/tmp/test.sock" in cmd
+
+
 class TestBuildShellCommandJoinSession:
     def test_join_session_no_socket(self):
         """Joining a session group on the default server (no -S)."""
         cmd, unique = _build_shell_command(
+            session_name="joiner-uid",
             user_home="/home/bob",
-            join_session="admin",
+            join_session="owner-uid",
         )
         assert "-t" in cmd
-        assert "admin" in cmd
+        assert "owner-uid" in cmd
         assert "-S" not in cmd
         s_idx = cmd.index("-s")
-        assert cmd[s_idx + 1].startswith("bob-")
+        assert cmd[s_idx + 1].startswith("joiner-uid-")
         assert unique == cmd[s_idx + 1]
         assert "-A" not in cmd
 
     def test_read_only_join(self):
         cmd, unique = _build_shell_command(
+            session_name="joiner-uid",
             user_home="/home/ceo",
-            join_session="admin",
+            join_session="owner-uid",
             read_only=True,
         )
         assert "new-session" in cmd
@@ -766,6 +800,19 @@ class TestKillJoinerSessions:
         # Only list-sessions, no kills
         assert mock_cmd.call_count == 1
 
+    async def test_kill_session_error_ignored(self):
+        """If kill-session fails for a joiner, continue with others."""
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+            side_effect=[
+                "admin\nbob-abc\ncarol-def\n",  # list-sessions
+                RuntimeError("already exited"),  # kill bob fails
+                "",  # kill carol succeeds
+            ],
+        ) as mock_cmd:
+            await kill_joiner_sessions("cid", "admin")
+        assert mock_cmd.call_count == 3
+
     async def test_no_sessions(self):
         with patch(
             "klangk_backend.terminal.tmux_command",
@@ -782,13 +829,14 @@ class TestTerminalSessionJoin:
         with _patch(fake):
             s = TerminalSession(
                 "cid",
+                session_name="joiner-uid",
                 user_home="/home/bob",
-                join_session="admin",
+                join_session="owner-uid",
             )
             await s.start(80, 24)
         assert "-S" not in fake.argv
         assert "-t" in fake.argv
-        assert "admin" in fake.argv
+        assert "owner-uid" in fake.argv
         await s.stop()
 
     async def test_read_only_join(self):
@@ -796,8 +844,9 @@ class TestTerminalSessionJoin:
         with _patch(fake):
             s = TerminalSession(
                 "cid",
+                session_name="joiner-uid",
                 user_home="/home/ceo",
-                join_session="admin",
+                join_session="owner-uid",
                 read_only=True,
             )
             await s.start(80, 24)

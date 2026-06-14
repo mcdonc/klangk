@@ -79,7 +79,11 @@ def _base_conn(user=None, ws=None):
     if ws is None:
         ws = _mock_sock()
     if user is None:
-        user = {"id": "uid", "email": "testuser@example.com"}
+        user = {
+            "id": "uid",
+            "email": "testuser@example.com",
+            "handle": "testuser",
+        }
     return Connection(ws, user)
 
 
@@ -439,6 +443,15 @@ class TestHandleTerminalStart:
         conn._has_perm = _perm  # type: ignore[method-assign]
         container.registry.track_activity("cid", "ws")
 
+        # Create a session with shared windows so the shared_terminals
+        # broadcast path (lines 977-978) is exercised.
+        session = wshandler.state.get_or_create_session("ws")
+        session.terminal_windows["other-uid"] = [
+            {"name": "dev", "shared": True},
+        ]
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+
         list_call = [0]
 
         async def fake_list(*a, **kw):
@@ -468,13 +481,26 @@ class TestHandleTerminalStart:
             # Let the background task run
             await asyncio.sleep(0)
 
-        MockTS.assert_called_once_with("cid", user_home="/home/testuser")
-        # Should have sent terminal_windows after terminal_started
+        MockTS.assert_called_once_with(
+            "cid",
+            session_name="uid",
+            user_home="/home/testuser",
+            user_id="uid",
+            user_handle="testuser",
+        )
+        # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
         assert any(
             isinstance(m, dict) and m.get("type") == "terminal_windows"
             for m in sent
         )
+        assert any(
+            isinstance(m, dict) and m.get("type") == "shared_terminals"
+            for m in sent
+        )
+
+        wshandler.state.sessions.pop("ws", None)
+        wshandler.state.connections.pop(sock, None)
         # bridge_token should be passed (a UUID string)
         start_kwargs = mock_session.start.call_args
         assert start_kwargs[1]["command_override"] is None
@@ -973,6 +999,7 @@ class TestHandleSetHandle:
             user={"id": user["id"], "email": user["email"]}, ws=sock
         )
         conn.workspace_id = ws["id"]
+        conn.workspace = {"user_id": user["id"]}
 
         await conn.handle_set_handle({"handle": "alice"})
         sent = sock.send_json.call_args_list
@@ -984,21 +1011,21 @@ class TestHandleSetHandle:
         assert conn._user_home == "/home/alice"
 
     async def test_set_handle_conflict(self, user, temp_data_dir):
-        from klangk_backend import workspaces
-
-        ws = await workspaces.create_workspace(user["id"], "handle-test2")
-        workspaces.set_user_handle(user["id"], ws["id"], "other-uid", "alice")
+        # Create another user that already has handle "alice"
+        other = await model.create_user(
+            "alice@example.com", "hash", verified=True
+        )
+        assert other["handle"] == "alice"
 
         sock = _mock_sock()
         conn = _base_conn(
             user={"id": user["id"], "email": user["email"]}, ws=sock
         )
-        conn.workspace_id = ws["id"]
+        conn.workspace_id = "ws-1"
 
         await conn.handle_set_handle({"handle": "alice"})
         sent = sock.send_json.call_args_list
         assert any(call.args[0].get("type") == "handle_error" for call in sent)
-        assert conn._user_home is None
 
     async def test_set_handle_no_workspace(self):
         sock = _mock_sock()
@@ -1008,7 +1035,6 @@ class TestHandleSetHandle:
         assert any(call.args[0].get("type") == "error" for call in sent)
 
     async def test_handle_auto_created_on_connect(self, user):
-
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock)
         workspace = await ws_mod.create_workspace(user["id"], "auto-handle")
@@ -1027,77 +1053,9 @@ class TestHandleSetHandle:
         ):
             await conn.start_workspace_container(workspace["id"], workspace)
 
+        # Handle is derived from email at user creation time
         assert conn._user_home is not None
         assert conn._user_home.startswith("/home/")
-
-        wshandler.state.sessions.pop(workspace["id"], None)
-        container.registry.states.pop(workspace["id"], None)
-
-    async def test_handle_auto_created_with_conflict(self, user):
-        from klangk_backend import workspaces
-
-        sock = _mock_sock(headers={"host": "localhost:8997"})
-        conn = _base_conn(user=user, ws=sock)
-        workspace = await ws_mod.create_workspace(
-            user["id"], "conflict-handle"
-        )
-        # Pre-create a conflicting handle from another user
-        workspaces.set_user_handle(
-            user["id"],
-            workspace["id"],
-            "other-uid",
-            workspaces.suggest_handle(user["email"]),
-        )
-
-        async def fake_start(*a, **kw):
-            container.registry.track_activity("cid-ch", workspace["id"])
-            return ("cid-ch", "created")
-
-        with (
-            patch.object(
-                container.registry,
-                "start_container",
-                side_effect=fake_start,
-            ),
-            patch("glob.glob", return_value=[]),
-        ):
-            await conn.start_workspace_container(workspace["id"], workspace)
-
-        assert conn._user_home is not None
-        assert "-2" in conn._user_home or "-3" in conn._user_home
-
-        wshandler.state.sessions.pop(workspace["id"], None)
-        container.registry.states.pop(workspace["id"], None)
-
-    async def test_handle_creation_failure_logs_and_continues(self, user):
-        from klangk_backend import workspaces
-
-        sock = _mock_sock(headers={"host": "localhost:8997"})
-        conn = _base_conn(user=user, ws=sock)
-        workspace = await ws_mod.create_workspace(user["id"], "handle-fail")
-
-        async def fake_start(*a, **kw):
-            container.registry.track_activity("cid-hf", workspace["id"])
-            return ("cid-hf", "created")
-
-        with (
-            patch.object(
-                container.registry,
-                "start_container",
-                side_effect=fake_start,
-            ),
-            patch("glob.glob", return_value=[]),
-            patch.object(
-                workspaces,
-                "set_user_handle",
-                side_effect=OSError("disk full"),
-            ),
-        ):
-            await conn.start_workspace_container(workspace["id"], workspace)
-
-        # Handle creation failed, but connect still worked
-        assert conn._user_home is None
-        assert conn.container_id == "cid-hf"
 
         wshandler.state.sessions.pop(workspace["id"], None)
         container.registry.states.pop(workspace["id"], None)
@@ -1106,19 +1064,16 @@ class TestHandleSetHandle:
         from klangk_backend import workspaces
 
         ws = await workspaces.create_workspace(user["id"], "handle-test4")
-        workspaces.set_user_handle(user["id"], ws["id"], user["id"], "chris")
         sock = _mock_sock()
         conn = _base_conn(
             user={"id": user["id"], "email": user["email"]}, ws=sock
         )
         conn.workspace_id = ws["id"]
-        conn.pending_status_msg = "ready"
 
-        # Simulate what start_workspace_container does for handle resolution
-        handle = workspaces.get_user_handle(user["id"], ws["id"], user["id"])
-        if handle:
-            conn._user_home = f"/home/{handle}"
-        assert conn._user_home == "/home/chris"
+        # Handle is already in the DB from create_user
+        handle = await model.get_user_handle(user["id"])
+        assert handle is not None
+        assert handle == user["handle"]
 
 
 # --- forward_terminal_output ---
@@ -1451,14 +1406,11 @@ class TestStartWorkspaceContainer:
         container.registry.states.pop(workspace["id"], None)
 
     async def test_resolves_existing_handle(self, user):
-        from klangk_backend import workspaces
-
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock)
         workspace = await ws_mod.create_workspace(user["id"], "handle-ws")
-        workspaces.set_user_handle(
-            user["id"], workspace["id"], user["id"], "chris"
-        )
+        # Set a custom handle in the DB
+        await model.set_user_handle(user["id"], "chris")
 
         async def fake_start(*a, **kw):
             container.registry.track_activity("cid-h", workspace["id"])
@@ -3115,7 +3067,7 @@ class TestTerminalWindowHandlers:
             ],
         ) as mock_new:
             await conn.handle_terminal_new_window({"name": "build"})
-        mock_new.assert_called_once_with("cid", "alice", name="build")
+        mock_new.assert_called_once_with("cid", "uid", name="build")
 
     async def test_new_window_error(self):
         sock = _mock_sock()
@@ -3139,7 +3091,7 @@ class TestTerminalWindowHandlers:
             "klangk_backend.terminal.select_window",
         ) as mock_sel:
             await conn.handle_terminal_select_window({"index": 2})
-        mock_sel.assert_called_once_with("cid", "alice", 2)
+        mock_sel.assert_called_once_with("cid", "uid", 2)
 
     async def test_select_window_error(self):
         sock = _mock_sock()
@@ -3269,11 +3221,15 @@ class TestShareWindowHandlers:
         ]
         await session.add_subscriber(sock, "cid")
         try:
-            with patch("klangk_backend.acl.check_permission", return_value=True):
+            with patch(
+                "klangk_backend.acl.check_permission", return_value=True
+            ):
                 await conn.handle_share_window({"index": 1})
             assert session.terminal_windows[user["id"]][1]["shared"] is True
             calls = [c[0][0] for c in sock.send_json.call_args_list]
-            shared_msgs = [c for c in calls if c.get("type") == "shared_terminals"]
+            shared_msgs = [
+                c for c in calls if c.get("type") == "shared_terminals"
+            ]
             assert len(shared_msgs) >= 1
         finally:
             wshandler.state.sessions.pop("ws-1", None)
@@ -3287,7 +3243,7 @@ class TestShareWindowHandlers:
         with patch("klangk_backend.acl.check_permission", return_value=False):
             await conn.handle_share_window({"index": 0})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
-        assert any("Permission" in str(c) for c in calls)
+        assert any("Permission" in c.get("message", "") for c in calls)
 
     async def test_unshare_window_kicks_joiners(self, user, temp_data_dir):
         sock = _mock_sock()
@@ -3302,14 +3258,20 @@ class TestShareWindowHandlers:
         await session.add_subscriber(sock, "cid")
         try:
             with (
-                patch("klangk_backend.acl.check_permission", return_value=True),
-                patch("klangk_backend.terminal.kill_joiner_sessions") as mock_kill,
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch(
+                    "klangk_backend.terminal.kill_joiner_sessions"
+                ) as mock_kill,
             ):
                 await conn.handle_unshare_window({"index": 0})
             assert session.terminal_windows[user["id"]][0]["shared"] is False
             mock_kill.assert_awaited_once()
             calls = [c[0][0] for c in sock.send_json.call_args_list]
-            deleted = [c for c in calls if c.get("type") == "shared_terminal_deleted"]
+            deleted = [
+                c for c in calls if c.get("type") == "shared_terminal_deleted"
+            ]
             assert len(deleted) == 1
         finally:
             wshandler.state.sessions.pop("ws-1", None)
@@ -3328,14 +3290,18 @@ class TestShareWindowHandlers:
         await session.add_subscriber(sock, "cid")
         wshandler.state.connections[sock] = conn
         try:
-            with patch("klangk_backend.acl.check_permission", return_value=True):
+            with patch(
+                "klangk_backend.acl.check_permission", return_value=True
+            ):
                 await conn.handle_list_shared_terminals()
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             shared = [c for c in calls if c.get("type") == "shared_terminals"]
             assert len(shared) == 1
             terminals = shared[0]["terminals"]
             assert len(terminals) == 1
-            assert "build" in terminals[0]["name"]
+            assert terminals[0]["window_name"] == "build"
+            assert terminals[0]["user_id"] == user["id"]
+            assert terminals[0]["handle"] == user["handle"]
         finally:
             wshandler.state.sessions.pop("ws-1", None)
             wshandler.state.connections.pop(sock, None)
@@ -3353,7 +3319,9 @@ class TestShareWindowHandlers:
         wshandler.state.connections[sock] = conn
         try:
             with (
-                patch("klangk_backend.acl.check_permission", return_value=True),
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
                 patch("klangk_backend.terminal.new_window", return_value=[]),
             ):
                 await conn.handle_create_shared_terminal({"name": "dev"})
@@ -3364,6 +3332,512 @@ class TestShareWindowHandlers:
         finally:
             wshandler.state.sessions.pop("ws-1", None)
             wshandler.state.connections.pop(sock, None)
+
+    async def test_share_window_no_container(self, user):
+        conn = _base_conn(user=user)
+        await conn.handle_share_window({"index": 0})
+        # No error sent — early return
+
+    async def test_share_window_missing_index(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "ws-1"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_share_window({})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("index" in c.get("message", "").lower() for c in calls)
+
+    async def test_share_window_invalid_index(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "ws-1"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[user["id"]] = [{"name": "1", "shared": False}]
+        try:
+            with patch(
+                "klangk_backend.acl.check_permission", return_value=True
+            ):
+                await conn.handle_share_window({"index": 5})
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any("Invalid" in c.get("message", "") for c in calls)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_share_window_no_session(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "no-session-ws"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_share_window({"index": 0})
+        # No error — early return
+
+    async def test_unshare_window_no_container(self, user):
+        conn = _base_conn(user=user)
+        await conn.handle_unshare_window({"index": 0})
+
+    async def test_unshare_window_permission_denied(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        with patch("klangk_backend.acl.check_permission", return_value=False):
+            await conn.handle_unshare_window({"index": 0})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Permission" in c.get("message", "") for c in calls)
+
+    async def test_unshare_window_missing_index(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "ws-1"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_unshare_window({})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("index" in c.get("message", "").lower() for c in calls)
+
+    async def test_unshare_window_invalid_index(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "ws-1"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[user["id"]] = [{"name": "1", "shared": True}]
+        try:
+            with patch(
+                "klangk_backend.acl.check_permission", return_value=True
+            ):
+                await conn.handle_unshare_window({"index": 5})
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any("Invalid" in c.get("message", "") for c in calls)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_unshare_window_no_session(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "no-session-ws"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_unshare_window({"index": 0})
+
+    async def test_unshare_kill_error_handled(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[user["id"]] = [{"name": "1", "shared": True}]
+        await session.add_subscriber(sock, "cid")
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch(
+                    "klangk_backend.terminal.kill_joiner_sessions",
+                    side_effect=RuntimeError("no sessions"),
+                ),
+            ):
+                await conn.handle_unshare_window({"index": 0})
+            assert session.terminal_windows[user["id"]][0]["shared"] is False
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_join_shared_terminal(self, user, temp_data_dir):
+        owner = await model.create_user(
+            "owner@test.com", "hash", verified=True
+        )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/joiner"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[owner["id"]] = [
+            {"name": "build", "shared": True},
+        ]
+        container.registry.track_activity("cid", "ws-1")
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch("klangk_backend.terminal.select_window"),
+                patch("klangk_backend.terminal.tmux_command", return_value=""),
+            ):
+                mock_sess = _mock_terminal()
+                MockTS.return_value = mock_sess
+
+                async def fake_output():
+                    return
+                    yield
+
+                mock_sess.output = fake_output
+
+                await conn.handle_join_shared_terminal(
+                    {"user_id": owner["id"], "window_name": "build"}
+                )
+                await asyncio.sleep(0)
+
+            MockTS.assert_called_once()
+            call_kwargs = MockTS.call_args[1]
+            assert call_kwargs["join_session"] == owner["id"]
+            # Verify terminal_started was sent with shared info
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            started = [s for s in sent if s.get("type") == "terminal_started"]
+            assert len(started) == 1
+            assert started[0]["shared_user_id"] == owner["id"]
+            assert started[0]["shared_window"] == "build"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+            container.registry.states.pop("ws-1", None)
+
+    async def test_join_shared_terminal_no_container(self, user):
+        conn = _base_conn(user=user)
+        await conn.handle_join_shared_terminal(
+            {"user_id": "x", "window_name": "y"}
+        )
+
+    async def test_join_shared_terminal_permission_denied(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/x"
+        with patch("klangk_backend.acl.check_permission", return_value=False):
+            await conn.handle_join_shared_terminal(
+                {"user_id": "x", "window_name": "y"}
+            )
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Permission" in c.get("message", "") for c in calls)
+
+    async def test_join_shared_terminal_missing_fields(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/x"
+        conn.workspace_id = "ws-1"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_join_shared_terminal({})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("required" in c.get("message", "").lower() for c in calls)
+
+    async def test_join_shared_terminal_superseded(self, user, temp_data_dir):
+        """If session is superseded during start, _activate_session returns False."""
+        owner = await model.create_user(
+            "owner-sup@test.com", "hash", verified=True
+        )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/joiner"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[owner["id"]] = [
+            {"name": "build", "shared": True},
+        ]
+        container.registry.track_activity("cid", "ws-1")
+
+        async def fake_start(*a, **kw):
+            # Supersede the session before _activate_session runs
+            conn.terminal_session = None
+
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch.object(wshandler, "TerminalSession") as MockTS,
+            ):
+                mock_sess = _mock_terminal()
+                mock_sess.start = AsyncMock(side_effect=fake_start)
+                MockTS.return_value = mock_sess
+
+                await conn.handle_join_shared_terminal(
+                    {"user_id": owner["id"], "window_name": "build"}
+                )
+                await asyncio.sleep(0)
+
+            # Session was stopped because it was superseded
+            mock_sess.stop.assert_awaited()
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+            container.registry.states.pop("ws-1", None)
+
+    async def test_join_shared_terminal_start_error(self, user, temp_data_dir):
+        """If session.start() fails, error is sent and session stopped."""
+        owner = await model.create_user(
+            "owner-err@test.com", "hash", verified=True
+        )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/joiner"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[owner["id"]] = [
+            {"name": "build", "shared": True},
+        ]
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch.object(wshandler, "TerminalSession") as MockTS,
+            ):
+                mock_sess = _mock_terminal()
+                mock_sess.start = AsyncMock(
+                    side_effect=RuntimeError("start failed")
+                )
+                MockTS.return_value = mock_sess
+
+                await conn.handle_join_shared_terminal(
+                    {"user_id": owner["id"], "window_name": "build"}
+                )
+                await asyncio.sleep(0)
+
+            mock_sess.stop.assert_awaited()
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any("Failed" in c.get("message", "") for c in sent)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_join_shared_terminal_no_session(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/x"
+        conn.workspace_id = "no-session"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_join_shared_terminal(
+                {"user_id": "x", "window_name": "y"}
+            )
+        # Early return, no error sent
+
+    async def test_join_shared_terminal_not_found(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/x"
+        conn.workspace_id = "ws-1"
+        wshandler.state.get_or_create_session("ws-1")
+        try:
+            with patch(
+                "klangk_backend.acl.check_permission", return_value=True
+            ):
+                await conn.handle_join_shared_terminal(
+                    {"user_id": "nobody", "window_name": "nope"}
+                )
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(
+                "not found" in c.get("message", "").lower() for c in calls
+            )
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_delete_shared_terminal(self, user, temp_data_dir):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[user["id"]] = [
+            {"name": "1", "shared": False},
+            {"name": "build", "shared": True},
+        ]
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch("klangk_backend.terminal.kill_joiner_sessions"),
+                patch("klangk_backend.terminal.close_window", return_value=[]),
+            ):
+                await conn.handle_delete_shared_terminal(
+                    {"user_id": user["id"], "window_name": "build"}
+                )
+            windows = session.terminal_windows[user["id"]]
+            assert len(windows) == 1
+            assert windows[0]["name"] == "1"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+            wshandler.state.connections.pop(sock, None)
+
+    async def test_delete_shared_terminal_no_container(self, user):
+        conn = _base_conn(user=user)
+        await conn.handle_delete_shared_terminal(
+            {"user_id": "x", "window_name": "y"}
+        )
+
+    async def test_delete_shared_terminal_permission_denied(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        with patch("klangk_backend.acl.check_permission", return_value=False):
+            await conn.handle_delete_shared_terminal(
+                {"user_id": "x", "window_name": "y"}
+            )
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Permission" in c.get("message", "") for c in calls)
+
+    async def test_delete_shared_terminal_missing_fields(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws-1"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_delete_shared_terminal({})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("required" in c.get("message", "").lower() for c in calls)
+
+    async def test_delete_shared_terminal_not_found(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws-1"
+        wshandler.state.get_or_create_session("ws-1")
+        try:
+            with patch(
+                "klangk_backend.acl.check_permission", return_value=True
+            ):
+                await conn.handle_delete_shared_terminal(
+                    {"user_id": "nobody", "window_name": "nope"}
+                )
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(
+                "not found" in c.get("message", "").lower() for c in calls
+            )
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_delete_shared_terminal_error(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[user["id"]] = [
+            {"name": "build", "shared": True},
+        ]
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch(
+                    "klangk_backend.terminal.kill_joiner_sessions",
+                    side_effect=RuntimeError("boom"),
+                ),
+            ):
+                await conn.handle_delete_shared_terminal(
+                    {"user_id": user["id"], "window_name": "build"}
+                )
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any("Failed" in c.get("message", "") for c in calls)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_create_shared_terminal_no_session(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "no-session"
+        with (
+            patch("klangk_backend.acl.check_permission", return_value=True),
+            patch("klangk_backend.terminal.new_window", return_value=[]),
+        ):
+            await conn.handle_create_shared_terminal({"name": "dev"})
+        # Early return after new_window — no crash
+
+    async def test_delete_shared_terminal_no_session(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "no-session"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_delete_shared_terminal(
+                {"user_id": "x", "window_name": "y"}
+            )
+        # Early return — no crash
+
+    async def test_create_shared_terminal_no_container(self, user):
+        conn = _base_conn(user=user)
+        await conn.handle_create_shared_terminal({"name": "x"})
+
+    async def test_create_shared_terminal_permission_denied(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        with patch("klangk_backend.acl.check_permission", return_value=False):
+            await conn.handle_create_shared_terminal({"name": "x"})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Permission" in c.get("message", "") for c in calls)
+
+    async def test_create_shared_terminal_empty_name(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "ws-1"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_create_shared_terminal({"name": ""})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Name" in c.get("message", "") for c in calls)
+
+    async def test_create_shared_terminal_error(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn.workspace_id = "ws-1"
+        with (
+            patch("klangk_backend.acl.check_permission", return_value=True),
+            patch(
+                "klangk_backend.terminal.new_window",
+                side_effect=RuntimeError("fail"),
+            ),
+        ):
+            await conn.handle_create_shared_terminal({"name": "dev"})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Failed" in c.get("message", "") for c in calls)
+
+    async def test_list_shared_terminals_no_workspace(self):
+        conn = _base_conn()
+        await conn.handle_list_shared_terminals()
+
+    async def test_list_shared_terminals_permission_denied(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        with patch("klangk_backend.acl.check_permission", return_value=False):
+            await conn.handle_list_shared_terminals()
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any("Permission" in c.get("message", "") for c in calls)
+
+    async def test_list_shared_terminals_no_session(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "no-session"
+        with patch("klangk_backend.acl.check_permission", return_value=True):
+            await conn.handle_list_shared_terminals()
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        shared = [c for c in calls if c.get("type") == "shared_terminals"]
+        assert shared[0]["terminals"] == []
 
     async def test_has_perm_checks_acl(self, user, temp_data_dir):
         sock = _mock_sock()
@@ -4497,35 +4971,39 @@ class TestDispatchBrowserRequestStreamTo:
 
 
 class TestHandleAutoCreateFailure:
-    async def test_handle_creation_failure_logs_and_continues(
+    async def test_no_handle_in_db_sets_user_home_none(
         self, user, temp_data_dir
     ):
-        """If auto-handle creation fails entirely, log and proceed without HOME."""
-        from klangk_backend import workspaces
-
-        ws = await workspaces.create_workspace(user["id"], "handle-fail")
-        sock = _mock_sock()
+        """If get_user_handle returns None, _user_home is None."""
+        ws = await ws_mod.create_workspace(user["id"], "handle-fail")
+        sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(
             user={"id": user["id"], "email": user["email"]}, ws=sock
         )
-        conn.workspace_id = ws["id"]
-        conn._user_home = None
-        conn.pending_status_msg = "ready"
 
-        with patch.object(
-            workspaces, "suggest_handle", side_effect=RuntimeError("boom")
+        async def fake_start(*a, **kw):
+            container.registry.track_activity("cid-hf", ws["id"])
+            return ("cid-hf", "created")
+
+        with (
+            patch.object(
+                container.registry,
+                "start_container",
+                side_effect=fake_start,
+            ),
+            patch("glob.glob", return_value=[]),
+            patch(
+                "klangk_backend.model.get_user_handle",
+                return_value=None,
+            ),
         ):
-            await conn.handle_ui_ready()
-        # _user_home stays None (creation failed)
+            await conn.start_workspace_container(ws["id"], ws)
+
         assert conn._user_home is None
-        # container_ready is still sent
-        sent = [c[0][0] for c in sock.send_json.call_args_list]
-        assert any(
-            isinstance(m, dict)
-            and m.get("type") == "event"
-            and m.get("event", {}).get("name") == "container_ready"
-            for m in sent
-        )
+        assert conn.container_id == "cid-hf"
+
+        wshandler.state.sessions.pop(ws["id"], None)
+        container.registry.states.pop(ws["id"], None)
 
 
 class TestUiReadySharedTerminals:
