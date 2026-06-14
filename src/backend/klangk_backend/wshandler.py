@@ -1296,14 +1296,22 @@ class Connection:
         async def _start_shared() -> None:
             try:
                 await session.start(cols, rows)
+                logger.info("_start_shared: session started, activating...")
                 if not await conn._activate_session(session, cols, rows):
+                    logger.info("_start_shared: session superseded")
                     return
                 # Select the specific shared window
                 from .terminal import select_window
 
+                logger.info(
+                    "_start_shared: selecting window %s:%s",
+                    owner_user_id,
+                    window_index,
+                )
                 await select_window(
                     conn.container_id, owner_user_id, window_index
                 )
+                logger.info("_start_shared: sending terminal_started")
                 conn.sock.send_json(
                     {
                         "type": "terminal_started",
@@ -1317,6 +1325,7 @@ class Connection:
                 raise
             except Exception as e:
                 await session.stop()
+                logger.exception("_start_shared FAILED: %s", e)
                 logger.exception("Shared terminal join failed: %s", e)
                 send_error(conn.sock, f"Failed to join shared terminal: {e}")
 
