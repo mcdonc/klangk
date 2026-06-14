@@ -826,7 +826,7 @@ def share(
                 raise typer.Exit(code=1)
 
             await conn.send(
-                json.dumps({"cmd": "share_window", "index": match["index"]})
+                json.dumps({"cmd": "share_window", "window_id": match["id"]})
             )
             # Wait for shared_terminals confirmation
             deadline = asyncio.get_event_loop().time() + 10
@@ -912,7 +912,7 @@ def unshare(
                 raise typer.Exit(code=1)
 
             await conn.send(
-                json.dumps({"cmd": "unshare_window", "index": match["index"]})
+                json.dumps({"cmd": "unshare_window", "window_id": match["id"]})
             )
             # Wait for shared_terminals confirmation
             deadline = asyncio.get_event_loop().time() + 10

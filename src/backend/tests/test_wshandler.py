@@ -447,7 +447,7 @@ class TestHandleTerminalStart:
         # broadcast path (lines 977-978) is exercised.
         session = wshandler.state.get_or_create_session("ws")
         session.terminal_windows["other-uid"] = [
-            {"name": "dev", "index": 0, "shared": True},
+            {"name": "dev", "index": 0, "id": "@0", "shared": True},
         ]
         await session.add_subscriber(sock, "cid")
         wshandler.state.connections[sock] = conn
@@ -456,7 +456,9 @@ class TestHandleTerminalStart:
             patch.object(wshandler, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
-                return_value=[{"index": 0, "name": "bash", "active": True}],
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "bash", "active": True}
+                ],
             ),
             patch(
                 "klangk_backend.terminal.load_workspace_state",
@@ -546,8 +548,8 @@ class TestHandleTerminalStart:
 
         saved_state = {
             "uid": [
-                {"name": "1", "index": 0, "shared": False},
-                {"name": "build", "index": 1, "shared": True},
+                {"name": "1", "index": 0, "id": "@0", "shared": False},
+                {"name": "build", "index": 1, "id": "@1", "shared": True},
             ],
             "other-uid": [
                 {"name": "1", "shared": False},
@@ -560,8 +562,8 @@ class TestHandleTerminalStart:
             patch(
                 "klangk_backend.terminal.list_windows",
                 return_value=[
-                    {"index": 0, "name": "1", "active": True},
-                    {"index": 1, "name": "build", "active": False},
+                    {"id": "@0", "index": 0, "name": "1", "active": True},
+                    {"id": "@1", "index": 1, "name": "build", "active": False},
                 ],
             ),
             patch("klangk_backend.terminal.tmux_command", return_value=""),
@@ -691,7 +693,9 @@ class TestHandleTerminalStart:
             patch.object(wshandler, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
-                return_value=[{"index": 0, "name": "bash", "active": True}],
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "bash", "active": True}
+                ],
             ),
             patch(
                 "klangk_backend.terminal.tmux_command",
@@ -791,7 +795,9 @@ class TestHandleTerminalStart:
             patch.object(wshandler, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
-                return_value=[{"index": 0, "name": "1", "active": True}],
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "1", "active": True}
+                ],
             ),
             patch("klangk_backend.terminal.tmux_command", return_value=""),
         ):
@@ -3077,8 +3083,8 @@ class TestTerminalWindowHandlers:
         with patch(
             "klangk_backend.terminal.new_window",
             return_value=[
-                {"index": 0, "name": "bash", "active": False},
-                {"index": 1, "name": "bash", "active": True},
+                {"id": "@0", "index": 0, "name": "bash", "active": False},
+                {"id": "@1", "index": 1, "name": "bash", "active": True},
             ],
         ):
             await conn.handle_terminal_new_window({})
@@ -3094,8 +3100,8 @@ class TestTerminalWindowHandlers:
         with patch(
             "klangk_backend.terminal.new_window",
             return_value=[
-                {"index": 0, "name": "bash", "active": False},
-                {"index": 1, "name": "build", "active": True},
+                {"id": "@0", "index": 0, "name": "bash", "active": False},
+                {"id": "@1", "index": 1, "name": "build", "active": True},
             ],
         ) as mock_new:
             await conn.handle_terminal_new_window({"name": "build"})
@@ -3145,7 +3151,9 @@ class TestTerminalWindowHandlers:
         conn._user_home = "/home/alice"
         with patch(
             "klangk_backend.terminal.close_window",
-            return_value=[{"index": 0, "name": "bash", "active": True}],
+            return_value=[
+                {"id": "@0", "index": 0, "name": "bash", "active": True}
+            ],
         ):
             await conn.handle_terminal_close_window({"index": 1})
         sent = sock.send_json.call_args[0][0]
@@ -3160,15 +3168,17 @@ class TestTerminalWindowHandlers:
         conn.workspace_id = "ws-1"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "bash", "index": 0, "shared": True},
-            {"name": "1", "index": 1, "shared": False},
+            {"name": "bash", "index": 0, "id": "@0", "shared": True},
+            {"name": "1", "index": 1, "id": "@1", "shared": False},
         ]
         await session.add_subscriber(sock, "cid")
         wshandler.state.connections[sock] = conn
         try:
             with patch(
                 "klangk_backend.terminal.close_window",
-                return_value=[{"index": 1, "name": "1", "active": True}],
+                return_value=[
+                    {"id": "@1", "index": 1, "name": "1", "active": True}
+                ],
             ):
                 await conn.handle_terminal_close_window({"index": 0})
             # shared "bash" was removed — broadcast should have fired
@@ -3207,7 +3217,9 @@ class TestTerminalWindowHandlers:
             ),
             patch(
                 "klangk_backend.terminal.list_windows",
-                return_value=[{"index": 0, "name": "build", "active": True}],
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "build", "active": True}
+                ],
             ),
         ):
             await conn.handle_terminal_rename_window(
@@ -3248,7 +3260,9 @@ class TestTerminalWindowHandlers:
         conn._user_home = "/home/alice"
         with patch(
             "klangk_backend.terminal.list_windows",
-            return_value=[{"index": 0, "name": "bash", "active": True}],
+            return_value=[
+                {"id": "@0", "index": 0, "name": "bash", "active": True}
+            ],
         ):
             await conn.handle_terminal_list_windows()
         sent = sock.send_json.call_args[0][0]
@@ -3280,15 +3294,15 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "shared": False},
-            {"name": "2", "index": 1, "shared": False},
+            {"name": "1", "index": 0, "id": "@0", "shared": False},
+            {"name": "2", "index": 1, "id": "@1", "shared": False},
         ]
         await session.add_subscriber(sock, "cid")
         try:
             with patch(
                 "klangk_backend.acl.check_permission", return_value=True
             ):
-                await conn.handle_share_window({"index": 1})
+                await conn.handle_share_window({"window_id": "@1"})
             assert session.terminal_windows[user["id"]][1]["shared"] is True
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             shared_msgs = [
@@ -3305,7 +3319,7 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
         with patch("klangk_backend.acl.check_permission", return_value=False):
-            await conn.handle_share_window({"index": 0})
+            await conn.handle_share_window({"window_id": "@0"})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
 
@@ -3317,7 +3331,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "shared": True},
+            {"name": "1", "index": 0, "id": "@0", "shared": True},
         ]
         await session.add_subscriber(sock, "cid")
         try:
@@ -3329,7 +3343,7 @@ class TestShareWindowHandlers:
                     "klangk_backend.terminal.kill_joiner_sessions"
                 ) as mock_kill,
             ):
-                await conn.handle_unshare_window({"index": 0})
+                await conn.handle_unshare_window({"window_id": "@0"})
             assert session.terminal_windows[user["id"]][0]["shared"] is False
             mock_kill.assert_awaited_once()
             calls = [c[0][0] for c in sock.send_json.call_args_list]
@@ -3348,8 +3362,8 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "shared": False},
-            {"name": "build", "index": 1, "shared": True},
+            {"name": "1", "index": 0, "id": "@0", "shared": False},
+            {"name": "build", "index": 1, "id": "@1", "shared": True},
         ]
         await session.add_subscriber(sock, "cid")
         wshandler.state.connections[sock] = conn
@@ -3379,7 +3393,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "shared": False}
+            {"name": "1", "index": 0, "id": "@0", "shared": False}
         ]
         await session.add_subscriber(sock, "cid")
         wshandler.state.connections[sock] = conn
@@ -3401,10 +3415,10 @@ class TestShareWindowHandlers:
 
     async def test_share_window_no_container(self, user):
         conn = _base_conn(user=user)
-        await conn.handle_share_window({"index": 0})
+        await conn.handle_share_window({"window_id": "@0"})
         # No error sent — early return
 
-    async def test_share_window_missing_index(self, user):
+    async def test_share_window_missing_id(self, user):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
@@ -3413,9 +3427,9 @@ class TestShareWindowHandlers:
         with patch("klangk_backend.acl.check_permission", return_value=True):
             await conn.handle_share_window({})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
-        assert any("index" in c.get("message", "").lower() for c in calls)
+        assert any("id" in c.get("message", "").lower() for c in calls)
 
-    async def test_share_window_invalid_index(self, user):
+    async def test_share_window_not_found(self, user):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
@@ -3423,15 +3437,17 @@ class TestShareWindowHandlers:
         conn.workspace_id = "ws-1"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "shared": False}
+            {"name": "1", "index": 0, "id": "@0", "shared": False}
         ]
         try:
             with patch(
                 "klangk_backend.acl.check_permission", return_value=True
             ):
-                await conn.handle_share_window({"index": 5})
+                await conn.handle_share_window({"window_id": "@99"})
             calls = [c[0][0] for c in sock.send_json.call_args_list]
-            assert any("Invalid" in c.get("message", "") for c in calls)
+            assert any(
+                "not found" in c.get("message", "").lower() for c in calls
+            )
         finally:
             wshandler.state.sessions.pop("ws-1", None)
 
@@ -3442,12 +3458,12 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         conn.workspace_id = "no-session-ws"
         with patch("klangk_backend.acl.check_permission", return_value=True):
-            await conn.handle_share_window({"index": 0})
+            await conn.handle_share_window({"window_id": "@0"})
         # No error — early return
 
     async def test_unshare_window_no_container(self, user):
         conn = _base_conn(user=user)
-        await conn.handle_unshare_window({"index": 0})
+        await conn.handle_unshare_window({"window_id": "@0"})
 
     async def test_unshare_window_permission_denied(self, user):
         sock = _mock_sock()
@@ -3455,11 +3471,11 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
         with patch("klangk_backend.acl.check_permission", return_value=False):
-            await conn.handle_unshare_window({"index": 0})
+            await conn.handle_unshare_window({"window_id": "@0"})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
 
-    async def test_unshare_window_missing_index(self, user):
+    async def test_unshare_window_missing_id(self, user):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
@@ -3468,9 +3484,9 @@ class TestShareWindowHandlers:
         with patch("klangk_backend.acl.check_permission", return_value=True):
             await conn.handle_unshare_window({})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
-        assert any("index" in c.get("message", "").lower() for c in calls)
+        assert any("id" in c.get("message", "").lower() for c in calls)
 
-    async def test_unshare_window_invalid_index(self, user):
+    async def test_unshare_window_not_found(self, user):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
@@ -3478,15 +3494,17 @@ class TestShareWindowHandlers:
         conn.workspace_id = "ws-1"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "shared": True}
+            {"name": "1", "index": 0, "id": "@0", "shared": True}
         ]
         try:
             with patch(
                 "klangk_backend.acl.check_permission", return_value=True
             ):
-                await conn.handle_unshare_window({"index": 5})
+                await conn.handle_unshare_window({"window_id": "@99"})
             calls = [c[0][0] for c in sock.send_json.call_args_list]
-            assert any("Invalid" in c.get("message", "") for c in calls)
+            assert any(
+                "not found" in c.get("message", "").lower() for c in calls
+            )
         finally:
             wshandler.state.sessions.pop("ws-1", None)
 
@@ -3497,7 +3515,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         conn.workspace_id = "no-session-ws"
         with patch("klangk_backend.acl.check_permission", return_value=True):
-            await conn.handle_unshare_window({"index": 0})
+            await conn.handle_unshare_window({"window_id": "@0"})
 
     async def test_unshare_kill_error_handled(self, user):
         sock = _mock_sock()
@@ -3507,7 +3525,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "shared": True}
+            {"name": "1", "index": 0, "id": "@0", "shared": True}
         ]
         await session.add_subscriber(sock, "cid")
         try:
@@ -3520,7 +3538,7 @@ class TestShareWindowHandlers:
                     side_effect=RuntimeError("no sessions"),
                 ),
             ):
-                await conn.handle_unshare_window({"index": 0})
+                await conn.handle_unshare_window({"window_id": "@0"})
             assert session.terminal_windows[user["id"]][0]["shared"] is False
         finally:
             wshandler.state.sessions.pop("ws-1", None)
@@ -3536,7 +3554,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/joiner"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[owner["id"]] = [
-            {"name": "build", "index": 0, "shared": True},
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
         ]
         container.registry.track_activity("cid", "ws-1")
         try:
@@ -3558,7 +3576,7 @@ class TestShareWindowHandlers:
                 mock_sess.output = fake_output
 
                 await conn.handle_join_shared_terminal(
-                    {"user_id": owner["id"], "window_index": 0}
+                    {"user_id": owner["id"], "window_id": "@0"}
                 )
                 await asyncio.sleep(0)
 
@@ -3578,7 +3596,7 @@ class TestShareWindowHandlers:
     async def test_join_shared_terminal_no_container(self, user):
         conn = _base_conn(user=user)
         await conn.handle_join_shared_terminal(
-            {"user_id": "x", "window_index": 99}
+            {"user_id": "x", "window_id": "@99"}
         )
 
     async def test_join_shared_terminal_permission_denied(self, user):
@@ -3588,7 +3606,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/x"
         with patch("klangk_backend.acl.check_permission", return_value=False):
             await conn.handle_join_shared_terminal(
-                {"user_id": "x", "window_index": 99}
+                {"user_id": "x", "window_id": "@99"}
             )
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
@@ -3616,7 +3634,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/joiner"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[owner["id"]] = [
-            {"name": "build", "index": 0, "shared": True},
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
         ]
         container.registry.track_activity("cid", "ws-1")
 
@@ -3630,13 +3648,14 @@ class TestShareWindowHandlers:
                     "klangk_backend.acl.check_permission", return_value=True
                 ),
                 patch.object(wshandler, "TerminalSession") as MockTS,
+                patch("klangk_backend.terminal.select_window"),
             ):
                 mock_sess = _mock_terminal()
                 mock_sess.start = AsyncMock(side_effect=fake_start)
                 MockTS.return_value = mock_sess
 
                 await conn.handle_join_shared_terminal(
-                    {"user_id": owner["id"], "window_index": 0}
+                    {"user_id": owner["id"], "window_id": "@0"}
                 )
                 await asyncio.sleep(0)
 
@@ -3658,7 +3677,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/joiner"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[owner["id"]] = [
-            {"name": "build", "index": 0, "shared": True},
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
         ]
         try:
             with (
@@ -3674,7 +3693,7 @@ class TestShareWindowHandlers:
                 MockTS.return_value = mock_sess
 
                 await conn.handle_join_shared_terminal(
-                    {"user_id": owner["id"], "window_index": 0}
+                    {"user_id": owner["id"], "window_id": "@0"}
                 )
                 await asyncio.sleep(0)
 
@@ -3692,7 +3711,7 @@ class TestShareWindowHandlers:
         conn.workspace_id = "no-session"
         with patch("klangk_backend.acl.check_permission", return_value=True):
             await conn.handle_join_shared_terminal(
-                {"user_id": "x", "window_index": 99}
+                {"user_id": "x", "window_id": "@99"}
             )
         # Early return, no error sent
 
@@ -3708,7 +3727,7 @@ class TestShareWindowHandlers:
                 "klangk_backend.acl.check_permission", return_value=True
             ):
                 await conn.handle_join_shared_terminal(
-                    {"user_id": "nobody", "window_index": 99}
+                    {"user_id": "nobody", "window_id": "@99"}
                 )
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             assert any(
@@ -3725,8 +3744,8 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "shared": False},
-            {"name": "build", "index": 1, "shared": True},
+            {"name": "1", "index": 0, "id": "@0", "shared": False},
+            {"name": "build", "index": 1, "id": "@1", "shared": True},
         ]
         await session.add_subscriber(sock, "cid")
         wshandler.state.connections[sock] = conn
@@ -3739,7 +3758,7 @@ class TestShareWindowHandlers:
                 patch("klangk_backend.terminal.close_window", return_value=[]),
             ):
                 await conn.handle_delete_shared_terminal(
-                    {"user_id": user["id"], "window_index": 1}
+                    {"user_id": user["id"], "window_id": "@1"}
                 )
             windows = session.terminal_windows[user["id"]]
             assert len(windows) == 1
@@ -3751,7 +3770,7 @@ class TestShareWindowHandlers:
     async def test_delete_shared_terminal_no_container(self, user):
         conn = _base_conn(user=user)
         await conn.handle_delete_shared_terminal(
-            {"user_id": "x", "window_index": 99}
+            {"user_id": "x", "window_id": "@99"}
         )
 
     async def test_delete_shared_terminal_permission_denied(self, user):
@@ -3760,7 +3779,7 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         with patch("klangk_backend.acl.check_permission", return_value=False):
             await conn.handle_delete_shared_terminal(
-                {"user_id": "x", "window_index": 99}
+                {"user_id": "x", "window_id": "@99"}
             )
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
@@ -3786,7 +3805,7 @@ class TestShareWindowHandlers:
                 "klangk_backend.acl.check_permission", return_value=True
             ):
                 await conn.handle_delete_shared_terminal(
-                    {"user_id": "nobody", "window_index": 99}
+                    {"user_id": "nobody", "window_id": "@99"}
                 )
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             assert any(
@@ -3802,7 +3821,7 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[user["id"]] = [
-            {"name": "build", "index": 0, "shared": True},
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
         ]
         try:
             with (
@@ -3815,7 +3834,7 @@ class TestShareWindowHandlers:
                 ),
             ):
                 await conn.handle_delete_shared_terminal(
-                    {"user_id": user["id"], "window_index": 0}
+                    {"user_id": user["id"], "window_id": "@0"}
                 )
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             assert any("Failed" in c.get("message", "") for c in calls)
@@ -3842,7 +3861,7 @@ class TestShareWindowHandlers:
         conn.workspace_id = "no-session"
         with patch("klangk_backend.acl.check_permission", return_value=True):
             await conn.handle_delete_shared_terminal(
-                {"user_id": "x", "window_index": 99}
+                {"user_id": "x", "window_id": "@99"}
             )
         # Early return — no crash
 
@@ -5095,7 +5114,7 @@ class TestUiReadySharedTerminals:
         # Set up in-memory shared state
         session = wshandler.state.get_or_create_session(ws["id"])
         session.terminal_windows[user["id"]] = [
-            {"name": "dev", "index": 0, "shared": True},
+            {"name": "dev", "index": 0, "id": "@0", "shared": True},
         ]
         await session.add_subscriber(sock, "cid")
         wshandler.state.connections[sock] = conn

@@ -575,8 +575,13 @@ class TestMainCLI:
                 {
                     "type": "terminal_windows",
                     "windows": [
-                        {"index": 0, "name": "1", "active": True},
-                        {"index": 1, "name": "build", "active": False},
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
+                        {
+                            "id": "@1",
+                            "index": 1,
+                            "name": "build",
+                            "active": False,
+                        },
                     ],
                 }
             ),
@@ -616,8 +621,13 @@ class TestMainCLI:
                 {
                     "type": "terminal_windows",
                     "windows": [
-                        {"index": 0, "name": "1", "active": True},
-                        {"index": 1, "name": "build", "active": False},
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
+                        {
+                            "id": "@1",
+                            "index": 1,
+                            "name": "build",
+                            "active": False,
+                        },
                     ],
                 }
             ),
@@ -677,8 +687,13 @@ class TestMainCLI:
                 {
                     "type": "terminal_windows",
                     "windows": [
-                        {"index": 0, "name": "1", "active": True},
-                        {"index": 1, "name": "build", "active": False},
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
+                        {
+                            "id": "@1",
+                            "index": 1,
+                            "name": "build",
+                            "active": False,
+                        },
                     ],
                 }
             ),
@@ -728,7 +743,7 @@ class TestMainCLI:
                 {
                     "type": "terminal_windows",
                     "windows": [
-                        {"index": 0, "name": "1", "active": True},
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
                     ],
                 }
             ),
@@ -874,7 +889,7 @@ class TestMainCLI:
                 {
                     "type": "terminal_windows",
                     "windows": [
-                        {"index": 0, "name": "1", "active": True},
+                        {"id": "@0", "index": 0, "name": "1", "active": True},
                     ],
                 }
             ),

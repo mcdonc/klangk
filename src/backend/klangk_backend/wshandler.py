@@ -531,7 +531,7 @@ def _get_shared_terminals(ws_session) -> list[dict]:
                         "user_id": user_id,
                         "handle": handle,
                         "window_name": w["name"],
-                        "window_index": w.get("index", 0),
+                        "window_id": w.get("id", ""),
                     }
                 )
     return terminals
@@ -1050,26 +1050,26 @@ class Connection:
             return
         user_id = self.user["id"]
         old = ws_session.terminal_windows.get(user_id, [])
-        # Build a map of shared state by tmux window index (durable ID).
-        # Using name would break when tmux auto-renames windows.
-        shared_by_index = {
-            w["index"]: w.get("shared", False) for w in old if "index" in w
-        }
-        old_shared = {w["index"] for w in old if w.get("shared")}
-        ws_session.terminal_windows[user_id] = [
-            {
-                "name": w["name"],
-                "index": w["index"],
-                "shared": shared_by_index.get(w["index"], False),
-            }
-            for w in windows
-        ]
-        new_shared = {
-            w["index"]
-            for w in ws_session.terminal_windows[user_id]
-            if w.get("shared")
-        }
-        # Broadcast if shared set changed (window closed/renamed)
+        # Match old entries to new tmux entries by window_id (@N) —
+        # a tmux-assigned unique identifier that is never reused within
+        # a server's lifetime.  This is stable across renames and
+        # index reuse.
+        old_by_id = {w["id"]: w for w in old if "id" in w}
+        old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
+        new_entries = []
+        for w in windows:
+            prev = old_by_id.get(w["id"])
+            new_entries.append(
+                {
+                    "id": w["id"],
+                    "name": w["name"],
+                    "index": w["index"],
+                    "shared": prev.get("shared", False) if prev else False,
+                }
+            )
+        ws_session.terminal_windows[user_id] = new_entries
+        new_shared = {w["id"] for w in new_entries if w.get("shared")}
+        # Broadcast if shared set changed (e.g. shared window was closed)
         if old_shared != new_shared:
             self._broadcast_shared_terminals(ws_session)
         self._save_state_snapshot(ws_session)
@@ -1190,18 +1190,18 @@ class Connection:
         if not await self._has_perm("share-terminals"):
             send_error(self.sock, "Permission denied")
             return
-        index = msg.get("index")
-        if index is None:
-            send_error(self.sock, "Window index required")
+        window_id = msg.get("window_id", "")
+        if not window_id:
+            send_error(self.sock, "Window ID required")
             return
         user_id = self.user["id"]
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
         windows = ws_session.terminal_windows.get(user_id, [])
-        match = next((w for w in windows if w.get("index") == index), None)
+        match = next((w for w in windows if w.get("id") == window_id), None)
         if match is None:
-            send_error(self.sock, "Invalid window index")
+            send_error(self.sock, "Window not found")
             return
         match["shared"] = True
         self._broadcast_shared_terminals(ws_session)
@@ -1216,9 +1216,9 @@ class Connection:
             return
         from .terminal import kill_joiner_sessions
 
-        index = msg.get("index")
-        if index is None:
-            send_error(self.sock, "Window index required")
+        window_id = msg.get("window_id", "")
+        if not window_id:
+            send_error(self.sock, "Window ID required")
             return
         user_id = self.user["id"]
         session_name = self._tmux_session_name()
@@ -1226,9 +1226,9 @@ class Connection:
         if not ws_session:
             return
         windows = ws_session.terminal_windows.get(user_id, [])
-        match = next((w for w in windows if w.get("index") == index), None)
+        match = next((w for w in windows if w.get("id") == window_id), None)
         if match is None:
-            send_error(self.sock, "Invalid window index")
+            send_error(self.sock, "Window not found")
             return
         match["shared"] = False
         # Kick spectators/collaborators
@@ -1241,7 +1241,7 @@ class Connection:
                 "type": "shared_terminal_deleted",
                 "user_id": user_id,
                 "window_name": match["name"],
-                "window_index": index,
+                "window_id": window_id,
             }
         )
         self._broadcast_shared_terminals(ws_session)
@@ -1261,9 +1261,9 @@ class Connection:
             return
 
         owner_user_id = msg.get("user_id", "").strip()
-        window_index = msg.get("window_index")
-        if not owner_user_id or window_index is None:
-            send_error(self.sock, "user_id and window_index required")
+        window_id = msg.get("window_id", "").strip()
+        if not owner_user_id or not window_id:
+            send_error(self.sock, "user_id and window_id required")
             return
 
         # Verify the window exists and is shared
@@ -1275,7 +1275,7 @@ class Connection:
             (
                 w
                 for w in owner_windows
-                if w.get("index") == window_index and w.get("shared")
+                if w.get("id") == window_id and w.get("shared")
             ),
             None,
         )
@@ -1311,21 +1311,24 @@ class Connection:
         async def _start_shared() -> None:
             try:
                 await session.start(cols, rows)
-                logger.info("_start_shared: session started, activating...")
+                # Select the target window BEFORE activating output
+                # forwarding, so the initial output burst is from
+                # the correct window.
+                from .terminal import select_window
+
+                # Use the window_id (@N) as the target — it's globally
+                # unique within the tmux server, so no session prefix
+                # needed.
+                logger.info(
+                    "_start_shared: selecting window %s",
+                    window_id,
+                )
+                await select_window(
+                    conn.container_id, owner_user_id, window_id
+                )
                 if not await conn._activate_session(session, cols, rows):
                     logger.info("_start_shared: session superseded")
                     return
-                # Select the specific shared window
-                from .terminal import select_window
-
-                logger.info(
-                    "_start_shared: selecting window %s:%s",
-                    owner_user_id,
-                    window_index,
-                )
-                await select_window(
-                    conn.container_id, owner_user_id, window_index
-                )
                 logger.info("_start_shared: sending terminal_started")
                 conn.sock.send_json(
                     {
@@ -1432,16 +1435,16 @@ class Connection:
         from .terminal import close_window, kill_joiner_sessions
 
         owner_user_id = msg.get("user_id", "").strip()
-        window_index = msg.get("window_index")
-        if not owner_user_id or window_index is None:
-            send_error(self.sock, "user_id and window_index required")
+        window_id = msg.get("window_id", "").strip()
+        if not owner_user_id or not window_id:
+            send_error(self.sock, "user_id and window_id required")
             return
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
         owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
         match = next(
-            (w for w in owner_windows if w.get("index") == window_index),
+            (w for w in owner_windows if w.get("id") == window_id),
             None,
         )
         if match is None:
@@ -1450,19 +1453,19 @@ class Connection:
         window_name = match["name"]
         try:
             await kill_joiner_sessions(self.container_id, owner_user_id)
-            await close_window(self.container_id, owner_user_id, window_index)
+            await close_window(self.container_id, owner_user_id, window_id)
         except Exception as e:
             send_error(self.sock, f"Failed to delete shared terminal: {e}")
             return
         owner_windows[:] = [
-            w for w in owner_windows if w.get("index") != window_index
+            w for w in owner_windows if w.get("id") != window_id
         ]
         ws_session.broadcast(
             {
                 "type": "shared_terminal_deleted",
                 "user_id": owner_user_id,
                 "window_name": window_name,
-                "window_index": window_index,
+                "window_id": window_id,
             }
         )
         self._broadcast_shared_terminals(ws_session)

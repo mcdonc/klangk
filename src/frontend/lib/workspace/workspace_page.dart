@@ -219,17 +219,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (!mounted) return;
       final deletedUserId = msg['user_id'] as String? ?? '';
       final deletedWindow = msg['window_name'] as String? ?? '';
-      final deletedIndex = msg['window_index']?.toString() ?? '';
+      final deletedWid = msg['window_id'] as String? ?? '';
       final wasViewing = _activeSharedTerminal != null &&
           _activeSharedTerminal!['user_id'] == deletedUserId &&
-          _activeSharedTerminal!['window_index'] == deletedIndex;
+          _activeSharedTerminal!['window_id'] == deletedWid;
       if (wasViewing) {
         setState(() => _activeSharedTerminal = null);
       }
       final last = wsClient.lastDeletedSharedTerminal;
       if (last != null &&
           last['user_id'] == deletedUserId &&
-          last['window_index'] == deletedIndex) {
+          last['window_id'] == deletedWid) {
         wsClient.lastDeletedSharedTerminal = null;
       } else if (wasViewing) {
         ScaffoldMessenger.of(context)
@@ -309,13 +309,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
           wsClient.sharedTerminals.isNotEmpty) {
         final first = wsClient.sharedTerminals[0];
         final userId = first['user_id'] as String?;
-        final windowIndex = first['window_index'] as int?;
-        if (userId != null && windowIndex != null) {
+        final windowId = first['window_id'] as String?;
+        if (userId != null && windowId != null) {
           _activeSharedTerminal = {
             'user_id': userId,
-            'window_index': windowIndex.toString(),
+            'window_id': windowId,
           };
-          wsClient.sendJoinSharedTerminal(userId, windowIndex);
+          wsClient.sendJoinSharedTerminal(userId, windowId);
         }
       }
       if (mounted) setState(() {});
@@ -350,26 +350,25 @@ class _WorkspacePageState extends State<WorkspacePage> {
     wsClient.sendTerminalSelectWindow(index);
   }
 
-  void _joinShared(WsClient wsClient, String userId, int windowIndex) {
+  void _joinShared(WsClient wsClient, String userId, String windowId) {
     setState(
       () => _activeSharedTerminal = {
         'user_id': userId,
-        'window_index': windowIndex.toString(),
+        'window_id': windowId,
       },
     );
     // Clear the terminal so stale content from the previous session
     // doesn't linger while the join is in progress.
     _terminalKey.currentState?.clearScreen();
-    wsClient.sendJoinSharedTerminal(userId, windowIndex);
+    wsClient.sendJoinSharedTerminal(userId, windowId);
   }
 
   /// Check if a window is shared by looking it up in the shared terminals list.
-  bool _isWindowShared(WsClient wsClient, String windowName) {
-    // The current user's user_id — shared terminals from us have our user_id
+  bool _isWindowShared(WsClient wsClient, String windowId) {
     final myUserId = wsClient.currentUserId;
     if (myUserId == null) return false;
     return wsClient.sharedTerminals.any(
-      (s) => s['user_id'] == myUserId && s['window_name'] == windowName,
+      (s) => s['user_id'] == myUserId && s['window_id'] == windowId,
     );
   }
 
@@ -408,7 +407,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                                 (w['active'] as bool? ?? false),
                             isShared: _isWindowShared(
                               wsClient,
-                              w['name'] as String? ?? '',
+                              w['id'] as String? ?? '',
                             ),
                             onTap: () =>
                                 _switchToIsolated(wsClient, w['index'] as int),
@@ -419,12 +418,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
                                 : null,
                             onToggleShare: _hasPerm('share-terminals')
                                 ? () {
-                                    final idx = w['index'] as int;
-                                    final name = w['name'] as String? ?? '';
-                                    if (_isWindowShared(wsClient, name)) {
-                                      wsClient.sendUnshareWindow(idx);
+                                    final wid = w['id'] as String? ?? '';
+                                    if (_isWindowShared(wsClient, wid)) {
+                                      wsClient.sendUnshareWindow(wid);
                                     } else {
-                                      wsClient.sendShareWindow(idx);
+                                      wsClient.sendShareWindow(wid);
                                     }
                                   }
                                 : null,
@@ -443,15 +441,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
                           active: _activeSharedTerminal != null &&
                               _activeSharedTerminal!['user_id'] ==
                                   s['user_id'] &&
-                              _activeSharedTerminal!['window_index'] ==
-                                  s['window_index'].toString(),
+                              _activeSharedTerminal!['window_id'] ==
+                                  s['window_id'],
                           shared: true,
                           readOnly: !_hasPerm('code-in-shared-terminals') &&
                               !_hasPerm('share-terminals'),
                           onTap: () => _joinShared(
                             wsClient,
                             s['user_id'] as String,
-                            s['window_index'] as int,
+                            s['window_id'] as String,
                           ),
                         ),
                     ],

@@ -112,10 +112,8 @@ def _build_shell_command(
         *session_args,
         *tmux_env,
     ]
-    if join_session is not None:
-        # Force a screen redraw so the client sees pre-existing content
-        # (e.g. a bash prompt printed before the client attached).
-        cmd += [";", "refresh-client"]
+    # Note: no refresh-client here for joins — the caller selects the
+    # target window first, then triggers a refresh via resize.
     # Read-only is enforced in handle_terminal_input (wshandler.py),
     # which drops input when session.read_only is True.  tmux's
     # switch-client -r is not used because it caused display issues.
@@ -172,18 +170,19 @@ async def list_windows(container_id: str, session_name: str) -> list[dict]:
             "-t",
             session_name,
             "-F",
-            "#{window_index}|||#{window_name}|||#{window_active}",
+            "#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}",
         ],
     )
     windows = []
     for line in output.strip().splitlines():
         parts = line.split("|||")
-        if len(parts) >= 3:
+        if len(parts) >= 4:
             windows.append(
                 {
-                    "index": int(parts[0]),
-                    "name": parts[1],
-                    "active": parts[2] == "1",
+                    "id": parts[0],  # e.g. "@0" — unique, never reused
+                    "index": int(parts[1]),
+                    "name": parts[2],
+                    "active": parts[3] == "1",
                 }
             )
     return windows
@@ -209,7 +208,7 @@ async def new_window(
             f" && echo 'DUPLICATE' && exit 1;"
             f" tmux new-window -t {session_name} -n '{name}';"
             f" tmux list-windows -t {session_name}"
-            f" -F '#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
+            f" -F '#{{window_id}}|||#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
         )
     else:
         # Auto-name — find next number, create, list.
@@ -219,7 +218,7 @@ async def new_window(
             f' n=1; while echo "$names" | grep -qx "$n"; do n=$((n+1)); done;'
             f' tmux new-window -t {session_name} -n "$n";'
             f" tmux list-windows -t {session_name}"
-            f" -F '#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
+            f" -F '#{{window_id}}|||#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
         )
     argv = [
         "exec",
@@ -247,12 +246,13 @@ async def new_window(
     windows = []
     for line in output.strip().splitlines():
         parts = line.split("|||")
-        if len(parts) >= 3:
+        if len(parts) >= 4:
             windows.append(
                 {
-                    "index": int(parts[0]),
-                    "name": parts[1],
-                    "active": parts[2] == "1",
+                    "id": parts[0],
+                    "index": int(parts[1]),
+                    "name": parts[2],
+                    "active": parts[3] == "1",
                 }
             )
     return windows
@@ -280,12 +280,19 @@ async def select_window(
 ) -> None:
     """Switch the active tmux window.
 
-    *target* can be a window index (int) or window name (str).
+    *target* can be a window index (int), window name (str), or
+    window id (``@N`` string — preferred, globally unique).
     """
+    # Window IDs (@N) can be used directly as targets without
+    # a session prefix.
+    if isinstance(target, str) and target.startswith("@"):
+        t = target
+    else:
+        t = f"{session_name}:{target}"
     await tmux_command(
         container_id,
         session_name,
-        ["select-window", "-t", f"{session_name}:{target}"],
+        ["select-window", "-t", t],
     )
 
 
@@ -294,12 +301,17 @@ async def close_window(
 ) -> list[dict]:
     """Close a tmux window and return the updated window list.
 
-    *target* can be a window index (int) or window name (str).
+    *target* can be a window index (int), window name (str), or
+    window id (``@N`` string — preferred, globally unique).
     """
+    if isinstance(target, str) and target.startswith("@"):
+        t = target
+    else:
+        t = f"{session_name}:{target}"
     await tmux_command(
         container_id,
         session_name,
-        ["kill-window", "-t", f"{session_name}:{target}"],
+        ["kill-window", "-t", t],
     )
     return await list_windows(container_id, session_name)
 

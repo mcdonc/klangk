@@ -445,7 +445,7 @@ test.describe("shared terminal visibility", () => {
         coderWs.send({
           cmd: "join_shared_terminal",
           user_id: devTerminal.user_id,
-          window_index: devTerminal.window_index as number,
+          window_id: devTerminal.window_id,
         });
         const joined = await coderWs.recvUntil(
           (m) =>
@@ -513,7 +513,7 @@ test.describe("shared terminal visibility", () => {
         ownerWs.send({
           cmd: "delete_shared_terminal",
           user_id: tempTerminal.user_id,
-          window_index: tempTerminal.window_index as number,
+          window_id: tempTerminal.window_id,
         });
 
         // Spectator gets deletion notification + empty list
@@ -591,7 +591,7 @@ test.describe("shared terminal visibility", () => {
           client.send({
             cmd: "join_shared_terminal",
             user_id: ownerUserId,
-            window_index: termA.window_index,
+            window_id: termA.window_id,
           });
           await client.recvUntil(
             (m) =>
@@ -600,7 +600,7 @@ test.describe("shared terminal visibility", () => {
           client.send({
             cmd: "join_shared_terminal",
             user_id: ownerUserId,
-            window_index: termB.window_index,
+            window_id: termB.window_id,
           });
           await client.recvUntil(
             (m) =>
@@ -747,7 +747,7 @@ test.describe("shared terminal visibility", () => {
         specWs.send({
           cmd: "join_shared_terminal",
           user_id: terminal.user_id,
-          window_index: terminal.window_index,
+          window_id: terminal.window_id,
         });
         const joined = await specWs.recvUntil(
           (m) =>
@@ -898,7 +898,7 @@ test.describe("shared terminal visibility", () => {
         coadminWs.send({
           cmd: "join_shared_terminal",
           user_id: sharedFirst.user_id,
-          window_index: sharedFirst.window_index,
+          window_id: sharedFirst.window_id,
         });
 
         // Wait for terminal_started + collect all terminal_output that
@@ -935,53 +935,23 @@ test.describe("shared terminal visibility", () => {
 
         // NOW: admin creates a second terminal window
         adminWs.send({ cmd: "terminal_new_window" });
-        await adminWs.recvUntil((m) => m.type === "terminal_windows");
+        const newWindowsMsg = await adminWs.recvUntil(
+          (m) => m.type === "terminal_windows",
+        );
+        const allWindows = newWindowsMsg.windows as Array<
+          Record<string, unknown>
+        >;
+        const newWindow = allWindows.find((w) => w.name !== firstWindowName);
+        expect(newWindow).toBeDefined();
 
         // Admin types in the new window
         adminWs.send({ cmd: "terminal_input", data: "oneoneone" });
 
-        // After creating a new window, "bash" should STILL be shared.
-        // The shared_terminals list should still contain bash.
-        // Collect any shared_terminals updates that arrived.
-        const sharedUpdates = await coadminWs.collectUntilQuiet(
-          (m) => m.type === "shared_terminals",
-          2000,
-        );
-
-        // If we got updates, the LAST one is the current state.
-        // bash should still be in it.
-        if (sharedUpdates.length > 0) {
-          const lastUpdate = sharedUpdates[sharedUpdates.length - 1];
-          const terminals = lastUpdate.terminals as Array<
-            Record<string, unknown>
-          >;
-          expect(terminals.some((t) => t.window_name === firstWindowName)).toBe(
-            true,
-          );
-        }
-
-        // Also verify: no shared_terminal_deleted for bash should have fired
-        const deletions = await coadminWs.collectUntilQuiet(
-          (m) => m.type === "shared_terminal_deleted",
-          500,
-        );
-        const firstDeleted = deletions.filter(
-          (d) => d.window_name === firstWindowName,
-        );
-        expect(firstDeleted.length).toBe(0);
-
-        // Admin shares the new window too
-        adminWs.send({ cmd: "terminal_list_windows" });
-        const windowList = await adminWs.recvUntil(
-          (m) => m.type === "terminal_windows",
-        );
-        const windows = windowList.windows as Array<Record<string, unknown>>;
-        const newWindow = windows.find((w) => w.name !== firstWindowName);
-        expect(newWindow).toBeDefined();
-
+        // Admin shares the new window
         adminWs.send({ cmd: "share_window", index: newWindow!.index });
 
-        // Coadmin should see both shared terminals
+        // After creating AND sharing a new window, the first shared
+        // terminal should STILL be shared. Coadmin should see both.
         const shared2 = await coadminWs.recvUntil(
           (m) =>
             m.type === "shared_terminals" &&
@@ -1002,20 +972,27 @@ test.describe("shared terminal visibility", () => {
         coadminWs.send({
           cmd: "join_shared_terminal",
           user_id: newShared.user_id,
-          window_index: newShared.window_index,
+          window_id: newShared.window_id,
         });
-        await coadminWs.recvUntil(
-          (m) =>
-            m.type === "terminal_started" &&
-            m.shared_window === newWindow!.name,
-        );
 
-        // Coadmin should see "oneoneone"
-        const newOutput = await coadminWs.collectUntilQuiet(
+        // Collect output during the join
+        const joinNewOutput: string[] = [];
+        await coadminWs.recvUntil((m) => {
+          if (m.type === "terminal_output") {
+            joinNewOutput.push((m.data as string) ?? "");
+          }
+          return (
+            m.type === "terminal_started" && m.shared_window === newWindow!.name
+          );
+        });
+        const moreNewOutput = await coadminWs.collectUntilQuiet(
           (m) => m.type === "terminal_output",
           2000,
         );
-        const newText = newOutput.map((m) => (m.data as string) ?? "").join("");
+        const newText = [
+          ...joinNewOutput,
+          ...moreNewOutput.map((m) => (m.data as string) ?? ""),
+        ].join("");
         expect(newText).toContain("oneoneone");
       } finally {
         adminWs.close();

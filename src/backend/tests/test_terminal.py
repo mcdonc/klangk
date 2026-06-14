@@ -530,12 +530,12 @@ class TestListWindows:
     async def test_parses_output(self):
         with patch(
             "klangk_backend.terminal.tmux_command",
-            return_value="0|||bash|||1\n1|||build|||0\n",
+            return_value="@0|||0|||bash|||1\n@1|||1|||build|||0\n",
         ):
             result = await list_windows("cid", "sess")
         assert result == [
-            {"index": 0, "name": "bash", "active": True},
-            {"index": 1, "name": "build", "active": False},
+            {"id": "@0", "index": 0, "name": "bash", "active": True},
+            {"id": "@1", "index": 1, "name": "build", "active": False},
         ]
 
     async def test_empty_session(self):
@@ -547,7 +547,7 @@ class TestListWindows:
 class TestNewWindow:
     async def test_creates_window_auto_name(self):
         proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"0|||1|||1\n", b""))
+        proc.communicate = AsyncMock(return_value=(b"@0|||0|||1|||1\n", b""))
         proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
             result = await new_window("cid", "sess")
@@ -557,7 +557,7 @@ class TestNewWindow:
     async def test_auto_name_skips_existing(self):
         proc = AsyncMock()
         proc.communicate = AsyncMock(
-            return_value=(b"0|||1|||0\n1|||2|||1\n", b"")
+            return_value=(b"@0|||0|||1|||0\n@1|||1|||2|||1\n", b"")
         )
         proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
@@ -567,7 +567,7 @@ class TestNewWindow:
     async def test_creates_named_window(self):
         proc = AsyncMock()
         proc.communicate = AsyncMock(
-            return_value=(b"0|||bash|||0\n1|||build|||1\n", b"")
+            return_value=(b"@0|||0|||bash|||0\n@1|||1|||build|||1\n", b"")
         )
         proc.returncode = 0
         with patch("asyncio.create_subprocess_exec", return_value=proc):
@@ -603,6 +603,15 @@ class TestSelectWindow:
             "cid", "sess", ["select-window", "-t", "sess:2"]
         )
 
+    async def test_selects_by_window_id(self):
+        with patch(
+            "klangk_backend.terminal.tmux_command",
+        ) as mock_cmd:
+            await select_window("cid", "sess", "@5")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["select-window", "-t", "@5"]
+        )
+
 
 class TestCloseWindow:
     async def test_closes_window(self):
@@ -621,6 +630,22 @@ class TestCloseWindow:
             "cid", "sess", ["kill-window", "-t", "sess:1"]
         )
         assert len(result) == 1
+
+    async def test_closes_by_window_id(self):
+        with (
+            patch(
+                "klangk_backend.terminal.tmux_command",
+                return_value="",
+            ) as mock_cmd,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[],
+            ),
+        ):
+            await close_window("cid", "sess", "@3")
+        mock_cmd.assert_called_once_with(
+            "cid", "sess", ["kill-window", "-t", "@3"]
+        )
 
 
 class TestRenameWindow:

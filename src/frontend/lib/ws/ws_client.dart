@@ -364,19 +364,19 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'terminal_list_windows'});
   }
 
-  void sendShareWindow(int index) {
-    _send({'cmd': 'share_window', 'index': index});
+  void sendShareWindow(String windowId) {
+    _send({'cmd': 'share_window', 'window_id': windowId});
   }
 
-  void sendUnshareWindow(int index) {
-    _send({'cmd': 'unshare_window', 'index': index});
+  void sendUnshareWindow(String windowId) {
+    _send({'cmd': 'unshare_window', 'window_id': windowId});
   }
 
-  void sendJoinSharedTerminal(String userId, int windowIndex) {
+  void sendJoinSharedTerminal(String userId, String windowId) {
     _send({
       'cmd': 'join_shared_terminal',
       'user_id': userId,
-      'window_index': windowIndex,
+      'window_id': windowId,
     });
   }
 
@@ -384,15 +384,12 @@ class WsClient extends ChangeNotifier {
   /// can skip the "deleted" snackbar for the user who initiated it.
   Map<String, String>? lastDeletedSharedTerminal;
 
-  void sendDeleteSharedTerminal(String userId, int windowIndex) {
-    lastDeletedSharedTerminal = {
-      'user_id': userId,
-      'window_index': windowIndex.toString(),
-    };
+  void sendDeleteSharedTerminal(String userId, String windowId) {
+    lastDeletedSharedTerminal = {'user_id': userId, 'window_id': windowId};
     _send({
       'cmd': 'delete_shared_terminal',
       'user_id': userId,
-      'window_index': windowIndex,
+      'window_id': windowId,
     });
   }
 

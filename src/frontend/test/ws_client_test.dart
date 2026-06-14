@@ -127,10 +127,10 @@ void main() {
       client.sendTerminalCloseWindow(1);
       client.sendTerminalRenameWindow(0, 'test');
       client.sendTerminalListWindows();
-      client.sendShareWindow(0);
-      client.sendUnshareWindow(0);
-      client.sendJoinSharedTerminal('uid', 0);
-      client.sendDeleteSharedTerminal('uid', 0);
+      client.sendShareWindow('@0');
+      client.sendUnshareWindow('@0');
+      client.sendJoinSharedTerminal('uid', '@0');
+      client.sendDeleteSharedTerminal('uid', '@0');
       client.sendListSharedTerminals();
       client.sendTerminalStop();
       client.sendHeartbeat();
@@ -603,10 +603,10 @@ void main() {
       client.sendTerminalCloseWindow(1);
       client.sendTerminalRenameWindow(0, 'main');
       client.sendTerminalListWindows();
-      client.sendShareWindow(0);
-      client.sendUnshareWindow(0);
-      client.sendJoinSharedTerminal('uid', 0);
-      client.sendDeleteSharedTerminal('uid', 0);
+      client.sendShareWindow('@0');
+      client.sendUnshareWindow('@0');
+      client.sendJoinSharedTerminal('uid', '@0');
+      client.sendDeleteSharedTerminal('uid', '@0');
       client.sendListSharedTerminals();
       client.sendTerminalStop();
       client.sendUiReady();
@@ -627,17 +627,17 @@ void main() {
       expect(msgs[8],
           {'cmd': 'terminal_rename_window', 'index': 0, 'name': 'main'});
       expect(msgs[9], {'cmd': 'terminal_list_windows'});
-      expect(msgs[10], {'cmd': 'share_window', 'index': 0});
-      expect(msgs[11], {'cmd': 'unshare_window', 'index': 0});
+      expect(msgs[10], {'cmd': 'share_window', 'window_id': '@0'});
+      expect(msgs[11], {'cmd': 'unshare_window', 'window_id': '@0'});
       expect(msgs[12], {
         'cmd': 'join_shared_terminal',
         'user_id': 'uid',
-        'window_index': 0,
+        'window_id': '@0',
       });
       expect(msgs[13], {
         'cmd': 'delete_shared_terminal',
         'user_id': 'uid',
-        'window_index': 0,
+        'window_id': '@0',
       });
       expect(msgs[14], {'cmd': 'list_shared_terminals'});
       expect(msgs[15], {'cmd': 'terminal_stop'});
@@ -689,7 +689,7 @@ void main() {
         'type': 'shared_terminal_deleted',
         'user_id': 'uid',
         'window_name': 'dev',
-        'window_index': 0,
+        'window_id': '@0',
       });
       await Future.delayed(Duration.zero);
       expect(deleted.length, 1);

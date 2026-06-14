@@ -145,7 +145,12 @@ class TestWsShell:
                     {
                         "type": "terminal_windows",
                         "windows": [
-                            {"index": 0, "name": "1", "active": True},
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "1",
+                                "active": True,
+                            },
                         ],
                     }
                 ),
@@ -157,7 +162,7 @@ class TestWsShell:
                                 "user_id": "u1",
                                 "handle": "alice",
                                 "window_name": "dev",
-                                "window_index": 1,
+                                "window_id": "@1",
                             },
                         ],
                     }
@@ -201,8 +206,18 @@ class TestWsShell:
                     {
                         "type": "terminal_windows",
                         "windows": [
-                            {"index": 0, "name": "1", "active": True},
-                            {"index": 1, "name": "build", "active": False},
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "1",
+                                "active": True,
+                            },
+                            {
+                                "id": "@1",
+                                "index": 1,
+                                "name": "build",
+                                "active": False,
+                            },
                         ],
                     }
                 ),
@@ -254,7 +269,12 @@ class TestWsShell:
                     {
                         "type": "terminal_windows",
                         "windows": [
-                            {"index": 0, "name": "1", "active": True},
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "1",
+                                "active": True,
+                            },
                         ],
                     }
                 ),
@@ -298,7 +318,7 @@ class TestWsShell:
                                 "user_id": "u1",
                                 "handle": "alice",
                                 "window_name": "dev",
-                                "window_index": 1,
+                                "window_id": "@1",
                             },
                         ],
                     }
@@ -331,7 +351,7 @@ class TestWsShell:
         join_msgs = [s for s in sent if s.get("cmd") == "join_shared_terminal"]
         assert len(join_msgs) == 1
         assert join_msgs[0]["user_id"] == "u1"
-        assert join_msgs[0]["window_index"] == 1
+        assert join_msgs[0]["window_id"] == "@1"
 
     @pytest.mark.asyncio
     async def test_ws_shell_join_shared_not_found(self):
@@ -391,7 +411,7 @@ class TestWsShell:
                                 "user_id": "u1",
                                 "handle": "alice",
                                 "window_name": "dev",
-                                "window_index": 1,
+                                "window_id": "@1",
                             },
                         ],
                     }
