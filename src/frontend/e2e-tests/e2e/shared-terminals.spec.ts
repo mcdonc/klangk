@@ -691,6 +691,103 @@ test.describe("shared terminal visibility", () => {
     }
   });
 
+  test("spectator cannot send input to shared terminal", async ({
+    page,
+    request,
+  }) => {
+    const ownerEmail = `spec-input-owner-${Date.now()}@test.example.com`;
+    const owner = await registerUser(request, ownerEmail);
+    const { workspaceId, cleanup } = await createWorkspace(
+      request,
+      owner.headers,
+      "spec-input",
+    );
+    try {
+      const specEmail = `spec-input-user-${Date.now()}@test.example.com`;
+      const spec = await registerUser(request, specEmail);
+      await addToRole(
+        request,
+        owner.headers,
+        workspaceId,
+        "spectators",
+        specEmail,
+      );
+
+      // Owner starts container and creates a shared terminal
+      await openWorkspace(page, ownerEmail, workspaceId, {
+        waitForTerminal: true,
+      });
+
+      const ownerWs = await connectWs(owner.token, workspaceId);
+      ownerWs.send({ cmd: "create_shared_terminal", name: "watch-me" });
+      const sharedMsg = await ownerWs.recvUntil(
+        (m) =>
+          m.type === "shared_terminals" &&
+          (m.terminals as Array<Record<string, unknown>>).some(
+            (t) => t.window_name === "watch-me",
+          ),
+      );
+      const terminal = (
+        sharedMsg.terminals as Array<Record<string, unknown>>
+      ).find((t) => t.window_name === "watch-me") as Record<string, unknown>;
+
+      // Spectator connects and joins the shared terminal
+      const specWs = await connectWs(spec.token, workspaceId);
+      try {
+        specWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+        await specWs.recvUntil((m) => m.type === "terminal_started");
+
+        specWs.send({
+          cmd: "join_shared_terminal",
+          user_id: terminal.user_id,
+          window_name: "watch-me",
+        });
+        const joined = await specWs.recvUntil(
+          (m) =>
+            m.type === "terminal_started" && m.shared_window === "watch-me",
+        );
+        expect(joined.readOnly).toBe(true);
+
+        // Spectator sends input — it should be silently dropped
+        // (the server drops input when session.read_only is True).
+        // Send a distinctive command and verify it doesn't appear
+        // in the owner's terminal output.
+        specWs.send({
+          cmd: "terminal_input",
+          data: "echo SPECTATOR_WAS_HERE\r",
+        });
+
+        // Wait a bit for any output, then check owner's terminal
+        // for the distinctive string. Owner sends a command that
+        // WILL produce output, proving the terminal is working.
+        ownerWs.send({
+          cmd: "terminal_input",
+          data: "echo OWNER_CHECK\r",
+        });
+
+        // Collect output from the spectator's view
+        const output = await specWs.collectUntilQuiet(
+          (m) => m.type === "terminal_output",
+          2000,
+        );
+        const allOutput = output
+          .map((m) => {
+            const data = m.data as string | undefined;
+            return data ?? "";
+          })
+          .join("");
+
+        // The owner's echo should appear but the spectator's should not
+        expect(allOutput).not.toContain("SPECTATOR_WAS_HERE");
+      } finally {
+        specWs.close();
+        ownerWs.close();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("spectator cannot create shared terminal", async ({ page, request }) => {
     const ownerEmail = `spec-nocreate-${Date.now()}@test.example.com`;
     const owner = await registerUser(request, ownerEmail);
