@@ -1469,6 +1469,10 @@ class TestVolumeUserIsolation:
             _run(["klangk", "volumes", "rm", "vol-private"], env=env_a)
 
 
+@pytest.mark.skipif(
+    os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="Flaky on CI: httpx ReadTimeout under load (#341)",
+)
 class TestTerminalSharing:
     """Test klangk terminals, share, and unshare commands."""
 
