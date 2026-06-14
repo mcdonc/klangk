@@ -14,7 +14,7 @@ class WsDebugEntry {
   final Map<String, dynamic>? data;
 
   WsDebugEntry({required this.direction, required this.summary, this.data})
-      : timestamp = DateTime.now();
+    : timestamp = DateTime.now();
 }
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
@@ -31,6 +31,7 @@ class WsClient extends ChangeNotifier {
   WebSocketChannel? _channel;
   AuthService? _auth;
   String? _currentWorkspaceId;
+  String? _currentUserId;
   String? _defaultCommand;
   bool _connected = false;
   Timer? _heartbeatTimer;
@@ -79,7 +80,8 @@ class WsClient extends ChangeNotifier {
   final _customEventController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _chatController = StreamController<Map<String, dynamic>>.broadcast();
-  final _sharedTerminalDeletedController = StreamController<String>.broadcast();
+  final _sharedTerminalDeletedController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _debugLogController = StreamController<WsDebugEntry>.broadcast();
 
   Stream<String> get errors => _errorController.stream;
@@ -115,14 +117,15 @@ class WsClient extends ChangeNotifier {
   Stream<Map<String, dynamic>> get customEvents =>
       _customEventController.stream;
 
-  /// Fires when a shared terminal is deleted (name of the deleted terminal).
-  Stream<String> get sharedTerminalDeleted =>
+  /// Fires when a shared terminal is deleted.
+  Stream<Map<String, dynamic>> get sharedTerminalDeleted =>
       _sharedTerminalDeletedController.stream;
 
   /// Debug log of all WebSocket messages (sent and received).
   Stream<WsDebugEntry> get debugLog => _debugLogController.stream;
   bool get connected => _connected;
   String? get currentWorkspaceId => _currentWorkspaceId;
+  String? get currentUserId => _currentUserId;
   String? get defaultCommand => _defaultCommand;
 
   void updateAuth(AuthService auth) {
@@ -177,6 +180,7 @@ class WsClient extends ChangeNotifier {
 
           if (type == 'workspace_ready') {
             _currentWorkspaceId = json['workspaceId'] as String?;
+            _currentUserId = json['userId'] as String?;
             _defaultCommand = json['defaultCommand'] as String?;
             _reconnecting = false;
             _reconnectAttempt = 0;
@@ -225,13 +229,15 @@ class WsClient extends ChangeNotifier {
           } else if (type == 'presence_leave') {
             final uid = json['user_id'] as String?;
             if (uid != null) {
-              presenceUsers =
-                  presenceUsers.where((u) => u['user_id'] != uid).toList();
+              presenceUsers = presenceUsers
+                  .where((u) => u['user_id'] != uid)
+                  .toList();
               notifyListeners();
             }
           } else if (type == 'terminal_windows') {
             debugPrint(
-                '[WsClient] terminal_windows received: ${DateTime.now()}');
+              '[WsClient] terminal_windows received: ${DateTime.now()}',
+            );
             final windows = json['windows'] as List? ?? [];
             terminalWindows = windows.cast<Map<String, dynamic>>();
             notifyListeners();
@@ -240,9 +246,7 @@ class WsClient extends ChangeNotifier {
             sharedTerminals = terminals.cast<Map<String, dynamic>>();
             notifyListeners();
           } else if (type == 'shared_terminal_deleted') {
-            _sharedTerminalDeletedController.add(
-              json['name'] as String? ?? '',
-            );
+            _sharedTerminalDeletedController.add(json);
             notifyListeners();
           } else if (type == 'event') {
             _customEventController.add(json);
@@ -361,21 +365,33 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'terminal_list_windows'});
   }
 
-  void sendCreateSharedTerminal(String name) {
-    _send({'cmd': 'create_shared_terminal', 'name': name});
+  void sendShareWindow(int index) {
+    _send({'cmd': 'share_window', 'index': index});
   }
 
-  void sendJoinSharedTerminal(String name) {
-    _send({'cmd': 'join_shared_terminal', 'name': name});
+  void sendUnshareWindow(int index) {
+    _send({'cmd': 'unshare_window', 'index': index});
   }
 
-  /// Name of the terminal we just requested deletion for, so the UI
+  void sendJoinSharedTerminal(String userId, String windowName) {
+    _send({
+      'cmd': 'join_shared_terminal',
+      'user_id': userId,
+      'window_name': windowName,
+    });
+  }
+
+  /// Identity of the terminal we just requested deletion for, so the UI
   /// can skip the "deleted" snackbar for the user who initiated it.
-  String? lastDeletedSharedTerminal;
+  Map<String, String>? lastDeletedSharedTerminal;
 
-  void sendDeleteSharedTerminal(String name) {
-    lastDeletedSharedTerminal = name;
-    _send({'cmd': 'delete_shared_terminal', 'name': name});
+  void sendDeleteSharedTerminal(String userId, String windowName) {
+    lastDeletedSharedTerminal = {'user_id': userId, 'window_name': windowName};
+    _send({
+      'cmd': 'delete_shared_terminal',
+      'user_id': userId,
+      'window_name': windowName,
+    });
   }
 
   void sendListSharedTerminals() {

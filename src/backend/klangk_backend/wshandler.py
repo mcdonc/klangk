@@ -681,6 +681,7 @@ class Connection:
             {
                 "type": "workspace_ready",
                 "workspaceId": workspace_id,
+                "userId": self.user["id"],
                 "ports": ports,
                 "defaultCommand": workspace.get("default_command"),
             }

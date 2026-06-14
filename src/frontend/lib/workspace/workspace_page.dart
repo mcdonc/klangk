@@ -67,7 +67,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
   bool _containerStopped = false;
   bool _restarting = false;
   bool _disconnected = false;
-  String? _activeSharedTerminal;
+
+  /// Tracks which shared terminal (from another user) we're viewing.
+  /// null means we're on our own isolated terminal.
+  Map<String, String>? _activeSharedTerminal;
   String _stopReason = '';
   List<String> _workspacePermissions = [];
   BrowserDelegate? _browserDelegate;
@@ -83,7 +86,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
   /// view via the `?file=` deep-link. All untrusted-input handling lives in
   /// [TerminalLinkActions]/[classifyTerminalLink].
   void _handleTerminalPathTap(
-      ({String token, String? uri, String pwd, String tail}) e) {
+    ({String token, String? uri, String pwd, String tail}) e,
+  ) {
     final authToken = context.read<AuthService>().token;
     final actions = TerminalLinkActions(
       pathRoot: _containerHome,
@@ -96,13 +100,18 @@ class _WorkspacePageState extends State<WorkspacePage> {
         rel: rel,
         authToken: authToken,
       ),
-      openFile: (rel) => context.go('/workspace/${widget.workspaceId}'
-          '?file=${Uri.encodeQueryComponent(rel)}'),
-      openDirectory: (rel) => context.go('/workspace/${widget.workspaceId}'
-          '?dir=${Uri.encodeQueryComponent(rel)}'),
+      openFile: (rel) => context.go(
+        '/workspace/${widget.workspaceId}'
+        '?file=${Uri.encodeQueryComponent(rel)}',
+      ),
+      openDirectory: (rel) => context.go(
+        '/workspace/${widget.workspaceId}'
+        '?dir=${Uri.encodeQueryComponent(rel)}',
+      ),
     );
     unawaited(
-        actions.handle(token: e.token, uri: e.uri, pwd: e.pwd, tail: e.tail));
+      actions.handle(token: e.token, uri: e.uri, pwd: e.pwd, tail: e.tail),
+    );
   }
 
   @override
@@ -206,35 +215,38 @@ class _WorkspacePageState extends State<WorkspacePage> {
     });
 
     // Listen for shared terminal deletions
-    _sharedDeletedSub = wsClient.sharedTerminalDeleted.listen((name) {
+    _sharedDeletedSub = wsClient.sharedTerminalDeleted.listen((msg) {
       if (!mounted) return;
-      final wasViewing = _activeSharedTerminal == name;
-      // Switch away if we were viewing the deleted terminal.
+      final deletedUserId = msg['user_id'] as String? ?? '';
+      final deletedWindow = msg['window_name'] as String? ?? '';
+      final wasViewing =
+          _activeSharedTerminal != null &&
+          _activeSharedTerminal!['user_id'] == deletedUserId &&
+          _activeSharedTerminal!['window_name'] == deletedWindow;
       if (wasViewing) {
         setState(() => _activeSharedTerminal = null);
       }
-      // Show persistent snackbar only if the user was viewing the
-      // deleted terminal (and didn't initiate the delete themselves).
-      if (wsClient.lastDeletedSharedTerminal == name) {
+      final last = wsClient.lastDeletedSharedTerminal;
+      if (last != null &&
+          last['user_id'] == deletedUserId &&
+          last['window_name'] == deletedWindow) {
         wsClient.lastDeletedSharedTerminal = null;
       } else if (wasViewing) {
-        // User was actively viewing the deleted terminal — persistent.
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
-              content: Text('Shared terminal "$name" was deleted'),
+              content: Text('Shared terminal "$deletedWindow" was removed'),
               duration: const Duration(days: 1),
               showCloseIcon: true,
             ),
           );
       } else {
-        // User wasn't viewing it — brief notification.
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
-              content: Text('Shared terminal "$name" was deleted'),
+              content: Text('Shared terminal "$deletedWindow" was removed'),
             ),
           );
       }
@@ -275,12 +287,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (wasDisconnected && mounted) {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
-          ..showSnackBar(const SnackBar(
-            content: Text('Reconnected'),
-            duration: Duration(seconds: 3),
-            behavior: SnackBarBehavior.floating,
-            width: 200,
-          ));
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Reconnected'),
+              duration: Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+              width: 200,
+            ),
+          );
       }
     }
     // Rebuild only when terminal/shared tab lists actually change.
@@ -293,10 +307,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (_activeSharedTerminal == null &&
           !_hasPerm('code-in-isolation') &&
           wsClient.sharedTerminals.isNotEmpty) {
-        final name = wsClient.sharedTerminals[0]['name'] as String?;
-        if (name != null) {
-          _activeSharedTerminal = name;
-          wsClient.sendJoinSharedTerminal(name);
+        final first = wsClient.sharedTerminals[0];
+        final userId = first['user_id'] as String?;
+        final windowName = first['window_name'] as String?;
+        if (userId != null && windowName != null) {
+          _activeSharedTerminal = {
+            'user_id': userId,
+            'window_name': windowName,
+          };
+          wsClient.sendJoinSharedTerminal(userId, windowName);
         }
       }
       if (mounted) setState(() {});
@@ -329,58 +348,36 @@ class _WorkspacePageState extends State<WorkspacePage> {
     wsClient.sendTerminalSelectWindow(index);
   }
 
-  void _joinShared(WsClient wsClient, String name) {
-    setState(() => _activeSharedTerminal = name);
-    wsClient.sendJoinSharedTerminal(name);
+  void _joinShared(WsClient wsClient, String userId, String windowName) {
+    setState(
+      () => _activeSharedTerminal = {
+        'user_id': userId,
+        'window_name': windowName,
+      },
+    );
+    wsClient.sendJoinSharedTerminal(userId, windowName);
   }
 
-  void _createSharedTerminal(WsClient wsClient) {
-    final controller = TextEditingController();
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Create Shared Terminal'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Name',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (value) {
-            final name = value.trim();
-            if (name.isNotEmpty) {
-              Navigator.of(ctx).pop();
-              wsClient.sendCreateSharedTerminal(name);
-            }
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) {
-                Navigator.of(ctx).pop();
-                wsClient.sendCreateSharedTerminal(name);
-              }
-            },
-            child: const Text('Create'),
-          ),
-        ],
-      ),
+  /// Check if a window is shared by looking it up in the shared terminals list.
+  bool _isWindowShared(WsClient wsClient, String windowName) {
+    // The current user's user_id — shared terminals from us have our user_id
+    final myUserId = wsClient.currentUserId;
+    if (myUserId == null) return false;
+    return wsClient.sharedTerminals.any(
+      (s) => s['user_id'] == myUserId && s['window_name'] == windowName,
     );
   }
 
   Widget _buildTerminalWithTabs(WsClient wsClient) {
     debugPrint(
-        '[WorkspacePage] _buildTerminalWithTabs: ${DateTime.now()} windows=${wsClient.terminalWindows.length}');
+      '[WorkspacePage] _buildTerminalWithTabs: ${DateTime.now()} windows=${wsClient.terminalWindows.length}',
+    );
     final windows = wsClient.terminalWindows;
     final shared = wsClient.sharedTerminals;
-    final hasContent = windows.isNotEmpty || shared.isNotEmpty;
+    // Shared terminals from OTHER users (not ours)
+    final myUserId = wsClient.currentUserId;
+    final othersShared = shared.where((s) => s['user_id'] != myUserId).toList();
+    final hasContent = windows.isNotEmpty || othersShared.isNotEmpty;
     return Column(
       children: [
         if (hasContent)
@@ -388,75 +385,72 @@ class _WorkspacePageState extends State<WorkspacePage> {
             height: 32,
             decoration: const BoxDecoration(
               color: KColors.bgAppBar,
-              border: Border(
-                bottom: BorderSide(color: KColors.borderMuted),
-              ),
+              border: Border(bottom: BorderSide(color: KColors.borderMuted)),
             ),
             child: Row(
               children: [
                 const SizedBox(width: 4),
-                // Isolated terminal tabs
                 Expanded(
                   child: ListView(
                     scrollDirection: Axis.horizontal,
                     children: [
+                      // Own terminal tabs with share/unshare toggle
                       if (_hasPerm('code-in-isolation'))
                         for (final w in windows)
                           _TerminalTab(
                             name: w['name'] as String? ?? '?',
-                            active: _activeSharedTerminal == null &&
+                            active:
+                                _activeSharedTerminal == null &&
                                 (w['active'] as bool? ?? false),
-                            onTap: () => _switchToIsolated(
+                            isShared: _isWindowShared(
                               wsClient,
-                              w['index'] as int,
+                              w['name'] as String? ?? '',
                             ),
+                            onTap: () =>
+                                _switchToIsolated(wsClient, w['index'] as int),
                             onClose: windows.length > 1
                                 ? () => wsClient.sendTerminalCloseWindow(
-                                      w['index'] as int,
-                                    )
+                                    w['index'] as int,
+                                  )
+                                : null,
+                            onToggleShare: _hasPerm('share-terminals')
+                                ? () {
+                                    final idx = w['index'] as int;
+                                    final name = w['name'] as String? ?? '';
+                                    if (_isWindowShared(wsClient, name)) {
+                                      wsClient.sendUnshareWindow(idx);
+                                    } else {
+                                      wsClient.sendShareWindow(idx);
+                                    }
+                                  }
                                 : null,
                           ),
-                      // "+" for new isolated terminal
+                      // "+" for new terminal
                       if (_hasPerm('code-in-isolation'))
                         _TabIconButton(
                           icon: Icons.add,
                           tooltip: 'New terminal',
                           onTap: () => wsClient.sendTerminalNewWindow(),
                         ),
-                      // Separator between isolated and shared tabs
-                      if (_hasPerm('code-in-isolation') &&
-                          (shared.isNotEmpty || _hasPerm('share-terminals')))
-                        Container(
-                          width: 1,
-                          height: 16,
-                          margin: const EdgeInsets.symmetric(horizontal: 8),
-                          color: KColors.borderDefault,
-                        ),
-                      // Shared terminal tabs
-                      for (final s in shared)
+                      // Shared terminals from OTHER users
+                      for (final s in othersShared)
                         _TerminalTab(
-                          name: s['name'] as String? ?? '?',
+                          name: '${s['handle']}:${s['window_name']}',
                           active:
-                              _activeSharedTerminal == (s['name'] as String?),
+                              _activeSharedTerminal != null &&
+                              _activeSharedTerminal!['user_id'] ==
+                                  s['user_id'] &&
+                              _activeSharedTerminal!['window_name'] ==
+                                  s['window_name'],
                           shared: true,
-                          readOnly: !_hasPerm('code-in-shared-terminals') &&
+                          readOnly:
+                              !_hasPerm('code-in-shared-terminals') &&
                               !_hasPerm('share-terminals'),
                           onTap: () => _joinShared(
                             wsClient,
-                            s['name'] as String,
+                            s['user_id'] as String,
+                            s['window_name'] as String,
                           ),
-                          onClose: _hasPerm('share-terminals')
-                              ? () => wsClient.sendDeleteSharedTerminal(
-                                    s['name'] as String,
-                                  )
-                              : null,
-                        ),
-                      // "+shared" button
-                      if (_hasPerm('share-terminals'))
-                        _TabIconButton(
-                          icon: Icons.screen_share,
-                          tooltip: 'Share a terminal',
-                          onTap: () => _createSharedTerminal(wsClient),
                         ),
                     ],
                   ),
@@ -551,10 +545,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
     return Scaffold(
       appBar: AppBar(
         title: AppBarTitle(
-            title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace'),
-        actions: const [
-          AppBarActions(),
-        ],
+          title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace',
+        ),
+        actions: const [AppBarActions()],
       ),
       body: Stack(
         children: [
@@ -582,14 +575,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
             chatUnread: _chatUnread,
             chatMentioned: _chatMentioned,
             settings: _hasPerm('edit')
-                ? WorkspaceSettingsPanel(
-                    workspaceId: widget.workspaceId,
-                  )
+                ? WorkspaceSettingsPanel(workspaceId: widget.workspaceId)
                 : null,
             sharing: _hasPerm('share')
-                ? WorkspaceSharingPanel(
-                    workspaceId: widget.workspaceId,
-                  )
+                ? WorkspaceSharingPanel(workspaceId: widget.workspaceId)
                 : null,
             terminalKey: _terminalKey,
             fileViewerKey: _fileViewerKey,
@@ -611,16 +600,22 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         children: [
                           CircularProgressIndicator(color: Colors.white),
                           SizedBox(height: 12),
-                          Text('Restarting...',
-                              style: TextStyle(color: Colors.white)),
+                          Text(
+                            'Restarting...',
+                            style: TextStyle(color: Colors.white),
+                          ),
                         ],
                       )
                     : Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(_stopReason,
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 16)),
+                          Text(
+                            _stopReason,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                            ),
+                          ),
                           const SizedBox(height: 16),
                           ElevatedButton.icon(
                             onPressed: _restartContainer,
@@ -664,9 +659,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
                     : Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text('Disconnected from server',
-                              style:
-                                  TextStyle(color: Colors.white, fontSize: 16)),
+                          const Text(
+                            'Disconnected from server',
+                            style: TextStyle(color: Colors.white, fontSize: 16),
+                          ),
                           const SizedBox(height: 16),
                           ElevatedButton.icon(
                             onPressed: _reconnect,
@@ -692,8 +688,10 @@ class _TerminalTab extends StatefulWidget {
   final bool active;
   final bool shared;
   final bool readOnly;
+  final bool isShared;
   final VoidCallback onTap;
   final VoidCallback? onClose;
+  final VoidCallback? onToggleShare;
 
   const _TerminalTab({
     required this.name,
@@ -701,7 +699,9 @@ class _TerminalTab extends StatefulWidget {
     required this.onTap,
     this.shared = false,
     this.readOnly = false,
+    this.isShared = false,
     this.onClose,
+    this.onToggleShare,
   });
 
   @override
@@ -713,8 +713,9 @@ class _TerminalTabState extends State<_TerminalTab> {
 
   @override
   Widget build(BuildContext context) {
-    final accentColor =
-        widget.shared ? KColors.accentCyan : KColors.accentGreen;
+    final accentColor = widget.shared
+        ? KColors.accentCyan
+        : KColors.accentGreen;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
       child: MouseRegion(
@@ -729,8 +730,8 @@ class _TerminalTabState extends State<_TerminalTab> {
               color: widget.active
                   ? KColors.bgSurface
                   : _hovered
-                      ? KColors.bgOverlay
-                      : Colors.transparent,
+                  ? KColors.bgOverlay
+                  : Colors.transparent,
               borderRadius: BorderRadius.circular(4),
               border: widget.active
                   ? Border.all(color: KColors.borderMuted, width: 0.5)
@@ -739,6 +740,29 @@ class _TerminalTabState extends State<_TerminalTab> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Share status icon for own tabs (clickable toggle)
+                if (!widget.shared && widget.onToggleShare != null) ...[
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: widget.onToggleShare,
+                      child: Tooltip(
+                        message: widget.isShared ? 'Unshare' : 'Share',
+                        child: Icon(
+                          widget.isShared ? Icons.people : Icons.lock_outline,
+                          size: 12,
+                          color: widget.isShared
+                              ? KColors.accentCyan
+                              : widget.active
+                              ? Colors.white38
+                              : Colors.white24,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                // Icon for other users' shared tabs
                 if (widget.shared) ...[
                   Icon(
                     widget.readOnly
@@ -753,13 +777,14 @@ class _TerminalTabState extends State<_TerminalTab> {
                   widget.name,
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight:
-                        widget.active ? FontWeight.w600 : FontWeight.normal,
+                    fontWeight: widget.active
+                        ? FontWeight.w600
+                        : FontWeight.normal,
                     color: widget.active
                         ? KColors.textPrimary
                         : _hovered
-                            ? Colors.white70
-                            : KColors.textSecondary,
+                        ? Colors.white70
+                        : KColors.textSecondary,
                   ),
                 ),
                 if (widget.onClose != null) ...[
@@ -774,8 +799,8 @@ class _TerminalTabState extends State<_TerminalTab> {
                         color: _hovered
                             ? Colors.white70
                             : widget.active
-                                ? Colors.white38
-                                : Colors.transparent,
+                            ? Colors.white38
+                            : Colors.transparent,
                       ),
                     ),
                   ),
