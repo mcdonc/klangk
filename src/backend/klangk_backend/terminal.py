@@ -333,13 +333,20 @@ async def save_workspace_state(container_id: str, state: dict) -> None:
 
     Writes atomically to /home/.workspace-state.json via temp + rename.
     Callers should serialize access via WorkspaceSession._save_lock.
+
+    Uses ``mktemp`` inside the container so the temp file is created with
+    ``O_EXCL``, preventing symlink-following attacks.
     """
     import json
 
-    tmp_path = f"{_STATE_PATH}.{uuid.uuid4().hex[:8]}.tmp"
     data = json.dumps(state, indent=2)
+    # mktemp creates a file safely (O_EXCL); cat writes into it; mv renames
+    # atomically; trap ensures cleanup on any failure.
     script = (
-        f"cat > {tmp_path} && mv {tmp_path} {_STATE_PATH} || rm -f {tmp_path}"
+        "set -e; t=$(mktemp /home/.workspace-state.XXXXXX);"
+        " trap 'rm -f \"$t\"' EXIT;"
+        f' cat > "$t" && mv "$t" {_STATE_PATH};'
+        " trap - EXIT"
     )
     argv = [
         "exec",
