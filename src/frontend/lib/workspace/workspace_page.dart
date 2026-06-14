@@ -13,6 +13,7 @@ import '../utils/page_title.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 import '../file_viewer/file_viewer_panel.dart';
+import '../utils/suppress_browser_menu.dart';
 import '../file_viewer/file_renderer_wiring.dart';
 import '../layout/ide_layout.dart';
 import '../terminal/ghostty_terminal.dart';
@@ -372,6 +373,22 @@ class _WorkspacePageState extends State<WorkspacePage> {
     );
   }
 
+  List<Map<String, dynamic>> _getViewers(
+    WsClient wsClient,
+    String ownerUserId,
+    String windowId,
+  ) {
+    for (final s in wsClient.sharedTerminals) {
+      if (s['user_id'] == ownerUserId && s['window_id'] == windowId) {
+        final viewers = s['viewers'];
+        if (viewers is List) {
+          return viewers.cast<Map<String, dynamic>>();
+        }
+      }
+    }
+    return [];
+  }
+
   Widget _buildTerminalWithTabs(WsClient wsClient) {
     debugPrint(
       '[WorkspacePage] _buildTerminalWithTabs: ${DateTime.now()} windows=${wsClient.terminalWindows.length}',
@@ -403,10 +420,16 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         for (final w in windows)
                           _TerminalTab(
                             name: w['name'] as String? ?? '?',
+                            tooltip: w['name'] as String? ?? '?',
                             active: _activeSharedTerminal == null &&
                                 (w['active'] as bool? ?? false),
                             isShared: _isWindowShared(
                               wsClient,
+                              w['id'] as String? ?? '',
+                            ),
+                            viewers: _getViewers(
+                              wsClient,
+                              myUserId ?? '',
                               w['id'] as String? ?? '',
                             ),
                             onTap: () =>
@@ -416,6 +439,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
                                       w['index'] as int,
                                     )
                                 : null,
+                            onRename: (newName) =>
+                                wsClient.sendTerminalRenameWindow(
+                              w['index'] as int,
+                              newName,
+                            ),
                             onToggleShare: _hasPerm('share-terminals')
                                 ? () {
                                     final wid = w['id'] as String? ?? '';
@@ -446,6 +474,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
                                 w.length > 3 ? '${w.substring(0, 3)}…' : w;
                             return '$he:$we';
                           }(),
+                          tooltip:
+                              '${s['handle'] ?? '?'}:${s['window_name'] ?? '?'}',
                           active: _activeSharedTerminal != null &&
                               _activeSharedTerminal!['user_id'] ==
                                   s['user_id'] &&
@@ -454,6 +484,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
                           shared: true,
                           readOnly: !_hasPerm('code-in-shared-terminals') &&
                               !_hasPerm('share-terminals'),
+                          viewers: _getViewers(
+                            wsClient,
+                            s['user_id'] as String? ?? '',
+                            s['window_id'] as String? ?? '',
+                          ),
                           onTap: () => _joinShared(
                             wsClient,
                             s['user_id'] as String,
@@ -693,23 +728,29 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
 class _TerminalTab extends StatefulWidget {
   final String name;
+  final String? tooltip;
   final bool active;
   final bool shared;
   final bool readOnly;
   final bool isShared;
+  final List<Map<String, dynamic>> viewers;
   final VoidCallback onTap;
   final VoidCallback? onClose;
   final VoidCallback? onToggleShare;
+  final void Function(String newName)? onRename;
 
   const _TerminalTab({
     required this.name,
     required this.active,
     required this.onTap,
+    this.tooltip,
     this.shared = false,
     this.readOnly = false,
     this.isShared = false,
+    this.viewers = const [],
     this.onClose,
     this.onToggleShare,
+    this.onRename,
   });
 
   @override
@@ -718,112 +759,220 @@ class _TerminalTab extends StatefulWidget {
 
 class _TerminalTabState extends State<_TerminalTab> {
   bool _hovered = false;
+  Offset? _tapPosition;
+
+  void _showContextMenu() {
+    final pos = _tapPosition;
+    if (pos == null) return;
+    final items = <PopupMenuEntry<String>>[
+      if (widget.onRename != null)
+        const PopupMenuItem(
+          value: 'rename',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.edit, size: 18),
+            title: Text('Rename'),
+          ),
+        ),
+      if (widget.onToggleShare != null)
+        PopupMenuItem(
+          value: 'share',
+          child: ListTile(
+            dense: true,
+            leading: Icon(
+              widget.isShared ? Icons.cell_tower : Icons.share_outlined,
+              size: 18,
+            ),
+            title: Text(widget.isShared ? 'Unshare' : 'Share'),
+          ),
+        ),
+    ];
+    if (items.isEmpty) return;
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
+      items: items,
+    ).then((action) {
+      if (action == 'rename') {
+        _showRenameDialog();
+      } else if (action == 'share') {
+        widget.onToggleShare?.call();
+      }
+    });
+  }
+
+  void _showRenameDialog() {
+    final controller = TextEditingController(text: widget.name);
+    showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename terminal'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Terminal name'),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    ).then((newName) {
+      if (newName != null && newName.isNotEmpty && newName != widget.name) {
+        widget.onRename?.call(newName);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return _maybeTooltip(Padding(
       padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
         cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: SizedBox(
-            width: 120,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                color: widget.active
-                    ? KColors.bgSurface
-                    : _hovered
-                        ? KColors.bgOverlay
-                        : Colors.transparent,
-                borderRadius: BorderRadius.circular(4),
-                border: widget.active
-                    ? Border.all(color: KColors.borderMuted, width: 0.5)
-                    : null,
-              ),
-              child: Row(
-                children: [
-                  // Icon for other users' shared tabs (left of name)
-                  if (widget.shared) ...[
-                    Icon(
-                      widget.readOnly
-                          ? Icons.visibility_outlined
-                          : Icons.edit_outlined,
-                      size: 12,
-                      color:
-                          widget.active ? KColors.accentAmber : Colors.white38,
-                    ),
-                    const SizedBox(width: 4),
-                  ],
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: Text(
-                      widget.name,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight:
-                            widget.active ? FontWeight.w600 : FontWeight.normal,
+        child: SuppressBrowserContextMenu(
+          child: GestureDetector(
+            onTap: widget.onTap,
+            onSecondaryTapDown: (details) {
+              _tapPosition = details.globalPosition;
+            },
+            onSecondaryTap: _showContextMenu,
+            child: SizedBox(
+              width: 120,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: widget.active
+                      ? KColors.bgSurface
+                      : _hovered
+                          ? KColors.bgOverlay
+                          : Colors.transparent,
+                  borderRadius: BorderRadius.circular(4),
+                  border: widget.active
+                      ? Border.all(color: KColors.borderMuted, width: 0.5)
+                      : null,
+                ),
+                child: Row(
+                  children: [
+                    // Icon for other users' shared tabs (left of name)
+                    if (widget.shared) ...[
+                      Icon(
+                        widget.readOnly
+                            ? Icons.lock_outlined
+                            : Icons.edit_outlined,
+                        size: 12,
                         color: widget.active
-                            ? KColors.textPrimary
-                            : _hovered
-                                ? Colors.white70
-                                : KColors.textSecondary,
+                            ? KColors.accentAmber
+                            : Colors.white38,
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    // Broadcast icon for own tabs that are actively shared
+                    // — click to unshare
+                    if (!widget.shared && widget.isShared) ...[
+                      GestureDetector(
+                        onTap: widget.onToggleShare,
+                        child: const MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: Tooltip(
+                            message: 'Unshare',
+                            child: Icon(
+                              Icons.cell_tower,
+                              size: 12,
+                              color: KColors.accentCyan,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    Expanded(
+                      child: Text(
+                        widget.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: widget.active
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                          color: widget.active
+                              ? KColors.textPrimary
+                              : _hovered
+                                  ? Colors.white70
+                                  : KColors.textSecondary,
+                        ),
                       ),
                     ),
-                  ),
-                  const Spacer(),
-                  // Share toggle + close pushed to the right
-                  if (!widget.shared && widget.onToggleShare != null) ...[
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        onTap: widget.onToggleShare,
-                        child: Tooltip(
-                          message: widget.isShared ? 'Unshare' : 'Share',
+                    // Viewer count
+                    if (widget.viewers.isNotEmpty) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.visibility,
+                        size: 10,
+                        color: Colors.white38,
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        '${widget.viewers.length}',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white38,
+                        ),
+                      ),
+                    ],
+                    if (widget.onClose != null) ...[
+                      const SizedBox(width: 4),
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: widget.onClose,
                           child: Icon(
-                            widget.isShared
-                                ? Icons.cell_tower
-                                : Icons.share_outlined,
+                            Icons.close,
                             size: 12,
-                            color: widget.isShared
-                                ? KColors.accentCyan
-                                : _hovered
-                                    ? Colors.white70
+                            color: _hovered
+                                ? Colors.white70
+                                : widget.active
+                                    ? Colors.white38
                                     : Colors.transparent,
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
-                  if (widget.onClose != null) ...[
-                    const SizedBox(width: 4),
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        onTap: widget.onClose,
-                        child: Icon(
-                          Icons.close,
-                          size: 12,
-                          color: _hovered
-                              ? Colors.white70
-                              : widget.active
-                                  ? Colors.white38
-                                  : Colors.transparent,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+                ),
               ),
             ),
           ),
         ),
       ),
-    );
+    ));
+  }
+
+  Widget _maybeTooltip(Widget child) {
+    final parts = <String>[];
+    if (widget.tooltip != null) {
+      parts.add(widget.tooltip!);
+    }
+    if (widget.viewers.isNotEmpty) {
+      final names = widget.viewers
+          .map((v) => (v['email'] as String?)?.split('@').first ?? '?')
+          .join(', ');
+      parts.add('👁 $names');
+    }
+    if (parts.isNotEmpty) {
+      return Tooltip(message: parts.join('\n'), child: child);
+    }
+    return child;
   }
 }
 

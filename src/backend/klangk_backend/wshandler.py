@@ -513,6 +513,20 @@ def _get_presence_list(workspace_id: str) -> list[dict]:
 
 def _get_shared_terminals(ws_session) -> list[dict]:
     """Collect all shared windows across all users in a workspace."""
+    # Build viewer map: (owner_user_id, window_id) -> [{user_id, email}]
+    viewer_map: dict[tuple[str, str], list[dict]] = {}
+    for sock in ws_session.subscribers:
+        conn = state.connections.get(sock)
+        if not conn or not conn._viewing_shared:
+            continue
+        key = (
+            conn._viewing_shared["user_id"],
+            conn._viewing_shared["window_id"],
+        )
+        viewer_map.setdefault(key, []).append(
+            {"user_id": conn.user["id"], "email": conn.user.get("email", "")}
+        )
+
     terminals = []
     for user_id, windows in ws_session.terminal_windows.items():
         # Look up the user's handle from any active connection
@@ -526,12 +540,15 @@ def _get_shared_terminals(ws_session) -> list[dict]:
             continue
         for w in windows:
             if w.get("shared"):
+                wid = w.get("id", "")
+                viewers = viewer_map.get((user_id, wid), [])
                 terminals.append(
                     {
                         "user_id": user_id,
                         "handle": handle,
                         "window_name": w["name"],
-                        "window_id": w.get("id", ""),
+                        "window_id": wid,
+                        "viewers": viewers,
                     }
                 )
     return terminals
@@ -556,6 +573,9 @@ class Connection:
         self._user_home: str | None = None
         self._terminal_cols: int = 80
         self._terminal_rows: int = 24
+        # Tracks which shared terminal this connection is viewing.
+        # Set on join_shared_terminal, cleared on stop_terminal/terminal_start.
+        self._viewing_shared: dict | None = None  # {user_id, window_id}
 
     async def start_workspace_container(
         self, workspace_id: str, workspace: dict
@@ -1088,7 +1108,14 @@ class Connection:
         ws_session.terminal_windows[user_id] = new_entries
         new_shared = {w["id"] for w in new_entries if w.get("shared")}
         # Broadcast if shared set changed (e.g. shared window was closed)
-        if old_shared != new_shared:
+        # or if any shared window was renamed.
+        old_shared_names = {
+            (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
+        }
+        new_shared_names = {
+            (w["id"], w["name"]) for w in new_entries if w.get("shared")
+        }
+        if old_shared != new_shared or old_shared_names != new_shared_names:
             self._broadcast_shared_terminals(ws_session)
         self._save_state_snapshot(ws_session)
 
@@ -1311,6 +1338,10 @@ class Connection:
         # session group on the default tmux server (no -S socket).
         # tmux session is named by user_id.
         await self.stop_terminal()
+        self._viewing_shared = {
+            "user_id": owner_user_id,
+            "window_id": window_id,
+        }
         session = TerminalSession(
             self.container_id,
             session_name=self.user["id"],
@@ -1347,6 +1378,10 @@ class Connection:
                         "readOnly": read_only,
                     }
                 )
+                # Broadcast updated viewer list
+                ws_sess = state.get_session(conn.workspace_id)
+                if ws_sess:
+                    conn._broadcast_shared_terminals(ws_sess)
             except asyncio.CancelledError:  # pragma: no cover
                 await session.stop()
                 raise
@@ -1783,6 +1818,8 @@ class Connection:
         return True
 
     async def stop_terminal(self) -> None:
+        was_viewing = self._viewing_shared
+        self._viewing_shared = None
         task = self.terminal_task
         if task:
             task.cancel()
@@ -1792,6 +1829,11 @@ class Connection:
                 pass
             self.terminal_task = None
         await self._claim_and_stop_terminal()
+        # Broadcast viewer change so other users see updated viewer list
+        if was_viewing and self.workspace_id:
+            ws_session = state.get_session(self.workspace_id)
+            if ws_session:
+                self._broadcast_shared_terminals(ws_session)
         # Reset debounce so the next explicit start isn't blocked.
         self._last_terminal_start = 0
 

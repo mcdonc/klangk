@@ -998,4 +998,103 @@ test.describe("shared terminal visibility", () => {
       await cleanup();
     }
   });
+
+  test("renaming a shared terminal updates other users' tab list", async ({
+    page,
+    request,
+  }) => {
+    const adminEmail = `rename-share-admin-${Date.now()}@test.example.com`;
+    const admin = await registerUser(request, adminEmail);
+    const { workspaceId, cleanup } = await createWorkspace(
+      request,
+      admin.headers,
+      "rename-share",
+    );
+    try {
+      const coadminEmail = `rename-share-coadmin-${Date.now()}@test.example.com`;
+      const coadmin = await registerUser(request, coadminEmail);
+      await addToRole(
+        request,
+        admin.headers,
+        workspaceId,
+        "owners",
+        coadminEmail,
+      );
+
+      await openWorkspace(page, adminEmail, workspaceId, {
+        waitForTerminal: true,
+      });
+
+      const adminWs = await connectWs(admin.token, workspaceId);
+      const coadminWs = await connectWs(coadmin.token, workspaceId);
+
+      try {
+        // Admin starts terminal and gets window list
+        adminWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+        let adminWindows: WsMessage = { type: "none" };
+        await adminWs.recvUntil((m) => {
+          if (m.type === "terminal_windows") adminWindows = m;
+          return (
+            m.type === "terminal_windows" &&
+            (m.windows as Array<Record<string, unknown>>).length > 0
+          );
+        }, 60_000);
+
+        const firstWindow = (
+          adminWindows.windows as Array<Record<string, unknown>>
+        )[0];
+
+        // Admin shares the terminal
+        adminWs.send({
+          cmd: "share_window",
+          window_id: firstWindow.id as string,
+        });
+
+        // Coadmin sees the shared terminal with its original name
+        const shared1 = await coadminWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).length > 0,
+        );
+        const originalName = (
+          shared1.terminals as Array<Record<string, unknown>>
+        )[0].window_name as string;
+        expect(originalName).toBe(firstWindow.name as string);
+
+        // Admin renames the terminal
+        adminWs.send({
+          cmd: "terminal_rename_window",
+          index: firstWindow.index as number,
+          name: "my-build",
+        });
+
+        // Admin gets updated terminal_windows
+        await adminWs.recvUntil(
+          (m) =>
+            m.type === "terminal_windows" &&
+            (m.windows as Array<Record<string, unknown>>).some(
+              (w) => w.name === "my-build",
+            ),
+        );
+
+        // Coadmin should receive updated shared_terminals with the new name
+        const shared2 = await coadminWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.window_name === "my-build",
+            ),
+        );
+        const renamedTerminal = (
+          shared2.terminals as Array<Record<string, unknown>>
+        ).find((t) => t.window_name === "my-build");
+        expect(renamedTerminal).toBeDefined();
+      } finally {
+        adminWs.close();
+        coadminWs.close();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
 });
