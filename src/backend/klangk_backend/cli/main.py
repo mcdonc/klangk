@@ -721,7 +721,9 @@ def terminals(
                 ):
                     break
 
-            # Start terminal to get own windows
+            # Start terminal to get own windows.
+            # terminal_windows arrives after terminal_started — skip
+            # terminal_output and other messages until we get it.
             cols, rows = _get_terminal_size()
             await conn.send(
                 json.dumps(
@@ -739,8 +741,6 @@ def terminals(
                 if msg.get("type") == "terminal_windows":
                     own_windows = msg.get("windows", [])
                     break
-                if msg.get("type") == "terminal_output":
-                    break  # Got output before windows — use what we have
 
             # Print results
             table = Table(title=f"Terminals in {ws.name}")
@@ -818,9 +818,6 @@ def share(
                 if msg.get("type") == "terminal_windows":
                     own_windows = msg.get("windows", [])
                     break
-                if msg.get("type") == "terminal_output":
-                    break
-
             match = next(
                 (w for w in own_windows if w["name"] == terminal), None
             )
@@ -905,8 +902,6 @@ def unshare(
                 msg = json.loads(raw)
                 if msg.get("type") == "terminal_windows":
                     own_windows = msg.get("windows", [])
-                    break
-                if msg.get("type") == "terminal_output":
                     break
 
             match = next(

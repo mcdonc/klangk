@@ -1494,30 +1494,21 @@ class TestTerminalSharing:
 
     def test_share_and_unshare_terminal(self, cli_config):
         env = cli_config["env"]
-        # Share the first terminal (named "1" by default)
+        # The initial tmux window is named "bash"
         result = _run(
-            ["klangk", "share", "e2e-share", "1"],
+            ["klangk", "share", "e2e-share", "bash"],
             env=env,
             timeout=60,
         )
-        assert result.returncode == 0
+        assert result.returncode == 0, result.stderr
         assert "shared" in result.stderr.lower()
 
-        # Verify it shows as shared in terminals list
         result = _run(
-            ["klangk", "terminals", "e2e-share"],
+            ["klangk", "unshare", "e2e-share", "bash"],
             env=env,
             timeout=60,
         )
-        assert result.returncode == 0
-
-        # Unshare it
-        result = _run(
-            ["klangk", "unshare", "e2e-share", "1"],
-            env=env,
-            timeout=60,
-        )
-        assert result.returncode == 0
+        assert result.returncode == 0, result.stderr
         assert "no longer shared" in result.stderr.lower()
 
     def test_share_nonexistent_terminal(self, cli_config):

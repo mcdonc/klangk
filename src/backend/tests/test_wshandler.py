@@ -452,21 +452,12 @@ class TestHandleTerminalStart:
         await session.add_subscriber(sock, "cid")
         wshandler.state.connections[sock] = conn
 
-        list_call = [0]
-
-        async def fake_list(*a, **kw):
-            list_call[0] += 1
-            if list_call[0] <= 1:
-                return [{"index": 0, "name": "bash", "active": True}]
-            return [{"index": 0, "name": "1", "active": True}]
-
         with (
             patch.object(wshandler, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
-                side_effect=fake_list,
+                return_value=[{"index": 0, "name": "bash", "active": True}],
             ),
-            patch("klangk_backend.terminal.tmux_command", return_value=""),
             patch(
                 "klangk_backend.terminal.load_workspace_state",
                 return_value={},
@@ -521,7 +512,7 @@ class TestHandleTerminalStart:
         ws_session = wshandler.state.sessions.get("ws")
         assert ws_session is not None
         assert "uid" in ws_session.terminal_windows
-        assert ws_session.terminal_windows["uid"][0]["name"] == "1"
+        assert ws_session.terminal_windows["uid"][0]["name"] == "bash"
 
         # Clean up
         wshandler.state.sessions.pop("ws", None)
@@ -679,66 +670,6 @@ class TestHandleTerminalStart:
         # Should be silently ignored (debounced)
         assert conn.terminal_session is None
 
-    async def test_start_renames_bash_skips_taken_numbers(self):
-        """If window '1' exists, bash gets renamed to '2'."""
-        sock = _mock_sock()
-        conn = _base_conn(ws=sock)
-        conn.container_id = "cid"
-        conn.workspace_id = "ws"
-        conn._user_home = "/home/testuser"
-
-        async def _perm(*a):
-            return True
-
-        conn._has_perm = _perm  # type: ignore[method-assign]
-        container.registry.track_activity("cid", "ws")
-
-        list_call = [0]
-
-        async def fake_list(*a, **kw):
-            list_call[0] += 1
-            if list_call[0] <= 1:
-                return [
-                    {"index": 0, "name": "bash", "active": True},
-                    {"index": 1, "name": "1", "active": False},
-                ]
-            return [
-                {"index": 0, "name": "2", "active": True},
-                {"index": 1, "name": "1", "active": False},
-            ]
-
-        with (
-            patch.object(wshandler, "TerminalSession") as MockTS,
-            patch(
-                "klangk_backend.terminal.list_windows",
-                side_effect=fake_list,
-            ),
-            patch(
-                "klangk_backend.terminal.tmux_command", return_value=""
-            ) as mock_tmux,
-        ):
-            mock_session = _mock_terminal()
-            MockTS.return_value = mock_session
-
-            async def fake_output():
-                return
-                yield
-
-            mock_session.output = fake_output
-            await conn.handle_terminal_start({"cols": 80, "rows": 24})
-            await asyncio.sleep(0)
-
-        # Should have renamed bash to "2" (skipping "1") via tmux_command
-        rename_calls = [
-            c for c in mock_tmux.call_args_list if "rename-window" in str(c)
-        ]
-        assert len(rename_calls) == 1
-        assert "2" in str(rename_calls[0])
-        conn.terminal_task.cancel()
-        try:
-            await conn.terminal_task
-        except asyncio.CancelledError:
-            pass
         container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 

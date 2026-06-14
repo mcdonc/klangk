@@ -938,7 +938,6 @@ class Connection:
                         list_windows,
                         load_workspace_state,
                         restore_windows,
-                        tmux_command,
                     )
 
                     sname = conn._tmux_session_name()
@@ -967,28 +966,6 @@ class Connection:
                                         uid, wins
                                     )
 
-                    windows = await list_windows(conn.container_id, sname)
-                    # Rename any window still called "bash" to
-                    # the next available number.
-                    for w in windows:
-                        if w["name"] == "bash":
-                            num = 1
-                            used = {x["name"] for x in windows}
-                            while str(num) in used:
-                                num += 1
-                            try:
-                                await tmux_command(
-                                    conn.container_id,
-                                    sname,
-                                    [
-                                        "rename-window",
-                                        "-t",
-                                        f"{sname}:{w['index']}",
-                                        str(num),
-                                    ],
-                                )
-                            except Exception:
-                                pass
                     windows = await list_windows(conn.container_id, sname)
                     conn._sync_terminal_windows(windows)
                     conn.sock.send_json(
