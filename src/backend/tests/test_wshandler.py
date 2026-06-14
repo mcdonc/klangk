@@ -467,6 +467,11 @@ class TestHandleTerminalStart:
                 side_effect=fake_list,
             ),
             patch("klangk_backend.terminal.tmux_command", return_value=""),
+            patch(
+                "klangk_backend.terminal.load_workspace_state",
+                return_value={},
+            ),
+            patch("klangk_backend.terminal.restore_windows"),
         ):
             mock_session = _mock_terminal()
             MockTS.return_value = mock_session
@@ -499,8 +504,6 @@ class TestHandleTerminalStart:
             for m in sent
         )
 
-        wshandler.state.sessions.pop("ws", None)
-        wshandler.state.connections.pop(sock, None)
         # bridge_token should be passed (a UUID string)
         start_kwargs = mock_session.start.call_args
         assert start_kwargs[1]["command_override"] is None
@@ -514,12 +517,110 @@ class TestHandleTerminalStart:
             for m in sent
         )
 
+        # _sync_terminal_windows should have populated terminal_windows
+        ws_session = wshandler.state.sessions.get("ws")
+        assert ws_session is not None
+        assert "uid" in ws_session.terminal_windows
+        assert ws_session.terminal_windows["uid"][0]["name"] == "1"
+
         # Clean up
+        wshandler.state.sessions.pop("ws", None)
+        wshandler.state.connections.pop(sock, None)
         conn.terminal_task.cancel()
         try:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
+        container.registry.revoke_bridge_token("ws")
+        container.registry.states.pop("ws", None)
+
+    async def test_starts_session_restores_saved_state(self):
+        """On first terminal_start, saved state is loaded and restored."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        container.registry.track_activity("cid", "ws")
+
+        session = wshandler.state.get_or_create_session("ws")
+        # Do NOT pre-populate terminal_windows — simulates restart
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+
+        saved_state = {
+            "uid": [
+                {"name": "1", "shared": False},
+                {"name": "build", "shared": True},
+            ],
+            "other-uid": [
+                {"name": "1", "shared": False},
+                {"name": "dev", "shared": True},
+            ],
+        }
+
+        with (
+            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[
+                    {"index": 0, "name": "1", "active": True},
+                    {"index": 1, "name": "build", "active": False},
+                ],
+            ),
+            patch("klangk_backend.terminal.tmux_command", return_value=""),
+            patch(
+                "klangk_backend.terminal.load_workspace_state",
+                return_value=saved_state,
+            ),
+            patch("klangk_backend.terminal.restore_windows") as mock_restore,
+            patch("klangk_backend.terminal.save_workspace_state"),
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+        # restore_windows called with saved windows
+        mock_restore.assert_awaited_once_with(
+            "cid",
+            "uid",
+            saved_state["uid"],
+        )
+        # terminal_windows populated from saved state
+        ws_session = wshandler.state.sessions["ws"]
+        assert "uid" in ws_session.terminal_windows
+        # "build" should retain shared=True from saved state
+        build_win = [
+            w
+            for w in ws_session.terminal_windows["uid"]
+            if w["name"] == "build"
+        ]
+        assert len(build_win) == 1
+        assert build_win[0]["shared"] is True
+        # Other user's state also restored
+        assert "other-uid" in ws_session.terminal_windows
+        assert ws_session.terminal_windows["other-uid"][1]["shared"] is True
+
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
+        wshandler.state.sessions.pop("ws", None)
+        wshandler.state.connections.pop(sock, None)
         container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 

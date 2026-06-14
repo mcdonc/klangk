@@ -935,40 +935,67 @@ class Connection:
                 try:
                     from .terminal import (
                         list_windows,
+                        load_workspace_state,
+                        restore_windows,
                         tmux_command,
                     )
 
                     sname = conn._tmux_session_name()
-                    if sname:
-                        windows = await list_windows(conn.container_id, sname)
-                        # Rename any window still called "bash" to
-                        # the next available number.
-                        for w in windows:
-                            if w["name"] == "bash":
-                                num = 1
-                                used = {x["name"] for x in windows}
-                                while str(num) in used:
-                                    num += 1
-                                try:
-                                    await tmux_command(
-                                        conn.container_id,
-                                        sname,
-                                        [
-                                            "rename-window",
-                                            "-t",
-                                            f"{sname}:{w['index']}",
-                                            str(num),
-                                        ],
+                    user_id = conn.user["id"]
+                    ws_session = state.get_session(conn.workspace_id)
+
+                    # On first terminal_start after restart, restore
+                    # saved window state from the container.
+                    if (
+                        ws_session
+                        and user_id not in ws_session.terminal_windows
+                    ):
+                        saved = await load_workspace_state(conn.container_id)
+                        if user_id in saved:
+                            saved_windows = saved[user_id]
+                            await restore_windows(
+                                conn.container_id, sname, saved_windows
+                            )
+                            ws_session.terminal_windows[user_id] = (
+                                saved_windows
+                            )
+                            # Restore shared state for ALL users from snapshot
+                            for uid, wins in saved.items():
+                                if uid != user_id:
+                                    ws_session.terminal_windows.setdefault(
+                                        uid, wins
                                     )
-                                except Exception:
-                                    pass
-                        windows = await list_windows(conn.container_id, sname)
-                        conn.sock.send_json(
-                            {
-                                "type": "terminal_windows",
-                                "windows": windows,
-                            }
-                        )
+
+                    windows = await list_windows(conn.container_id, sname)
+                    # Rename any window still called "bash" to
+                    # the next available number.
+                    for w in windows:
+                        if w["name"] == "bash":
+                            num = 1
+                            used = {x["name"] for x in windows}
+                            while str(num) in used:
+                                num += 1
+                            try:
+                                await tmux_command(
+                                    conn.container_id,
+                                    sname,
+                                    [
+                                        "rename-window",
+                                        "-t",
+                                        f"{sname}:{w['index']}",
+                                        str(num),
+                                    ],
+                                )
+                            except Exception:
+                                pass
+                    windows = await list_windows(conn.container_id, sname)
+                    conn._sync_terminal_windows(windows)
+                    conn.sock.send_json(
+                        {
+                            "type": "terminal_windows",
+                            "windows": windows,
+                        }
+                    )
                 except Exception:
                     pass  # Non-critical; tabs update on next window op
                 # Also send the shared terminal list from in-memory state.
@@ -1036,6 +1063,21 @@ class Connection:
         """
         return self.user["id"]
 
+    def _sync_terminal_windows(self, windows: list[dict]) -> None:
+        """Update in-memory terminal_windows from tmux list_windows result."""
+        ws_session = state.get_session(self.workspace_id)
+        if not ws_session:
+            return
+        user_id = self.user["id"]
+        old = ws_session.terminal_windows.get(user_id, [])
+        # Build a map of shared state by window name from old data
+        shared_by_name = {w["name"]: w.get("shared", False) for w in old}
+        ws_session.terminal_windows[user_id] = [
+            {"name": w["name"], "shared": shared_by_name.get(w["name"], False)}
+            for w in windows
+        ]
+        self._save_state_snapshot(ws_session)
+
     async def handle_terminal_new_window(self, msg: dict) -> None:
         import time as _time
 
@@ -1054,6 +1096,7 @@ class Connection:
                 "handle_terminal_new_window: %.3fs",
                 _time.monotonic() - t0,
             )
+            self._sync_terminal_windows(windows)
             self.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
             )
@@ -1091,6 +1134,7 @@ class Connection:
             windows = await close_window(
                 self.container_id, session_name, index
             )
+            self._sync_terminal_windows(windows)
             self.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
             )
@@ -1111,6 +1155,7 @@ class Connection:
         try:
             await rename_window(self.container_id, session_name, index, name)
             windows = await list_windows(self.container_id, session_name)
+            self._sync_terminal_windows(windows)
             self.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
             )
