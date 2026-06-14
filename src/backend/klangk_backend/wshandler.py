@@ -819,8 +819,36 @@ class Connection:
         workspace_id = self.workspace_id
         container_id = self.container_id
 
-        # Notify all subscribers before stopping.
+        # Save terminal state before shutting down so it can be restored
+        # when the container restarts.
         session = state.get_session(workspace_id)
+        if session:
+            from .terminal import save_workspace_state
+
+            snapshot = {
+                uid: [dict(w) for w in wins]
+                for uid, wins in session.terminal_windows.items()
+            }
+            if snapshot:
+                try:
+                    await save_workspace_state(container_id, snapshot)
+                except Exception as e:
+                    logger.warning("State save before shutdown failed: %s", e)
+
+        # Clear container_id on ALL connections to prevent stale exec attempts.
+        for sock, conn_obj in state.connections.items():
+            if conn_obj.workspace_id == workspace_id:
+                conn_obj.container_id = None
+
+        try:
+            await container.registry.stop_and_remove_container(container_id)
+        except Exception as e:
+            logger.warning("Error stopping container: %s", e)
+
+        await container.registry._notify_workspace_killed(workspace_id)
+
+        # Notify subscribers AFTER the container is fully stopped, so
+        # reconnecting clients don't find a half-dead container.
         if session:
             session.broadcast(
                 {
@@ -832,18 +860,6 @@ class Connection:
                     },
                 }
             )
-
-        # Clear container_id on ALL connections to prevent stale exec attempts.
-        for sock, conn in state.connections.items():
-            if conn.workspace_id == workspace_id:
-                conn.container_id = None
-
-        try:
-            await container.registry.stop_and_remove_container(container_id)
-        except Exception as e:
-            logger.warning("Error stopping container: %s", e)
-
-        await container.registry._notify_workspace_killed(workspace_id)
 
         logger.info(
             "Container shut down by user for workspace %s", workspace_id
@@ -931,11 +947,8 @@ class Connection:
                     ),
                     timeout=30,
                 )
-                logger.info("_start_terminal: activating session")
                 if not await conn._activate_session(session, cols, rows):
-                    logger.info("_start_terminal: session superseded")
                     return
-                logger.info("_start_terminal: sending terminal_started")
                 conn.sock.send_json({"type": "terminal_started"})
                 try:
                     from .terminal import (
@@ -970,9 +983,7 @@ class Connection:
                                         uid, wins
                                     )
 
-                    logger.info("_start_terminal: listing windows")
                     windows = await list_windows(conn.container_id, sname)
-                    logger.info("_start_terminal: windows=%s", windows)
                     conn._sync_terminal_windows(windows)
                     conn.sock.send_json(
                         {
@@ -980,7 +991,7 @@ class Connection:
                             "windows": windows,
                         }
                     )
-                except Exception:
+                except (RuntimeError, OSError):
                     logger.exception("_start_terminal: window list failed")
                 # Also send the shared terminal list from in-memory state.
                 ws_session = state.get_session(conn.workspace_id)
@@ -1059,10 +1070,13 @@ class Connection:
         # a server's lifetime.  This is stable across renames and
         # index reuse.
         old_by_id = {w["id"]: w for w in old if "id" in w}
+        # Name-based fallback for matching after container restart where
+        # window_ids change but names are restored.
+        old_by_name = {w["name"]: w for w in old if "name" in w}
         old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
         new_entries = []
         for w in windows:
-            prev = old_by_id.get(w["id"])
+            prev = old_by_id.get(w["id"]) or old_by_name.get(w["name"])
             new_entries.append(
                 {
                     "id": w["id"],
@@ -1320,20 +1334,11 @@ class Connection:
                 # the correct window.
                 from .terminal import select_window
 
-                # Use the window_id (@N) as the target — it's globally
-                # unique within the tmux server, so no session prefix
-                # needed.
-                logger.info(
-                    "_start_shared: selecting window %s",
-                    window_id,
-                )
                 await select_window(
                     conn.container_id, owner_user_id, window_id
                 )
                 if not await conn._activate_session(session, cols, rows):
-                    logger.info("_start_shared: session superseded")
                     return
-                logger.info("_start_shared: sending terminal_started")
                 conn.sock.send_json(
                     {
                         "type": "terminal_started",
@@ -1347,7 +1352,6 @@ class Connection:
                 raise
             except Exception as e:
                 await session.stop()
-                logger.exception("_start_shared FAILED: %s", e)
                 logger.exception("Shared terminal join failed: %s", e)
                 send_error(conn.sock, f"Failed to join shared terminal: {e}")
 
@@ -1381,7 +1385,6 @@ class Connection:
         Callers must ensure ``container_id`` is set.
         Uses the session's _save_lock so concurrent saves don't overlap.
         """
-        return  # temporarily disabled for debugging
         from .terminal import save_workspace_state
 
         container_id = self.container_id
@@ -1411,20 +1414,26 @@ class Connection:
             send_error(self.sock, "Name required")
             return
         session_name = self._tmux_session_name()
-        # Create a new window with this name and mark it shared
         from .terminal import new_window
 
         try:
-            await new_window(self.container_id, session_name, name=name)
+            windows = await new_window(
+                self.container_id, session_name, name=name
+            )
         except Exception as e:
             send_error(self.sock, f"Failed to create shared terminal: {e}")
             return
+        # Sync with tmux to get proper window_id, then mark the new
+        # window as shared.
+        self._sync_terminal_windows(windows)
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
         user_id = self.user["id"]
-        windows = ws_session.terminal_windows.setdefault(user_id, [])
-        windows.append({"name": name, "shared": True})
+        for w in ws_session.terminal_windows.get(user_id, []):
+            if w["name"] == name:
+                w["shared"] = True
+                break
         self._broadcast_shared_terminals(ws_session)
         self._save_state_snapshot(ws_session)
 

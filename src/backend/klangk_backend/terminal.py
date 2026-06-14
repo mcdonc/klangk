@@ -137,27 +137,36 @@ def _build_exec_argv(
 async def tmux_command(
     container_id: str, session_name: str, args: list[str]
 ) -> str:
-    """Run a tmux command in the container and return stdout."""
-    argv = [
-        "exec",
-        "-u",
-        "klangk",
-        container_id,
-        "tmux",
-        *args,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        podman.PODMAN_BIN,
-        *argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=podman.subprocess_env(),
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-    if proc.returncode != 0:
+    """Run a tmux command in the container and return stdout.
+
+    Retries up to 3 times on socket-not-found errors, which can occur
+    when the tmux server is still starting in a fresh container.
+    """
+    for attempt in range(3):
+        argv = [
+            "exec",
+            "-u",
+            "klangk",
+            container_id,
+            "tmux",
+            *args,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            podman.PODMAN_BIN,
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=podman.subprocess_env(),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode == 0:
+            return stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace").strip()
+        if "No such file or directory" in err and attempt < 2:
+            await asyncio.sleep(0.5)
+            continue
         raise RuntimeError(f"tmux command failed: {err}")
-    return stdout.decode("utf-8", errors="replace")
+    return ""  # unreachable
 
 
 async def list_windows(container_id: str, session_name: str) -> list[dict]:
@@ -700,18 +709,23 @@ class TerminalSession:
 
         # Kill the tmux session inside the container so the client
         # doesn't stay attached after the host-side process is gone.
-        # Stale clients block the tmux server's event loop (it tries
-        # to write output to PTYs nobody is reading).
-        if self._tmux_session_name and self.socket_path:
+        # For shared-socket sessions (-S), target the specific socket.
+        # For joiner sessions (join_session set, no socket), kill on
+        # the default server to prevent orphaned session-group members.
+        # Owner sessions (no join_session, no socket) are left alive
+        # so reconnecting users can reattach.
+        if self._tmux_session_name and (self.socket_path or self.join_session):
             try:
+                socket_args = (
+                    ["-S", self.socket_path] if self.socket_path else []
+                )
                 argv = [
                     "exec",
                     "-u",
                     "klangk",
                     self.container_id,
                     "tmux",
-                    "-S",
-                    self.socket_path,
+                    *socket_args,
                     "kill-session",
                     "-t",
                     self._tmux_session_name,

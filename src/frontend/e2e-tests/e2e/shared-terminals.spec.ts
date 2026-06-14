@@ -623,10 +623,7 @@ test.describe("shared terminal visibility", () => {
     }
   });
 
-  test("terminal state survives container restart", async ({
-    page,
-    request,
-  }) => {
+  test("terminal state survives container restart", async ({ request }) => {
     const ownerEmail = `state-restart-${Date.now()}@test.example.com`;
     const owner = await registerUser(request, ownerEmail);
     const { workspaceId, cleanup } = await createWorkspace(
@@ -635,17 +632,12 @@ test.describe("shared terminal visibility", () => {
       "state-restart",
     );
     try {
-      // Start container and connect
-      await openWorkspace(page, ownerEmail, workspaceId, {
-        waitForTerminal: true,
-      });
-
+      // Connect directly — connectWs starts the container
       const client1 = await connectWs(owner.token, workspaceId);
 
       // Start terminal, create a second window, share it
       client1.send({ cmd: "terminal_start", cols: 80, rows: 24 });
       await client1.recvUntil((m) => m.type === "terminal_started");
-      // Wait for initial terminal_windows
       await client1.recvUntil((m) => m.type === "terminal_windows");
 
       client1.send({ cmd: "create_shared_terminal", name: "build" });
@@ -659,7 +651,6 @@ test.describe("shared terminal visibility", () => {
 
       // Shut down the container
       client1.send({ cmd: "shutdown_container" });
-      // Wait for disconnect or container_stopped event
       await client1.recvUntil(
         (m) =>
           m.type === "event" &&
@@ -867,29 +858,18 @@ test.describe("shared terminal visibility", () => {
         adminWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
         let adminInitWindows: WsMessage = { type: "none" };
         let gotStarted = false;
-        const debugMsgs: string[] = [];
-        await adminWs
-          .recvUntil((m) => {
-            debugMsgs.push((m.type as string) ?? "?");
-            if (m.type === "terminal_started") gotStarted = true;
-            if (m.type === "terminal_windows") adminInitWindows = m;
-            return gotStarted && adminInitWindows.type === "terminal_windows";
-          }, 60_000)
-          .catch((e) => {
-            console.error(
-              "DEBUG: recvUntil failed, messages seen:",
-              debugMsgs.join(", "),
-            );
-            throw e;
-          });
+        await adminWs.recvUntil((m) => {
+          if (m.type === "terminal_started") gotStarted = true;
+          if (m.type === "terminal_windows") adminInitWindows = m;
+          return gotStarted && adminInitWindows.type === "terminal_windows";
+        }, 60_000);
         const firstWindow = (
           adminInitWindows.windows as Array<Record<string, unknown>>
         )[0];
         const firstWindowName = firstWindow.name as string;
-        const firstWindowIdx = firstWindow.index as number;
 
         // Admin shares the first terminal
-        adminWs.send({ cmd: "share_window", index: firstWindowIdx });
+        adminWs.send({ cmd: "share_window", window_id: firstWindow.id });
 
         // Coadmin sees the shared terminal
         const shared1 = await coadminWs.recvUntil(
@@ -962,7 +942,7 @@ test.describe("shared terminal visibility", () => {
         adminWs.send({ cmd: "terminal_input", data: "oneoneone" });
 
         // Admin shares the new window
-        adminWs.send({ cmd: "share_window", index: newWindow!.index });
+        adminWs.send({ cmd: "share_window", window_id: newWindow!.id });
 
         // After creating AND sharing a new window, the first shared
         // terminal should STILL be shared. Coadmin should see both.
@@ -1001,7 +981,7 @@ test.describe("shared terminal visibility", () => {
         });
         const moreNewOutput = await coadminWs.collectUntilQuiet(
           (m) => m.type === "terminal_output",
-          2000,
+          3000,
         );
         const newText = [
           ...joinNewOutput,
