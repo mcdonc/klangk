@@ -993,16 +993,13 @@ class Connection:
                         )
                 except Exception:
                     pass  # Non-critical; tabs update on next window op
-                # Also send the shared terminal list.
-                try:
-                    from .terminal import list_shared_terminals
-
-                    shared = await list_shared_terminals(conn.container_id)
+                # Also send the shared terminal list from in-memory state.
+                ws_session = state.get_session(conn.workspace_id)
+                if ws_session:
+                    terminals = _get_shared_terminals(ws_session)
                     conn.sock.send_json(
-                        {"type": "shared_terminals", "terminals": shared}
+                        {"type": "shared_terminals", "terminals": terminals}
                     )
-                except Exception:
-                    pass
             except asyncio.CancelledError:
                 await session.stop()
                 container.registry.revoke_connection_token(conn.sock)
@@ -1368,7 +1365,8 @@ class Connection:
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
-        windows = ws_session.terminal_windows.setdefault(handle, [])
+        user_id = self.user["id"]
+        windows = ws_session.terminal_windows.setdefault(user_id, [])
         windows.append({"name": name, "shared": True})
         self._broadcast_shared_terminals(ws_session)
         self._save_state_snapshot(ws_session)
@@ -1598,17 +1596,13 @@ class Connection:
         self.pending_status_msg = None
         if status_msg:
             _send_event(self.sock, "container_ready", status_msg)
-        # Send shared terminal list so tabs appear on initial load.
-        if self.container_id:
-            try:
-                from .terminal import list_shared_terminals
-
-                shared = await list_shared_terminals(self.container_id)
-                self.sock.send_json(
-                    {"type": "shared_terminals", "terminals": shared}
-                )
-            except Exception:
-                pass
+        # Send shared terminal list from in-memory state.
+        ws_session = state.get_session(self.workspace_id)
+        if ws_session:
+            terminals = _get_shared_terminals(ws_session)
+            self.sock.send_json(
+                {"type": "shared_terminals", "terminals": terminals}
+            )
 
     async def handle_set_handle(self, msg: dict) -> None:
         handle = msg.get("handle", "").strip()
