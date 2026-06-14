@@ -1050,19 +1050,22 @@ class Connection:
             return
         user_id = self.user["id"]
         old = ws_session.terminal_windows.get(user_id, [])
-        # Build a map of shared state by window name from old data
-        shared_by_name = {w["name"]: w.get("shared", False) for w in old}
-        old_shared = {w["name"] for w in old if w.get("shared")}
+        # Build a map of shared state by tmux window index (durable ID).
+        # Using name would break when tmux auto-renames windows.
+        shared_by_index = {
+            w["index"]: w.get("shared", False) for w in old if "index" in w
+        }
+        old_shared = {w["index"] for w in old if w.get("shared")}
         ws_session.terminal_windows[user_id] = [
             {
                 "name": w["name"],
                 "index": w["index"],
-                "shared": shared_by_name.get(w["name"], False),
+                "shared": shared_by_index.get(w["index"], False),
             }
             for w in windows
         ]
         new_shared = {
-            w["name"]
+            w["index"]
             for w in ws_session.terminal_windows[user_id]
             if w.get("shared")
         }

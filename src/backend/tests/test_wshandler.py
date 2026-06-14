@@ -3168,7 +3168,7 @@ class TestTerminalWindowHandlers:
         try:
             with patch(
                 "klangk_backend.terminal.close_window",
-                return_value=[{"index": 0, "name": "1", "active": True}],
+                return_value=[{"index": 1, "name": "1", "active": True}],
             ):
                 await conn.handle_terminal_close_window({"index": 0})
             # shared "bash" was removed — broadcast should have fired
