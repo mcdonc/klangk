@@ -57,6 +57,19 @@ class TestWsShell:
                 json.dumps(
                     {"type": "terminal_output", "data": "\x1b[2J\x1b[H"}
                 ),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
                 Exception("stop"),
             ]
         )
@@ -99,6 +112,19 @@ class TestWsShell:
                 json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {"type": "terminal_output", "data": "\x1b[2J\x1b[H"}
+                ),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
                 ),
                 Exception("stop"),
             ]
@@ -143,19 +169,6 @@ class TestWsShell:
                 json.dumps({"type": "workspace_ready"}),
                 json.dumps(
                     {
-                        "type": "terminal_windows",
-                        "windows": [
-                            {
-                                "id": "@0",
-                                "index": 0,
-                                "name": "1",
-                                "active": True,
-                            },
-                        ],
-                    }
-                ),
-                json.dumps(
-                    {
                         "type": "shared_terminals",
                         "terminals": [
                             {
@@ -168,6 +181,19 @@ class TestWsShell:
                     }
                 ),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "1",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
                 Exception("stop"),
             ]
         )
@@ -324,6 +350,19 @@ class TestWsShell:
                     }
                 ),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
                 # After join_shared_terminal is sent:
                 json.dumps({"type": "terminal_output", "data": "joining..."}),
                 json.dumps(
@@ -373,6 +412,19 @@ class TestWsShell:
                 json.dumps({"type": "workspace_ready"}),
                 json.dumps({"type": "shared_terminals", "terminals": []}),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
             ]
         )
 
@@ -417,6 +469,19 @@ class TestWsShell:
                     }
                 ),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
                 json.dumps({"type": "error", "message": "Permission denied"}),
             ]
         )

@@ -328,6 +328,42 @@ def _is_terminal_response(data: bytes) -> bool:
     return False
 
 
+def _drain_stdin() -> None:
+    """Drain any pending bytes from stdin (terminal query responses).
+
+    Terminal capability responses can arrive over several hundred
+    milliseconds after tmux probes the terminal.  We drain in a loop
+    with a generous timeout so late-arriving responses don't leak to
+    the host shell as garbage commands.
+    """
+    try:
+        fd = sys.stdin.fileno()
+        # Put stdin in raw mode temporarily so responses don't echo
+        # and aren't line-buffered.
+        try:
+            old = termios.tcgetattr(fd)
+            tty.setraw(fd)
+            restore = True
+        except termios.error:
+            restore = False
+        try:
+            # Drain for up to 500ms total, checking every 50ms.
+            for _ in range(10):
+                if select.select([fd], [], [], 0.05)[0]:
+                    os.read(fd, 4096)
+                else:
+                    # No data for 50ms — but responses may still be in
+                    # flight. Wait one more round to be sure.
+                    if not select.select([fd], [], [], 0.1)[0]:
+                        break
+                    os.read(fd, 4096)
+        finally:
+            if restore:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except (OSError, io.UnsupportedOperation):
+        pass
+
+
 def _raw_mode_enter() -> object:
     """Enter raw mode on stdin.  Returns opaque old-settings object."""
     return termios.tcgetattr(sys.stdin)
@@ -345,6 +381,7 @@ def reset_terminal() -> None:
     (Pi, nano, etc.) may have enabled.
     """
     sys.stdout.write(
+        "\x1b[?1049l"  # exit alternate screen
         "\x1b[?1000l"  # disable mouse click tracking
         "\x1b[?1002l"  # disable mouse button tracking
         "\x1b[?1003l"  # disable all mouse tracking
@@ -390,11 +427,13 @@ async def _ws_shell(
             start_msg["commandOverride"] = command_override
         await ws.send(json.dumps(start_msg))
 
-        # 3. Drain messages until the first terminal_output (the shell prompt).
-        # Along the way, collect terminal_windows and shared_terminals for
-        # window selection.
+        # 3. Drain messages until we have terminal_windows (needed for
+        # window selection).  terminal_output may arrive before
+        # terminal_windows due to async output forwarding, so we buffer
+        # early output and don't stop until the window list is in.
         own_windows: list[dict] = []
         shared_terminals: list[dict] = []
+        buffered_output: list[str] = []
         try:
             deadline = asyncio.get_event_loop().time() + 30
             while True:
@@ -405,12 +444,11 @@ async def _ws_shell(
                 msg = json.loads(raw)
                 if msg.get("type") == "terminal_windows":
                     own_windows = msg.get("windows", [])
+                    break
                 elif msg.get("type") == "shared_terminals":
                     shared_terminals = msg.get("terminals", [])
                 elif msg.get("type") == "terminal_output":
-                    sys.stdout.write(msg.get("data", ""))
-                    sys.stdout.flush()
-                    break
+                    buffered_output.append(msg.get("data", ""))
                 elif msg.get("type") == "error":  # pragma: no cover
                     raise ConnectionError(
                         f"Server error: {msg.get('message', 'unknown')}"
@@ -481,6 +519,11 @@ async def _ws_shell(
                     )
                 )
 
+        # Flush buffered terminal output from the startup drain.
+        for text in buffered_output:
+            sys.stdout.write(text)
+        sys.stdout.flush()
+
         # 4. Put terminal in raw mode, run shell, restore
         # raw_mode path: tcgetattr + tty.setraw + _raw_mode_exit + terminal_stop  # pragma: no cover
         if raw_mode:
@@ -492,6 +535,9 @@ async def _ws_shell(
             if raw_mode:
                 _raw_mode_exit(old_settings)
                 reset_terminal()
+            # Drain any terminal query responses still buffered in stdin
+            # so they don't leak to the host shell after exit.
+            _drain_stdin()
         await _send_ignore_closed(  # pragma: no cover
             ws, json.dumps({"cmd": "terminal_stop"})
         )
@@ -625,7 +671,9 @@ async def _run_shell(
                     stdout.write(text)
                     stdout.flush()
                     if "[exited]" in text:
-                        stdout.write("\r\nPress ~. to disconnect.\r\n")
+                        stdout.write(
+                            "\r\nPress Enter, then ~. to disconnect.\r\n"
+                        )
                         stdout.flush()
                 elif data.get("type") == "event":
                     event = data.get("event", {})
