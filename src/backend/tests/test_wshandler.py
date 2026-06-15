@@ -3803,7 +3803,10 @@ class TestShareWindowHandlers:
                     "klangk_backend.acl.check_permission", return_value=True
                 ),
                 patch.object(wshandler, "TerminalSession") as MockTS,
-                patch("klangk_backend.terminal.select_window"),
+                patch(
+                    "klangk_backend.terminal.tmux_command",
+                    new_callable=AsyncMock,
+                ),
             ):
                 mock_sess = _mock_terminal()
                 mock_sess.start = AsyncMock(side_effect=fake_start)
@@ -3818,6 +3821,117 @@ class TestShareWindowHandlers:
             mock_sess.stop.assert_awaited()
         finally:
             wshandler.state.sessions.pop("ws-1", None)
+            container.registry.states.pop("ws-1", None)
+
+    async def test_join_shared_terminal_select_fallback(
+        self, user, temp_data_dir
+    ):
+        """Falls back to bare @N when joiner session select fails."""
+        owner = await model.create_user(
+            "owner-fb@test.com", "hash", verified=True
+        )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/joiner"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[owner["id"]] = [
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
+        ]
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+        container.registry.track_activity("cid", "ws-1")
+
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch(
+                    "klangk_backend.terminal.tmux_command",
+                    new_callable=AsyncMock,
+                    side_effect=RuntimeError("can't find session"),
+                ),
+                patch(
+                    "klangk_backend.terminal.select_window",
+                    new_callable=AsyncMock,
+                ) as mock_select,
+            ):
+                mock_sess = _mock_terminal()
+                mock_sess._tmux_session_name = "joiner-abc"
+
+                async def fake_output():
+                    return
+                    yield  # make it an async generator
+
+                mock_sess.output = fake_output
+                MockTS.return_value = mock_sess
+
+                await conn.handle_join_shared_terminal(
+                    {"user_id": owner["id"], "window_id": "@0"}
+                )
+                await asyncio.sleep(0)
+
+            # Fell back to select_window with bare @N
+            mock_select.assert_awaited_once_with("cid", owner["id"], "@0")
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+            wshandler.state.connections.pop(sock, None)
+            container.registry.states.pop("ws-1", None)
+
+    async def test_join_shared_terminal_no_joiner_session(
+        self, user, temp_data_dir
+    ):
+        """Falls back to bare @N when joiner session name is None."""
+        owner = await model.create_user(
+            "owner-nj@test.com", "hash", verified=True
+        )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/joiner"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[owner["id"]] = [
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
+        ]
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+        container.registry.track_activity("cid", "ws-1")
+
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch(
+                    "klangk_backend.terminal.select_window",
+                    new_callable=AsyncMock,
+                ) as mock_select,
+            ):
+                mock_sess = _mock_terminal()
+                # No joiner session name
+                mock_sess._tmux_session_name = None
+
+                async def fake_output():
+                    return
+                    yield
+
+                mock_sess.output = fake_output
+                MockTS.return_value = mock_sess
+
+                await conn.handle_join_shared_terminal(
+                    {"user_id": owner["id"], "window_id": "@0"}
+                )
+                await asyncio.sleep(0)
+
+            mock_select.assert_awaited_once_with("cid", owner["id"], "@0")
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+            wshandler.state.connections.pop(sock, None)
             container.registry.states.pop("ws-1", None)
 
     async def test_join_shared_terminal_start_error(self, user, temp_data_dir):
