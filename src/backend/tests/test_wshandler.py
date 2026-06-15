@@ -954,6 +954,63 @@ class TestHandleTerminalStart:
         container.registry.revoke_bridge_token("ws")
         container.registry.states.pop("ws", None)
 
+    async def test_start_slow_client_cleans_up(self):
+        """SlowClientError during start cleans up without sending error."""
+
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        container.registry.track_activity("cid", "ws")
+
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock(side_effect=SlowClientError())
+        MockTS = MagicMock(return_value=mock_session)
+        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+        mock_session.stop.assert_awaited_once()
+        # No error message sent (client is gone)
+        sent = sock.send_json.call_args_list
+        assert not any(call.args[0].get("type") == "error" for call in sent)
+        container.registry.revoke_bridge_token("ws")
+        container.registry.states.pop("ws", None)
+
+    async def test_start_failure_send_error_ws_dead(self):
+        """If send_error itself fails with a WS error, it's swallowed."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        container.registry.track_activity("cid", "ws")
+
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock(side_effect=ValueError("bad config"))
+        # send_json raises RuntimeError (a _WS_ERRORS member) when
+        # trying to send the error message
+        sock.send_json = MagicMock(side_effect=RuntimeError("ws gone"))
+        MockTS = MagicMock(return_value=mock_session)
+        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+        mock_session.stop.assert_awaited_once()
+        container.registry.revoke_bridge_token("ws")
+        container.registry.states.pop("ws", None)
+
     async def test_cancellation_during_start_cleans_up(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
