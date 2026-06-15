@@ -16,9 +16,8 @@ trap - INT
 # without resolving them, so we start in /home and cd here instead).
 cd "$HOME" 2>/dev/null
 
-# Per-user Pi agent config.  Copies the skel built by setup_clankers
-# (at /opt/klangk/pi-skel/) into $HOME if not already present.
-python3 /opt/klangk/bin/setup-user-pi
+# Per-user Pi agent config (extensions, settings, models, skills).
+python3 /opt/klangk/bin/setup-clankers
 
 # Determine which command to exec into (if any).
 # KLANGK_CMD_OVERRIDE (set per-session via podman exec -e) takes priority.
