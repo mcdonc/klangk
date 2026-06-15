@@ -643,9 +643,13 @@ class Connection:
         handle = await model.get_user_handle(self.user["id"])
         if handle:
             workspace_home = workspaces.home_path(owner_id, workspace_id)
-            self._user_home = workspaces.ensure_home_symlink(
+            self._user_home, created = workspaces.ensure_home_symlink(
                 workspace_home, handle, self.user["id"]
             )
+            if created:
+                await workspaces.populate_home_skel(
+                    container_id, self.user["id"]
+                )
         else:
             self._user_home = None
 
@@ -1723,9 +1727,13 @@ class Connection:
                 workspace_home = workspaces.home_path(
                     owner_id, self.workspace_id
                 )
-                container_home = workspaces.ensure_home_symlink(
+                container_home, created = workspaces.ensure_home_symlink(
                     workspace_home, handle, self.user["id"]
                 )
+                if created and self.container_id:
+                    await workspaces.populate_home_skel(
+                        self.container_id, self.user["id"]
+                    )
                 self._user_home = container_home
             self.sock.send_json(
                 {

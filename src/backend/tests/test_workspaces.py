@@ -156,8 +156,9 @@ class TestEnsureHomeSymlink:
     async def test_creates_symlink(self, user):
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws")
         home = ws_mod.home_path(user["id"], ws["id"])
-        result = ws_mod.ensure_home_symlink(home, "alice", "uid-1")
+        result, created = ws_mod.ensure_home_symlink(home, "alice", "uid-1")
         assert result == "/home/alice"
+        assert created is True
         symlink = home / "alice"
         assert symlink.is_symlink()
         assert os.readlink(symlink) == ".users/uid-1"
@@ -167,14 +168,42 @@ class TestEnsureHomeSymlink:
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws2")
         home = ws_mod.home_path(user["id"], ws["id"])
         ws_mod.ensure_home_symlink(home, "bob", "uid-1")
-        result = ws_mod.ensure_home_symlink(home, "bob", "uid-1")
+        result, created = ws_mod.ensure_home_symlink(home, "bob", "uid-1")
         assert result == "/home/bob"
+        assert created is False
 
     async def test_rename_removes_old_symlink(self, user):
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws3")
         home = ws_mod.home_path(user["id"], ws["id"])
         ws_mod.ensure_home_symlink(home, "alice", "uid-1")
-        result = ws_mod.ensure_home_symlink(home, "alicia", "uid-1")
+        result, created = ws_mod.ensure_home_symlink(home, "alicia", "uid-1")
         assert result == "/home/alicia"
+        assert created is False
         assert not (home / "alice").exists()
         assert (home / "alicia").is_symlink()
+
+
+class TestPopulateHomeSkel:
+    async def test_execs_cp_skel(self):
+        """populate_home_skel runs podman exec to copy /etc/skel."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ) as mock_exec:
+            await ws_mod.populate_home_skel("cid-123", "uid-456")
+        args = mock_exec.call_args[0]
+        assert "exec" in args
+        assert "cid-123" in args
+        assert any("/etc/skel" in str(a) for a in args)
+        assert any("uid-456" in str(a) for a in args)
+
+    async def test_logs_warning_on_failure(self):
+        """populate_home_skel logs but does not raise on failure."""
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=OSError("podman not found"),
+        ):
+            # Should not raise
+            await ws_mod.populate_home_skel("cid-123", "uid-456")

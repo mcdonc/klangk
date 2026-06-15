@@ -1038,8 +1038,14 @@ class TestHandleSetHandle:
         )
         conn.workspace_id = ws["id"]
         conn.workspace = {"user_id": user["id"]}
+        conn.container_id = "cid"
 
-        await conn.handle_set_handle({"handle": "alice"})
+        with patch(
+            "klangk_backend.workspaces.populate_home_skel",
+            new_callable=AsyncMock,
+        ) as mock_skel:
+            await conn.handle_set_handle({"handle": "alice"})
+        mock_skel.assert_awaited_once_with("cid", user["id"])
         sent = sock.send_json.call_args_list
         assert any(
             call.args[0].get("type") == "handle_set"

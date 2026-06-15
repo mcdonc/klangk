@@ -310,7 +310,7 @@ def ensure_home_symlink(
     workspace_home: Path,
     handle: str,
     user_id: str,
-) -> str:
+) -> tuple[str, bool]:
     """Ensure the ``/home/{handle} -> .users/{user_id}`` symlink exists.
 
     Creates the ``.users/{user_id}`` directory and symlink if missing.
@@ -318,19 +318,22 @@ def ensure_home_symlink(
     If the handle changed (old symlink for this user_id exists), removes
     the old one and creates the new one.
 
-    Returns the container-side home path (e.g. ``/home/alice``).
+    Returns ``(container_home_path, created)`` where *created* is True
+    when a new user directory was created (caller should populate it
+    with skeleton files).
     """
     users_dir = workspace_home / ".users"
     users_dir.mkdir(parents=True, exist_ok=True)
 
     user_dir = users_dir / user_id
+    created = not user_dir.exists()
     user_dir.mkdir(exist_ok=True)
 
     symlink = workspace_home / handle
     target = f".users/{user_id}"
 
     if symlink.is_symlink() and os.readlink(symlink) == target:
-        return f"/home/{handle}"  # already correct
+        return f"/home/{handle}", created
 
     # Remove any existing symlink for this user (handle rename).
     for entry in workspace_home.iterdir():
@@ -339,4 +342,39 @@ def ensure_home_symlink(
             break
 
     symlink.symlink_to(target)
-    return f"/home/{handle}"
+    return f"/home/{handle}", created
+
+
+async def populate_home_skel(
+    container_id: str,
+    user_id: str,
+) -> None:
+    """Copy /etc/skel into a new user's home directory inside the container.
+
+    This gives the user the standard skeleton files (.profile, .bashrc,
+    etc.) so login shells source ~/.bashrc as users expect.  /etc/skel
+    is part of the shadow-utils/login package and is present on most
+    Linux distributions (notable exception: NixOS).  The workspace
+    container runs Ubuntu, which always has it.
+    """
+    from . import podman
+
+    home = f"/home/.users/{user_id}"
+    script = f"if [ -d /etc/skel ]; then cp -a /etc/skel/. {home}/; fi"
+    argv = ["exec", "-u", "klangk", container_id, "bash", "-c", script]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            podman.PODMAN_BIN,
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=podman.subprocess_env(),
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=10)
+    except Exception:
+        logger.warning(
+            "Failed to populate skel for user %s in %s",
+            user_id,
+            container_id,
+            exc_info=True,
+        )
