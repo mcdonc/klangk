@@ -16,10 +16,8 @@ trap - INT
 # without resolving them, so we start in /home and cd here instead).
 cd "$HOME" 2>/dev/null
 
-# Per-user Pi agent config.  Shared config lives at /home/.pi/agent/
-# (written by setup_clankers at container start).  Each user gets their
-# own ~/.pi/agent with symlinks to shared resources and copies of files
-# they may customize.
+# Per-user Pi agent config.  Copies the skel built by setup_clankers
+# (at /opt/klangk/pi-skel/) into $HOME if not already present.
 python3 /opt/klangk/bin/setup-user-pi
 
 # Determine which command to exec into (if any).

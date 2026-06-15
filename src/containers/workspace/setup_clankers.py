@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Set up Pi agent config at container init time.
+"""Build the Pi agent skel at container init time.
 
-Called from entrypoint.sh. Syncs image extensions/npm, merges
-settings.json (preserving user packages), writes models.json,
-and builds the system prompt.
+Called from entrypoint.sh.  Builds a ready-to-copy Pi agent tree at
+/opt/klangk/pi-skel/ containing .pi/agent/ and AGENTS.md.  Each
+user gets their own copy via setup-user-pi (called from bash.bashrc).
 """
 
 import json
@@ -13,7 +13,8 @@ import traceback
 from pathlib import Path
 
 IMAGE_DIR = Path("/opt/klangk/pi-agent")
-AGENT_DIR = Path.home() / ".pi" / "agent"
+SKEL_DIR = Path("/opt/klangk/pi-skel")
+AGENT_DIR = SKEL_DIR / ".pi" / "agent"
 SYSTEM_PROMPT_SRC = Path("/opt/klangk/system-prompt.md")
 ERROR_LOG = Path("/tmp/setup_clankers_errors.log")
 
@@ -115,6 +116,13 @@ def merge_settings():
     model = os.environ.get("KLANGK_LLM_MODEL", "")
     settings["defaultProvider"] = "llm-proxy"
     settings["defaultModel"] = model
+    # Point to the skel dirs.  Pi also auto-discovers
+    # ~/.pi/agent/{extensions,skills}/ (real dirs per user) so user
+    # installs are isolated while shared resources are available to all.
+    settings["extensions"] = [str(AGENT_DIR / "extensions")]
+    skills_dir = AGENT_DIR / "skills"
+    if skills_dir.is_dir():
+        settings["skills"] = [str(skills_dir)]
 
     user_settings_path.write_text(json.dumps(settings, indent=2))
     sidecar.write_text("\n".join(sorted(image_pkg_names)) + "\n")
@@ -176,25 +184,25 @@ def merge_keybindings():
 
 
 def build_system_prompt():
-    """Write system prompt template to ~/AGENTS.md if it doesn't exist.
+    """Write system prompt template to AGENTS.md in the skel.
 
-    Pi auto-discovers AGENTS.md. Users can edit it freely — it won't
-    be overwritten on subsequent container starts.
+    Pi auto-discovers AGENTS.md. Users can edit their copy freely —
+    it won't be overwritten on subsequent container starts because
+    setup-user-pi only copies when the target doesn't exist.
     """
-    prompt_path = Path.home() / "AGENTS.md"
-    if not prompt_path.exists():
-        prompt_path.write_text(SYSTEM_PROMPT_SRC.read_text())
+    prompt_path = SKEL_DIR / "AGENTS.md"
+    prompt_path.write_text(SYSTEM_PROMPT_SRC.read_text())
 
 
 def setup_claude_code_skills():
-    """Symlink enabled skill dirs into Claude Code's discovery path.
+    """Symlink enabled skill dirs into Claude Code's discovery path in the skel.
 
     KLANGK_SKILLS is a comma-separated list of skill directory names.
     Skills are expected at /opt/klangk/skills/<name>/ (user-mounted).
     """
     skills_env = os.environ.get("KLANGK_SKILLS", "")
     skills_dir = Path("/opt/klangk/skills")
-    cc_skills_dir = Path.home() / ".claude" / "skills"
+    cc_skills_dir = SKEL_DIR / ".claude" / "skills"
 
     if not skills_env or not skills_dir.is_dir():
         return
@@ -251,10 +259,15 @@ def _run_step(name, fn):
 
 
 def main():
-    os.environ["PI_CODING_AGENT_DIR"] = str(AGENT_DIR)
-
     # Clear previous error log
     ERROR_LOG.unlink(missing_ok=True)
+
+    # Start fresh each container boot
+    if SKEL_DIR.exists():
+        import shutil
+
+        shutil.rmtree(SKEL_DIR)
+    SKEL_DIR.mkdir(parents=True)
 
     _run_step("setup_dirs", setup_dirs)
     _run_step("sync_image_files", sync_image_files)

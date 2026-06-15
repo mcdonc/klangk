@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
-"""Set up per-user Pi agent config from shared defaults.
+"""Set up per-user Pi agent config from the skel.
 
-Called from bash.bashrc on first shell for each user.  Creates
-$HOME/.pi/agent/ with symlinks to shared resources and copies of
-files the user may customize.
+Called from bash.bashrc on each shell.  Symlinks most of the Pi agent
+skel (built by setup_clankers at container start) into the user's home
+directory.  Writable directories (bin, extensions, git, npm) are created
+as real dirs so per-user installs don't affect other users.
 """
 
-import json
 import os
+import shutil
 from pathlib import Path
 
-SHARED_PI = Path("/home/.pi/agent")
+SKEL_DIR = Path("/opt/klangk/pi-skel")
+
+# Directories created as real (writable) dirs for user installs.
+# Contents of skel dirs are symlinked into the user's copy so
+# image-provided resources are available alongside user additions.
+WRITABLE_DIRS_WITH_CHILDREN = {"bin"}
+
+# Writable dirs that start empty — Pi finds shared content via
+# the extensions/skills arrays in settings.json pointing at the skel.
+WRITABLE_DIRS_EMPTY = {"extensions", "skills"}
+
+# Files that must be copied (not symlinked) because Pi writes to them.
+COPIED_FILES = {"settings.json"}
+
+# Skel entries to skip — Pi manages these itself when the user installs
+# packages, and image content is found via settings.json paths.
+SKIP = {"git", "npm"}
 
 
 def main():
@@ -18,49 +35,49 @@ def main():
     if not home or home == Path("/home"):
         return  # don't init for the system user
 
+    if not SKEL_DIR.is_dir():
+        return  # skel not ready
+
+    # Set up .pi/agent/ — symlink files, create writable dirs
+    skel_agent = SKEL_DIR / ".pi" / "agent"
     user_agent = home / ".pi" / "agent"
-    if (user_agent / "settings.json").exists():
-        return  # already initialized
+    if skel_agent.is_dir() and not user_agent.exists():
+        user_agent.mkdir(parents=True)
+        for entry in skel_agent.iterdir():
+            if entry.name in SKIP:
+                continue
+            target = user_agent / entry.name
+            if entry.name in WRITABLE_DIRS_WITH_CHILDREN:
+                # Real dir with symlinks to skel children (bin/fd, npm/node_modules)
+                target.mkdir(exist_ok=True)
+                if entry.is_dir():
+                    for child in entry.iterdir():
+                        child_target = target / child.name
+                        if not child_target.exists():
+                            child_target.symlink_to(child)
+            elif entry.name in WRITABLE_DIRS_EMPTY:
+                # Empty writable dir — Pi finds shared content via settings.json
+                target.mkdir(exist_ok=True)
+            elif entry.name in COPIED_FILES:
+                # Copy files that Pi writes to (e.g. settings.json)
+                shutil.copy2(entry, target)
+            else:
+                # Symlink everything else.  models.json in particular must
+                # be a symlink so KLANGK_WORKSPACE_TOKEN refreshes on
+                # container restart propagate to all users automatically.
+                target.symlink_to(entry)
 
-    if not SHARED_PI.is_dir():
-        return  # shared config not ready
-
-    user_agent.mkdir(parents=True, exist_ok=True)
-
-    # Symlink shared directories
-    for d in ("extensions", "npm", "git", "bin", "skills"):
-        shared = SHARED_PI / d
-        local = user_agent / d
-        if shared.is_dir() and not local.exists():
-            local.symlink_to(shared)
-
-    # Copy per-user files (contain tokens or user may customize)
-    for f in ("models.json", "keybindings.json"):
-        shared = SHARED_PI / f
-        local = user_agent / f
-        if shared.is_file() and not local.exists():
-            local.write_text(shared.read_text())
-
-    # Build settings.json with absolute paths to shared resources
-    shared_settings_path = SHARED_PI / "settings.json"
-    if shared_settings_path.is_file():
-        shared = json.loads(shared_settings_path.read_text())
-        user_settings = {
-            "defaultProvider": shared.get("defaultProvider", ""),
-            "defaultModel": shared.get("defaultModel", ""),
-            "packages": shared.get("packages", []),
-            "extensions": [str(SHARED_PI / "extensions")],
-        }
-        skills_dir = SHARED_PI / "skills"
-        if skills_dir.is_dir():
-            user_settings["skills"] = [str(skills_dir)]
-        (user_agent / "settings.json").write_text(json.dumps(user_settings, indent=2))
-
-    # Symlink shared AGENTS.md
-    shared_agents = Path("/home/AGENTS.md")
+    # Symlink AGENTS.md if not present
     user_agents = home / "AGENTS.md"
-    if shared_agents.is_file() and not user_agents.exists():
-        user_agents.symlink_to(shared_agents)
+    skel_agents = SKEL_DIR / "AGENTS.md"
+    if not user_agents.exists() and skel_agents.is_file():
+        user_agents.symlink_to(skel_agents)
+
+    # Symlink .claude/ tree if not present (skills symlinks)
+    user_claude = home / ".claude"
+    skel_claude = SKEL_DIR / ".claude"
+    if not user_claude.exists() and skel_claude.is_dir():
+        shutil.copytree(skel_claude, user_claude, symlinks=True)
 
 
 if __name__ == "__main__":

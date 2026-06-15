@@ -6,9 +6,9 @@
 # klangk — no root privileges needed.
 set -e
 
-# Set up Pi agent config (extensions, settings, models, system prompt,
-# Claude Code skills). Runs before the readiness signal so terminal
-# sessions find everything in place.
+# Build the Pi agent skel at /opt/klangk/pi-skel/ (extensions, settings,
+# models, system prompt, Claude Code skills).  Each user gets a copy
+# via setup-user-pi (called from bash.bashrc on first shell).
 python3 /opt/klangk/bin/setup-clankers
 
 # Signal that setup is complete. Terminal sessions (podman exec) source
