@@ -1029,12 +1029,19 @@ class Connection:
                 container.registry.revoke_connection_token(conn.sock)
                 conn._bridge_token = None
                 raise
+            except (SlowClientError, WebSocketDisconnect):
+                await session.stop()
+                container.registry.revoke_connection_token(conn.sock)
+                conn._bridge_token = None
             except Exception as e:
                 await session.stop()
                 container.registry.revoke_connection_token(conn.sock)
                 conn._bridge_token = None
                 logger.exception("Terminal start failed: %s", e)
-                send_error(conn.sock, f"Terminal start failed: {e}")
+                try:
+                    send_error(conn.sock, f"Terminal start failed: {e}")
+                except _WS_ERRORS:
+                    pass
 
         self.terminal_task = asyncio.create_task(_start_terminal())
 

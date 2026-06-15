@@ -647,15 +647,24 @@ def shell(
 
     token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
-    asyncio.run(
-        _ws_shell(
-            ws_url,
-            token,
-            ws.id,
-            command_override=command,
-            window=terminal,
+    _err.print("[dim]Escape: Enter, then ~.[/dim]")
+    try:
+        asyncio.run(
+            _ws_shell(
+                ws_url,
+                token,
+                ws.id,
+                command_override=command,
+                window=terminal,
+            )
         )
-    )
+    except ConnectionError as e:
+        from .client import _drain_stdin, reset_terminal
+
+        reset_terminal()
+        _drain_stdin()
+        _err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
 
 
 def _resolve_workspace_and_url(

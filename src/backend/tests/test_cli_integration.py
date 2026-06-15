@@ -57,6 +57,19 @@ class TestWsShell:
                 json.dumps(
                     {"type": "terminal_output", "data": "\x1b[2J\x1b[H"}
                 ),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
                 Exception("stop"),
             ]
         )
@@ -99,6 +112,19 @@ class TestWsShell:
                 json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {"type": "terminal_output", "data": "\x1b[2J\x1b[H"}
+                ),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
                 ),
                 Exception("stop"),
             ]
@@ -143,19 +169,6 @@ class TestWsShell:
                 json.dumps({"type": "workspace_ready"}),
                 json.dumps(
                     {
-                        "type": "terminal_windows",
-                        "windows": [
-                            {
-                                "id": "@0",
-                                "index": 0,
-                                "name": "1",
-                                "active": True,
-                            },
-                        ],
-                    }
-                ),
-                json.dumps(
-                    {
                         "type": "shared_terminals",
                         "terminals": [
                             {
@@ -168,6 +181,19 @@ class TestWsShell:
                     }
                 ),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "1",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
                 Exception("stop"),
             ]
         )
@@ -324,6 +350,19 @@ class TestWsShell:
                     }
                 ),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
                 # After join_shared_terminal is sent:
                 json.dumps({"type": "terminal_output", "data": "joining..."}),
                 json.dumps(
@@ -373,6 +412,19 @@ class TestWsShell:
                 json.dumps({"type": "workspace_ready"}),
                 json.dumps({"type": "shared_terminals", "terminals": []}),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
             ]
         )
 
@@ -417,6 +469,19 @@ class TestWsShell:
                     }
                 ),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
                 json.dumps({"type": "error", "message": "Permission denied"}),
             ]
         )
@@ -631,6 +696,255 @@ class TestRunShell:
         )
 
 
+class TestIsTerminalResponse:
+    def test_short_data_returns_false(self):
+        from klangk_backend.cli.client import _is_terminal_response
+
+        assert _is_terminal_response(b"") is False
+        assert _is_terminal_response(b"\x1b") is False
+        assert _is_terminal_response(b"\x1b[") is False
+
+    def test_osc_response(self):
+        from klangk_backend.cli.client import _is_terminal_response
+
+        assert _is_terminal_response(b"\x1b]11;rgb:0000/0000/0000\x07") is True
+
+    def test_dcs_response(self):
+        from klangk_backend.cli.client import _is_terminal_response
+
+        assert _is_terminal_response(b"\x1bP>|xterm\x1b\\") is True
+
+    def test_da2_response(self):
+        from klangk_backend.cli.client import _is_terminal_response
+
+        assert _is_terminal_response(b"\x1b[>61;1;21c") is True
+
+    def test_da1_response(self):
+        from klangk_backend.cli.client import _is_terminal_response
+
+        assert _is_terminal_response(b"\x1b[?61;1c") is True
+
+    def test_user_arrow_key_returns_false(self):
+        from klangk_backend.cli.client import _is_terminal_response
+
+        assert _is_terminal_response(b"\x1b[A") is False  # up arrow
+
+    def test_non_escape_returns_false(self):
+        from klangk_backend.cli.client import _is_terminal_response
+
+        assert _is_terminal_response(b"hello") is False
+
+
+class TestDrainStdin:
+    def test_drain_with_pending_data(self):
+        from klangk_backend.cli.client import _drain_stdin
+
+        call_count = [0]
+
+        def fake_select(rlist, wlist, xlist, timeout):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                return (rlist, [], [])
+            return ([], [], [])
+
+        with (
+            patch("klangk_backend.cli.client.sys.stdin") as mock_stdin,
+            patch(
+                "klangk_backend.cli.client.select.select",
+                side_effect=fake_select,
+            ),
+            patch(
+                "klangk_backend.cli.client.os.read", return_value=b"\x1b[>1;2c"
+            ),
+            patch(
+                "klangk_backend.cli.client.termios.tcgetattr", return_value=[]
+            ),
+            patch("klangk_backend.cli.client.termios.tcsetattr"),
+            patch("klangk_backend.cli.client.tty.setraw"),
+        ):
+            mock_stdin.fileno.return_value = 0
+            _drain_stdin()
+
+    def test_drain_termios_error_skips_raw_mode(self):
+        import termios
+
+        from klangk_backend.cli.client import _drain_stdin
+
+        with (
+            patch("klangk_backend.cli.client.sys.stdin") as mock_stdin,
+            patch(
+                "klangk_backend.cli.client.select.select",
+                return_value=([], [], []),
+            ),
+            patch(
+                "klangk_backend.cli.client.termios.tcgetattr",
+                side_effect=termios.error("nope"),
+            ),
+        ):
+            mock_stdin.fileno.return_value = 0
+            _drain_stdin()  # should not raise
+
+    def test_drain_os_error(self):
+        from klangk_backend.cli.client import _drain_stdin
+
+        with patch("klangk_backend.cli.client.sys.stdin") as mock_stdin:
+            mock_stdin.fileno.side_effect = OSError("bad fd")
+            _drain_stdin()  # should not raise
+
+    def test_drain_second_select_finds_data(self):
+        """Cover the 'wait one more round' branch."""
+        from klangk_backend.cli.client import _drain_stdin
+
+        call_count = [0]
+
+        def fake_select(rlist, wlist, xlist, timeout):
+            call_count[0] += 1
+            # First select: no data (50ms)
+            if call_count[0] == 1:
+                return ([], [], [])
+            # Second select (100ms fallback): data arrives
+            if call_count[0] == 2:
+                return (rlist, [], [])
+            # Third: no more
+            return ([], [], [])
+
+        with (
+            patch("klangk_backend.cli.client.sys.stdin") as mock_stdin,
+            patch(
+                "klangk_backend.cli.client.select.select",
+                side_effect=fake_select,
+            ),
+            patch(
+                "klangk_backend.cli.client.os.read", return_value=b"\x1b[?1c"
+            ),
+            patch(
+                "klangk_backend.cli.client.termios.tcgetattr", return_value=[]
+            ),
+            patch("klangk_backend.cli.client.termios.tcsetattr"),
+            patch("klangk_backend.cli.client.tty.setraw"),
+        ):
+            mock_stdin.fileno.return_value = 0
+            _drain_stdin()
+
+
+class TestStdoutLoopExited:
+    @pytest.mark.asyncio
+    async def test_exited_shows_disconnect_hint(self):
+        from klangk_backend.cli.client import _run_shell
+
+        ws = AsyncMock()
+        ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {"type": "terminal_output", "data": "bash [exited]\r\n"}
+                ),
+                json.dumps(
+                    {
+                        "type": "event",
+                        "event": {
+                            "type": "CUSTOM",
+                            "name": "container_stopped",
+                            "value": {},
+                        },
+                    }
+                ),
+            ]
+        )
+
+        captured = []
+
+        class CaptureWriter:
+            def write(self, data):
+                captured.append(data)
+
+            def flush(self):
+                pass
+
+        task = asyncio.create_task(
+            _run_shell(ws, 80, 24, stdout=CaptureWriter())
+        )
+        await asyncio.sleep(0.3)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        output = "".join(captured)
+        assert "[exited]" in output
+        assert "Enter, then ~." in output
+
+
+class TestStdinTerminalResponseFilter:
+    @pytest.mark.asyncio
+    async def test_terminal_response_filtered_from_stdin(self):
+        """Terminal query responses on stdin are dropped, not forwarded."""
+        from klangk_backend.cli.client import _run_shell
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+
+        read_count = [0]
+        # DA2 response on first read, then EOF
+        responses = [b"\x1b", b"[>61;1;21c", b""]
+
+        def fake_read(fd, n):
+            val = responses[min(read_count[0], len(responses) - 1)]
+            read_count[0] += 1
+            return val
+
+        select_count = [0]
+
+        def fake_select(rlist, wlist, xlist, timeout):
+            select_count[0] += 1
+            if select_count[0] <= 4:
+                return (rlist, [], [])
+            return ([], [], [])
+
+        ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "type": "event",
+                        "event": {
+                            "type": "CUSTOM",
+                            "name": "container_stopped",
+                            "value": {},
+                        },
+                    }
+                )
+            ]
+        )
+
+        fake_stdin = MagicMock()
+        fake_stdin.fileno.return_value = 99
+
+        with (
+            patch(
+                "klangk_backend.cli.client.select.select",
+                side_effect=fake_select,
+            ),
+            patch("klangk_backend.cli.client.os.read", side_effect=fake_read),
+        ):
+            task = asyncio.create_task(
+                _run_shell(ws, 80, 24, stdin=fake_stdin)
+            )
+            await asyncio.sleep(0.5)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # No terminal_input should have been sent
+        sent = [
+            json.loads(c[0][0])
+            for c in ws.send.call_args_list
+            if isinstance(c[0][0], str) and "terminal_input" in c[0][0]
+        ]
+        assert len(sent) == 0
+
+
 class TestAuthLines:
     def test_logout_network_error_propagates(self, tmp_path, monkeypatch):
         from klangk_backend.cli import auth
@@ -773,3 +1087,43 @@ class TestWsExec:
         with patch("websockets.connect", return_value=ws_mock):
             with pytest.raises(ConnectionError):
                 await _ws_exec("ws://localhost/ws", "token", "ws1", ["ls"])
+
+
+class TestShellConnectionError:
+    def test_shell_catches_connection_error(self, monkeypatch):
+        """shell() catches ConnectionError from _ws_shell and exits cleanly."""
+        from klangk_backend.cli.main import shell
+        from klangk_backend.cli.client import Workspace
+
+        from klangk_backend.cli.config import ServerConfig, AuthConfig
+
+        fake_cfg = CLIConfig(
+            server=ServerConfig(url="http://localhost:8995"),
+            auth=AuthConfig(token="fake", email="test@test.com"),
+        )
+        monkeypatch.setattr("klangk_backend.cli.main._cfg", lambda: fake_cfg)
+
+        fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
+        monkeypatch.setattr(
+            "klangk_backend.cli.main._client",
+            lambda: MagicMock(
+                resolve_workspace=MagicMock(return_value=fake_ws)
+            ),
+        )
+
+        monkeypatch.setattr(
+            "klangk_backend.cli.main.asyncio.run",
+            MagicMock(side_effect=ConnectionError("Window 'x' not found")),
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client._drain_stdin", lambda: None
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client.reset_terminal", lambda: None
+        )
+
+        import click
+
+        with pytest.raises(click.exceptions.Exit) as exc_info:
+            shell(workspace="ws", terminal="x")
+        assert exc_info.value.exit_code == 1

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import io
 from io import BytesIO
 
 from klangk_backend.cli.config import CLIConfig
@@ -920,6 +921,125 @@ class TestRunShell:
             with pytest.raises(ConnectionError) as exc_info:
                 await _ws_shell("ws://localhost/ws", "token", "ws1")
             assert "Connection failed" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_tilde_dot_disconnects(self):
+        """Enter then ~ then . cleanly exits the shell."""
+        from klangk_backend.cli.client import _run_shell
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+
+        # Block recv until stdin_loop processes ~. and closes the WS
+        import websockets
+
+        recv_gate = asyncio.Event()
+
+        async def blocking_recv():
+            await recv_gate.wait()
+            raise websockets.ConnectionClosed(None, None)
+
+        ws.recv = blocking_recv
+        ws.close = AsyncMock(side_effect=lambda: recv_gate.set())
+
+        # Simulate: \r (Enter), ~ , .
+        read_sequence = [b"\r", b"~", b"."]
+        read_idx = 0
+        call_count = 0
+        fake_buf = BytesIO(b"")
+        fake_buf.fileno = lambda: 99
+
+        def fake_select(rlist, wlist, xlist, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= len(read_sequence):
+                return ([99], [], [])
+            return ([], [], [])
+
+        def fake_os_read(fd, n):
+            nonlocal read_idx
+            if fd == 99 and read_idx < len(read_sequence):
+                data = read_sequence[read_idx]
+                read_idx += 1
+                return data
+            return b""
+
+        fake_stdout = io.StringIO()
+
+        with (
+            patch(
+                "klangk_backend.cli.client.select.select",
+                side_effect=fake_select,
+            ),
+            patch(
+                "klangk_backend.cli.client.os.read",
+                side_effect=fake_os_read,
+            ),
+        ):
+            await _run_shell(ws, 80, 24, stdin=fake_buf, stdout=fake_stdout)
+
+        assert "Disconnected" in fake_stdout.getvalue()
+
+    @pytest.mark.asyncio
+    async def test_tilde_without_dot_sends_tilde(self):
+        """~ followed by a non-dot sends the ~ normally."""
+        from klangk_backend.cli.client import _run_shell
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+
+        # Block recv so stdin_loop can run first
+        async def slow_recv():
+            await asyncio.sleep(1)
+            return json.dumps({"type": "terminal_output", "data": ""})
+
+        ws.recv = slow_recv
+
+        # Enter, ~, x  — should send ~ then x
+        read_sequence = [b"\r", b"~", b"x"]
+        read_idx = 0
+        call_count = 0
+        fake_buf = BytesIO(b"")
+        fake_buf.fileno = lambda: 99
+
+        def fake_select(rlist, wlist, xlist, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= len(read_sequence):
+                return ([99], [], [])
+            return ([], [], [])
+
+        def fake_os_read(fd, n):
+            nonlocal read_idx
+            if fd == 99 and read_idx < len(read_sequence):
+                data = read_sequence[read_idx]
+                read_idx += 1
+                return data
+            return b""
+
+        with (
+            patch(
+                "klangk_backend.cli.client.select.select",
+                side_effect=fake_select,
+            ),
+            patch(
+                "klangk_backend.cli.client.os.read",
+                side_effect=fake_os_read,
+            ),
+        ):
+            task = asyncio.create_task(_run_shell(ws, 80, 24, stdin=fake_buf))
+            await asyncio.sleep(0.5)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        sent = [c[0][0] for c in ws.send.call_args_list]
+        # The ~ should have been sent as terminal_input
+        assert any("terminal_input" in s and "~" in s for s in sent)
+        # The x should also have been sent
+        assert any("terminal_input" in s and "x" in s for s in sent)
 
 
 # --- Misc ---
