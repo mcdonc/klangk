@@ -21,5 +21,8 @@ String getLocationHash() => '';
 void Function() installPasteListener(bool Function(String text) onPaste) =>
     () {};
 
+/// Stub — no PageUp/PageDown suppression outside the browser.
+void Function() installPageKeyListener(bool Function() shouldSuppress) => () {};
+
 /// Stub — no system clipboard outside the browser.
 Future<String?> readClipboardText() async => null;

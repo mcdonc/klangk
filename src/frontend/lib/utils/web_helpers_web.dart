@@ -65,6 +65,24 @@ void Function() installPasteListener(bool Function(String text) onPaste) {
   return () => web.document.removeEventListener('paste', handler, true.toJS);
 }
 
+/// Prevents the browser from handling PageUp / PageDown when the terminal
+/// is focused.  Firefox dispatches these keys for native page scrolling
+/// before Flutter's event system sees them, so the terminal never receives
+/// the key.  This capture-phase listener calls `preventDefault` when
+/// [shouldSuppress] returns true (i.e. the terminal has focus), letting
+/// Flutter forward the key to the PTY instead.
+/// Returns a disposer that removes the listener.
+void Function() installPageKeyListener(bool Function() shouldSuppress) {
+  final handler = ((web.Event event) {
+    final ke = event as web.KeyboardEvent;
+    if ((ke.key == 'PageUp' || ke.key == 'PageDown') && shouldSuppress()) {
+      event.preventDefault();
+    }
+  }).toJS;
+  web.document.addEventListener('keydown', handler, true.toJS);
+  return () => web.document.removeEventListener('keydown', handler, true.toJS);
+}
+
 /// Reads the system clipboard as plain text via the async Clipboard API.
 ///
 /// Used only by the right-click "Paste" menu item: a synthetic button click is
