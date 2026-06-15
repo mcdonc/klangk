@@ -31,9 +31,11 @@ COPY entrypoint.sh /opt/klangk/entrypoint.sh
 COPY otel.sh /opt/klangk/otel.sh
 COPY setup_clankers.py /opt/klangk/bin/setup-clankers
 COPY setup_user_pi.py /opt/klangk/bin/setup-user-pi
+COPY setup-home.sh /opt/klangk/bin/setup-home
 RUN chmod +x /opt/klangk/entrypoint.sh \
       /opt/klangk/bin/setup-clankers \
-      /opt/klangk/bin/setup-user-pi
+      /opt/klangk/bin/setup-user-pi \
+      /opt/klangk/bin/setup-home
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 

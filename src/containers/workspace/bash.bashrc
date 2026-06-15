@@ -5,11 +5,6 @@
 # Ignore Ctrl+C until setup is complete and any default command has started.
 trap '' INT
 
-# Source Nix profile if installed (adds nix, devenv to PATH)
-if [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
-  . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-fi
-
 # Wait for the entrypoint to finish setup before showing a prompt.
 # /tmp is a tmpfs, so .klangk-ready is cleared on every container start.
 while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done
@@ -26,15 +21,6 @@ cd "$HOME" 2>/dev/null
 # own ~/.pi/agent with symlinks to shared resources and copies of files
 # they may customize.
 python3 /opt/klangk/bin/setup-user-pi
-
-PS1='\[\033[01;34m\]\w\[\033[00m\]\$ '
-HISTFILE=~/.bash_history
-HISTSIZE=1000
-HISTFILESIZE=2000
-shopt -s histappend
-PROMPT_COMMAND="history -a"
-alias ls='ls --color=auto'
-alias grep='grep --color=auto'
 
 # Determine which command to exec into (if any).
 # KLANGK_CMD_OVERRIDE (set per-session via podman exec -e) takes priority.

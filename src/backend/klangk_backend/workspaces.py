@@ -360,8 +360,14 @@ async def populate_home_skel(
     from . import podman
 
     home = f"/home/.users/{user_id}"
-    script = f"if [ -d /etc/skel ]; then cp -a /etc/skel/. {home}/; fi"
-    argv = ["exec", "-u", "klangk", container_id, "bash", "-c", script]
+    argv = [
+        "exec",
+        "-u",
+        "klangk",
+        container_id,
+        "/opt/klangk/bin/setup-home",
+        home,
+    ]
     try:
         proc = await asyncio.create_subprocess_exec(
             podman.PODMAN_BIN,
