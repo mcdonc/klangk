@@ -13,7 +13,7 @@ import traceback
 from pathlib import Path
 
 IMAGE_DIR = Path("/opt/klangk/pi-agent")
-SKEL_DIR = Path("/opt/klangk/pi-skel")
+SKEL_DIR = Path("/tmp/klangk-pi-skel")
 AGENT_DIR = SKEL_DIR / ".pi" / "agent"
 SYSTEM_PROMPT_SRC = Path("/opt/klangk/system-prompt.md")
 ERROR_LOG = Path("/tmp/setup_clankers_errors.log")

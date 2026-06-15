@@ -11,7 +11,7 @@ import os
 import shutil
 from pathlib import Path
 
-SKEL_DIR = Path("/opt/klangk/pi-skel")
+SKEL_DIR = Path("/tmp/klangk-pi-skel")
 
 # Directories created as real (writable) dirs for user installs.
 # Contents of skel dirs are symlinked into the user's copy so
