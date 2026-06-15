@@ -335,6 +335,42 @@ class TestPerUserHome:
             cleanup()
 
 
+class TestBashrc:
+    @pytest.mark.asyncio
+    async def test_user_bashrc_sourced_in_login_shell(self, server, auth):
+        """~/.bashrc is sourced when a login shell starts (as tmux does).
+
+        tmux starts bash as a login shell for new windows.  Login bash
+        reads /etc/profile then ~/.profile — but per-user HOME dirs
+        don't get /etc/skel/.profile, so ~/.bashrc is never sourced
+        unless /etc/bash.bashrc or ~/.profile does it explicitly.
+        """
+        workspace_id, cleanup = create_workspace(server, auth)
+        try:
+            ws = await ws_connect(server, auth, workspace_id)
+            try:
+                # Write a .bashrc that sets a marker env var
+                await exec_command(
+                    ws,
+                    [
+                        "bash",
+                        "-c",
+                        'echo "export BASHRC_MARKER=hello_from_bashrc" '
+                        "> $HOME/.bashrc",
+                    ],
+                )
+                # Start a login shell (same as tmux new-window does)
+                output = await exec_command(
+                    ws,
+                    ["bash", "-lic", "echo $BASHRC_MARKER"],
+                )
+                assert "hello_from_bashrc" in output
+            finally:
+                await ws.close()
+        finally:
+            cleanup()
+
+
 class TestHandleChange:
     @pytest.mark.asyncio
     async def test_change_handle_via_set_handle(self, server, auth):

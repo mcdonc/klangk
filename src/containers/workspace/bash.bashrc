@@ -23,9 +23,8 @@ cd "$HOME" 2>/dev/null
 
 # Per-user Pi agent config.  Shared config lives at /home/.pi/agent/
 # (written by setup_clankers at container start).  Each user gets their
-# own PI_CODING_AGENT_DIR with symlinks to shared resources and copies
-# of files they may customize.
-export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+# own ~/.pi/agent with symlinks to shared resources and copies of files
+# they may customize.
 python3 /opt/klangk/bin/setup-user-pi
 
 PS1='\[\033[01;34m\]\w\[\033[00m\]\$ '
