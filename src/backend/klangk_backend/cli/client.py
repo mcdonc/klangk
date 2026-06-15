@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import select
 import sys
 import termios
@@ -287,6 +288,46 @@ async def _send_ignore_closed(ws, msg: str) -> None:  # pragma: no cover
         pass
 
 
+# Patterns matching terminal query responses that arrive on stdin when
+# tmux probes the terminal's capabilities on attach.  These are NOT user
+# input and must be filtered before forwarding to terminal_input, or tmux
+# echoes them as visible garbage.
+#
+# Matched responses:
+#   DA1:     ESC [ ? <digits;...> c
+#   DA2:     ESC [ > <digits;...> c
+#   DSR:     ESC [ <digits;...> n
+#   DECRPM:  ESC [ ? <digits;...> y   (or $ y)
+#   OSC:     ESC ] <digits> ; <payload> ST   (ST = ESC \ or BEL)
+#   XTVER:   ESC [ > | <payload> ST
+_TERMINAL_RESPONSE_RE = re.compile(
+    rb"\x1b\[[\?>]?[\d;]*[cnySy]"  # CSI responses (DA1/DA2/DSR/DECRPM)
+    rb"|\x1b\][\d]+;[^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC responses
+    rb"|\x1b\[>\|[^\x1b]*\x1b\\"  # XTVERSION
+    rb"|\x1bP[^\x1b]*\x1b\\"  # DCS responses
+)
+
+
+def _is_terminal_response(data: bytes) -> bool:
+    """True if *data* looks like a terminal query response, not user input.
+
+    Terminal responses start with ESC followed by ] (OSC), P (DCS), or
+    [ then > or ? (DA2/DA1/DECRPM).  User-typed escape sequences start
+    with ESC [ followed by a letter (arrow keys, function keys) without
+    the > or ? prefix that characterizes responses.
+    """
+    if len(data) < 3 or data[0:1] != b"\x1b":
+        return False
+    # Fast path: OSC (\e]) and DCS (\eP) are always responses, never
+    # user input.
+    if data[1:2] in (b"]", b"P"):
+        return True
+    # CSI responses: \e[> (DA2), \e[? (DA1/DECRPM)
+    if data[1:2] == b"[" and len(data) > 2 and data[2:3] in (b">", b"?"):
+        return True
+    return False
+
+
 def _raw_mode_enter() -> object:
     """Enter raw mode on stdin.  Returns opaque old-settings object."""
     return termios.tcgetattr(sys.stdin)
@@ -490,6 +531,9 @@ async def _run_shell(
 
     async def stdin_loop() -> None:
         fd = stdin.fileno()
+        # SSH-style escape: after Enter (or at start), ~ then . disconnects.
+        after_newline = True
+        saw_tilde = False
         while not stop_event.is_set():
             # select() with a 0.2s timeout keeps us responsive to stop_event
             # without burning CPU. When stop_event fires we exit within 0.2s.
@@ -506,6 +550,26 @@ async def _run_shell(
                 data = await loop.run_in_executor(None, os.read, fd, 1)
                 if not data:  # EOF on stdin
                     return
+                # Escape sequence: ~. after Enter disconnects (like SSH)
+                if saw_tilde:
+                    saw_tilde = False
+                    if data == b".":
+                        stdout.write("\r\nDisconnected.\r\n")
+                        stdout.flush()
+                        stop_event.set()
+                        # Close the WS so stdout_loop's recv() unblocks.
+                        await ws.close()
+                        return
+                    # Not a disconnect — send the buffered ~ and this byte
+                    await ws.send(
+                        json.dumps({"cmd": "terminal_input", "data": "~"})
+                    )
+                    # Fall through to send current byte normally
+                if data == b"~" and after_newline:
+                    saw_tilde = True
+                    after_newline = False
+                    continue
+                after_newline = data in (b"\r", b"\n")
                 # If the first byte is ESC, read the rest of the escape
                 # sequence as a single unit. Without this, the sequence
                 # gets split across WebSocket messages and the terminal
@@ -518,6 +582,26 @@ async def _run_shell(
                         )
                         if more:
                             data += more
+                    # Filter terminal query responses that the user's
+                    # terminal sends in reply to tmux's capability probes.
+                    # These arrive on stdin but are not user input — sending
+                    # them as terminal_input causes tmux to echo them as
+                    # visible garbage.  If we detect a response prefix,
+                    # drain any remaining bytes (the payload may arrive
+                    # in a subsequent chunk).
+                    if _is_terminal_response(data):
+                        # Drain trailing response bytes that may still
+                        # be in the buffer (payload + string terminator).
+                        for _ in range(10):
+                            if not select.select([fd], [], [], 0.02)[0]:
+                                break
+                            try:
+                                await loop.run_in_executor(
+                                    None, os.read, fd, 256
+                                )
+                            except OSError:  # pragma: no cover
+                                break
+                        continue
             except (OSError, io.UnsupportedOperation):  # pragma: no cover
                 return
             await ws.send(
@@ -537,8 +621,12 @@ async def _run_shell(
                     msg = msg.decode("utf-8", errors="replace")
                 data = json.loads(msg)
                 if data.get("type") == "terminal_output":
-                    stdout.write(data["data"])
+                    text = data["data"]
+                    stdout.write(text)
                     stdout.flush()
+                    if "[exited]" in text:
+                        stdout.write("\r\nPress ~. to disconnect.\r\n")
+                        stdout.flush()
                 elif data.get("type") == "event":
                     event = data.get("event", {})
                     if (
@@ -549,8 +637,9 @@ async def _run_shell(
                         stop_event.set()
                         break
         except websockets.ConnectionClosed:
-            stdout.write("\r\nServer disconnected.\r\n")
-            stdout.flush()
+            if not stop_event.is_set():
+                stdout.write("\r\nServer disconnected.\r\n")
+                stdout.flush()
         stop_event.set()
 
     async def resize_loop() -> None:
@@ -567,13 +656,16 @@ async def _run_shell(
                 await _send_resize()
 
     async def heartbeat_loop() -> None:  # pragma: no cover
+        elapsed = 0
         while not stop_event.is_set():
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=60)
+                await asyncio.wait_for(stop_event.wait(), timeout=1)
                 return
             except asyncio.TimeoutError:
                 pass
-            if not stop_event.is_set():
+            elapsed += 1
+            if elapsed >= 60 and not stop_event.is_set():
+                elapsed = 0
                 await ws.send(json.dumps({"cmd": "heartbeat"}))
 
     await asyncio.gather(

@@ -647,6 +647,7 @@ def shell(
 
     token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
+    _err.print("[dim]Escape: ~.[/dim]")
     asyncio.run(
         _ws_shell(
             ws_url,
