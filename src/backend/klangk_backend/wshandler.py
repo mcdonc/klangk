@@ -1366,12 +1366,37 @@ class Connection:
                 await session.start(cols, rows)
                 # Select the target window BEFORE activating output
                 # forwarding, so the initial output burst is from
-                # the correct window.
-                from .terminal import select_window
+                # the correct window.  Target the joiner's session
+                # specifically so the active window changes for the
+                # joiner, not the group owner.  Fall back to bare @N
+                # if the session isn't ready yet (race on rapid joins).
+                from .terminal import tmux_command
 
-                await select_window(
-                    conn.container_id, owner_user_id, window_id
-                )
+                joiner_session = session._tmux_session_name
+                if joiner_session:
+                    try:
+                        await tmux_command(
+                            conn.container_id,
+                            joiner_session,
+                            [
+                                "select-window",
+                                "-t",
+                                f"{joiner_session}:{window_id}",
+                            ],
+                        )
+                    except RuntimeError:
+                        # Joiner session not ready — fall back to bare @N
+                        from .terminal import select_window
+
+                        await select_window(
+                            conn.container_id, owner_user_id, window_id
+                        )
+                else:
+                    from .terminal import select_window
+
+                    await select_window(
+                        conn.container_id, owner_user_id, window_id
+                    )
                 if not await conn._activate_session(session, cols, rows):
                     return
                 conn.sock.send_json(
