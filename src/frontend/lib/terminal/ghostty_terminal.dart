@@ -45,6 +45,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   StreamSubscription<String>? _outputSub;
   StreamSubscription<Map<String, dynamic>>? _eventSub;
   void Function()? _removePasteListener;
+  void Function()? _removePageKeyListener;
   bool _started = false;
   // The pty must start at the real measured grid size, not the 80x24 seed.
   // flterm's first onResize (after the view lays out) delivers the measured
@@ -126,6 +127,9 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     // too, unlike Clipboard.getData). Only consume it when the terminal is
     // focused, so pastes into other inputs (e.g. chat) are left untouched.
     _removePasteListener = installPasteListener(routeNativePaste);
+    // Prevent Firefox from intercepting PageUp/PageDown for native page
+    // scrolling when the terminal is focused. See web_helpers_web.dart.
+    _removePageKeyListener = installPageKeyListener(() => _focusNode.hasFocus);
     _loadFont();
   }
 
@@ -370,6 +374,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     _outputSub?.cancel();
     _eventSub?.cancel();
     _removePasteListener?.call();
+    _removePageKeyListener?.call();
     if (_started) {
       widget.wsClient.sendTerminalStop();
     }
