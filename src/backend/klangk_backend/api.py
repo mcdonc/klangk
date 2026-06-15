@@ -970,6 +970,7 @@ async def create_workspace(
             "code-in-isolation",
             "code-in-shared-terminals",
             "spectate-on-shared-terminals",
+            "share-terminals",
             "files",
             "chat",
         ],

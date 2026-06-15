@@ -28,7 +28,8 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     'owners': 'Full admin access',
     'coders':
         'Use isolated terminals, spectate on shared terminals, files, chat',
-    'collaborators': 'Use isolated and shared terminals, files, chat',
+    'collaborators':
+        'Use isolated and shared terminals, share terminals, files, chat',
     'spectators': 'Watch shared terminals, chat',
   };
 
