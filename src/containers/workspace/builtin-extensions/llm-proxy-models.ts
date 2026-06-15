@@ -24,6 +24,39 @@ interface OpenAIModelsResponse {
   data: OpenAIModel[];
 }
 
+async function fetchModels(
+  baseUrl: string,
+  apiKey: string,
+): Promise<OpenAIModel[] | null> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await fetch(`${baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as OpenAIModelsResponse;
+        return payload.data ?? [];
+      }
+      if (attempt < 3 && response.status >= 500) {
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+        continue;
+      }
+      console.error(
+        `llm-proxy-models: failed to fetch models: ${response.status} ${response.statusText}`,
+      );
+      return null;
+    } catch (err) {
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+        continue;
+      }
+      console.error(`llm-proxy-models: failed to fetch models:`, err);
+      return null;
+    }
+  }
+  return null;
+}
+
 export default async function (pi: ExtensionAPI) {
   const proxyUrl = process.env.KLANGK_LLM_PROXY_URL;
   const apiKey = process.env.KLANGK_WORKSPACE_TOKEN || "proxy";
@@ -36,25 +69,8 @@ export default async function (pi: ExtensionAPI) {
   // its own path segments when making requests.
   const baseUrl = proxyUrl.replace(/\/+$/, "");
 
-  let models: OpenAIModel[];
-  try {
-    const response = await fetch(`${baseUrl}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!response.ok) {
-      console.error(
-        `llm-proxy-models: failed to fetch models: ${response.status} ${response.statusText}`,
-      );
-      return;
-    }
-    const payload = (await response.json()) as OpenAIModelsResponse;
-    models = payload.data ?? [];
-  } catch (err) {
-    console.error(`llm-proxy-models: failed to fetch models:`, err);
-    return;
-  }
-
-  if (models.length === 0) {
+  const models = await fetchModels(baseUrl, apiKey);
+  if (!models || models.length === 0) {
     return;
   }
 

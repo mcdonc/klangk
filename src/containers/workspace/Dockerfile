@@ -4,7 +4,7 @@ FROM $WORKSPACE_BASE_IMAGE
 # Install npm-based Pi extensions globally via pi install.
 # This layer is expensive (~30s) and rarely changes, so it goes first.
 # Records packages in settings.json for Pi to discover at runtime.
-RUN mkdir -p /opt/klangk/pi-agent/extensions \
+RUN mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:@demigodmode/pi-web-agent \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-otel-telemetry \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-mcp-extension
@@ -30,11 +30,9 @@ COPY system-prompt.md /opt/klangk/system-prompt.md
 COPY entrypoint.sh /opt/klangk/entrypoint.sh
 COPY otel.sh /opt/klangk/otel.sh
 COPY setup_clankers.py /opt/klangk/bin/setup-clankers
-COPY setup_user_pi.py /opt/klangk/bin/setup-user-pi
 COPY setup-home.sh /opt/klangk/bin/setup-home
 RUN chmod +x /opt/klangk/entrypoint.sh \
       /opt/klangk/bin/setup-clankers \
-      /opt/klangk/bin/setup-user-pi \
       /opt/klangk/bin/setup-home
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
