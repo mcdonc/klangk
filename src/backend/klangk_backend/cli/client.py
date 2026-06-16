@@ -35,7 +35,7 @@ def _request_with_retry(
     method: str,
     url: str,
     *,
-    timeout: float = 30.0,
+    timeout: float = 60.0,
     **kwargs,
 ) -> httpx.Response:
     """Make an HTTP request with retry on transient failures.
