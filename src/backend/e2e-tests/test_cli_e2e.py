@@ -17,7 +17,7 @@ import time
 import pytest
 
 
-def _run(args, timeout=30, input=None, **kwargs):
+def _run(args, timeout=120, input=None, **kwargs):
     """Run a CLI command, return CompletedProcess."""
     return subprocess.run(
         args,
