@@ -747,15 +747,21 @@ class ContainerRegistry:
     async def prewarm_podman(self) -> None:
         """Run a throwaway container create+rm to warm podman caches.
 
-        The very first ``podman create`` in a session can take ~20s while
-        podman initialises storage, user-namespace mappings, and network
-        helpers.  Paying that cost here (during backend startup) keeps it
-        off the path where a user is waiting.
+        The very first ``podman create`` with ``--userns=keep-id`` in a
+        session can take ~20-30s while podman initialises storage,
+        user-namespace mappings, and network helpers.  Paying that cost
+        here (during backend startup) keeps it off the path where a
+        user is waiting.
         """
         t0 = time.monotonic()
         try:
             cid = await podman.create_container(
-                "klangk-prewarm", IMAGE_NAME, pull="never"
+                "klangk-prewarm",
+                IMAGE_NAME,
+                pull="never",
+                userns=util.resolve_env_secret(
+                    "KLANGK_USERNS", "keep-id:uid=1000,gid=1000"
+                ),
             )
             await podman.remove_container(cid)
             logger.info("Podman pre-warmed in %.3fs", time.monotonic() - t0)
@@ -777,6 +783,12 @@ class ContainerRegistry:
                     labels = c.get("Labels") or {}
                     workspace_id = labels.get("klangk.workspace-id", "unknown")
                     self.track_activity(cid, workspace_id)
+                    # Update the DB so the next workspace connect uses the
+                    # fast path (existing container) instead of rebuilding.
+                    if workspace_id != "unknown":
+                        await model.update_workspace_container(
+                            workspace_id, cid
+                        )
                     logger.info(
                         "Adopted orphaned container %s (workspace %s)",
                         cid[:12],
