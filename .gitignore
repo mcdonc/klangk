@@ -67,3 +67,4 @@ oidc.tar.gz
 
 # Zensical docs build output
 site/
+output.log
