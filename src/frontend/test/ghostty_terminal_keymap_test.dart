@@ -206,10 +206,8 @@ void main() {
       await _pumpReady(tester, client, key);
       await switchToAltScreen(tester, client, key);
 
-      // No terminal scrollback on the alt screen; _scrollAltScreenByPage hands
-      // the app a page of mouse-wheel scroll (flterm handleScroll), which reaches
-      // the PTY. _bypassKey releases the combo to our shortcut so flterm doesn't
-      // encode it first under the app's keyboard protocol.
+      // Shift+PgUp on the alt screen (tmux) is sent to the PTY as \e[5;2~
+      // so tmux's S-PgUp copy-mode binding fires.
       client.sentInput.clear();
       await _sendKey(tester, LogicalKeyboardKey.pageUp,
           modifier: LogicalKeyboardKey.shift);

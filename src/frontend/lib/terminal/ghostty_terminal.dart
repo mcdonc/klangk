@@ -182,38 +182,11 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
   bool get hasFocus => _focusNode.hasFocus;
 
   // Page the alternate screen app (vim/less/pi) via mouse-wheel-style scroll.
-  // On the alternate screen there is no terminal scrollback, so hand the app a
-  // page of MOUSE-WHEEL scroll via flterm's handleScroll — the exact events the
-  // mouse wheel produces. Primary screen scrollback is handled by tmux
-  // (copy-mode via PgUp/Shift+PgUp bindings in tmux.conf).
-  void _scrollAltScreenByPage(int direction) {
-    if (!_scrollController.hasClients) return;
-    if (_scrollController.activeScreen == TerminalScreen.alternate) {
-      _terminal.handleScroll(direction * _rows);
-    }
-  }
-
   // flterm bypass predicate: returning true makes flterm leave the key for
   // outer handlers / the browser instead of encoding it for the PTY.
-  // Page keys go to the PTY on the primary screen (tmux handles scrollback).
-  // On the alternate screen, Shift+PgUp/PgDn (and Cmd+PgUp/PgDn on macOS)
-  // are intercepted and converted to mouse-wheel events for apps like Pi.
+  // All page keys (PgUp/PgDn, with or without Shift) are sent to the PTY so
+  // tmux can handle scrollback via copy-mode bindings in tmux.conf.
   bool _bypassKey(KeyEvent event, TerminalScreen screen) {
-    // Alt screen: intercept Shift+PgUp/PgDn and convert to mouse-wheel scroll
-    // for apps like Pi that need that specific input type.
-    if (screen == TerminalScreen.alternate) {
-      final k = event.logicalKey;
-      if (k == LogicalKeyboardKey.pageUp || k == LogicalKeyboardKey.pageDown) {
-        final hw = HardwareKeyboard.instance;
-        final isScrollCombo = hw.isShiftPressed ||
-            (hw.isMetaPressed && defaultTargetPlatform == TargetPlatform.macOS);
-        if (isScrollCombo) {
-          final direction = k == LogicalKeyboardKey.pageUp ? -1 : 1;
-          _scrollAltScreenByPage(direction);
-          return true;
-        }
-      }
-    }
     if (!isWebOverride) return false;
     // Browser zoom (Cmd +/-/0 on macOS, Ctrl +/-/0 elsewhere): leave the key
     // for the browser so its native zoom fires. flterm reports bypassed keys as
@@ -430,11 +403,11 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
                 _scrollController.hasClients &&
                 _scrollController.activeScreen == TerminalScreen.alternate) {
               if (event.scrollDelta.dy < 0) {
-                // Wheel up → PgUp (ESC [5~)
-                widget.wsClient.sendTerminalInput('\x1b[5~');
+                // Wheel up → Shift+PgUp (ESC [5;2~)
+                widget.wsClient.sendTerminalInput('\x1b[5;2~');
               } else if (event.scrollDelta.dy > 0) {
-                // Wheel down → PgDn (ESC [6~)
-                widget.wsClient.sendTerminalInput('\x1b[6~');
+                // Wheel down → Shift+PgDn (ESC [6;2~)
+                widget.wsClient.sendTerminalInput('\x1b[6;2~');
               }
             }
           },
