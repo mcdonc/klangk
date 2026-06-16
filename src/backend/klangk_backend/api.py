@@ -27,6 +27,7 @@ from . import (
     emailsvc,
     files,
     oidc,
+    plugin_config,
     wshandler,
     model,
     workspaces,
@@ -152,15 +153,13 @@ async def _send_email(coro, recipient: str, kind: str = "email") -> None:
 
 # --- Config endpoint ---
 
-SOLIPLEX_URL = resolve_env_secret("SOLIPLEX_URL", "")
 LOGIN_BANNER_TITLE = resolve_env_secret("KLANGK_LOGIN_BANNER_TITLE", "")
 LOGIN_BANNER = resolve_env_secret("KLANGK_LOGIN_BANNER", "")
 
 
 @router.get("/api/config")
 async def get_config():
-    return {
-        "soliplex_url": SOLIPLEX_URL,
+    config = {
         "registration_enabled": auth.registration_enabled(),
         "invitations_enabled": auth.invitations_enabled(),
         "login_banner_title": LOGIN_BANNER_TITLE,
@@ -168,6 +167,8 @@ async def get_config():
         "oidc_providers": oidc.list_providers(),
         "auth_modes": oidc.auth_modes(),
     }
+    config.update(plugin_config.frontend_config())
+    return config
 
 
 # --- Auth endpoints ---

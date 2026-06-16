@@ -37,7 +37,6 @@ void main() {
       if (request.url.path.contains('/api/config')) {
         return http.Response(
           jsonEncode({
-            'soliplex_url': '',
             'registration_enabled': registrationEnabled,
             'login_banner_title': '',
             'login_banner': '',

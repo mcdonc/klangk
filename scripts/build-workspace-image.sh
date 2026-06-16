@@ -33,6 +33,9 @@ if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plug
   python3 scripts/update_plugins.py
 fi
 
+# Collect plugin config declarations
+python3 scripts/collect_plugin_config.py
+
 # Stage plugin files outside the source tree
 STAGING="$KLANGK_PLUGINS_DIR/.docker"
 rm -rf "$STAGING"

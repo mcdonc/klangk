@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import container, model, oidc
+from . import container, model, oidc, plugin_config
 from .api import router
 from .model import (
     ACTION_ALLOW,
@@ -142,6 +142,7 @@ async def lifespan(app: FastAPI):
     from . import auth
 
     auth.require_secure_jwt_secret()
+    plugin_config.load()
     await model.init_db()
     oidc.init_providers()
     oidc.load_login_hook()

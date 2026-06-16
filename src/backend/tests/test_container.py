@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from klangk_backend import container, model, podman
+from klangk_backend import container, model, plugin_config, podman
 
 
 class TestParseIdleTimeout:
@@ -625,6 +625,30 @@ class TestStartContainer:
         env_dict = dict(e.split("=", 1) for e in env_list)
         assert env_dict["KLANGK_SKILLS"] == "stats,rdkit"
         assert env_dict["FOO"] == "bar"
+
+    async def test_plugin_config_env_injected(self, workspace, monkeypatch):
+        monkeypatch.setattr(
+            plugin_config,
+            "_declarations",
+            {
+                "PLUGIN_VAR": {
+                    "plugin": "test",
+                    "description": "",
+                    "default": "",
+                    "scope": "container",
+                }
+            },
+        )
+        monkeypatch.setattr(
+            plugin_config, "_values", {"PLUGIN_VAR": "plugin-val"}
+        )
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        env_list = p.create_container.call_args.kwargs["env"]
+        env_dict = dict(e.split("=", 1) for e in env_list)
+        assert env_dict["PLUGIN_VAR"] == "plugin-val"
 
 
 class TestStartContainerPortConflict:
