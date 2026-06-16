@@ -145,7 +145,6 @@ class AgentSession:
             "pi",
             "--mode",
             "rpc",
-            "--no-session",
             "--append-system-prompt",
             system_prompt,
         ]
