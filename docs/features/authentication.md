@@ -14,19 +14,9 @@ See [OIDC Configuration](../reference/oidc.md) for detailed setup instructions.
 - Resend via "Resend verification email" link on login page (shown on 403 "not verified" error, rate-limited to 1/min per email)
 - Email sent via SMTP (`KLANGK_SMTP_HOST/PORT/USER/PASSWORD/FROM`) or local sendmail (default, configurable via `KLANGK_SENDMAIL_PATH`)
 
-## Password Reset
-
-- User requests reset via `POST /auth/forgot-password` with their email address
-- Response is always `{"status": "sent"}` regardless of whether the email exists (prevents email enumeration)
-- Rate limited: one reset email per address per 60 seconds (in-memory cooldown, resets on server restart)
-- Token: JWT (HS256) containing `{sub: user_id, purpose: "reset", exp: timestamp}`, expires in 1 hour
-- Reset URL sent via email: `{proto}://{hostname}/#/reset-password?token={token}`
-- User submits new password via `POST /auth/reset-password` with the token
-- Tokens are stateless (no database tracking) — the same token can be reused until it expires
-
 ## JWT Sessions
 
-- JWT tokens (24hr expiry, secret configurable via `KLANGK_JWT_SECRET`) with token blocklist for logout; no refresh/renewal mechanism — users must re-authenticate when tokens expire
+- JWT tokens (24hr expiry, secret configurable via `KLANGK_JWT_SECRET`) with token blocklist for logout
 - Session persists across page reloads (async token loading before routing)
 - Deep link preservation: unauthenticated visits to protected URLs redirect to login, then return to the original URL after successful login
 
