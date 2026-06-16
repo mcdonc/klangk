@@ -7,6 +7,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**Terminal**](terminal.md) — Full terminal emulator with Pi agent integration, idle timeout, session persistence
 - [**Chat**](chat.md) — Real-time workspace chat with markdown, @mentions, message types, container-to-chat API
 - [**File Viewer**](file-viewer.md) — Directory tree, drag-and-drop upload, preview, download
+- [**Invitations**](invitations.md) — Admin invitation workflow for onboarding new users
 - [**Plugins & Extensions**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
 
 ## UI/Theme
@@ -18,7 +19,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - Slidable Debug panel on bottom (collapsed by default)
 - Browser tab title updates per page ("Klangk - Login", "Klangk - Workspaces", "Klangk - workspace-name")
 
-## Right Panel Layout
+## Panel Layout
 
 - Two-part split: tabbed panel on top (Terminal, Files tabs) and slidable Debug panel on bottom
 - Debug panel collapsed by default, expandable via draggable horizontal divider
@@ -35,9 +36,3 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - Timestamps and color-coded entries
 - Selectable text for titles and content
 - Clear button
-
-## Workspace Presence
-
-- Real-time display of connected users per workspace
-- `presence_list` sent to joining user, `presence_join`/`presence_leave` broadcast to others
-- Tracks per-connection state; leave only broadcast when user's last connection closes
