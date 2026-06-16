@@ -1470,30 +1470,56 @@ class TestVolumeUserIsolation:
 
 
 class TestTerminalSharing:
-    """Test klangk terminals, share, and unshare commands."""
+    """Test klangk terminals, share, and unshare commands.
+
+    Uses its own dedicated server to avoid cascading failures from
+    other test classes that may leave the shared server unresponsive.
+    """
 
     @pytest.fixture(autouse=True, scope="class")
-    def workspace(self, cli_config):
-        _run(["klangk", "create", "e2e-share"], env=cli_config["env"])
+    def _dedicated_server(self, tmp_path_factory):
+        data_dir = tempfile.mkdtemp(prefix="klangk-terminal-sharing-")
+        proc, base_url = _start_server(
+            data_dir, "18997", "terminal-sharing-e2e"
+        )
+        config_dir = tmp_path_factory.mktemp("klangk-terminal-sharing-config")
+        env = {**os.environ, "HOME": str(config_dir)}
+        (config_dir / ".config" / "klangk").mkdir(parents=True)
+        _run(
+            [
+                "klangk",
+                "login",
+                "test@example.com",
+                "--server",
+                base_url,
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+        _run(["klangk", "create", "e2e-share"], env=env)
         # Start container so terminal commands work
         _run(
             ["klangk", "exec", "e2e-share", "true"],
-            env=cli_config["env"],
+            env=env,
             timeout=120,
         )
+        self.__class__._env = env
         yield
-        _run(["klangk", "rm", "e2e-share"], env=cli_config["env"])
+        _run(["klangk", "rm", "e2e-share"], env=env)
+        _stop_server(proc, data_dir, "terminal-sharing-e2e")
 
-    def test_terminals_lists_windows(self, cli_config):
+    def test_terminals_lists_windows(self):
         result = _run(
             ["klangk", "terminals", "e2e-share"],
-            env=cli_config["env"],
+            env=self._env,
             timeout=120,
         )
         assert result.returncode == 0
 
-    def test_share_and_unshare_terminal(self, cli_config):
-        env = cli_config["env"]
+    def test_share_and_unshare_terminal(self):
+        env = self._env
         # First discover the window name via `klangk terminals`
         list_result = _run(
             ["klangk", "terminals", "e2e-share"],
@@ -1531,10 +1557,10 @@ class TestTerminalSharing:
         assert result.returncode == 0, result.stderr
         assert "no longer shared" in result.stderr.lower()
 
-    def test_share_nonexistent_terminal(self, cli_config):
+    def test_share_nonexistent_terminal(self):
         result = _run(
             ["klangk", "share", "e2e-share", "nonexistent"],
-            env=cli_config["env"],
+            env=self._env,
             timeout=120,
         )
         assert result.returncode != 0
