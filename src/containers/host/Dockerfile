@@ -57,7 +57,7 @@ RUN printf '{"version":"%s","commit":"%s","built_at":"%s"}\n' \
     chown klangk:klangk /home/klangk/version.json
 
 # Plugins (package.json manifests needed for plugin config at runtime)
-COPY --from=plugins --chown=klangk:klangk . /opt/klangk/plugins/
+COPY --from=plugins --chown=klangk:klangk . /home/klangk/plugins/
 
 # Data directory (volume mount point)
 RUN mkdir -p /home/klangk/data && chown klangk:klangk /home/klangk/data
@@ -82,7 +82,7 @@ ENV PATH=/home/klangk/bin:/home/klangk/venv/bin:$PATH
 ENV KLANGK_PORT=8997
 ENV KLANGK_NGINX_PORT=8995
 ENV KLANGK_DATA_DIR=/home/klangk/data
-ENV KLANGK_PLUGINS_DIR=/opt/klangk/plugins
+ENV KLANGK_PLUGINS_DIR=/home/klangk/plugins
 ENV KLANGK_IMAGE_NAME=klangk-workspace
 ENV KLANGK_INSTANCE_ID=default
 ENV KLANGK_VERSION_FILE=/home/klangk/version.json
