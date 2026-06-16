@@ -34,8 +34,16 @@ Guidelines:
 logger = logging.getLogger(__name__)
 
 
-class AgentProcessDied(Exception):
+class AgentError(Exception):
+    """Base class for agent errors."""
+
+
+class AgentProcessDied(AgentError):
     """Raised when the Pi RPC subprocess exits unexpectedly."""
+
+
+class AgentSetupError(AgentError):
+    """Raised when the agent's home directory cannot be set up."""
 
 
 # Registry of active agent sessions keyed by container ID.
@@ -49,25 +57,97 @@ class AgentSession:
         self.container_id = container_id
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
+        self._home_ready = False
+
+    async def _ensure_home(self) -> str:
+        """Ensure the agent has a home directory with Pi config.
+
+        Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount
+        and populates it via ``setup_clankers.py`` (the same path real
+        users take) by running a login shell.  Returns the container
+        path, e.g. ``/home/MrBoops``.
+        """
+        if self._home_ready:
+            from . import model
+
+            return f"/home/{model.AGENT_HANDLE}"
+
+        from . import model
+        from . import workspaces
+        from . import container
+
+        # Look up the workspace via the container registry.
+        workspace_id = container.registry.workspace_id_for(self.container_id)
+        if not workspace_id:
+            raise AgentSetupError(
+                f"No workspace found for container {self.container_id}"
+            )
+        ws = await model.get_workspace_by_id(workspace_id)
+        if not ws:
+            raise AgentSetupError(
+                f"Workspace {workspace_id} not found in database"
+            )
+        owner_id = ws["user_id"]
+        workspace_home = workspaces.home_path(owner_id, workspace_id)
+
+        container_home, created = workspaces.ensure_home_symlink(
+            workspace_home, model.AGENT_HANDLE, model.AGENT_USER_ID
+        )
+        if created:
+            await workspaces.populate_home_skel(
+                self.container_id, model.AGENT_USER_ID
+            )
+
+        # Run setup-clankers to populate ~/.pi/agent/ with models.json,
+        # settings.json, etc.  Unlike real users, the agent has no
+        # personal preferences — always delete settings.json first so
+        # it picks up the current KLANGK_LLM_MODEL env var.
+        proc = await asyncio.create_subprocess_exec(
+            podman.PODMAN_BIN,
+            "exec",
+            "-u",
+            "klangk",
+            "-e",
+            f"HOME={container_home}",
+            self.container_id,
+            "bash",
+            "-c",
+            "rm -f $HOME/.pi/agent/settings.json"
+            " && python3 /opt/klangk/bin/setup-clankers",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=podman.subprocess_env(),
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=30)
+        self._home_ready = True
+        logger.info(
+            "Agent home ready at %s for container %s",
+            container_home,
+            self.container_id,
+        )
+        return container_home
 
     async def _ensure_started(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:
             return self._proc
         from . import model
 
-        system_prompt = _CHAT_SYSTEM_PROMPT.format(name=model.AGENT_EMAIL)
+        container_home = await self._ensure_home()
+        system_prompt = _CHAT_SYSTEM_PROMPT.format(name=model.AGENT_HANDLE)
         argv = [
             "exec",
             "-i",
             "-u",
             "klangk",
+            "-e",
+            f"HOME={container_home}",
             "-w",
-            "/home",
+            container_home,
             self.container_id,
             "pi",
             "--mode",
             "rpc",
-            "--no-session",
             "--append-system-prompt",
             system_prompt,
         ]
@@ -93,7 +173,24 @@ class AgentSession:
             proc.stdin.write((cmd + "\n").encode())
             await proc.stdin.drain()
 
-            # Collect text deltas until agent_end
+            # Wait for the command ack before reading events.  Pi
+            # sends {"type":"response","command":"prompt","success":true}
+            # first; any lines before it are leftover from a previous
+            # turn and must be discarded.
+            try:
+                await asyncio.wait_for(
+                    self._wait_for_ack(proc.stdout), timeout=30
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Pi RPC ack timed out for %s", self.container_id
+                )
+
+            # Skip past any leftover events to the current turn's
+            # agent_start, then collect deltas until agent_end.
+            await asyncio.wait_for(
+                self._skip_to_agent_start(proc.stdout), timeout=30
+            )
             text_parts: list[str] = []
             try:
                 response = await asyncio.wait_for(
@@ -130,12 +227,67 @@ class AgentSession:
             except Exception:  # pragma: no cover
                 pass
 
+    async def _wait_for_ack(self, stdout: asyncio.StreamReader) -> None:
+        """Read lines until the Pi RPC command acknowledgement.
+
+        Discards any leftover events from a previous turn that may
+        still be in the pipe.
+        """
+        while True:
+            line = await stdout.readline()
+            if not line:
+                return
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                event.get("type") == "response"
+                and event.get("command") == "prompt"
+            ):
+                return
+
+    async def _skip_to_agent_start(self, stdout: asyncio.StreamReader) -> None:
+        """Skip events until agent_start for the current turn.
+
+        After the ack, Pi emits agent_start before sending any deltas.
+        If there are leftover events from a prior turn (e.g. after a
+        timeout), they appear before agent_start and must be discarded.
+        """
+        while True:
+            line = await stdout.readline()
+            if not line:
+                return
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            etype = event.get("type")
+            if etype == "agent_start":
+                return
+            if etype == "auto_retry_start":
+                logger.info(
+                    "Pi auto-retry %d/%d for %s: %s",
+                    event.get("attempt", "?"),
+                    event.get("maxAttempts", "?"),
+                    self.container_id,
+                    str(event.get("errorMessage", ""))[:100],
+                )
+
     async def _read_until_agent_end(
         self,
         stdout: asyncio.StreamReader,
         text_parts: list[str],
     ) -> str:
-        """Read JSONL events from Pi until agent_end."""
+        """Read JSONL events from Pi until the final agent_end.
+
+        Pi may emit multiple agent_start/agent_end cycles when it
+        auto-retries on errors (e.g. 429 rate limits).  We keep
+        reading until an agent_end with ``willRetry: false`` (or no
+        ``willRetry`` key, which is the normal success case).
+        """
+        thinking_parts: list[str] = []
+        last_error: str = ""
         while True:
             line = await stdout.readline()
             if not line:
@@ -150,15 +302,44 @@ class AgentSession:
 
             if event_type == "message_update":
                 delta = event.get("assistantMessageEvent", {})
-                if delta.get("type") == "text_delta":
+                delta_type = delta.get("type", "")
+                if delta_type == "text_delta":
                     text_parts.append(delta.get("delta", ""))
+                elif delta_type == "thinking_delta":
+                    thinking_parts.append(delta.get("delta", ""))
+                elif delta_type not in ("thinking_start", "thinking_end"):
+                    logger.debug("Unhandled delta type: %s", delta_type)
+
+            elif event_type in ("message_start", "message_end"):
+                # Capture error messages from the LLM provider.
+                msg = event.get("message", {})
+                if msg.get("stopReason") == "error":
+                    last_error = msg.get("errorMessage", "")
 
             elif event_type == "agent_end":
-                break
+                if not event.get("willRetry", False):
+                    break
+                # Pi is retrying — reset parts for the next attempt
+                # and wait for the next agent_start.
+                text_parts.clear()
+                thinking_parts.clear()
+                last_error = ""
+                await self._skip_to_agent_start(stdout)
+
+            # auto_retry_start is consumed by _skip_to_agent_start
 
         text = "".join(text_parts)
         # Strip <think>...</think> tags that some models emit
         text = _THINK_RE.sub("", text).strip()
+        if not text:
+            # Some models put their response in thinking only (no
+            # text_delta). Fall back to the thinking content, stripped
+            # of reasoning artifacts.
+            text = "".join(thinking_parts).strip()
+            text = _THINK_RE.sub("", text).strip()
+        if not text and last_error:
+            # Surface the LLM error to the user.
+            text = f"Error from LLM: {last_error}"
         return text or "I had nothing to say."
 
     async def stop(self) -> None:

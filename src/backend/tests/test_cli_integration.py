@@ -1122,8 +1122,8 @@ class TestShellConnectionError:
             "klangk_backend.cli.client.reset_terminal", lambda: None
         )
 
-        import click
+        import typer
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.Exit) as exc_info:
             shell(workspace="ws", terminal="x")
         assert exc_info.value.exit_code == 1
