@@ -232,6 +232,14 @@ def main():
     write_lock(list(lock_map.values()), LOCK_PATH)
     print(f"Wrote {LOCK_PATH} with {len(lock_map)} plugins")
 
+    # Collect plugin config declarations so they're ready before the next
+    # image build or backend restart.
+    collect_script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "collect_plugin_config.py"
+    )
+    if os.path.isfile(collect_script):
+        subprocess.run([sys.executable, collect_script], check=False)
+
 
 if __name__ == "__main__":
     main()
