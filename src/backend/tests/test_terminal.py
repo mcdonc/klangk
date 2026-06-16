@@ -23,6 +23,7 @@ from klangk_backend.terminal import (
     restore_windows,
     save_workspace_state,
     select_window,
+    terminal_tmux_enabled,
     tmux_command,
 )
 
@@ -135,6 +136,21 @@ class TestStart:
         assert argv[-2:] == ["tmux", "new-session"]
         assert (fake.rows, fake.cols) == (40, 120)
         assert s._running is True
+        await s.stop()
+
+    async def test_start_uses_plain_shell_when_tmux_disabled(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("KLANGK_DISABLE_TMUX", "1")
+        fake = FakeShell(block_after_chunks=True)
+        with _patch(fake):
+            s = TerminalSession("cid", session_name="uid")
+            await s.start(120, 40)
+
+        argv = fake.argv
+        assert argv[-2:] == ["bash", "-l"]
+        assert "tmux" not in argv
+        assert s._tmux_session_name is None
         await s.stop()
 
     async def test_start_unsets_sensitive_env_vars(self, monkeypatch):
@@ -734,6 +750,60 @@ class TestBuildShellCommandJoinSession:
         assert "new-session" in cmd
         assert "-S" not in cmd
         assert "switch-client" not in cmd
+        assert unique is not None
+
+
+class TestTerminalTmuxEnabled:
+    def test_default_enabled(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_DISABLE_TMUX", raising=False)
+        assert terminal_tmux_enabled() is True
+
+    @pytest.mark.parametrize("val", ["1", "true", "TRUE", "yes", "Yes"])
+    def test_truthy_disables(self, monkeypatch, val):
+        monkeypatch.setenv("KLANGK_DISABLE_TMUX", val)
+        assert terminal_tmux_enabled() is False
+
+    @pytest.mark.parametrize("val", ["", "0", "false", "no", "off"])
+    def test_other_values_keep_enabled(self, monkeypatch, val):
+        monkeypatch.setenv("KLANGK_DISABLE_TMUX", val)
+        assert terminal_tmux_enabled() is True
+
+
+class TestBuildShellCommandTmuxDisabled:
+    def test_plain_login_shell_when_disabled(self):
+        cmd, unique = _build_shell_command(
+            session_name="uid",
+            user_home="/home/bob",
+            tmux_enabled=False,
+        )
+        assert cmd[-2:] == ["bash", "-l"]
+        assert "tmux" not in cmd
+        assert unique is None
+
+    def test_plain_shell_still_unsets_sensitive_env(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_LLM_API_KEY", "secret")
+        cmd, _ = _build_shell_command(session_name="uid", tmux_enabled=False)
+        unset = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-u"]
+        assert "KLANGK_LLM_API_KEY" in unset
+        assert "tmux" not in cmd
+
+    def test_shared_socket_still_uses_tmux_when_disabled(self):
+        """Sharing is built on tmux; the toggle must not break it."""
+        cmd, _ = _build_shell_command(
+            session_name="uid",
+            socket_path="/tmp/test.sock",
+            tmux_enabled=False,
+        )
+        assert "tmux" in cmd
+        assert "-S" in cmd
+
+    def test_join_session_still_uses_tmux_when_disabled(self):
+        cmd, unique = _build_shell_command(
+            session_name="joiner-uid",
+            join_session="owner-uid",
+            tmux_enabled=False,
+        )
+        assert "tmux" in cmd
         assert unique is not None
 
 

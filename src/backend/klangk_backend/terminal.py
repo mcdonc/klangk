@@ -21,11 +21,25 @@ import tty
 from collections.abc import AsyncGenerator
 
 from . import podman
-from .util import BoundedOutputQueue
+from .util import BoundedOutputQueue, resolve_env_secret
 
 logger = logging.getLogger(__name__)
 
 _READ_CHUNK = 65536
+
+
+def terminal_tmux_enabled() -> bool:
+    """Whether new terminal sessions are wrapped in tmux.
+
+    Defaults to enabled (the historical behaviour).  Set
+    ``KLANGK_DISABLE_TMUX`` to a truthy value (``1``/``true``/``yes``) to
+    drop users straight into a plain login shell instead.  Note this only
+    affects the default per-user terminal; shared/joined terminals are
+    built on tmux session groups and always use tmux regardless.
+    """
+    val = resolve_env_secret("KLANGK_DISABLE_TMUX", "") or ""
+    return val.lower() not in ("1", "true", "yes")
+
 
 # Backend env vars stripped from the in-container shell.
 _SENSITIVE_ENV_PREFIXES = (
@@ -68,14 +82,18 @@ def _build_shell_command(
     socket_path: str | None = None,
     join_session: str | None = None,
     read_only: bool = False,
+    tmux_enabled: bool = True,
 ) -> tuple[list[str], str | None]:
-    """Build the tmux command for a terminal session.
+    """Build the shell command for a terminal session.
 
     *session_name*: tmux session name (typically the user_id).
     *user_home*: sets ``HOME`` env var inside the session.
     *socket_path*: use ``-S`` for shared terminal sockets.
     *join_session*: join an existing session group (for shared terminals).
     *read_only*: attach with ``-r`` for spy mode.
+    *tmux_enabled*: when ``False`` and this is a plain (non-shared)
+    session, launch a bare login shell instead of tmux.  Shared/joined
+    sessions (``socket_path``/``join_session``) always use tmux.
 
     Returns ``(command, unique_session_name)``.  *unique_session_name* is
     set only for shared terminal joins so ``stop()`` can kill the tmux
@@ -86,6 +104,14 @@ def _build_shell_command(
     for key in os.environ:
         if key.startswith(_SENSITIVE_ENV_PREFIXES):
             unset_args.extend(["-u", key])
+
+    # Plain-shell mode: drop straight into a login shell (sources
+    # /etc/profile -> /etc/bash.bashrc, same init path tmux's login shell
+    # uses).  Only applies to the default session — sharing needs tmux.
+    if not tmux_enabled and socket_path is None and join_session is None:
+        cmd = ["env", *unset_args, "bash", "-l"]
+        return cmd, None
+
     tmux_env: list[str] = []
     session_args: list[str] = []
     socket_args: list[str] = []
@@ -586,6 +612,7 @@ class TerminalSession:
             socket_path=self.socket_path,
             join_session=self.join_session,
             read_only=self.read_only,
+            tmux_enabled=terminal_tmux_enabled(),
         )
         work_dir = "/home"
         argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)
