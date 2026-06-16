@@ -982,11 +982,14 @@ class TestExportSymlinks:
         resp = httpx.post(
             f"{server['url']}/auth/login",
             json={"email": "test@example.com", "password": "testpass"},
+            timeout=30,
         )
         token = resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
-        resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+        resp = httpx.get(
+            f"{server['url']}/workspaces", headers=headers, timeout=30
+        )
         ws = [w for w in resp.json() if w["name"] == "e2e-symlink"][0]
         ws_id = ws["id"]
 
@@ -1145,10 +1148,13 @@ class TestExportImport:
             resp = httpx.post(
                 f"{server['url']}/auth/login",
                 json={"email": "test@example.com", "password": "testpass"},
+                timeout=30,
             )
             token = resp.json()["access_token"]
             headers = {"Authorization": f"Bearer {token}"}
-            resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+            resp = httpx.get(
+                f"{server['url']}/workspaces", headers=headers, timeout=30
+            )
             ws = [w for w in resp.json() if w["name"] == "export-symlink"][0]
             ws_id = ws["id"]
             ws_root = Path(server["data_dir"]) / "workspaces"
@@ -1213,7 +1219,9 @@ class TestExportImport:
             assert result.returncode == 0, result.stderr or result.stdout
 
             # Find the imported workspace's home dir
-            resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+            resp = httpx.get(
+                f"{server['url']}/workspaces", headers=headers, timeout=30
+            )
             imported = [
                 w
                 for w in resp.json()
@@ -1337,6 +1345,7 @@ class TestVolumeUserIsolation:
                 "email": "user2@example.com",
                 "password": "testpass2",
             },
+            timeout=30,
         )
 
         # Set up CLI configs for both users
