@@ -99,8 +99,9 @@ class AgentSession:
             )
 
         # Run setup-clankers to populate ~/.pi/agent/ with models.json,
-        # settings.json, etc. — the same script that /etc/bash.bashrc
-        # runs for interactive user shells.
+        # settings.json, etc.  Unlike real users, the agent has no
+        # personal preferences — always delete settings.json first so
+        # it picks up the current KLANGK_LLM_MODEL env var.
         proc = await asyncio.create_subprocess_exec(
             podman.PODMAN_BIN,
             "exec",
@@ -109,8 +110,10 @@ class AgentSession:
             "-e",
             f"HOME={container_home}",
             self.container_id,
-            "python3",
-            "/opt/klangk/bin/setup-clankers",
+            "bash",
+            "-c",
+            "rm -f $HOME/.pi/agent/settings.json"
+            " && python3 /opt/klangk/bin/setup-clankers",
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -145,7 +148,6 @@ class AgentSession:
             "pi",
             "--mode",
             "rpc",
-            "--no-session",
             "--append-system-prompt",
             system_prompt,
         ]
@@ -171,7 +173,24 @@ class AgentSession:
             proc.stdin.write((cmd + "\n").encode())
             await proc.stdin.drain()
 
-            # Collect text deltas until agent_end
+            # Wait for the command ack before reading events.  Pi
+            # sends {"type":"response","command":"prompt","success":true}
+            # first; any lines before it are leftover from a previous
+            # turn and must be discarded.
+            try:
+                await asyncio.wait_for(
+                    self._wait_for_ack(proc.stdout), timeout=30
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Pi RPC ack timed out for %s", self.container_id
+                )
+
+            # Skip past any leftover events to the current turn's
+            # agent_start, then collect deltas until agent_end.
+            await asyncio.wait_for(
+                self._skip_to_agent_start(proc.stdout), timeout=30
+            )
             text_parts: list[str] = []
             try:
                 response = await asyncio.wait_for(
@@ -208,12 +227,67 @@ class AgentSession:
             except Exception:  # pragma: no cover
                 pass
 
+    async def _wait_for_ack(self, stdout: asyncio.StreamReader) -> None:
+        """Read lines until the Pi RPC command acknowledgement.
+
+        Discards any leftover events from a previous turn that may
+        still be in the pipe.
+        """
+        while True:
+            line = await stdout.readline()
+            if not line:
+                return
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                event.get("type") == "response"
+                and event.get("command") == "prompt"
+            ):
+                return
+
+    async def _skip_to_agent_start(self, stdout: asyncio.StreamReader) -> None:
+        """Skip events until agent_start for the current turn.
+
+        After the ack, Pi emits agent_start before sending any deltas.
+        If there are leftover events from a prior turn (e.g. after a
+        timeout), they appear before agent_start and must be discarded.
+        """
+        while True:
+            line = await stdout.readline()
+            if not line:
+                return
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            etype = event.get("type")
+            if etype == "agent_start":
+                return
+            if etype == "auto_retry_start":
+                logger.info(
+                    "Pi auto-retry %d/%d for %s: %s",
+                    event.get("attempt", "?"),
+                    event.get("maxAttempts", "?"),
+                    self.container_id,
+                    str(event.get("errorMessage", ""))[:100],
+                )
+
     async def _read_until_agent_end(
         self,
         stdout: asyncio.StreamReader,
         text_parts: list[str],
     ) -> str:
-        """Read JSONL events from Pi until agent_end."""
+        """Read JSONL events from Pi until the final agent_end.
+
+        Pi may emit multiple agent_start/agent_end cycles when it
+        auto-retries on errors (e.g. 429 rate limits).  We keep
+        reading until an agent_end with ``willRetry: false`` (or no
+        ``willRetry`` key, which is the normal success case).
+        """
+        thinking_parts: list[str] = []
+        last_error: str = ""
         while True:
             line = await stdout.readline()
             if not line:
@@ -228,15 +302,44 @@ class AgentSession:
 
             if event_type == "message_update":
                 delta = event.get("assistantMessageEvent", {})
-                if delta.get("type") == "text_delta":
+                delta_type = delta.get("type", "")
+                if delta_type == "text_delta":
                     text_parts.append(delta.get("delta", ""))
+                elif delta_type == "thinking_delta":
+                    thinking_parts.append(delta.get("delta", ""))
+                elif delta_type not in ("thinking_start", "thinking_end"):
+                    logger.debug("Unhandled delta type: %s", delta_type)
+
+            elif event_type in ("message_start", "message_end"):
+                # Capture error messages from the LLM provider.
+                msg = event.get("message", {})
+                if msg.get("stopReason") == "error":
+                    last_error = msg.get("errorMessage", "")
 
             elif event_type == "agent_end":
-                break
+                if not event.get("willRetry", False):
+                    break
+                # Pi is retrying — reset parts for the next attempt
+                # and wait for the next agent_start.
+                text_parts.clear()
+                thinking_parts.clear()
+                last_error = ""
+                await self._skip_to_agent_start(stdout)
+
+            # auto_retry_start is consumed by _skip_to_agent_start
 
         text = "".join(text_parts)
         # Strip <think>...</think> tags that some models emit
         text = _THINK_RE.sub("", text).strip()
+        if not text:
+            # Some models put their response in thinking only (no
+            # text_delta). Fall back to the thinking content, stripped
+            # of reasoning artifacts.
+            text = "".join(thinking_parts).strip()
+            text = _THINK_RE.sub("", text).strip()
+        if not text and last_error:
+            # Surface the LLM error to the user.
+            text = f"Error from LLM: {last_error}"
         return text or "I had nothing to say."
 
     async def stop(self) -> None:

@@ -31,9 +31,13 @@ def _make_session(container_id="cid"):
     return s
 
 
+_ACK = {"type": "response", "command": "prompt", "success": True}
+
+
 class TestAgentSession:
     async def test_send_prompt_collects_text_deltas(self):
         events = [
+            _ACK,
             {"type": "agent_start"},
             {
                 "type": "message_update",
@@ -71,8 +75,15 @@ class TestAgentSession:
         proc = AsyncMock()
         proc.returncode = None
         proc.stdin = AsyncMock()
-        # stdout that never produces data
+        # Feed ack + agent_start so we get past the preamble, then
+        # nothing — simulating a model that never responds.
         proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(
+            json.dumps(_ACK).encode()
+            + b"\n"
+            + json.dumps({"type": "agent_start"}).encode()
+            + b"\n"
+        )
         proc.stderr = asyncio.StreamReader()
 
         with patch("asyncio.create_subprocess_exec", return_value=proc):
@@ -81,8 +92,94 @@ class TestAgentSession:
 
         assert "timed out" in result
 
+    async def test_llm_error_surfaced(self):
+        """LLM errors (e.g. 429) are returned to the user."""
+        events = [
+            _ACK,
+            {"type": "agent_start"},
+            {
+                "type": "message_start",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "429 rate limited",
+                },
+            },
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "429 rate limited",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
+
+        proc = AsyncMock()
+        proc.returncode = None
+        proc.stdin = AsyncMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(stdout_data.encode())
+        proc.stdout.feed_eof()
+        proc.stderr = asyncio.StreamReader()
+
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            session = _make_session()
+            result = await session.send_prompt("test")
+
+        assert "429 rate limited" in result
+
+    async def test_auto_retry_resets_and_reads_final(self):
+        """Pi auto-retry cycles are handled; final response is used."""
+        events = [
+            _ACK,
+            {"type": "agent_start"},
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "429 limit",
+                },
+            },
+            {"type": "agent_end", "willRetry": True},
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "errorMessage": "429 limit",
+            },
+            {"type": "agent_start"},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "success",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
+
+        proc = AsyncMock()
+        proc.returncode = None
+        proc.stdin = AsyncMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(stdout_data.encode())
+        proc.stdout.feed_eof()
+        proc.stderr = asyncio.StreamReader()
+
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            session = _make_session()
+            result = await session.send_prompt("test")
+
+        assert result == "success"
+
     async def test_send_prompt_empty_response(self):
         events = [
+            _ACK,
             {"type": "agent_start"},
             {"type": "agent_end"},
         ]
@@ -102,9 +199,87 @@ class TestAgentSession:
 
         assert result == "I had nothing to say."
 
+    async def test_thinking_fallback_when_no_text_delta(self):
+        """When model only emits thinking_delta, use thinking as response."""
+        events = [
+            _ACK,
+            {"type": "agent_start"},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "thinking_start",
+                },
+            },
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "thinking_delta",
+                    "delta": "The answer is 42.",
+                },
+            },
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "thinking_end",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
+
+        proc = AsyncMock()
+        proc.returncode = None
+        proc.stdin = AsyncMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(stdout_data.encode())
+        proc.stdout.feed_eof()
+        proc.stderr = asyncio.StreamReader()
+
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            session = _make_session()
+            result = await session.send_prompt("test")
+
+        assert result == "The answer is 42."
+
+    async def test_unhandled_delta_type_logged(self, caplog):
+        """Unknown delta types are logged at debug level."""
+        events = [
+            _ACK,
+            {"type": "agent_start"},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "mystery_delta",
+                    "delta": "?",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
+
+        proc = AsyncMock()
+        proc.returncode = None
+        proc.stdin = AsyncMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(stdout_data.encode())
+        proc.stdout.feed_eof()
+        proc.stderr = asyncio.StreamReader()
+
+        import logging
+
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=proc),
+            caplog.at_level(logging.DEBUG, logger="klangk_backend.agent"),
+        ):
+            session = _make_session()
+            await session.send_prompt("test")
+
+        assert any("mystery_delta" in r.message for r in caplog.records)
+
     async def test_process_dies_raises(self):
         """AgentProcessDied raised when process exits mid-prompt."""
         events = [
+            _ACK,
             {"type": "agent_start"},
             {
                 "type": "message_update",
@@ -147,6 +322,8 @@ class TestAgentSession:
     async def test_reuses_running_proc(self):
         """Second prompt reuses the existing subprocess."""
         events = [
+            _ACK,
+            {"type": "agent_start"},
             {
                 "type": "message_update",
                 "assistantMessageEvent": {
@@ -155,6 +332,8 @@ class TestAgentSession:
                 },
             },
             {"type": "agent_end"},
+            _ACK,
+            {"type": "agent_start"},
             {
                 "type": "message_update",
                 "assistantMessageEvent": {
@@ -193,7 +372,9 @@ class TestAgentSession:
         proc.stdin = AsyncMock()
         proc.stdout = asyncio.StreamReader()
         # Feed partial data then EOF
-        proc.stdout.feed_data(b'{"type":"agent_start"}\n')
+        proc.stdout.feed_data(
+            json.dumps(_ACK).encode() + b"\n" + b'{"type":"agent_start"}\n'
+        )
         proc.stdout.feed_eof()
         proc.stderr = asyncio.StreamReader()
 
@@ -206,6 +387,8 @@ class TestAgentSession:
     async def test_malformed_jsonl_skipped(self):
         """Non-JSON lines are silently skipped."""
         lines = [
+            json.dumps(_ACK),
+            json.dumps({"type": "agent_start"}),
             "not json at all",
             json.dumps(
                 {
@@ -233,6 +416,92 @@ class TestAgentSession:
             result = await session.send_prompt("test")
 
         assert result == "ok"
+
+    async def test_skip_to_agent_start_discards_stale(self):
+        """_skip_to_agent_start skips stale events."""
+        session = _make_session()
+        reader = asyncio.StreamReader()
+        # Stale events from a prior turn, then agent_start
+        reader.feed_data(
+            json.dumps({"type": "message_update"}).encode()
+            + b"\n"
+            + json.dumps({"type": "agent_end"}).encode()
+            + b"\n"
+            + json.dumps({"type": "agent_start"}).encode()
+            + b"\n"
+        )
+        reader.feed_eof()
+        await session._skip_to_agent_start(reader)
+
+    async def test_skip_to_agent_start_eof(self):
+        """_skip_to_agent_start returns on EOF."""
+        session = _make_session()
+        reader = asyncio.StreamReader()
+        reader.feed_eof()
+        await session._skip_to_agent_start(reader)
+
+    async def test_skip_to_agent_start_skips_non_json(self):
+        """_skip_to_agent_start skips malformed lines."""
+        session = _make_session()
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            b"garbage\n" + json.dumps({"type": "agent_start"}).encode() + b"\n"
+        )
+        reader.feed_eof()
+        await session._skip_to_agent_start(reader)
+
+    async def test_ack_timeout_still_proceeds(self):
+        """If ack times out, send_prompt still tries to read response."""
+        events = [
+            # No _ACK — simulates ack timeout
+            {"type": "agent_start"},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "late",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
+
+        proc = AsyncMock()
+        proc.returncode = None
+        proc.stdin = AsyncMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(stdout_data.encode())
+        proc.stdout.feed_eof()
+        proc.stderr = asyncio.StreamReader()
+
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=proc),
+            patch(
+                "klangk_backend.agent.AgentSession._wait_for_ack",
+                side_effect=asyncio.TimeoutError,
+            ),
+        ):
+            session = _make_session()
+            result = await session.send_prompt("test")
+
+        # Should still get a result (skip_to_agent_start finds it)
+        assert result == "late"
+
+    async def test_wait_for_ack_eof(self):
+        """_wait_for_ack returns on EOF without error."""
+        session = _make_session()
+        reader = asyncio.StreamReader()
+        reader.feed_eof()
+        await session._wait_for_ack(reader)  # should not raise
+
+    async def test_wait_for_ack_skips_non_json(self):
+        """_wait_for_ack skips malformed lines before ack."""
+        session = _make_session()
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"garbage\n")
+        reader.feed_data(json.dumps(_ACK).encode() + b"\n")
+        reader.feed_eof()
+        await session._wait_for_ack(reader)  # should not raise
 
 
 class TestGetSession:
