@@ -1,6 +1,10 @@
 """Tests for util: file-backed secret resolution."""
 
-from klangk_backend.util import resolve_env_secret, resolve_file_secret
+from klangk_backend.util import (
+    resolve_env_bool,
+    resolve_env_secret,
+    resolve_file_secret,
+)
 
 
 class TestResolveEnvSecret:
@@ -29,6 +33,31 @@ class TestResolveEnvSecret:
     def test_empty_string_returned_as_is(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "")
         assert resolve_env_secret("TEST_SECRET") == ""
+
+
+class TestResolveEnvBool:
+    def test_unset_default_false(self, monkeypatch):
+        monkeypatch.delenv("TEST_BOOL", raising=False)
+        assert resolve_env_bool("TEST_BOOL") is False
+
+    def test_unset_default_true(self, monkeypatch):
+        monkeypatch.delenv("TEST_BOOL", raising=False)
+        assert resolve_env_bool("TEST_BOOL", default=True) is True
+
+    def test_truthy_values(self, monkeypatch):
+        for val in ("1", "true", "True", "YES", "yes"):
+            monkeypatch.setenv("TEST_BOOL", val)
+            assert resolve_env_bool("TEST_BOOL") is True
+
+    def test_falsy_values(self, monkeypatch):
+        for val in ("0", "false", "False", "NO", "no", "maybe", ""):
+            monkeypatch.setenv("TEST_BOOL", val)
+            assert resolve_env_bool("TEST_BOOL") is False
+            assert resolve_env_bool("TEST_BOOL", default=True) is False
+
+    def test_whitespace_stripped(self, monkeypatch):
+        monkeypatch.setenv("TEST_BOOL", " true ")
+        assert resolve_env_bool("TEST_BOOL") is True
 
 
 class TestResolveFileSecret:

@@ -483,6 +483,7 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
         workspace_token = auth.create_workspace_token(workspace_id)
         env_vars.append(f"KLANGK_WORKSPACE_TOKEN={workspace_token}")
+        allow_sudo = util.resolve_env_bool("KLANGK_ALLOW_SUDO")
 
         if extra_env:
             for k, v in extra_env.items():
@@ -629,6 +630,28 @@ class ContainerRegistry:
                 "workspace-open: boot container (podman start): %.3fs",
                 time.monotonic() - t_podman_start,
             )
+
+            # Configure sudo inside the container.  The image ships without
+            # a sudoers rule; we exec as root to write it based on the
+            # KLANGK_ALLOW_SUDO setting.
+            if allow_sudo:
+                sudoers_rule = "klangk ALL=(ALL) NOPASSWD:ALL"
+            else:
+                # Explicitly deny all sudo, even if someone sets a password
+                # on the klangk user.
+                sudoers_rule = "klangk ALL=(ALL) !ALL"
+            await podman.exec_container(
+                cid,
+                [
+                    "sh",
+                    "-c",
+                    f'echo "{sudoers_rule}"'
+                    " > /etc/sudoers.d/klangk"
+                    " && chmod 0440 /etc/sudoers.d/klangk",
+                ],
+                user="root",
+            )
+
             return cid
 
         container_id = await asyncio.shield(_create_and_start())

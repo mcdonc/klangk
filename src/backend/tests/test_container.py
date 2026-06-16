@@ -261,6 +261,7 @@ def patch_podman(**overrides):
         "start_container": AsyncMock(),
         "remove_container": AsyncMock(),
         "list_containers": AsyncMock(return_value=[]),
+        "exec_container": AsyncMock(return_value=(0, "", "")),
         "inspect_volume": AsyncMock(return_value=None),
         "create_volume": AsyncMock(
             return_value={"Name": "v", "CreatedAt": ""}
@@ -296,6 +297,82 @@ class TestStartContainer:
         assert status == "created"
         p.start_container.assert_awaited_once_with("new-cid")
         assert workspace["id"] in container.registry.states
+
+    async def test_sudo_disabled_by_default(self, workspace):
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        p.exec_container.assert_awaited_once()
+        call_args = p.exec_container.call_args
+        assert call_args.kwargs.get("user") == "root"
+        assert "!ALL" in str(call_args.args[1])
+
+    async def test_sudo_enabled(self, workspace, monkeypatch):
+        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        p.exec_container.assert_awaited_once()
+        call_args = p.exec_container.call_args
+        assert call_args.kwargs.get("user") == "root"
+        assert "NOPASSWD:ALL" in str(call_args.args[1])
+
+    async def test_sudo_disabled(self, workspace, monkeypatch):
+        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "0")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        p.exec_container.assert_awaited_once()
+        assert "!ALL" in str(p.exec_container.call_args.args[1])
+
+    async def test_sudo_disabled_false(self, workspace, monkeypatch):
+        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        p.exec_container.assert_awaited_once()
+        assert "!ALL" in str(p.exec_container.call_args.args[1])
+
+    async def test_sudo_toggled_off_to_on(self, workspace, monkeypatch):
+        """Start with sudo disabled, restart with sudo enabled."""
+        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert "!ALL" in str(p.exec_container.call_args.args[1])
+
+        # "Restart" — remove container state so start_container creates a new one
+        container.registry.states.clear()
+        await model.update_workspace_container(workspace["id"], None)
+        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert "NOPASSWD:ALL" in str(p.exec_container.call_args.args[1])
+
+    async def test_sudo_toggled_on_to_off(self, workspace, monkeypatch):
+        """Start with sudo enabled, restart with sudo disabled."""
+        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert "NOPASSWD:ALL" in str(p.exec_container.call_args.args[1])
+
+        container.registry.states.clear()
+        await model.update_workspace_container(workspace["id"], None)
+        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert "!ALL" in str(p.exec_container.call_args.args[1])
 
     async def test_container_id_persisted_before_start(self, workspace, user):
         # If `start` fails, the id created just before it must already be on

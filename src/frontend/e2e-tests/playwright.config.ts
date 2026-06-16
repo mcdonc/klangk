@@ -76,6 +76,7 @@ export default defineConfig({
         "terminal-tabs.spec.ts",
         "shared-terminals.spec.ts",
         "tab-speed.spec.ts",
+        "sudo.spec.ts",
       ],
       use: chromiumUse,
     },
