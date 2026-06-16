@@ -101,7 +101,11 @@ export default defineConfig({
       // Documentation screenshot capture — not part of CI.
       // Run with: --project=docs-screenshots
       name: "docs-screenshots",
-      testMatch: "docs-screenshots.spec.ts",
+      testMatch: [
+        "docs-screenshots.spec.ts",
+        "docs-chat-screenshots.spec.ts",
+        "docs-chat-screenshots-dev.spec.ts",
+      ],
       use: chromiumUse,
     },
   ],
