@@ -34,8 +34,16 @@ Guidelines:
 logger = logging.getLogger(__name__)
 
 
-class AgentProcessDied(Exception):
+class AgentError(Exception):
+    """Base class for agent errors."""
+
+
+class AgentProcessDied(AgentError):
     """Raised when the Pi RPC subprocess exits unexpectedly."""
+
+
+class AgentSetupError(AgentError):
+    """Raised when the agent's home directory cannot be set up."""
 
 
 # Registry of active agent sessions keyed by container ID.
@@ -49,20 +57,90 @@ class AgentSession:
         self.container_id = container_id
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
+        self._home_ready = False
+
+    async def _ensure_home(self) -> str:
+        """Ensure the agent has a home directory with Pi config.
+
+        Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount
+        and populates it via ``setup_clankers.py`` (the same path real
+        users take) by running a login shell.  Returns the container
+        path, e.g. ``/home/MrBoops``.
+        """
+        if self._home_ready:
+            from . import model
+
+            return f"/home/{model.AGENT_HANDLE}"
+
+        from . import model
+        from . import workspaces
+        from . import container
+
+        # Look up the workspace via the container registry.
+        workspace_id = container.registry.workspace_id_for(self.container_id)
+        if not workspace_id:
+            raise AgentSetupError(
+                f"No workspace found for container {self.container_id}"
+            )
+        ws = await model.get_workspace_by_id(workspace_id)
+        if not ws:
+            raise AgentSetupError(
+                f"Workspace {workspace_id} not found in database"
+            )
+        owner_id = ws["user_id"]
+        workspace_home = workspaces.home_path(owner_id, workspace_id)
+
+        container_home, created = workspaces.ensure_home_symlink(
+            workspace_home, model.AGENT_HANDLE, model.AGENT_USER_ID
+        )
+        if created:
+            await workspaces.populate_home_skel(
+                self.container_id, model.AGENT_USER_ID
+            )
+
+        # Run setup-clankers to populate ~/.pi/agent/ with models.json,
+        # settings.json, etc. — the same script that /etc/bash.bashrc
+        # runs for interactive user shells.
+        proc = await asyncio.create_subprocess_exec(
+            podman.PODMAN_BIN,
+            "exec",
+            "-u",
+            "klangk",
+            "-e",
+            f"HOME={container_home}",
+            self.container_id,
+            "python3",
+            "/opt/klangk/bin/setup-clankers",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=podman.subprocess_env(),
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=30)
+        self._home_ready = True
+        logger.info(
+            "Agent home ready at %s for container %s",
+            container_home,
+            self.container_id,
+        )
+        return container_home
 
     async def _ensure_started(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:
             return self._proc
         from . import model
 
-        system_prompt = _CHAT_SYSTEM_PROMPT.format(name=model.AGENT_EMAIL)
+        container_home = await self._ensure_home()
+        system_prompt = _CHAT_SYSTEM_PROMPT.format(name=model.AGENT_HANDLE)
         argv = [
             "exec",
             "-i",
             "-u",
             "klangk",
+            "-e",
+            f"HOME={container_home}",
             "-w",
-            "/home",
+            container_home,
             self.container_id,
             "pi",
             "--mode",

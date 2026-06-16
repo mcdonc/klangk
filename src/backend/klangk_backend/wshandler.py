@@ -2038,7 +2038,7 @@ async def _handle_agent_mention(
             {
                 "type": "agent_thinking",
                 "thinking": True,
-                "name": model.AGENT_EMAIL,
+                "name": model.AGENT_HANDLE,
             }
         )
 
@@ -2054,7 +2054,7 @@ async def _handle_agent_mention(
             workspace_id,
             model.AGENT_USER_ID,
             model.AGENT_EMAIL,
-            f"{model.AGENT_EMAIL} has disconnected",
+            f"{model.AGENT_HANDLE} has disconnected",
             message_type=model.MSG_SYSTEM,
         )
         session = state.get_session(workspace_id)

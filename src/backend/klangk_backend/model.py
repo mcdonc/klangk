@@ -25,9 +25,9 @@ MSG_SYSTEM = 2
 
 # Agent identity
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
-_AGENT_NAME = os.environ.get("KLANGK_CHAT_AGENT_NAME", "MrBoops")
-AGENT_EMAIL = _AGENT_NAME
-AGENT_MENTION = _AGENT_NAME
+AGENT_EMAIL = os.environ.get("KLANGK_CHAT_AGENT_EMAIL", "MrBoops@example.com")
+AGENT_HANDLE = os.environ.get("KLANGK_CHAT_AGENT_HANDLE", "MrBoops")
+AGENT_MENTION = AGENT_HANDLE
 
 
 async def get_db() -> aiosqlite.Connection:

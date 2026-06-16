@@ -24,6 +24,13 @@ def _clear_agents():
     _agents.clear()
 
 
+def _make_session(container_id="cid"):
+    """Create an AgentSession with home setup already done."""
+    s = AgentSession(container_id)
+    s._home_ready = True
+    return s
+
+
 class TestAgentSession:
     async def test_send_prompt_collects_text_deltas(self):
         events = [
@@ -55,7 +62,7 @@ class TestAgentSession:
         proc.stderr = asyncio.StreamReader()
 
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            session = AgentSession("cid")
+            session = _make_session()
             result = await session.send_prompt("test")
 
         assert result == "Hello world"
@@ -69,7 +76,7 @@ class TestAgentSession:
         proc.stderr = asyncio.StreamReader()
 
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            session = AgentSession("cid")
+            session = _make_session()
             result = await session.send_prompt("test", timeout=0.1)
 
         assert "timed out" in result
@@ -90,7 +97,7 @@ class TestAgentSession:
         proc.stderr = asyncio.StreamReader()
 
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            session = AgentSession("cid")
+            session = _make_session()
             result = await session.send_prompt("test")
 
         assert result == "I had nothing to say."
@@ -118,7 +125,7 @@ class TestAgentSession:
         proc.stderr = asyncio.StreamReader()
 
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            session = AgentSession("cid")
+            session = _make_session()
             # Simulate process dying after reading
             proc.returncode = 1
             with pytest.raises(AgentProcessDied):
@@ -130,7 +137,7 @@ class TestAgentSession:
         proc.kill = MagicMock()
         proc.wait = AsyncMock()
 
-        session = AgentSession("cid")
+        session = _make_session()
         session._proc = proc
         await session.stop()
 
@@ -170,7 +177,7 @@ class TestAgentSession:
         with patch(
             "asyncio.create_subprocess_exec", return_value=proc
         ) as mock_exec:
-            session = AgentSession("cid")
+            session = _make_session()
             r1 = await session.send_prompt("first")
             r2 = await session.send_prompt("second")
 
@@ -191,7 +198,7 @@ class TestAgentSession:
         proc.stderr = asyncio.StreamReader()
 
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            session = AgentSession("cid")
+            session = _make_session()
             result = await session.send_prompt("test")
 
         assert result == "I had nothing to say."
@@ -222,7 +229,7 @@ class TestAgentSession:
         proc.stderr = asyncio.StreamReader()
 
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            session = AgentSession("cid")
+            session = _make_session()
             result = await session.send_prompt("test")
 
         assert result == "ok"
@@ -238,6 +245,79 @@ class TestGetSession:
         s1 = await get_session("cid-1")
         s2 = await get_session("cid-1")
         assert s1 is s2
+
+
+class TestEnsureHome:
+    async def test_ensure_home_creates_dir_and_runs_login_shell(
+        self, tmp_path
+    ):
+        from klangk_backend import container, model, workspaces
+
+        session = AgentSession("cid")
+        # Simulate registry mapping so workspace_id_for("cid") returns "ws1"
+        container.registry.track_activity("cid", "ws1")
+
+        fake_ws = {"user_id": "owner1"}
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with (
+            patch.object(
+                model,
+                "get_workspace_by_id",
+                return_value=fake_ws,
+            ),
+            patch.object(
+                workspaces,
+                "home_path",
+                return_value=fake_home,
+            ),
+            patch.object(
+                workspaces,
+                "ensure_home_symlink",
+                return_value=("/home/MrBoops", True),
+            ) as mock_symlink,
+            patch.object(
+                workspaces,
+                "populate_home_skel",
+                new_callable=AsyncMock,
+            ) as mock_skel,
+            patch(
+                "asyncio.create_subprocess_exec",
+                return_value=mock_proc,
+            ),
+        ):
+            result = await session._ensure_home()
+
+        assert result == "/home/MrBoops"
+        assert session._home_ready is True
+        mock_symlink.assert_called_once()
+        mock_skel.assert_awaited_once_with(
+            "cid", "00000000-0000-0000-0000-000000000001"
+        )
+        container.registry.states.pop("ws1", None)
+
+    async def test_ensure_home_cached(self):
+        session = AgentSession("cid")
+        session._home_ready = True
+        result = await session._ensure_home()
+        assert result == "/home/MrBoops"
+
+    async def test_ensure_home_workspace_not_in_db(self):
+        from klangk_backend import container, model
+        from klangk_backend.agent import AgentSetupError
+
+        session = AgentSession("cid")
+        container.registry.track_activity("cid", "ws-gone")
+
+        with patch.object(model, "get_workspace_by_id", return_value=None):
+            with pytest.raises(AgentSetupError, match="not found in database"):
+                await session._ensure_home()
+
+        container.registry.states.pop("ws-gone", None)
 
 
 class TestStopSession:
@@ -260,18 +340,18 @@ class TestIsRunning:
         assert not is_running("cid")
 
     def test_no_proc(self):
-        _agents["cid"] = AgentSession("cid")
+        _agents["cid"] = _make_session()
         assert not is_running("cid")
 
     def test_proc_alive(self):
-        s = AgentSession("cid")
+        s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = None
         _agents["cid"] = s
         assert is_running("cid")
 
     def test_proc_dead(self):
-        s = AgentSession("cid")
+        s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = 1
         _agents["cid"] = s
@@ -283,14 +363,14 @@ class TestAnyRunning:
         assert not any_running()
 
     def test_one_alive(self):
-        s = AgentSession("cid")
+        s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = None
         _agents["cid"] = s
         assert any_running()
 
     def test_all_dead(self):
-        s = AgentSession("cid")
+        s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = 0
         _agents["cid"] = s
