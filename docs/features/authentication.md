@@ -16,7 +16,8 @@ See [OIDC Configuration](../reference/oidc.md) for detailed setup instructions.
 
 ## JWT Sessions
 
-- JWT tokens (24hr expiry, secret configurable via `KLANGK_JWT_SECRET`) with token blocklist for logout
+- JWT tokens (24hr expiry, secret configurable via `KLANGK_JWT_SECRET`) with token blocklist for logout; no refresh/renewal mechanism — users must re-authenticate when tokens expire
+- Workspace containers receive a separate JWT (`KLANGK_WORKSPACE_TOKEN`) at startup for bridge API calls; lifetime controlled by `KLANGK_WORKSPACE_TOKEN_HOURS` (default 24h). No renewal — containers running longer than the token lifetime lose bridge access until restarted. See [Workspace JWT Auth](../architecture/workspace-jwt.md) for details.
 - Session persists across page reloads (async token loading before routing)
 - Deep link preservation: unauthenticated visits to protected URLs redirect to login, then return to the original URL after successful login
 
