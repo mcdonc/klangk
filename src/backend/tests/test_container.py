@@ -303,11 +303,10 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        # Default is disabled — should rm the sudoers file
         p.exec_container.assert_awaited_once()
         call_args = p.exec_container.call_args
         assert call_args.kwargs.get("user") == "root"
-        assert call_args.args[1] == ["rm", "-f", "/etc/sudoers.d/klangk"]
+        assert "!ALL" in str(call_args.args[1])
 
     async def test_sudo_enabled(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
@@ -318,7 +317,7 @@ class TestStartContainer:
         p.exec_container.assert_awaited_once()
         call_args = p.exec_container.call_args
         assert call_args.kwargs.get("user") == "root"
-        assert "sudoers" in str(call_args.args[1])
+        assert "NOPASSWD:ALL" in str(call_args.args[1])
 
     async def test_sudo_disabled(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "0")
@@ -327,9 +326,7 @@ class TestStartContainer:
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         p.exec_container.assert_awaited_once()
-        call_args = p.exec_container.call_args
-        assert call_args.kwargs.get("user") == "root"
-        assert call_args.args[1] == ["rm", "-f", "/etc/sudoers.d/klangk"]
+        assert "!ALL" in str(p.exec_container.call_args.args[1])
 
     async def test_sudo_disabled_false(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
@@ -338,11 +335,7 @@ class TestStartContainer:
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         p.exec_container.assert_awaited_once()
-        assert p.exec_container.call_args.args[1] == [
-            "rm",
-            "-f",
-            "/etc/sudoers.d/klangk",
-        ]
+        assert "!ALL" in str(p.exec_container.call_args.args[1])
 
     async def test_sudo_toggled_off_to_on(self, workspace, monkeypatch):
         """Start with sudo disabled, restart with sudo enabled."""
@@ -351,11 +344,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        assert p.exec_container.call_args.args[1] == [
-            "rm",
-            "-f",
-            "/etc/sudoers.d/klangk",
-        ]
+        assert "!ALL" in str(p.exec_container.call_args.args[1])
 
         # "Restart" — remove container state so start_container creates a new one
         container.registry.states.clear()
@@ -365,7 +354,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        assert "sudoers" in str(p.exec_container.call_args.args[1])
+        assert "NOPASSWD:ALL" in str(p.exec_container.call_args.args[1])
 
     async def test_sudo_toggled_on_to_off(self, workspace, monkeypatch):
         """Start with sudo enabled, restart with sudo disabled."""
@@ -374,7 +363,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        assert "sudoers" in str(p.exec_container.call_args.args[1])
+        assert "NOPASSWD:ALL" in str(p.exec_container.call_args.args[1])
 
         container.registry.states.clear()
         await model.update_workspace_container(workspace["id"], None)
@@ -383,11 +372,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        assert p.exec_container.call_args.args[1] == [
-            "rm",
-            "-f",
-            "/etc/sudoers.d/klangk",
-        ]
+        assert "!ALL" in str(p.exec_container.call_args.args[1])
 
     async def test_container_id_persisted_before_start(self, workspace, user):
         # If `start` fails, the id created just before it must already be on

@@ -632,26 +632,25 @@ class ContainerRegistry:
             )
 
             # Configure sudo inside the container.  The image ships without
-            # a sudoers rule; we exec as root to write or remove it based on
-            # the KLANGK_ALLOW_SUDO setting.
+            # a sudoers rule; we exec as root to write it based on the
+            # KLANGK_ALLOW_SUDO setting.
             if allow_sudo:
-                await podman.exec_container(
-                    cid,
-                    [
-                        "sh",
-                        "-c",
-                        'echo "klangk ALL=(ALL) NOPASSWD:ALL"'
-                        " > /etc/sudoers.d/klangk"
-                        " && chmod 0440 /etc/sudoers.d/klangk",
-                    ],
-                    user="root",
-                )
+                sudoers_rule = "klangk ALL=(ALL) NOPASSWD:ALL"
             else:
-                await podman.exec_container(
-                    cid,
-                    ["rm", "-f", "/etc/sudoers.d/klangk"],
-                    user="root",
-                )
+                # Explicitly deny all sudo, even if someone sets a password
+                # on the klangk user.
+                sudoers_rule = "klangk ALL=(ALL) !ALL"
+            await podman.exec_container(
+                cid,
+                [
+                    "sh",
+                    "-c",
+                    f'echo "{sudoers_rule}"'
+                    " > /etc/sudoers.d/klangk"
+                    " && chmod 0440 /etc/sudoers.d/klangk",
+                ],
+                user="root",
+            )
 
             return cid
 
