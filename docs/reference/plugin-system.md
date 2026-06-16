@@ -110,10 +110,9 @@ If an environment variable is not set, the `default` from the plugin manifest is
 
 ### How It Works
 
-1. **Build time**: `scripts/collect_plugin_config.py` scans all `plugins/*/package.json` files for `klangk.config` entries and writes a merged manifest to `$KLANGK_PLUGINS_DIR/.plugin_config.json`. This runs automatically during `build-workspace-image`.
-2. **Startup**: The backend loads `.plugin_config.json` and resolves each declared key from the server environment (with fallback to declared defaults).
-3. **Container creation**: Keys with `scope: "container"` or `"both"` are injected as env vars into workspace containers alongside system env vars like `KLANGK_BRIDGE_URL`.
-4. **Frontend requests**: Keys with `scope: "frontend"` or `"both"` are included in the `GET /api/config` response. Dart plugins can fetch this endpoint to discover their configuration.
+1. **Startup**: The backend scans `$KLANGK_PLUGINS_DIR/*/package.json` for `klangk.config` entries and resolves each declared key from the server environment (with fallback to declared defaults).
+2. **Container creation**: Keys with `scope: "container"` or `"both"` are injected as env vars into workspace containers alongside system env vars like `KLANGK_BRIDGE_URL`.
+3. **Frontend requests**: Keys with `scope: "frontend"` or `"both"` are included in the `GET /api/config` response. Dart plugins can fetch this endpoint to discover their configuration.
 
 ### Example: Accessing Config in a Dart Plugin
 
