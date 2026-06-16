@@ -4,7 +4,6 @@ tmp/
 # devenv
 .devenv/
 .devenv.flake.nix
-devenv.lock
 devenv.local.nix
 
 # Python
