@@ -37,6 +37,11 @@ RUN chmod +x /opt/klangk/entrypoint.sh \
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 
+# Git credential helper: delegates to the user's browser via the bridge.
+COPY git-credential-klangk.py /usr/local/bin/git-credential-klangk
+RUN chmod +x /usr/local/bin/git-credential-klangk
+RUN git config --system credential.helper klangk
+
 # Fix non-root group ownership that causes crun fchownat errors with
 # --userns=keep-id. crun cannot remap groups like utmp, shadow, adm, ssh
 # in rootless user namespaces. The find handles most files; explicit
