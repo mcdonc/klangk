@@ -1474,7 +1474,7 @@ ROLE_GROUP_SUFFIXES = ["owners", "coders", "collaborators", "spectators"]
 @router.get("/workspaces/{workspace_id}/roles")
 async def get_workspace_roles(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("share")),
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
 ):
     """Return the workspace's role groups with their members."""
     roles = []
@@ -1506,7 +1506,7 @@ async def add_to_workspace_role(
     workspace_id: str,
     role: str,
     body: AddToRoleRequest,
-    user: dict = Depends(acl.has_permission("share")),
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
 ):
     """Add a user to a workspace role group."""
     if role not in ROLE_GROUP_SUFFIXES:
@@ -1527,7 +1527,7 @@ async def remove_from_workspace_role(
     workspace_id: str,
     role: str,
     member_id: str,
-    user: dict = Depends(acl.has_permission("share")),
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
 ):
     """Remove a user from a workspace role group."""
     if role not in ROLE_GROUP_SUFFIXES:
