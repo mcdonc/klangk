@@ -170,7 +170,24 @@ class AgentSession:
             proc.stdin.write((cmd + "\n").encode())
             await proc.stdin.drain()
 
-            # Collect text deltas until agent_end
+            # Wait for the command ack before reading events.  Pi
+            # sends {"type":"response","command":"prompt","success":true}
+            # first; any lines before it are leftover from a previous
+            # turn and must be discarded.
+            try:
+                await asyncio.wait_for(
+                    self._wait_for_ack(proc.stdout), timeout=30
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Pi RPC ack timed out for %s", self.container_id
+                )
+
+            # Skip past any leftover events to the current turn's
+            # agent_start, then collect deltas until agent_end.
+            await asyncio.wait_for(
+                self._skip_to_agent_start(proc.stdout), timeout=30
+            )
             text_parts: list[str] = []
             try:
                 response = await asyncio.wait_for(
@@ -207,12 +224,51 @@ class AgentSession:
             except Exception:  # pragma: no cover
                 pass
 
+    async def _wait_for_ack(self, stdout: asyncio.StreamReader) -> None:
+        """Read lines until the Pi RPC command acknowledgement.
+
+        Discards any leftover events from a previous turn that may
+        still be in the pipe.
+        """
+        while True:
+            line = await stdout.readline()
+            if not line:
+                return
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                event.get("type") == "response"
+                and event.get("command") == "prompt"
+            ):
+                return
+
+    async def _skip_to_agent_start(self, stdout: asyncio.StreamReader) -> None:
+        """Skip events until agent_start for the current turn.
+
+        After the ack, Pi emits agent_start before sending any deltas.
+        If there are leftover events from a prior turn (e.g. after a
+        timeout), they appear before agent_start and must be discarded.
+        """
+        while True:
+            line = await stdout.readline()
+            if not line:
+                return
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "agent_start":
+                return
+
     async def _read_until_agent_end(
         self,
         stdout: asyncio.StreamReader,
         text_parts: list[str],
     ) -> str:
         """Read JSONL events from Pi until agent_end."""
+        thinking_parts: list[str] = []
         while True:
             line = await stdout.readline()
             if not line:
@@ -227,8 +283,13 @@ class AgentSession:
 
             if event_type == "message_update":
                 delta = event.get("assistantMessageEvent", {})
-                if delta.get("type") == "text_delta":
+                delta_type = delta.get("type", "")
+                if delta_type == "text_delta":
                     text_parts.append(delta.get("delta", ""))
+                elif delta_type == "thinking_delta":
+                    thinking_parts.append(delta.get("delta", ""))
+                elif delta_type not in ("thinking_start", "thinking_end"):
+                    logger.debug("Unhandled delta type: %s", delta_type)
 
             elif event_type == "agent_end":
                 break
@@ -236,6 +297,12 @@ class AgentSession:
         text = "".join(text_parts)
         # Strip <think>...</think> tags that some models emit
         text = _THINK_RE.sub("", text).strip()
+        if not text:
+            # Some models put their response in thinking only (no
+            # text_delta). Fall back to the thinking content, stripped
+            # of reasoning artifacts.
+            text = "".join(thinking_parts).strip()
+            text = _THINK_RE.sub("", text).strip()
         return text or "I had nothing to say."
 
     async def stop(self) -> None:
