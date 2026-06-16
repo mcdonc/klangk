@@ -29,9 +29,20 @@ fi
 
 # Export workspace image so it can be embedded in the host image.
 WORKSPACE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/klangk-workspace-XXXXXX")
-trap 'rm -rf "$WORKSPACE_DIR"' EXIT
+STAGING_DIR=$(mktemp -d "${TMPDIR:-/tmp}/klangk-staging-XXXXXX")
+trap 'rm -rf "$WORKSPACE_DIR" "$STAGING_DIR"' EXIT
 echo "Exporting workspace image $WORKSPACE_IMAGE from podman ..."
 "$PODMAN" save "${POLICY_ARGS[@]}" -o "$WORKSPACE_DIR/workspace.tar" "$WORKSPACE_IMAGE"
+
+# Stage plugin directories (skip generated dirs like .dart/, .docker/)
+PLUGINS_STAGING="$STAGING_DIR/plugins"
+mkdir -p "$PLUGINS_STAGING"
+for d in "$KLANGK_PLUGINS_DIR"/*/; do
+  [ -d "$d" ] || continue
+  name=$(basename "$d")
+  [[ $name == .* ]] && continue
+  cp -r "$d" "$PLUGINS_STAGING/$name"
+done
 
 echo "Building $IMAGE $VERSION ..."
 
@@ -43,6 +54,7 @@ docker build \
   --build-arg "KLANGK_BUILD_TIMESTAMP=$TIMESTAMP" \
   --build-context "hostvenv=$DEVENV_STATE/venv" \
   --build-context "workspace-image=$WORKSPACE_DIR" \
+  --build-context "plugins=$PLUGINS_STAGING" \
   -t "$IMAGE:latest" \
   -t "$IMAGE:$VERSION" \
   "$@" \
