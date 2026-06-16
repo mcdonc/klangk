@@ -11,7 +11,8 @@ export default function (pi: any) {
     name: "marquee",
     description:
       "Display a flashy scrolling marquee banner with rainbow animations. " +
-      "Use this to announce something exciting or celebrate achievements.",
+      "Only use this when the user explicitly asks for a marquee or banner. " +
+      "Never use this for greetings or unprompted messages.",
     parameters: Type.Object({
       text: Type.Optional(
         Type.String({

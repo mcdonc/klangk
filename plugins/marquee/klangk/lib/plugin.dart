@@ -2,13 +2,14 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 class MarqueePlugin extends ToolPlugin with ChangeNotifier {
   String? _text;
   String _defaultText = 'Hello from Klangk!';
-  double _speed = 50;
+  double _speed = 200;
   bool _configLoaded = false;
 
   @override
@@ -31,7 +32,7 @@ class MarqueePlugin extends ToolPlugin with ChangeNotifier {
         if (text != null && text.isNotEmpty) _defaultText = text;
         final speed = data['klangk_marquee_speed'] as String?;
         if (speed != null && speed.isNotEmpty) {
-          _speed = double.tryParse(speed) ?? 50;
+          _speed = double.tryParse(speed) ?? 200;
         }
       }
     } catch (_) {
@@ -92,11 +93,13 @@ class _MarqueeOverlayState extends State<_MarqueeOverlay>
     _sparkleCtrl.addListener(_updateSparkles);
 
     widget.plugin.addListener(_onUpdate);
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
   void dispose() {
     widget.plugin.removeListener(_onUpdate);
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _scrollCtrl.dispose();
     _rainbowCtrl.dispose();
     _pulseCtrl.dispose();
@@ -112,6 +115,28 @@ class _MarqueeOverlayState extends State<_MarqueeOverlay>
       _text = widget.plugin._text;
     });
     if (_text != null) _startAnimation();
+  }
+
+  bool _onKey(KeyEvent event) {
+    if (_text != null &&
+        event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      _dismiss();
+      return true;
+    }
+    return false;
+  }
+
+  void _dismiss() {
+    _scrollCtrl.stop();
+    _fadeCtrl.reverse().then((_) {
+      if (mounted) {
+        setState(() {
+          _text = null;
+          widget.plugin._text = null;
+        });
+      }
+    });
   }
 
   void _startAnimation() {
@@ -165,16 +190,19 @@ class _MarqueeOverlayState extends State<_MarqueeOverlay>
       top: 0,
       left: 0,
       right: 0,
-      child: FadeTransition(
-        opacity: _fadeCtrl,
-        child: AnimatedBuilder(
-          animation: Listenable.merge([
-            _scrollCtrl,
-            _rainbowCtrl,
-            _pulseCtrl,
-            _sparkleCtrl,
-          ]),
-          builder: (context, _) => _buildBanner(context),
+      child: GestureDetector(
+        onTap: _dismiss,
+        child: FadeTransition(
+          opacity: _fadeCtrl,
+          child: AnimatedBuilder(
+            animation: Listenable.merge([
+              _scrollCtrl,
+              _rainbowCtrl,
+              _pulseCtrl,
+              _sparkleCtrl,
+            ]),
+            builder: (context, _) => _buildBanner(context),
+          ),
         ),
       ),
     );

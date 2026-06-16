@@ -70,6 +70,9 @@ def write_settings():
     model = os.environ.get("KLANGK_LLM_MODEL", "")
     image_settings["defaultProvider"] = "llm-proxy"
     image_settings["defaultModel"] = model
+    # Disable thinking by default — Ctrl+T toggle doesn't work in web
+    # terminals because the browser captures it.
+    image_settings["defaultThinkingLevel"] = "off"
     # Point at image extensions dir directly — Pi also auto-discovers
     # ~/.pi/agent/extensions/ for user-installed extensions.
     image_settings["extensions"] = [str(IMAGE_DIR / "extensions")]
