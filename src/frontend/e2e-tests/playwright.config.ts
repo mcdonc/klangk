@@ -10,7 +10,7 @@ const chromiumUse = {
   launchOptions: {
     executablePath:
       process.env.CHROME_PATH ||
-      `${BROWSERS}/chromium-1217/chrome-linux64/chrome`,
+      `${BROWSERS}/chromium-1223/chrome-linux64/chrome`,
     args: ["--enable-unsafe-swiftshader"],
   },
 };
@@ -22,7 +22,7 @@ const firefoxUse = {
     // runs (e.g. macOS, where the binary is firefox/Nightly.app/...), mirroring
     // CHROME_PATH above.
     executablePath:
-      process.env.FIREFOX_PATH || `${BROWSERS}/firefox-1511/firefox/firefox`,
+      process.env.FIREFOX_PATH || `${BROWSERS}/firefox-1522/firefox/firefox`,
     // Allow navigator.clipboard read/write in automation without a prompt, so
     // the paste e2e can seed the clipboard. (The fix's own read path uses the
     // native `paste` event and needs no permission.)
