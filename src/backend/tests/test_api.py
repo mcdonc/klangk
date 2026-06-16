@@ -19,7 +19,7 @@ from klangk_backend import (
     container,
     model,
     oidc,
-    plugin_config,
+    plugins,
     podman,
     workspaces as ws_mod,
     wshandler,
@@ -210,11 +210,9 @@ class TestConfig:
         assert "login_banner_title" in data
         assert "login_banner" in data
 
-    async def test_get_config_includes_plugin_config(
-        self, client, monkeypatch
-    ):
+    async def test_get_config_includes_plugins(self, client, monkeypatch):
         monkeypatch.setattr(
-            plugin_config,
+            plugins,
             "_declarations",
             {
                 "MY_PLUGIN_VAR": {
@@ -226,7 +224,7 @@ class TestConfig:
             },
         )
         monkeypatch.setattr(
-            plugin_config, "_values", {"MY_PLUGIN_VAR": "test-value"}
+            plugins, "_values", {"MY_PLUGIN_VAR": "test-value"}
         )
         resp = await client.get("/api/config")
         assert resp.status_code == 200

@@ -27,7 +27,7 @@ from . import (
     emailsvc,
     files,
     oidc,
-    plugin_config,
+    plugins,
     wshandler,
     model,
     workspaces,
@@ -167,7 +167,7 @@ async def get_config():
         "oidc_providers": oidc.list_providers(),
         "auth_modes": oidc.auth_modes(),
     }
-    config.update(plugin_config.frontend_config())
+    config.update(plugins.frontend_config())
     return config
 
 

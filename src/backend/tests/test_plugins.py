@@ -1,8 +1,8 @@
-"""Tests for plugin_config module."""
+"""Tests for plugins module."""
 
 import json
 
-from klangk_backend import plugin_config
+from klangk_backend import plugins
 
 
 def _make_plugin(tmp_path, name, config):
@@ -17,17 +17,17 @@ def _make_plugin(tmp_path, name, config):
 class TestPluginConfig:
     def test_load_no_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            plugin_config, "_PLUGINS_DIR", str(tmp_path / "nonexistent")
+            plugins, "_PLUGINS_DIR", str(tmp_path / "nonexistent")
         )
-        plugin_config.load()
-        assert plugin_config.container_env() == {}
-        assert plugin_config.frontend_config() == {}
+        plugins.load()
+        assert plugins.container_env() == {}
+        assert plugins.frontend_config() == {}
 
     def test_load_empty_dir(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
-        plugin_config.load()
-        assert plugin_config.container_env() == {}
-        assert plugin_config.frontend_config() == {}
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        plugins.load()
+        assert plugins.container_env() == {}
+        assert plugins.frontend_config() == {}
 
     def test_load_plugin_without_config(self, tmp_path, monkeypatch):
         plugin_dir = tmp_path / "no-config"
@@ -35,10 +35,10 @@ class TestPluginConfig:
         (plugin_dir / "package.json").write_text(
             json.dumps({"name": "@klangk/no-config"})
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
-        plugin_config.load()
-        assert plugin_config.container_env() == {}
-        assert plugin_config.frontend_config() == {}
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        plugins.load()
+        assert plugins.container_env() == {}
+        assert plugins.frontend_config() == {}
 
     def test_load_container_scope(self, tmp_path, monkeypatch):
         _make_plugin(
@@ -52,11 +52,11 @@ class TestPluginConfig:
                 }
             },
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
         monkeypatch.delenv("MY_API_KEY", raising=False)
-        plugin_config.load()
-        assert plugin_config.container_env() == {"MY_API_KEY": "default-val"}
-        assert plugin_config.frontend_config() == {}
+        plugins.load()
+        assert plugins.container_env() == {"MY_API_KEY": "default-val"}
+        assert plugins.frontend_config() == {}
 
     def test_load_frontend_scope(self, tmp_path, monkeypatch):
         _make_plugin(
@@ -70,11 +70,11 @@ class TestPluginConfig:
                 }
             },
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
         monkeypatch.setenv("MY_CLIENT_ID", "real-id")
-        plugin_config.load()
-        assert plugin_config.container_env() == {}
-        assert plugin_config.frontend_config() == {"my_client_id": "real-id"}
+        plugins.load()
+        assert plugins.container_env() == {}
+        assert plugins.frontend_config() == {"my_client_id": "real-id"}
 
     def test_load_both_scope(self, tmp_path, monkeypatch):
         _make_plugin(
@@ -88,11 +88,11 @@ class TestPluginConfig:
                 }
             },
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
         monkeypatch.setenv("SHARED_URL", "http://real")
-        plugin_config.load()
-        assert plugin_config.container_env() == {"SHARED_URL": "http://real"}
-        assert plugin_config.frontend_config() == {"shared_url": "http://real"}
+        plugins.load()
+        assert plugins.container_env() == {"SHARED_URL": "http://real"}
+        assert plugins.frontend_config() == {"shared_url": "http://real"}
 
     def test_env_overrides_default(self, tmp_path, monkeypatch):
         _make_plugin(
@@ -106,19 +106,19 @@ class TestPluginConfig:
                 }
             },
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
         monkeypatch.setenv("MY_VAR", "from-env")
-        plugin_config.load()
-        assert plugin_config.container_env() == {"MY_VAR": "from-env"}
+        plugins.load()
+        assert plugins.container_env() == {"MY_VAR": "from-env"}
 
     def test_load_invalid_json(self, tmp_path, monkeypatch):
         plugin_dir = tmp_path / "bad"
         plugin_dir.mkdir()
         (plugin_dir / "package.json").write_text("not json")
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
-        plugin_config.load()
-        assert plugin_config.container_env() == {}
-        assert plugin_config.frontend_config() == {}
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        plugins.load()
+        assert plugins.container_env() == {}
+        assert plugins.frontend_config() == {}
 
     def test_multiple_plugins(self, tmp_path, monkeypatch):
         _make_plugin(
@@ -148,16 +148,16 @@ class TestPluginConfig:
                 },
             },
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
         monkeypatch.delenv("A_KEY", raising=False)
         monkeypatch.setenv("B_KEY", "b-val")
         monkeypatch.setenv("C_KEY", "c-val")
-        plugin_config.load()
-        assert plugin_config.container_env() == {
+        plugins.load()
+        assert plugins.container_env() == {
             "A_KEY": "a-default",
             "C_KEY": "c-val",
         }
-        assert plugin_config.frontend_config() == {
+        assert plugins.frontend_config() == {
             "b_key": "b-val",
             "c_key": "c-val",
         }
@@ -168,9 +168,9 @@ class TestPluginConfig:
         (plugin_dir / "package.json").write_text(
             json.dumps({"name": "@klangk/bad", "klangk": {"config": "nope"}})
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
-        plugin_config.load()
-        assert plugin_config.container_env() == {}
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        plugins.load()
+        assert plugins.container_env() == {}
 
     def test_non_dict_spec_ignored(self, tmp_path, monkeypatch):
         plugin_dir = tmp_path / "bad-spec"
@@ -183,9 +183,9 @@ class TestPluginConfig:
                 }
             )
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
-        plugin_config.load()
-        assert plugin_config.container_env() == {}
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        plugins.load()
+        assert plugins.container_env() == {}
 
     def test_invalid_scope_defaults_to_container(self, tmp_path, monkeypatch):
         _make_plugin(
@@ -199,8 +199,8 @@ class TestPluginConfig:
                 }
             },
         )
-        monkeypatch.setattr(plugin_config, "_PLUGINS_DIR", str(tmp_path))
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
         monkeypatch.delenv("X_KEY", raising=False)
-        plugin_config.load()
-        assert plugin_config.container_env() == {"X_KEY": "val"}
-        assert plugin_config.frontend_config() == {}
+        plugins.load()
+        assert plugins.container_env() == {"X_KEY": "val"}
+        assert plugins.frontend_config() == {}

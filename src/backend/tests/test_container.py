@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from klangk_backend import container, model, plugin_config, podman
+from klangk_backend import container, model, plugins, podman
 
 
 class TestParseIdleTimeout:
@@ -626,9 +626,9 @@ class TestStartContainer:
         assert env_dict["KLANGK_SKILLS"] == "stats,rdkit"
         assert env_dict["FOO"] == "bar"
 
-    async def test_plugin_config_env_injected(self, workspace, monkeypatch):
+    async def test_plugins_env_injected(self, workspace, monkeypatch):
         monkeypatch.setattr(
-            plugin_config,
+            plugins,
             "_declarations",
             {
                 "PLUGIN_VAR": {
@@ -639,9 +639,7 @@ class TestStartContainer:
                 }
             },
         )
-        monkeypatch.setattr(
-            plugin_config, "_values", {"PLUGIN_VAR": "plugin-val"}
-        )
+        monkeypatch.setattr(plugins, "_values", {"PLUGIN_VAR": "plugin-val"})
         with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"

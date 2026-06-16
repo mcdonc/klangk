@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 
-from . import auth, model, plugin_config, podman, util
+from . import auth, model, plugins, podman, util
 
 logger = logging.getLogger(__name__)
 
@@ -485,7 +485,7 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_WORKSPACE_TOKEN={workspace_token}")
         allow_sudo = util.resolve_env_bool("KLANGK_ALLOW_SUDO")
 
-        for k, v in plugin_config.container_env().items():
+        for k, v in plugins.container_env().items():
             env_vars.append(f"{k}={v}")
 
         if extra_env:
