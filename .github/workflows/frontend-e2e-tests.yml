@@ -58,18 +58,6 @@ jobs:
           build-tasks: klangk:build-workspace-image klangk:flutter-build
           cache-nix: "false"
 
-      - name: Verify Playwright browsers
-        if: steps.filter.outputs.e2e == 'true'
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          BROWSERS=$(devenv shell -- bash -c "echo \$PLAYWRIGHT_BROWSERS_PATH")
-          CHROME=$(find "$BROWSERS" -name chrome -type f 2>/dev/null | head -1)
-          if [ -z "$CHROME" ]; then
-            echo "::warning::Playwright chrome binary missing from Nix store — rebuilding"
-            devenv shell -- nix-store --repair-path "$BROWSERS" || true
-          fi
-          ls -la "$BROWSERS"/chromium-*/chrome-linux64/chrome
-
       - name: Run E2E tests (chromium + API)
         if: steps.filter.outputs.e2e == 'true'
         run: |
