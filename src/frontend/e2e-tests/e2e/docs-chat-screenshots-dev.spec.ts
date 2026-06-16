@@ -28,7 +28,24 @@ function vp(page: import("@playwright/test").Page) {
 }
 
 function fv(page: import("@playwright/test").Page) {
-  return page.locator("flt-glass-pane").first();
+  return page.locator("flutter-view");
+}
+
+async function waitForFlutter(page: import("@playwright/test").Page) {
+  await page.waitForFunction(
+    () => !document.body.textContent?.includes("Loading, please wait"),
+    { timeout: 90_000 },
+  );
+  await page.waitForSelector("flutter-view", { timeout: 10_000 });
+  await page.waitForTimeout(500);
+}
+
+async function dismissAccessibility(page: import("@playwright/test").Page) {
+  const btn = page.locator("button", { hasText: "Enable accessibility" });
+  if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
+    await btn.click();
+    await page.waitForTimeout(300);
+  }
 }
 
 async function screenshotChatArea(
@@ -39,33 +56,6 @@ async function screenshotChatArea(
   await page.screenshot({
     path: join(SCREENSHOT_DIR, `${name}.png`),
     clip: { x: 0, y: 56, width, height: height - 56 },
-  });
-}
-
-/** Wait for a WS frame matching predicate on any page WebSocket. */
-function waitForFrame(
-  page: import("@playwright/test").Page,
-  predicate: (text: string) => boolean,
-  timeoutMs = 120_000,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("Frame wait timed out")),
-      timeoutMs,
-    );
-    const handler = (ws: import("@playwright/test").WebSocket) => {
-      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
-        if (predicate(frame.payload.toString())) {
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-    };
-    // Listen on any future WS
-    page.on("websocket", handler);
-    // Also check existing websockets — not possible with Playwright API,
-    // but the WS was opened during page load so `page.on("websocket")`
-    // should have already fired. We rely on frames arriving in the future.
   });
 }
 
@@ -107,25 +97,30 @@ test.describe("chat dev server screenshots", () => {
       });
     }
 
-    // Login
+    // Login via UI
     await page.goto(BASE_URL);
-    await page.waitForTimeout(3000);
+    await waitForFlutter(page);
+    await dismissAccessibility(page);
 
-    // Dismiss consent banner — click "I Accept"
-    await f.click({ position: { x: 680, y: 420 }, force: true });
+    const cx = width / 2;
+
+    // Dismiss consent banner if present — click "I Accept" button
+    // using page.mouse.click which bypasses locator coordinate mapping.
     await page.waitForTimeout(1000);
+    await page.mouse.click(690, 420);
+    await page.waitForTimeout(2000);
 
-    // Fill login form
-    await f.click({ position: { x: width / 2, y: 340 }, force: true });
+    // Fill login form (same coordinate pattern as helpers.ts loginViaUI)
+    await f.click({ position: { x: cx, y: height * 0.46 }, force: true });
     await page.waitForTimeout(200);
     await page.keyboard.type("admin@plope.com");
-    await f.click({ position: { x: width / 2, y: 405 }, force: true });
+    await f.click({ position: { x: cx, y: height * 0.56 }, force: true });
     await page.waitForTimeout(200);
     await page.keyboard.type("admin");
-    await f.click({ position: { x: width / 2, y: 470 }, force: true });
+    await f.click({ position: { x: cx, y: height * 0.64 }, force: true });
     await page.waitForTimeout(5000);
 
-    // Find my-project workspace via API
+    // Find or create workspace via API
     const loginResp = await request.post(`${BASE_URL}/auth/login`, {
       data: { email: "admin@plope.com", password: "admin" },
     });
@@ -134,26 +129,24 @@ test.describe("chat dev server screenshots", () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     const workspaces = await wsResp.json();
-    const workspace = workspaces.find(
+    let workspace = workspaces.find(
       (w: Record<string, unknown>) => w.name === "my-project",
     );
-    if (!workspace) throw new Error("Workspace 'my-project' not found");
+    if (!workspace) {
+      const createResp = await request.post(`${BASE_URL}/workspaces`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { name: "my-project" },
+      });
+      workspace = await createResp.json();
+    }
 
     await page.goto(`${BASE_URL}/#/workspace/${workspace.id}`, {
       waitUntil: "load",
     });
-    await page.waitForTimeout(8000);
-
-    // Dismiss accessibility if present
-    try {
-      const btn = page.getByRole("button", { name: "Enable accessibility" });
-      if (await btn.isVisible({ timeout: 1000 })) {
-        await btn.click();
-        await page.waitForTimeout(500);
-      }
-    } catch {
-      // not present
-    }
+    await waitForFlutter(page);
+    await dismissAccessibility(page);
+    // Wait for container to start and terminal to be ready
+    await page.waitForTimeout(10000);
 
     // Click Chat tab (3rd of 5)
     const tabWidth = width / 5;

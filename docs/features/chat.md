@@ -3,7 +3,9 @@
 Per-workspace chat panel with real-time messaging. All workspace members
 see messages instantly via WebSocket. Click the **Chat** tab to open.
 
-![Chat panel showing messages and agent response](../assets/chat/03-agent-response.png)
+![Empty chat panel](../assets/chat/01-chat-panel.png)
+
+![Chat with agent response](../assets/chat/03-agent-response.png)
 
 ## Sending Messages
 
