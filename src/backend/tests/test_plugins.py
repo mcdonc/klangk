@@ -29,6 +29,13 @@ class TestPluginConfig:
         assert plugins.container_env() == {}
         assert plugins.frontend_config() == {}
 
+    def test_load_dir_without_package_json(self, tmp_path, monkeypatch):
+        (tmp_path / "no-manifest").mkdir()
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        plugins.load()
+        assert plugins.container_env() == {}
+        assert plugins.frontend_config() == {}
+
     def test_load_plugin_without_config(self, tmp_path, monkeypatch):
         plugin_dir = tmp_path / "no-config"
         plugin_dir.mkdir()
