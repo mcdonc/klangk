@@ -93,7 +93,14 @@ async def _run(
             proc.stdin.write(stdin_data)
             await proc.stdin.drain()
             proc.stdin.close()
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=120)
+        except TimeoutError:
+            logger.warning(
+                "podman-timeout: %s exceeded 120s, killing", cmd_label
+            )
+            proc.kill()
+            await proc.wait()
         t3 = time.monotonic()
         out_f.seek(0)
         err_f.seek(0)
