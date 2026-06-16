@@ -37,7 +37,6 @@ in
     [
       bash # explicit bash for shell scripts (CI /bin/sh may be dash)
       coreutils # GNU du (macOS BSD du lacks -b)
-      crun # for podman
       docker-client
       flutter
       git # "error: Failed to find git" during devenv:git-hooks:install
@@ -56,7 +55,9 @@ in
         [
           iproute2
           su
+          crun # for podman
           util-linux
+          shadow
         ]
     );
 
