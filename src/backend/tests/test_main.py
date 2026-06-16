@@ -169,6 +169,51 @@ class TestSetupLogfire:
         mock_logfire.configure.assert_called_once_with()
         mock_logfire.instrument_fastapi.assert_called_once_with(app)
 
+
+class TestCorsOrigins:
+    def test_default_localhost(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
+        assert main._cors_origins() == ["http://localhost:8995"]
+
+    def test_custom_nginx_port(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "9000")
+        assert main._cors_origins() == ["http://localhost:9000"]
+
+    def test_hosting_hostname(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
+        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "klangk.example.com")
+        monkeypatch.setenv("KLANGK_HOSTING_PROTO", "https")
+        assert main._cors_origins() == ["https://klangk.example.com"]
+
+    def test_hosting_hostname_default_proto(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
+        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "klangk.example.com")
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        assert main._cors_origins() == ["http://klangk.example.com"]
+
+    def test_explicit_origins(self, monkeypatch):
+        monkeypatch.setenv(
+            "KLANGK_CORS_ORIGINS",
+            "https://a.example.com, https://b.example.com",
+        )
+        assert main._cors_origins() == [
+            "https://a.example.com",
+            "https://b.example.com",
+        ]
+
+    def test_explicit_origins_strips_empties(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_CORS_ORIGINS", "https://a.com,,")
+        assert main._cors_origins() == ["https://a.com"]
+
+    def test_explicit_overrides_hosting(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_CORS_ORIGINS", "https://override.com")
+        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "ignored.com")
+        assert main._cors_origins() == ["https://override.com"]
+
     def test_with_base_url_and_environment(self, monkeypatch):
         monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
         monkeypatch.setenv("LOGFIRE_BASE_URL", "https://custom.logfire")

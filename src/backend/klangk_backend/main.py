@@ -182,9 +182,27 @@ def setup_logfire(app: FastAPI) -> bool:
 
 setup_logfire(app)
 
+
+def _cors_origins() -> list[str]:
+    """Build the CORS allowed-origins list.
+
+    Priority: KLANGK_CORS_ORIGINS (comma-separated) > derived from
+    hosting env vars > localhost with nginx port.
+    """
+    explicit = resolve_env_secret("KLANGK_CORS_ORIGINS")
+    if explicit:
+        return [o.strip() for o in explicit.split(",") if o.strip()]
+    hostname = resolve_env_secret("KLANGK_HOSTING_HOSTNAME")
+    proto = resolve_env_secret("KLANGK_HOSTING_PROTO", "http")
+    if hostname:
+        return [f"{proto}://{hostname}"]
+    nginx_port = resolve_env_secret("KLANGK_NGINX_PORT", "8995")
+    return [f"http://localhost:{nginx_port}"]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
