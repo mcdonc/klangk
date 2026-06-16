@@ -211,6 +211,25 @@ class TestStartContainer:
         assert _args(m) == ["start", "cid"]
 
 
+class TestExecContainer:
+    async def test_basic(self):
+        with patch(EXEC, _exec(("out", "", 0))) as m:
+            rc, out, err = await podman.exec_container("cid", ["ls", "/"])
+        assert _args(m) == ["exec", "cid", "ls", "/"]
+        assert (rc, out, err) == (0, "out", "")
+
+    async def test_with_user(self):
+        with patch(EXEC, _exec(("", "", 0))) as m:
+            await podman.exec_container("cid", ["id"], user="root")
+        assert _args(m) == ["exec", "-u", "root", "cid", "id"]
+
+    async def test_nonzero_returned(self):
+        with patch(EXEC, _exec(("", "fail", 1))):
+            rc, _out, err = await podman.exec_container("cid", ["false"])
+        assert rc == 1
+        assert err == "fail"
+
+
 class TestRemoveContainer:
     async def test_force_default(self):
         with patch(EXEC, _exec(("", "", 0))) as m:

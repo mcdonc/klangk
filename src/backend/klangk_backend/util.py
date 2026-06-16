@@ -30,6 +30,18 @@ def resolve_env_secret(key: str, default: str | None = None) -> str | None:
     return val
 
 
+def resolve_env_bool(key: str, default: bool = False) -> bool:
+    """Read an env var as a boolean.
+
+    Truthy values: "1", "true", "yes" (case-insensitive).
+    Everything else is falsy.  Unset returns *default*.
+    """
+    val = os.environ.get(key)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes")
+
+
 def resolve_file_secret(value: str) -> str:
     """Resolve a value that may have a 'file:' prefix.
 

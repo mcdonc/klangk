@@ -185,6 +185,24 @@ async def start_container(container_id: str) -> None:
     await _run(["start", container_id])
 
 
+async def exec_container(
+    container_id: str,
+    cmd: list[str],
+    *,
+    user: str | None = None,
+) -> tuple[int, str, str]:
+    """Run a command inside a running container.
+
+    Returns ``(returncode, stdout, stderr)``.
+    """
+    args = ["exec"]
+    if user:
+        args += ["-u", user]
+    args.append(container_id)
+    args.extend(cmd)
+    return await _run(args, check=False)
+
+
 async def remove_container(container_id: str, *, force: bool = True) -> None:
     """Remove a container; never raises on 404."""
     args = ["rm"]
