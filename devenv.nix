@@ -55,9 +55,7 @@ in
         [
           iproute2
           su
-          crun # for podman
           util-linux
-          shadow
         ]
     );
 
