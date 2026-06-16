@@ -118,6 +118,29 @@ class TestRun:
             rc, _out, _err = await podman._run(["x"], check=False)
         assert rc == 0
 
+    async def test_timeout_kills_process(self):
+        """proc.wait() exceeding 120s triggers kill."""
+        proc = _procs(("", "", 0))[0]
+        proc.returncode = -9  # after kill
+
+        def side_effect(*args, **kwargs):
+            stdout_f = kwargs.get("stdout")
+            stderr_f = kwargs.get("stderr")
+            if hasattr(stdout_f, "write"):
+                stdout_f.write(b"")
+            if hasattr(stderr_f, "write"):
+                stderr_f.write(b"")
+            return proc
+
+        with patch(EXEC, AsyncMock(side_effect=side_effect)):
+            with patch(
+                "klangk_backend.podman.asyncio.wait_for",
+                side_effect=TimeoutError,
+            ):
+                rc, _out, _err = await podman._run(["rm", "x"], check=False)
+        proc.kill.assert_called_once()
+        assert rc == -9
+
 
 # --- containers ---
 
