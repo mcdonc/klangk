@@ -7,7 +7,7 @@
     "install-browsers": "npx playwright install chromium"
   },
   "devDependencies": {
-    "@playwright/test": "1.59.1",
+    "@playwright/test": "^1.60.0",
     "@types/adm-zip": "^0.5.8",
     "@types/ws": "^8.18.1",
     "adm-zip": "^0.5.17",
