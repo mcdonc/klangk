@@ -56,6 +56,9 @@ RUN printf '{"version":"%s","commit":"%s","built_at":"%s"}\n' \
       > /home/klangk/version.json && \
     chown klangk:klangk /home/klangk/version.json
 
+# Plugins (package.json manifests needed for plugin config at runtime)
+COPY --from=plugins --chown=klangk:klangk . /home/klangk/plugins/
+
 # Data directory (volume mount point)
 RUN mkdir -p /home/klangk/data && chown klangk:klangk /home/klangk/data
 

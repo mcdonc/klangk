@@ -19,6 +19,7 @@ from klangk_backend import (
     container,
     model,
     oidc,
+    plugins,
     podman,
     workspaces as ws_mod,
     wshandler,
@@ -206,9 +207,29 @@ class TestConfig:
         resp = await client.get("/api/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert "soliplex_url" in data
         assert "login_banner_title" in data
         assert "login_banner" in data
+
+    async def test_get_config_includes_plugins(self, client, monkeypatch):
+        monkeypatch.setattr(
+            plugins,
+            "_declarations",
+            {
+                "MY_PLUGIN_VAR": {
+                    "plugin": "test",
+                    "description": "",
+                    "default": "",
+                    "scope": "frontend",
+                }
+            },
+        )
+        monkeypatch.setattr(
+            plugins, "_values", {"MY_PLUGIN_VAR": "test-value"}
+        )
+        resp = await client.get("/api/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["my_plugin_var"] == "test-value"
 
     async def test_get_config_banner_fields(self, client, monkeypatch):
         monkeypatch.setattr(api, "LOGIN_BANNER_TITLE", "Notice")

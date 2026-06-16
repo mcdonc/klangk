@@ -50,6 +50,10 @@ plugins:
     git: git@github.com:mcdonc/klangk.git
     path: plugins/browser-fetch
     ref: main
+  - name: marquee
+    git: git@github.com:mcdonc/klangk.git
+    path: plugins/marquee
+    ref: main
   # Add more plugins:
   # - name: my-plugin
   #   git: git@github.com:user/repo.git

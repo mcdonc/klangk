@@ -51,3 +51,85 @@ plugins:
 - `plugins.lock` — records resolved commit SHAs for reproducible builds
 - Local plugin development: drop a directory into `$KLANGK_PLUGINS_DIR` directly — the build system treats it the same as a fetched plugin
 - `execIfModified` watches `$KLANGK_PLUGINS_DIR` to trigger rebuilds when plugin content or the lockfile changes
+
+## Plugin Configuration
+
+Plugins can declare configuration settings (environment variables) in their `package.json`. The system reads these declarations at build time and resolves values from the server environment at runtime.
+
+### Declaring Config Keys
+
+Add a `klangk.config` section to your plugin's `package.json`:
+
+```json
+{
+  "name": "@klangk/my-plugin",
+  "klangk": {
+    "config": {
+      "MY_PLUGIN_URL": {
+        "description": "URL for the my-plugin backend",
+        "default": "http://localhost:8080",
+        "scope": "frontend"
+      },
+      "MY_PLUGIN_API_KEY": {
+        "description": "API key for my-plugin",
+        "default": "",
+        "scope": "container"
+      }
+    }
+  }
+}
+```
+
+Each key in the `config` object is an environment variable name. Fields:
+
+| Field         | Required | Description                                                |
+| ------------- | -------- | ---------------------------------------------------------- |
+| `description` | No       | Human-readable description of the setting                  |
+| `default`     | No       | Default value if the env var is not set (defaults to `""`) |
+| `scope`       | No       | Where the value is delivered (defaults to `"container"`)   |
+
+### Scopes
+
+The `scope` field controls where the resolved value is made available:
+
+- **`container`** — Injected as an environment variable into workspace containers at startup. Available to Pi extensions via `process.env.VAR_NAME` and to any process running in the container.
+- **`frontend`** — Included in the `GET /api/config` response as a lowercased key (e.g., `MY_PLUGIN_URL` → `my_plugin_url`). Available to Dart plugins in the browser.
+- **`both`** — Delivered to both containers and the frontend.
+
+### Setting Values
+
+Values come from the server environment — admins set them in `.env` or as system environment variables, the same as all other Klangk configuration:
+
+```bash
+# .env
+MY_PLUGIN_URL=https://my-plugin.example.com
+MY_PLUGIN_API_KEY=sk-abc123
+```
+
+If an environment variable is not set, the `default` from the plugin manifest is used.
+
+### How It Works
+
+1. **Startup**: The backend scans `$KLANGK_PLUGINS_DIR/*/package.json` for `klangk.config` entries and resolves each declared key from the server environment (with fallback to declared defaults).
+2. **Container creation**: Keys with `scope: "container"` or `"both"` are injected as env vars into workspace containers alongside system env vars like `KLANGK_BRIDGE_URL`.
+3. **Frontend requests**: Keys with `scope: "frontend"` or `"both"` are included in the `GET /api/config` response. Dart plugins can fetch this endpoint to discover their configuration.
+
+### Example: Accessing Config in a Dart Plugin
+
+```dart
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
+// In your plugin's initialization:
+final resp = await http.get(Uri.parse('$baseUrl/api/config'));
+final config = jsonDecode(resp.body) as Map<String, dynamic>;
+final myUrl = config['my_plugin_url'] as String? ?? '';
+```
+
+### Example: Accessing Config in a Pi Extension
+
+```typescript
+// Pi extensions run in the container — values are env vars
+const MY_URL = process.env.MY_PLUGIN_URL;
+const API_KEY = process.env.MY_PLUGIN_API_KEY;
+```

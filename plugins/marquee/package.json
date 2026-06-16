@@ -1,0 +1,24 @@
+{
+  "name": "@klangk/marquee",
+  "version": "1.0.0",
+  "description": "Scrolling marquee banner overlay with rainbow animations",
+  "pi": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  },
+  "klangk": {
+    "config": {
+      "KLANGK_MARQUEE_TEXT": {
+        "description": "Default text to scroll in the marquee",
+        "default": "Hello from Klangk!",
+        "scope": "frontend"
+      },
+      "KLANGK_MARQUEE_SPEED": {
+        "description": "Scroll speed in pixels per second",
+        "default": "200",
+        "scope": "frontend"
+      }
+    }
+  }
+}

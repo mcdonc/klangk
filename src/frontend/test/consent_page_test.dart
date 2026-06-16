@@ -17,7 +17,6 @@ http.Client _mockClient({
     if (request.url.path.contains('/api/config')) {
       return http.Response(
         jsonEncode({
-          'soliplex_url': '',
           'registration_enabled': true,
           'login_banner_title': bannerTitle,
           'login_banner': bannerText,
