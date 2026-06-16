@@ -49,4 +49,8 @@ RUN chgrp root \
       /usr/sbin/unix_chkpwd /var/mail \
     2>/dev/null; true
 
+# Allow klangk user to sudo without a password (for installing packages, etc.)
+RUN echo "klangk ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/klangk \
+    && chmod 0440 /etc/sudoers.d/klangk
+
 ENTRYPOINT ["/opt/klangk/entrypoint.sh"]
