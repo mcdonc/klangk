@@ -122,9 +122,11 @@ void main() {
       client.close();
     });
 
-    testWidgets('Shift+PgUp on alternate screen pages the app', (tester) async {
-      // On the alt screen, Shift+PgUp is converted to mouse-wheel scroll
-      // for apps like Pi that need that input type.
+    testWidgets('Shift+PgUp on alternate screen reaches the PTY', (
+      tester,
+    ) async {
+      // Shift+PgUp on the alt screen goes to the PTY as \e[5;2~ so
+      // tmux's S-PgUp copy-mode binding fires.
       final client = _MockWsClient();
       final key = GlobalKey<GhosttyTerminalState>();
       await _pumpReady(tester, client, key);
@@ -150,7 +152,9 @@ void main() {
   });
 
   group('mouse wheel on alternate screen', () {
-    testWidgets('wheel up sends PgUp to PTY on alt screen', (tester) async {
+    testWidgets('wheel up sends Shift+PgUp to PTY on alt screen', (
+      tester,
+    ) async {
       final client = _MockWsClient();
       final key = GlobalKey<GhosttyTerminalState>();
       await _pumpReady(tester, client, key);
@@ -170,11 +174,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Should have sent PgUp (ESC [5~) to the PTY
+      // Should have sent Shift+PgUp (ESC [5;2~) to the PTY
       expect(
-        client.sentCommands.any((c) => c.contains('\x1b[5~')),
+        client.sentCommands.any((c) => c.contains('\x1b[5;2~')),
         isTrue,
-        reason: 'wheel up on alt screen sends PgUp to PTY for tmux scrollback',
+        reason:
+            'wheel up on alt screen sends Shift+PgUp to PTY for tmux scrollback',
       );
       client.close();
     });
@@ -195,10 +200,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        client.sentCommands.any((c) => c.contains('\x1b[6~')),
+        client.sentCommands.any((c) => c.contains('\x1b[6;2~')),
         isTrue,
         reason:
-            'wheel down on alt screen sends PgDn to PTY for tmux scrollback',
+            'wheel down on alt screen sends Shift+PgDn to PTY for tmux scrollback',
       );
       client.close();
     });

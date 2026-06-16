@@ -403,11 +403,11 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
                 _scrollController.hasClients &&
                 _scrollController.activeScreen == TerminalScreen.alternate) {
               if (event.scrollDelta.dy < 0) {
-                // Wheel up → PgUp (ESC [5~)
-                widget.wsClient.sendTerminalInput('\x1b[5~');
+                // Wheel up → Shift+PgUp (ESC [5;2~)
+                widget.wsClient.sendTerminalInput('\x1b[5;2~');
               } else if (event.scrollDelta.dy > 0) {
-                // Wheel down → PgDn (ESC [6~)
-                widget.wsClient.sendTerminalInput('\x1b[6~');
+                // Wheel down → Shift+PgDn (ESC [6;2~)
+                widget.wsClient.sendTerminalInput('\x1b[6;2~');
               }
             }
           },
