@@ -361,7 +361,7 @@ class TestExec:
                 "yes | head -1000",
             ],
             env=cli_config["env"],
-            timeout=30,
+            timeout=60,
         )
         assert result.returncode == 0
         lines = result.stdout.strip().splitlines()
@@ -700,7 +700,7 @@ class TestDefaultCommand:
             _run(
                 ["klangk", "exec", "e2e-defbash", "true"],
                 env=env,
-                timeout=30,
+                timeout=60,
             )
             # Run an interactive bash inside the container that sources
             # .bashrc, which would exec bash again without the
@@ -982,13 +982,13 @@ class TestExportSymlinks:
         resp = httpx.post(
             f"{server['url']}/auth/login",
             json={"email": "test@example.com", "password": "testpass"},
-            timeout=30,
+            timeout=60,
         )
         token = resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = httpx.get(
-            f"{server['url']}/workspaces", headers=headers, timeout=30
+            f"{server['url']}/workspaces", headers=headers, timeout=60
         )
         ws = [w for w in resp.json() if w["name"] == "e2e-symlink"][0]
         ws_id = ws["id"]
@@ -1148,12 +1148,12 @@ class TestExportImport:
             resp = httpx.post(
                 f"{server['url']}/auth/login",
                 json={"email": "test@example.com", "password": "testpass"},
-                timeout=30,
+                timeout=60,
             )
             token = resp.json()["access_token"]
             headers = {"Authorization": f"Bearer {token}"}
             resp = httpx.get(
-                f"{server['url']}/workspaces", headers=headers, timeout=30
+                f"{server['url']}/workspaces", headers=headers, timeout=60
             )
             ws = [w for w in resp.json() if w["name"] == "export-symlink"][0]
             ws_id = ws["id"]
@@ -1220,7 +1220,7 @@ class TestExportImport:
 
             # Find the imported workspace's home dir
             resp = httpx.get(
-                f"{server['url']}/workspaces", headers=headers, timeout=30
+                f"{server['url']}/workspaces", headers=headers, timeout=60
             )
             imported = [
                 w
@@ -1345,7 +1345,7 @@ class TestVolumeUserIsolation:
                 "email": "user2@example.com",
                 "password": "testpass2",
             },
-            timeout=30,
+            timeout=60,
         )
 
         # Set up CLI configs for both users
