@@ -20,6 +20,12 @@ klangk export my-project            # export workspace to my-project.tar.gz (adm
 klangk export my-project -o bak.tar.gz  # export to specific file
 klangk import bak.tar.gz            # import workspace from archive
 klangk import bak.tar.gz --name new-name  # import with a different name
+klangk terminals my-project         # list all terminals (own + shared)
+klangk share my-project bash        # share a terminal with workspace members
+klangk unshare my-project bash      # stop sharing a terminal
+klangk invite user@example.com      # send an invitation email (admin only)
+klangk invitations                  # list all invitations (admin only)
+klangk images                       # list available container images
 klangk volumes ls                   # list your podman volumes
 klangk volumes create nix-store     # create a named volume (owned by you)
 klangk volumes rm nix-store         # delete a volume (must be yours)
