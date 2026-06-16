@@ -259,16 +259,32 @@ class AgentSession:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if event.get("type") == "agent_start":
+            etype = event.get("type")
+            if etype == "agent_start":
                 return
+            if etype == "auto_retry_start":
+                logger.info(
+                    "Pi auto-retry %d/%d for %s: %s",
+                    event.get("attempt", "?"),
+                    event.get("maxAttempts", "?"),
+                    self.container_id,
+                    str(event.get("errorMessage", ""))[:100],
+                )
 
     async def _read_until_agent_end(
         self,
         stdout: asyncio.StreamReader,
         text_parts: list[str],
     ) -> str:
-        """Read JSONL events from Pi until agent_end."""
+        """Read JSONL events from Pi until the final agent_end.
+
+        Pi may emit multiple agent_start/agent_end cycles when it
+        auto-retries on errors (e.g. 429 rate limits).  We keep
+        reading until an agent_end with ``willRetry: false`` (or no
+        ``willRetry`` key, which is the normal success case).
+        """
         thinking_parts: list[str] = []
+        last_error: str = ""
         while True:
             line = await stdout.readline()
             if not line:
@@ -291,8 +307,23 @@ class AgentSession:
                 elif delta_type not in ("thinking_start", "thinking_end"):
                     logger.debug("Unhandled delta type: %s", delta_type)
 
+            elif event_type in ("message_start", "message_end"):
+                # Capture error messages from the LLM provider.
+                msg = event.get("message", {})
+                if msg.get("stopReason") == "error":
+                    last_error = msg.get("errorMessage", "")
+
             elif event_type == "agent_end":
-                break
+                if not event.get("willRetry", False):
+                    break
+                # Pi is retrying — reset parts for the next attempt
+                # and wait for the next agent_start.
+                text_parts.clear()
+                thinking_parts.clear()
+                last_error = ""
+                await self._skip_to_agent_start(stdout)
+
+            # auto_retry_start is consumed by _skip_to_agent_start
 
         text = "".join(text_parts)
         # Strip <think>...</think> tags that some models emit
@@ -303,6 +334,9 @@ class AgentSession:
             # of reasoning artifacts.
             text = "".join(thinking_parts).strip()
             text = _THINK_RE.sub("", text).strip()
+        if not text and last_error:
+            # Surface the LLM error to the user.
+            text = f"Error from LLM: {last_error}"
         return text or "I had nothing to say."
 
     async def stop(self) -> None:

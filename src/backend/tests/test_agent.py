@@ -92,6 +92,91 @@ class TestAgentSession:
 
         assert "timed out" in result
 
+    async def test_llm_error_surfaced(self):
+        """LLM errors (e.g. 429) are returned to the user."""
+        events = [
+            _ACK,
+            {"type": "agent_start"},
+            {
+                "type": "message_start",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "429 rate limited",
+                },
+            },
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "429 rate limited",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
+
+        proc = AsyncMock()
+        proc.returncode = None
+        proc.stdin = AsyncMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(stdout_data.encode())
+        proc.stdout.feed_eof()
+        proc.stderr = asyncio.StreamReader()
+
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            session = _make_session()
+            result = await session.send_prompt("test")
+
+        assert "429 rate limited" in result
+
+    async def test_auto_retry_resets_and_reads_final(self):
+        """Pi auto-retry cycles are handled; final response is used."""
+        events = [
+            _ACK,
+            {"type": "agent_start"},
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "429 limit",
+                },
+            },
+            {"type": "agent_end", "willRetry": True},
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "errorMessage": "429 limit",
+            },
+            {"type": "agent_start"},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "success",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
+
+        proc = AsyncMock()
+        proc.returncode = None
+        proc.stdin = AsyncMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(stdout_data.encode())
+        proc.stdout.feed_eof()
+        proc.stderr = asyncio.StreamReader()
+
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            session = _make_session()
+            result = await session.send_prompt("test")
+
+        assert result == "success"
+
     async def test_send_prompt_empty_response(self):
         events = [
             _ACK,
