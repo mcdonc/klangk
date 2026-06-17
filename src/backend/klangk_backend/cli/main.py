@@ -22,6 +22,7 @@ from .client import (
     _WS_MAX_SIZE,
     _get_terminal_size,
     _send_ignore_closed,
+    _wait_workspace_ready,
     _ws_exec,
     _ws_shell,
 )
@@ -702,12 +703,7 @@ def terminals(
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
         ) as conn:
-            await conn.send(
-                json.dumps({"cmd": "workspace_connect", "workspaceId": ws.id})
-            )
-            resp = json.loads(await conn.recv())
-            if resp.get("type") != "workspace_ready":
-                raise ConnectionError(f"Connection failed: {resp}")
+            await _wait_workspace_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
@@ -785,12 +781,7 @@ def share(
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
         ) as conn:
-            await conn.send(
-                json.dumps({"cmd": "workspace_connect", "workspaceId": ws.id})
-            )
-            resp = json.loads(await conn.recv())
-            if resp.get("type") != "workspace_ready":
-                raise ConnectionError(f"Connection failed: {resp}")
+            await _wait_workspace_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
@@ -870,12 +861,7 @@ def unshare(
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
         ) as conn:
-            await conn.send(
-                json.dumps({"cmd": "workspace_connect", "workspaceId": ws.id})
-            )
-            resp = json.loads(await conn.recv())
-            if resp.get("type") != "workspace_ready":
-                raise ConnectionError(f"Connection failed: {resp}")
+            await _wait_workspace_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 

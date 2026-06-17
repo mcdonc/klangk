@@ -30,6 +30,37 @@ logger = logging.getLogger(__name__)
 _RETRY_ATTEMPTS = 3
 _RETRY_BACKOFF = 2.0  # seconds, doubled each retry
 
+_WS_CONNECT_TIMEOUT = 60  # seconds to wait for workspace_ready
+
+
+async def _wait_workspace_ready(
+    ws: websockets.ClientConnection,
+    workspace_id: str,
+    timeout: float = _WS_CONNECT_TIMEOUT,
+) -> dict:
+    """Send workspace_connect and wait for workspace_ready, skipping broadcasts.
+
+    The server may send broadcast messages (e.g. presence_list from eager
+    agent startup) before workspace_ready.  This drains them rather than
+    treating the first non-ready message as an error.
+
+    Returns the workspace_ready payload.
+    """
+    await ws.send(
+        json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})
+    )
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            raise asyncio.TimeoutError("Timed out waiting for workspace_ready")
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        resp = json.loads(raw)
+        if resp.get("type") == "workspace_ready":
+            return resp
+        if resp.get("type") == "error":
+            raise ConnectionError(f"Connection failed: {resp}")
+
 
 def _request_with_retry(
     method: str,
@@ -464,14 +495,7 @@ async def _ws_shell(
         f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
     ) as ws:
         # 1. Connect to workspace
-        await ws.send(
-            json.dumps(
-                {"cmd": "workspace_connect", "workspaceId": workspace_id}
-            )
-        )
-        resp = json.loads(await ws.recv())
-        if resp.get("type") != "workspace_ready":
-            raise ConnectionError(f"Connection failed: {resp}")
+        await _wait_workspace_ready(ws, workspace_id)
 
         # 2. Start terminal
         cols, rows = _get_terminal_size()
@@ -790,14 +814,7 @@ async def _ws_exec(
         f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
     ) as ws:
         # 1. Connect to workspace
-        await ws.send(
-            json.dumps(
-                {"cmd": "workspace_connect", "workspaceId": workspace_id}
-            )
-        )
-        resp = json.loads(await ws.recv())
-        if resp.get("type") != "workspace_ready":
-            raise ConnectionError(f"Connection failed: {resp}")
+        await _wait_workspace_ready(ws, workspace_id)
 
         # 2. Start exec session
         await ws.send(json.dumps({"cmd": "exec_start", "command": command}))
