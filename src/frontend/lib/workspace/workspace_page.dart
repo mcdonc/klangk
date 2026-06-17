@@ -703,7 +703,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Text(
-                            'Disconnected from server',
+                            'Connection lost',
                             style: TextStyle(color: Colors.white, fontSize: 16),
                           ),
                           const SizedBox(height: 16),

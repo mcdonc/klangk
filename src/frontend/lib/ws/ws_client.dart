@@ -55,6 +55,12 @@ class WsClient extends ChangeNotifier {
   /// Max backoff duration in seconds.
   static const int _maxBackoffSeconds = 30;
 
+  /// Give up auto-reconnecting after this duration.
+  static const Duration _reconnectTimeout = Duration(minutes: 5);
+
+  /// When the current reconnect cycle started.
+  DateTime? _reconnectStartedAt;
+
   /// Workspace ID to rejoin after reconnecting.
   String? _pendingWorkspaceId;
 
@@ -65,6 +71,10 @@ class WsClient extends ChangeNotifier {
   /// Override for testing to control reconnect backoff delay.
   @visibleForTesting
   static Duration Function(int attempt)? testBackoffOverride;
+
+  /// Override for testing to shorten the reconnect timeout.
+  @visibleForTesting
+  static Duration? testReconnectTimeout;
 
   /// Inject a pre-connected channel for testing.
   @visibleForTesting
@@ -186,6 +196,7 @@ class WsClient extends ChangeNotifier {
             _defaultCommand = json['defaultCommand'] as String?;
             _reconnecting = false;
             _reconnectAttempt = 0;
+            _reconnectStartedAt = null;
             _pendingWorkspaceId = null;
             _startHeartbeat();
             notifyListeners();
@@ -448,6 +459,21 @@ class WsClient extends ChangeNotifier {
 
   void _scheduleReconnect() {
     if (!_autoReconnect || _reconnecting) return;
+
+    // Record when the reconnect cycle started.
+    _reconnectStartedAt ??= DateTime.now();
+
+    // Give up after the timeout — stop auto-reconnect and let the UI
+    // show "Disconnected" with a manual reconnect button.
+    final timeout = testReconnectTimeout ?? _reconnectTimeout;
+    if (DateTime.now().difference(_reconnectStartedAt!) >= timeout) {
+      _autoReconnect = false;
+      _reconnecting = false;
+      _reconnectStartedAt = null;
+      notifyListeners();
+      return;
+    }
+
     _reconnecting = true;
     _reconnectAttempt++;
     notifyListeners();
@@ -483,6 +509,7 @@ class WsClient extends ChangeNotifier {
     _autoReconnect = false;
     _reconnecting = false;
     _reconnectAttempt = 0;
+    _reconnectStartedAt = null;
     _pendingWorkspaceId = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
