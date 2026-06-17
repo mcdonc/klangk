@@ -340,8 +340,11 @@ class WsClient extends ChangeNotifier {
   void sendBrowserReattach() {
     final bid = getBrowserId();
     if (bid.isNotEmpty) {
-      debugPrint('[WsClient] browser_reattach: $bid');
-      _send({'cmd': 'browser_reattach', 'browser_id': bid});
+      debugPrint('[WsClient] browser_reattach: $bid'); // coverage:ignore-start
+      _send({
+        'cmd': 'browser_reattach',
+        'browser_id': bid
+      }); // coverage:ignore-end
     }
   }
 

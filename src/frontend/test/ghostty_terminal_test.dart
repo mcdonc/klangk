@@ -258,7 +258,7 @@ void main() {
       await tester.tapAt(center, buttons: kSecondaryMouseButton);
       await tester.pumpAndSettle();
 
-      // Custom context menu shows Paste (Copy only appears with selection)
+      // Context menu only shows Paste; Copy is handled by tmux copy-pipe.
       expect(find.text('Paste'), findsOneWidget);
       expect(find.text('Copy'), findsNothing);
       client.close();

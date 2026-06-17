@@ -238,11 +238,11 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         k == LogicalKeyboardKey.numpad0;
   }
 
-  // Right-click context menu for the terminal. The browser's native Copy
-  // doesn't work with flterm's canvas selection, so we provide our own.
+  // Right-click context menu for the terminal. Copy is handled by tmux
+  // (mouse-on + copy-pipe routes selections to the system clipboard via
+  // the bridge), so we only offer Paste here.
   void _showTerminalContextMenu(BuildContext ctx, Offset position) {
     // coverage:ignore-start
-    final hasSelection = _terminal.selectedText().isNotEmpty;
     final overlay = Overlay.of(ctx).context.findRenderObject() as RenderBox;
     showMenu<String>(
       context: ctx,
@@ -252,18 +252,11 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         overlay.size.width - position.dx,
         overlay.size.height - position.dy,
       ),
-      items: [
-        if (hasSelection)
-          const PopupMenuItem(value: 'copy', child: Text('Copy')),
-        const PopupMenuItem(value: 'paste', child: Text('Paste')),
+      items: const [
+        PopupMenuItem(value: 'paste', child: Text('Paste')),
       ],
     ).then((value) {
-      if (value == 'copy') {
-        final text = _terminal.selectedText();
-        if (text.isNotEmpty) {
-          Clipboard.setData(ClipboardData(text: text));
-        }
-      } else if (value == 'paste') {
+      if (value == 'paste') {
         Clipboard.getData(Clipboard.kTextPlain).then((data) {
           if (data?.text != null && data!.text!.isNotEmpty) {
             _terminal.paste(data.text!);

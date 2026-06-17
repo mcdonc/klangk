@@ -37,11 +37,13 @@ COPY setup_clankers.py /opt/klangk/bin/setup-clankers
 COPY setup-home.sh /opt/klangk/bin/setup-home
 COPY klangk-attach-browser /opt/klangk/bin/klangk-attach-browser
 COPY klangk-browser-id /opt/klangk/bin/klangk-browser-id
+COPY klangk-copy-to-clipboard /opt/klangk/bin/klangk-copy-to-clipboard
 RUN chmod +x /opt/klangk/entrypoint.sh \
       /opt/klangk/bin/setup-clankers \
       /opt/klangk/bin/setup-home \
       /opt/klangk/bin/klangk-attach-browser \
-      /opt/klangk/bin/klangk-browser-id
+      /opt/klangk/bin/klangk-browser-id \
+      /opt/klangk/bin/klangk-copy-to-clipboard
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 

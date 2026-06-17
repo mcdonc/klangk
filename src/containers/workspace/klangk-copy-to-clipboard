@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Copy text from stdin to the browser's system clipboard via the bridge.
+
+Used by tmux's copy-pipe to make selections auto-copy to the user's
+clipboard.  Reads the selected text from stdin, resolves the current
+browser ID, and POSTs a clipboard_write action to the bridge endpoint.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE_URL = os.environ.get("KLANGK_BRIDGE_URL", "")
+WORKSPACE_TOKEN = os.environ.get("KLANGK_WORKSPACE_TOKEN", "")
+
+
+def _get_browser_id():
+    try:
+        result = subprocess.run(
+            ["klangk-browser-id"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def main():
+    if not BRIDGE_URL:
+        sys.exit(1)
+
+    browser_id = _get_browser_id()
+    if not browser_id:
+        sys.exit(1)
+
+    text = sys.stdin.read()
+    if not text:
+        sys.exit(0)
+
+    payload = json.dumps({
+        "action": "clipboard_write",
+        "browser_id": browser_id,
+        "text": text,
+    }).encode()
+
+    headers = {"Content-Type": "application/json"}
+    if WORKSPACE_TOKEN:
+        headers["Authorization"] = f"Bearer {WORKSPACE_TOKEN}"
+
+    req = urllib.request.Request(
+        f"{BRIDGE_URL}/api/browser-delegate",
+        data=payload,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    except (urllib.error.URLError, OSError):
+        pass
+
+
+if __name__ == "__main__":
+    main()

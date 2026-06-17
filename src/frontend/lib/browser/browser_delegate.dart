@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../ws/ws_client.dart';
@@ -40,6 +41,8 @@ class BrowserDelegate {
     try {
       if (action == 'fetch') {
         result = await _handleFetch(request);
+      } else if (action == 'clipboard_write') {
+        result = await _handleClipboardWrite(request);
       } else if (action != null) {
         // Streaming bridge: when the backend marks the request as a stream,
         // relay incremental deltas as browser_chunk messages; the final
@@ -62,6 +65,20 @@ class BrowserDelegate {
     }
 
     _client.sendBrowserResponse(id, result);
+  }
+
+  Future<Map<String, dynamic>> _handleClipboardWrite(
+      Map<String, dynamic> request) async {
+    final text = request['text'] as String?;
+    if (text == null || text.isEmpty) {
+      return {'error': 'missing text'};
+    }
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      return {'status': 'ok'};
+    } catch (e) {
+      return {'error': 'clipboard write failed: $e'};
+    }
   }
 
   Future<Map<String, dynamic>> _handleFetch(
