@@ -1061,22 +1061,11 @@ class TestExportImport:
             env=cli_config["env"],
         )
         yield
-        # Clean up workspaces created during tests; tolerate timeouts so
-        # one slow container removal doesn't cascade-fail subsequent tests.
-        try:
-            result = _run(["klangk", "list", "--plain"], env=cli_config["env"])
-            for line in result.stdout.strip().splitlines():
-                parts = line.split()
-                if parts and parts[0].startswith("export-"):
-                    try:
-                        _run(["klangk", "rm", parts[0]], env=cli_config["env"])
-                    except subprocess.TimeoutExpired:
-                        logger.warning(
-                            "Timeout removing workspace %s in teardown",
-                            parts[0],
-                        )
-        except subprocess.TimeoutExpired:
-            logger.warning("Timeout listing workspaces in teardown")
+        # No explicit workspace cleanup here — the shared server fixture
+        # tears down the entire server process (and its data dir) after
+        # the test session, so leftover workspaces are harmless.  Previous
+        # attempts at per-test CLI cleanup caused cascade failures on CI
+        # when `klangk rm` was slow (see #364).
 
     def test_export_and_import_round_trip(self, cli_config, tmp_path):
         env = cli_config["env"]
@@ -1160,10 +1149,13 @@ class TestExportImport:
             resp = httpx.post(
                 f"{server['url']}/auth/login",
                 json={"email": "test@example.com", "password": "testpass"},
+                timeout=30,
             )
             token = resp.json()["access_token"]
             headers = {"Authorization": f"Bearer {token}"}
-            resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+            resp = httpx.get(
+                f"{server['url']}/workspaces", headers=headers, timeout=30
+            )
             ws = [w for w in resp.json() if w["name"] == "export-symlink"][0]
             ws_id = ws["id"]
             ws_root = Path(server["data_dir"]) / "workspaces"
@@ -1233,7 +1225,9 @@ class TestExportImport:
             assert result.returncode == 0, result.stderr or result.stdout
 
             # Find the imported workspace's home dir
-            resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+            resp = httpx.get(
+                f"{server['url']}/workspaces", headers=headers, timeout=30
+            )
             imported = [
                 w
                 for w in resp.json()
