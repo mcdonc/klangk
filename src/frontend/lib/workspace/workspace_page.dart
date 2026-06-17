@@ -568,7 +568,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
     if (_connecting) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Connecting...')),
+        appBar: AppBar(
+          title: const AppBarTitle(title: 'Connecting...'),
+          actions: const [AppBarActions()],
+        ),
         body: const Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -669,6 +672,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
                               foregroundColor: Colors.white,
                             ),
                           ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: () => context.go('/'),
+                            child: const Text(
+                              'Back to workspaces',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                          ),
                         ],
                       ),
               ),
@@ -697,6 +708,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
                               foregroundColor: Colors.white,
                             ),
                           ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: () => context.go('/'),
+                            child: const Text(
+                              'Back to workspaces',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                          ),
                         ],
                       )
                     : Column(
@@ -714,6 +733,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             style: ElevatedButton.styleFrom(
                               backgroundColor: KColors.accentGreen,
                               foregroundColor: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: () => context.go('/'),
+                            child: const Text(
+                              'Back to workspaces',
+                              style: TextStyle(color: Colors.white54),
                             ),
                           ),
                         ],
