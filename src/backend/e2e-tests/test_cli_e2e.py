@@ -1250,9 +1250,15 @@ class TestExportImport:
                 == "/home/klangk/.local/bin/test"
             )
 
-            _run(["klangk", "rm", "export-symlink-imported"], env=env)
+            try:
+                _run(["klangk", "rm", "export-symlink-imported"], env=env)
+            except subprocess.TimeoutExpired:
+                pass  # fixture teardown will clean up
         finally:
-            _run(["klangk", "rm", "export-symlink"], env=env)
+            try:
+                _run(["klangk", "rm", "export-symlink"], env=env)
+            except subprocess.TimeoutExpired:
+                pass  # fixture teardown will clean up
 
 
 class TestAllowedMountRoots:
