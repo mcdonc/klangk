@@ -2,14 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flterm/flterm.dart';
-import 'package:flutter/gestures.dart'
-    show PointerScrollEvent, kSecondaryMouseButton;
+import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../utils/suppress_browser_menu.dart';
 import '../ws/ws_client.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
@@ -238,35 +236,6 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         k == LogicalKeyboardKey.numpad0;
   }
 
-  // Right-click context menu for the terminal. Copy is handled by tmux
-  // (mouse-on + copy-pipe routes selections to the system clipboard via
-  // the bridge), so we only offer Paste here.
-  void _showTerminalContextMenu(BuildContext ctx, Offset position) {
-    // coverage:ignore-start
-    final overlay = Overlay.of(ctx).context.findRenderObject() as RenderBox;
-    showMenu<String>(
-      context: ctx,
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        overlay.size.width - position.dx,
-        overlay.size.height - position.dy,
-      ),
-      items: const [
-        PopupMenuItem(value: 'paste', child: Text('Paste')),
-      ],
-    ).then((value) {
-      if (value == 'paste') {
-        Clipboard.getData(Clipboard.kTextPlain).then((data) {
-          if (data?.text != null && data!.text!.isNotEmpty) {
-            _terminal.paste(data.text!);
-          }
-        });
-      }
-    });
-    // coverage:ignore-end
-  }
-
   // Native-only font zoom (Ctrl +/-/0). On web these shortcuts are not bound,
   // so the browser's own zoom handles them.
   void _zoomBy(double delta) {
@@ -394,77 +363,59 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           onInvoke: (_) => _zoomReset(),
         ),
       },
-      child: SuppressBrowserContextMenu(
-        child: Listener(
-          // Right-click context menu for Copy/Paste. Use Listener (not
-          // GestureDetector) to avoid gesture arena conflicts that block
-          // mouse wheel scrollback in flterm's Scrollable.
-          onPointerSignal: (event) {
-            // On the alternate screen (tmux), convert wheel events to
-            // PgUp/PgDn key sequences so tmux can handle scrollback via
-            // copy-mode. flterm has no local scrollback on the alt screen.
-            if (event is PointerScrollEvent &&
-                _scrollController.hasClients &&
-                _scrollController.activeScreen == TerminalScreen.alternate) {
-              if (event.scrollDelta.dy < 0) {
-                // Wheel up → Shift+PgUp (ESC [5;2~)
-                widget.wsClient.sendTerminalInput('\x1b[5;2~');
-              } else if (event.scrollDelta.dy > 0) {
-                // Wheel down → Shift+PgDn (ESC [6;2~)
-                widget.wsClient.sendTerminalInput('\x1b[6;2~');
-              }
+      child: Listener(
+        // On the alternate screen (tmux), convert wheel events to
+        // PgUp/PgDn key sequences so tmux can handle scrollback via
+        // copy-mode. flterm has no local scrollback on the alt screen.
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent &&
+              _scrollController.hasClients &&
+              _scrollController.activeScreen == TerminalScreen.alternate) {
+            if (event.scrollDelta.dy < 0) {
+              // Wheel up → Shift+PgUp (ESC [5;2~)
+              widget.wsClient.sendTerminalInput('\x1b[5;2~');
+            } else if (event.scrollDelta.dy > 0) {
+              // Wheel down → Shift+PgDn (ESC [6;2~)
+              widget.wsClient.sendTerminalInput('\x1b[6;2~');
             }
+          }
+        },
+        child: TerminalView(
+          controller: _terminal,
+          theme: _theme,
+          fontData: _fontData,
+          focusNode: _focusNode,
+          scrollController: _scrollController,
+          autofocus: false,
+          padding: EdgeInsets.zero,
+          // On web, let plain PgUp/PgDn on the primary screen and the browser
+          // zoom combos (Cmd/Ctrl +/-/0) reach the browser (see [_bypassKey]);
+          // on the alt screen and on native they go to the PTY as usual.
+          bypassKey: _bypassKey,
+          // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
+          // Clipboard.getData, which fails on Firefox). These override flterm's
+          // platform defaults, so paste flows solely through the native
+          // `paste` event in [installPasteListener] — one path, no double-paste.
+          //
+          // Native-only font zoom is added via [zoomShortcutsFor]; on web
+          // the browser zooms. Page-scroll keys go to the PTY where tmux
+          // handles scrollback; alt-screen scroll is handled in [_bypassKey].
+          shortcuts: {
+            ..._disableFltermPaste,
+            if (!isWebOverride) ...zoomShortcutsFor(defaultTargetPlatform),
           },
-          onPointerDown: (event) {
-            // coverage:ignore-start
-            if (event.buttons == kSecondaryMouseButton) {
-              // Show context menu on right-click release. Schedule after
-              // the pointer down so the menu appears at the click location.
-              Future.delayed(const Duration(milliseconds: 50), () {
-                if (mounted) {
-                  _showTerminalContextMenu(context, event.position);
-                }
-              });
-            }
-            // coverage:ignore-end
-          },
-          child: TerminalView(
-            controller: _terminal,
-            theme: _theme,
-            fontData: _fontData,
-            focusNode: _focusNode,
-            scrollController: _scrollController,
-            autofocus: false,
-            padding: EdgeInsets.zero,
-            // On web, let plain PgUp/PgDn on the primary screen and the browser
-            // zoom combos (Cmd/Ctrl +/-/0) reach the browser (see [_bypassKey]);
-            // on the alt screen and on native they go to the PTY as usual.
-            bypassKey: _bypassKey,
-            // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
-            // Clipboard.getData, which fails on Firefox). These override flterm's
-            // platform defaults, so paste flows solely through the native
-            // `paste` event in [installPasteListener] — one path, no double-paste.
-            //
-            // Native-only font zoom is added via [zoomShortcutsFor]; on web
-            // the browser zooms. Page-scroll keys go to the PTY where tmux
-            // handles scrollback; alt-screen scroll is handled in [_bypassKey].
-            shortcuts: {
-              ..._disableFltermPaste,
-              if (!isWebOverride) ...zoomShortcutsFor(defaultTargetPlatform),
+          // Keep mouse selection (drag/word/line/long-press) but drop the
+          // keyboard select-all gesture, so Ctrl+A falls through to the shell
+          // (readline beginning-of-line / tmux prefix) instead of selecting the
+          // buffer. Ctrl+C already passes through (flterm's copy is selection-
+          // conditional); copy stays on Ctrl+Shift+C and the right-click menu.
+          gestureSettings: const TerminalGestureSettings(
+            enabledSelections: {
+              SelectionGesture.drag,
+              SelectionGesture.word,
+              SelectionGesture.line,
+              SelectionGesture.longPress,
             },
-            // Keep mouse selection (drag/word/line/long-press) but drop the
-            // keyboard select-all gesture, so Ctrl+A falls through to the shell
-            // (readline beginning-of-line / tmux prefix) instead of selecting the
-            // buffer. Ctrl+C already passes through (flterm's copy is selection-
-            // conditional); copy stays on Ctrl+Shift+C and the right-click menu.
-            gestureSettings: const TerminalGestureSettings(
-              enabledSelections: {
-                SelectionGesture.drag,
-                SelectionGesture.word,
-                SelectionGesture.line,
-                SelectionGesture.longPress,
-              },
-            ),
           ),
         ),
       ),

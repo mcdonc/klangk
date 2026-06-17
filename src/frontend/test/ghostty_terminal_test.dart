@@ -249,21 +249,6 @@ void main() {
       client.close();
     });
 
-    testWidgets('right-click shows context menu with Paste', (tester) async {
-      final client = _MockWsClient();
-      await tester.pumpWidget(_build(client));
-      await tester.pumpAndSettle();
-
-      final center = tester.getCenter(find.byType(TerminalView));
-      await tester.tapAt(center, buttons: kSecondaryMouseButton);
-      await tester.pumpAndSettle();
-
-      // Context menu only shows Paste; Copy is handled by tmux copy-pipe.
-      expect(find.text('Paste'), findsOneWidget);
-      expect(find.text('Copy'), findsNothing);
-      client.close();
-    });
-
     testWidgets('routeNativePaste drops the payload when not focused',
         (tester) async {
       final client = _MockWsClient();
