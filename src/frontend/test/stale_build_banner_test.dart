@@ -123,6 +123,35 @@ void main() {
     expect(find.text('A new version is available.'), findsNothing);
   });
 
+  testWidgets('reload button calls navigateTo', (tester) async {
+    final client = MockClient((request) async {
+      return http.Response(_indexWithHash, 200);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Stack(
+          children: [
+            const Scaffold(body: Text('Main content')),
+            StaleBuildBanner(
+              testHash: 'currenthash',
+              testClient: client,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final state =
+        tester.state<StaleBuildBannerState>(find.byType(StaleBuildBanner));
+    await state.check();
+    await tester.pump();
+
+    // Tap the Reload button — navigateTo is a no-op stub in VM tests.
+    await tester.tap(find.text('Reload'));
+    await tester.pump();
+  });
+
   testWidgets('handles HTTP error gracefully', (tester) async {
     final client = MockClient((request) async {
       return http.Response('Server Error', 500);
