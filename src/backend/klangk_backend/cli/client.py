@@ -16,12 +16,65 @@ import termios
 import tty
 from dataclasses import dataclass
 
+import time as _time
+
 import httpx
 import websockets
 
 from .config import CLIConfig
 
 _WS_MAX_SIZE = int(os.environ.get("KLANGK_WS_MSG_SIZE_MAX", 2**24))
+
+logger = logging.getLogger(__name__)
+
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF = 2.0  # seconds, doubled each retry
+
+
+def _request_with_retry(
+    method: str,
+    url: str,
+    *,
+    timeout: float = 60.0,
+    **kwargs,
+) -> httpx.Response:
+    """Make an HTTP request with retry on transient failures.
+
+    Retries on ReadTimeout, ConnectTimeout, ConnectError, and 502/503/504
+    responses with exponential backoff.
+    """
+    backoff = _RETRY_BACKOFF
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            resp = httpx.request(method, url, timeout=timeout, **kwargs)
+            if (
+                resp.status_code in (502, 503, 504)
+                and attempt < _RETRY_ATTEMPTS - 1
+            ):
+                logger.debug(
+                    "HTTP %s %s returned %d, retrying in %.1fs",
+                    method,
+                    url,
+                    resp.status_code,
+                    backoff,
+                )
+                _time.sleep(backoff)
+                backoff *= 2
+                continue
+            return resp
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            if attempt < _RETRY_ATTEMPTS - 1:
+                logger.debug(
+                    "HTTP %s %s failed (%s), retrying in %.1fs",
+                    method,
+                    url,
+                    exc,
+                    backoff,
+                )
+                _time.sleep(backoff)
+                backoff *= 2
+            else:
+                raise
 
 
 @dataclass
@@ -55,36 +108,36 @@ class KlangkClient:
         return {"Authorization": f"Bearer {token}"}
 
     def get(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
-        return httpx.get(
+        return _request_with_retry(
+            "GET",
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=30.0,
             **kwargs,
         )
 
     def post(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
-        return httpx.post(
+        return _request_with_retry(
+            "POST",
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=30.0,
             **kwargs,
         )
 
     def put(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
-        return httpx.put(
+        return _request_with_retry(
+            "PUT",
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=30.0,
             **kwargs,
         )
 
     def delete(
         self, path: str, **kwargs
     ) -> httpx.Response:  # pragma: no cover
-        return httpx.delete(
+        return _request_with_retry(
+            "DELETE",
             f"{self.cfg.server.url}{path}",
             headers=self._headers(),
-            timeout=30.0,
             **kwargs,
         )
 

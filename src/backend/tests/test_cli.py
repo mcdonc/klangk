@@ -18,6 +18,7 @@ from klangk_backend.cli.client import (
     KlangkClient,
     Workspace,
     WorkspaceNotFoundError,
+    _request_with_retry,
 )
 
 
@@ -459,6 +460,113 @@ class TestOIDCCLILogin:
                 email="u@test.com",
                 password="pw",
             )
+
+
+# --- _request_with_retry tests ---
+
+
+class TestRequestWithRetry:
+    def test_success_on_first_attempt(self, monkeypatch):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        monkeypatch.setattr(
+            "klangk_backend.cli.client.httpx.request",
+            lambda *a, **kw: mock_resp,
+        )
+        resp = _request_with_retry("GET", "http://test/path")
+        assert resp.status_code == 200
+
+    def test_retries_on_timeout(self, monkeypatch):
+        call_count = 0
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        def fake_request(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise httpx.ReadTimeout("timed out")
+            return mock_resp
+
+        monkeypatch.setattr(
+            "klangk_backend.cli.client.httpx.request", fake_request
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client._time.sleep", lambda _: None
+        )
+        resp = _request_with_retry("GET", "http://test/path")
+        assert resp.status_code == 200
+        assert call_count == 3
+
+    def test_retries_on_connect_error(self, monkeypatch):
+        call_count = 0
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        def fake_request(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.ConnectError("connection refused")
+            return mock_resp
+
+        monkeypatch.setattr(
+            "klangk_backend.cli.client.httpx.request", fake_request
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client._time.sleep", lambda _: None
+        )
+        resp = _request_with_retry("GET", "http://test/path")
+        assert resp.status_code == 200
+        assert call_count == 2
+
+    def test_retries_on_503(self, monkeypatch):
+        call_count = 0
+
+        def fake_request(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.status_code = 503 if call_count < 3 else 200
+            return resp
+
+        monkeypatch.setattr(
+            "klangk_backend.cli.client.httpx.request", fake_request
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client._time.sleep", lambda _: None
+        )
+        resp = _request_with_retry("GET", "http://test/path")
+        assert resp.status_code == 200
+        assert call_count == 3
+
+    def test_raises_after_exhausting_retries(self, monkeypatch):
+        def fake_request(*args, **kwargs):
+            raise httpx.ReadTimeout("timed out")
+
+        monkeypatch.setattr(
+            "klangk_backend.cli.client.httpx.request", fake_request
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client._time.sleep", lambda _: None
+        )
+        with pytest.raises(httpx.ReadTimeout):
+            _request_with_retry("GET", "http://test/path")
+
+    def test_returns_503_after_exhausting_retries(self, monkeypatch):
+        def fake_request(*args, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 503
+            return resp
+
+        monkeypatch.setattr(
+            "klangk_backend.cli.client.httpx.request", fake_request
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client._time.sleep", lambda _: None
+        )
+        resp = _request_with_retry("GET", "http://test/path")
+        assert resp.status_code == 503
 
 
 # --- KlangkClient tests ---

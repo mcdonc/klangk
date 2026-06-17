@@ -17,7 +17,7 @@ import time
 import pytest
 
 
-def _run(args, timeout=30, input=None, **kwargs):
+def _run(args, timeout=120, input=None, **kwargs):
     """Run a CLI command, return CompletedProcess."""
     return subprocess.run(
         args,
@@ -326,7 +326,7 @@ class TestExec:
         result = _run(
             ["klangk", "exec", "e2e-exec", "echo", "hello from exec"],
             env=cli_config["env"],
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0
         assert "hello from exec" in result.stdout
@@ -336,7 +336,7 @@ class TestExec:
             ["klangk", "exec", "e2e-exec", "cat"],
             input="piped data\n",
             env=cli_config["env"],
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0
         assert "piped data" in result.stdout
@@ -345,7 +345,7 @@ class TestExec:
         result = _run(
             ["klangk", "exec", "e2e-exec", "false"],
             env=cli_config["env"],
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode != 0
 
@@ -391,7 +391,7 @@ class TestSync:
                 "e2e-sync:/home/work/synced/",
             ],
             env=cli_config["env"],
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0
 
@@ -405,7 +405,7 @@ class TestSync:
                 "/home/work/synced/file1.txt",
             ],
             env=cli_config["env"],
-            timeout=60,
+            timeout=120,
         )
         assert verify.returncode == 0
         assert "content one" in verify.stdout
@@ -422,7 +422,7 @@ class TestSync:
                 "echo remote-data > /home/work/remote-file.txt",
             ],
             env=cli_config["env"],
-            timeout=60,
+            timeout=120,
         )
 
         dest = tmp_path / "sync-dest"
@@ -436,7 +436,7 @@ class TestSync:
                 str(dest) + "/",
             ],
             env=cli_config["env"],
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0
         assert (dest / "remote-file.txt").read_text().strip() == "remote-data"
@@ -509,7 +509,7 @@ class TestSyncLarge:
                 "find /home/work/large-upload -type f | wc -l",
             ],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert verify.returncode == 0
         assert int(verify.stdout.strip()) == file_count
@@ -525,7 +525,7 @@ class TestSyncLarge:
                 "du -sb /home/work/large-upload | cut -f1",
             ],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert verify.returncode == 0
         container_size = int(verify.stdout.strip())
@@ -542,7 +542,7 @@ class TestSyncLarge:
                     f"/home/work/large-upload/{rel}",
                 ],
                 env=env,
-                timeout=60,
+                timeout=120,
             )
             assert verify.returncode == 0
             assert expected_hash in verify.stdout
@@ -566,7 +566,7 @@ class TestSyncLarge:
                 "bs=1024 count=420 status=none; done",
             ],
             env=env,
-            timeout=60,
+            timeout=120,
         )
 
         # Verify size in container (~10.5 MB)
@@ -580,7 +580,7 @@ class TestSyncLarge:
                 "du -sb /home/work/large-download | cut -f1",
             ],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert verify.returncode == 0
         assert int(verify.stdout.strip()) >= 10 * 1024 * 1024
@@ -596,7 +596,7 @@ class TestSyncLarge:
                 "sha256sum /home/work/large-download/*.bin",
             ],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert verify.returncode == 0
         container_hashes = {}
@@ -672,7 +672,7 @@ class TestDefaultCommand:
                     "/opt/klangk/config/default-command",
                 ],
                 env=env,
-                timeout=60,
+                timeout=120,
             )
             assert result.returncode == 0
             assert result.stdout.strip() == "echo hello"
@@ -1019,7 +1019,7 @@ class TestExportSymlinks:
             result = _run(
                 ["klangk", "export", "e2e-symlink", "-o", str(archive)],
                 env=env,
-                timeout=60,
+                timeout=120,
             )
             assert result.returncode == 0, result.stderr or result.stdout
 
@@ -1086,7 +1086,7 @@ class TestExportImport:
         result = _run(
             ["klangk", "export", "export-test", "-o", str(archive)],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr or result.stdout
         assert archive.exists()
@@ -1116,7 +1116,7 @@ class TestExportImport:
                 "export-restored",
             ],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr or result.stdout
 
@@ -1170,7 +1170,7 @@ class TestExportImport:
             result = _run(
                 ["klangk", "export", "export-symlink", "-o", str(archive)],
                 env=env,
-                timeout=60,
+                timeout=120,
             )
             assert result.returncode == 0, result.stderr or result.stdout
 
@@ -1208,7 +1208,7 @@ class TestExportImport:
                     "export-symlink-imported",
                 ],
                 env=env,
-                timeout=60,
+                timeout=120,
             )
             assert result.returncode == 0, result.stderr or result.stdout
 
@@ -1386,7 +1386,7 @@ class TestVolumeUserIsolation:
             result = _run(
                 ["klangk", "exec", "ws-a", "echo", "ok"],
                 env=env_a,
-                timeout=60,
+                timeout=120,
             )
             assert result.returncode == 0
 
@@ -1406,7 +1406,7 @@ class TestVolumeUserIsolation:
                 result = _run(
                     ["klangk", "exec", "ws-b", "echo", "stolen"],
                     env=env_b,
-                    timeout=60,
+                    timeout=120,
                 )
                 assert result.returncode != 0
             finally:
@@ -1469,35 +1469,57 @@ class TestVolumeUserIsolation:
             _run(["klangk", "volumes", "rm", "vol-private"], env=env_a)
 
 
-@pytest.mark.skipif(
-    os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="Flaky on CI: httpx ReadTimeout under load (#341)",
-)
 class TestTerminalSharing:
-    """Test klangk terminals, share, and unshare commands."""
+    """Test klangk terminals, share, and unshare commands.
+
+    Uses its own dedicated server to avoid cascading failures from
+    other test classes that may leave the shared server unresponsive.
+    """
 
     @pytest.fixture(autouse=True, scope="class")
-    def workspace(self, cli_config):
-        _run(["klangk", "create", "e2e-share"], env=cli_config["env"])
+    def _dedicated_server(self, tmp_path_factory):
+        data_dir = tempfile.mkdtemp(prefix="klangk-terminal-sharing-")
+        proc, base_url = _start_server(
+            data_dir, "18997", "terminal-sharing-e2e"
+        )
+        config_dir = tmp_path_factory.mktemp("klangk-terminal-sharing-config")
+        env = {**os.environ, "HOME": str(config_dir)}
+        (config_dir / ".config" / "klangk").mkdir(parents=True)
+        _run(
+            [
+                "klangk",
+                "login",
+                "test@example.com",
+                "--server",
+                base_url,
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+        _run(["klangk", "create", "e2e-share"], env=env)
         # Start container so terminal commands work
         _run(
             ["klangk", "exec", "e2e-share", "true"],
-            env=cli_config["env"],
-            timeout=60,
+            env=env,
+            timeout=120,
         )
+        self.__class__._env = env
         yield
-        _run(["klangk", "rm", "e2e-share"], env=cli_config["env"])
+        _run(["klangk", "rm", "e2e-share"], env=env)
+        _stop_server(proc, data_dir, "terminal-sharing-e2e")
 
-    def test_terminals_lists_windows(self, cli_config):
+    def test_terminals_lists_windows(self):
         result = _run(
             ["klangk", "terminals", "e2e-share"],
-            env=cli_config["env"],
+            env=self._env,
             timeout=120,
         )
         assert result.returncode == 0
 
-    def test_share_and_unshare_terminal(self, cli_config):
-        env = cli_config["env"]
+    def test_share_and_unshare_terminal(self):
+        env = self._env
         # First discover the window name via `klangk terminals`
         list_result = _run(
             ["klangk", "terminals", "e2e-share"],
@@ -1522,7 +1544,7 @@ class TestTerminalSharing:
         result = _run(
             ["klangk", "share", "e2e-share", terminal_name],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
         assert "shared" in result.stderr.lower()
@@ -1530,16 +1552,16 @@ class TestTerminalSharing:
         result = _run(
             ["klangk", "unshare", "e2e-share", terminal_name],
             env=env,
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
         assert "no longer shared" in result.stderr.lower()
 
-    def test_share_nonexistent_terminal(self, cli_config):
+    def test_share_nonexistent_terminal(self):
         result = _run(
             ["klangk", "share", "e2e-share", "nonexistent"],
-            env=cli_config["env"],
-            timeout=60,
+            env=self._env,
+            timeout=120,
         )
         assert result.returncode != 0
 
@@ -1563,7 +1585,7 @@ class TestContainerReplace:
             result = _run(
                 ["klangk", "exec", "e2e-replace", "echo", "first"],
                 env=env,
-                timeout=60,
+                timeout=120,
             )
             assert result.returncode == 0
             assert "first" in result.stdout
@@ -1594,7 +1616,7 @@ class TestContainerReplace:
             result = _run(
                 ["klangk", "exec", "e2e-replace", "echo", "second"],
                 env=env,
-                timeout=60,
+                timeout=120,
             )
             assert result.returncode == 0
             assert "second" in result.stdout
