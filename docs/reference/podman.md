@@ -17,41 +17,38 @@ Klangk uses rootless podman with `--userns=keep-id` to run workspace
 containers. This maps the host user's UID into the container so files
 on bind mounts are owned correctly.
 
-## Idmapped Mounts
+When `--userns=keep-id` is used, podman must remap UIDs/GIDs in every
+image layer. It does this via `storage-chown-by-maps` — a recursive
+chown of the layer tree. This is slow on first container creation
+(10-30s depending on image size) but subsequent creates reuse cached
+layers and are fast.
 
-For fast container creation, podman needs **idmapped mount** support
-from the kernel and filesystem. This lets podman remap UIDs at the
-mount level instead of recursively chowning every file in every image
-layer (the `storage-chown-by-maps` fallback, which can take minutes
-or hang).
+## First Container Creation is Slow
 
-Check your setup:
+The first `podman create` with `--userns=keep-id` triggers
+`storage-chown-by-maps` on every image layer, which can take 10-30s
+depending on image size. This is normal for rootless podman.
+Subsequent creates reuse cached layers and are fast.
 
-```sh
-podman info | grep "Supports shifting"
-```
+**ZFS note:** ZFS's copy-on-write semantics may make the recursive
+chown even slower since every chowned file creates a new copy. If
+your home directory is on ZFS (common on NixOS) and container
+creation is unacceptably slow, moving podman storage to ext4/btrfs/XFS
+may help. See [Configuring Storage](#configuring-storage) below.
 
-- **`true`** — idmapped mounts work. Container creation is fast (< 2s).
-- **`false`** — podman falls back to `storage-chown-by-maps`. The first
-  container create with `--userns=keep-id` will be slow (20-30s) or may
-  hang entirely.
+### A note on "Supports shifting"
 
-## Filesystem Requirements
+Running `podman info | grep "Supports shifting"` shows whether the
+kernel's idmapped mount feature is available, which would skip the
+recursive chown entirely. In practice, **this is always `false` for
+rootless podman** — the kernel requires `CAP_SYS_ADMIN` in the
+initial mount namespace to use `mount_setattr` with `MOUNT_ATTR_IDMAP`,
+which rootless users don't have. Only rootful (`sudo`) podman can
+achieve `Supports shifting: true`.
 
-Idmapped mounts require the **graphroot** (image layers) and **runroot**
-(runtime state) to both be on a filesystem that supports them:
-
-| Filesystem | Idmapped mounts | Notes                            |
-| ---------- | --------------- | -------------------------------- |
-| ext4       | Yes             | Recommended                      |
-| btrfs      | Yes             | Works                            |
-| XFS        | Yes             | Works                            |
-| ZFS        | No              | Hangs on `storage-chown-by-maps` |
-| tmpfs      | Yes             | Fine for runroot                 |
-
-If your home directory is on ZFS (common on NixOS), podman's default
-storage paths (`~/.local/share/containers/`) will be on ZFS and
-idmapped mounts won't work.
+This means `storage-chown-by-maps` is the normal and expected path
+for rootless podman. The goal is not to eliminate it, but to ensure
+it runs on a filesystem where it completes quickly (i.e., not ZFS).
 
 ## Configuring Storage
 
@@ -82,7 +79,7 @@ runroot = "/path/to/ext4/podman/run"
 
 This applies to all rootless podman usage, not just Klangk.
 
-Both `graphroot` and `runroot` must be on a supported filesystem.
+Both `graphroot` and `runroot` must be on a non-ZFS filesystem.
 
 ### NixOS
 
@@ -113,10 +110,12 @@ image afterward with `devenv up`.
 
 ## Troubleshooting
 
-### Container creation hangs or times out
+### Container creation is slow
 
-Check `podman info | grep "Supports shifting"`. If `false`, your
-storage is on an unsupported filesystem. See [Configuring Storage](#configuring-storage).
+First container creation with `--userns=keep-id` is always slow
+(10-30s) due to `storage-chown-by-maps`. This is normal. If it's
+consistently over 30s and your storage is on ZFS, try moving to ext4 —
+see [Configuring Storage](#configuring-storage).
 
 ### "database run root does not match our run root"
 

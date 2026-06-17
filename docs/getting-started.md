@@ -42,18 +42,6 @@ devenv shell
 
 This puts all project tools (Python, Flutter, Dart, Node, podman, etc.) on your PATH.
 
-Before starting, verify podman storage is configured correctly (from
-inside the devenv shell):
-
-```bash
-podman info | grep "Supports shifting"
-```
-
-This must show `true`. If it shows `false`, container creation will be
-extremely slow or hang. See [Podman](reference/podman.md) for how to
-fix it (usually means your storage is on ZFS and needs to be moved to
-ext4).
-
 ## Starting the Dev Environment
 
 ```bash
