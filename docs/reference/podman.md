@@ -69,17 +69,11 @@ Both `graphroot` and `runroot` must be on a supported filesystem.
 
 ### NixOS
 
-On NixOS, configure via your host's nix config:
-
-```nix
-virtualisation.containers.storage.settings = {
-  storage = {
-    driver = "overlay";
-    graphroot = "/path/to/ext4/podman/storage";
-    runroot = "/path/to/ext4/podman/run";
-  };
-};
-```
+Klangk runs **rootless** podman. The NixOS module
+`virtualisation.containers.storage.settings` writes to
+`/etc/containers/storage.conf`, which only applies to **root** podman.
+Rootless podman ignores it and uses `~/.config/containers/storage.conf`
+instead. Create that file manually (as shown above) or use home-manager.
 
 ### macOS
 
