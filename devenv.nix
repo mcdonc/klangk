@@ -346,14 +346,21 @@ in
     # Use an ext4 filesystem (not ZFS) for --userns=keep-id support.
     # ZFS lacks idmapped mounts, causing storage-chown-by-maps to hang.
     _PODMAN_GRAPHROOT="''${KLANGK_PODMAN_STORAGE:-$_PODMAN_STORE/storage}"
-    mkdir -p "$_PODMAN_CONF" "$_PODMAN_STORE/run" \
+    # Keep runroot on the same filesystem as graphroot to avoid
+    # cross-device issues (e.g. graphroot on ext4, runroot on ZFS).
+    if [ -n "''${KLANGK_PODMAN_STORAGE:-}" ]; then
+      _PODMAN_RUNROOT="$KLANGK_PODMAN_STORAGE/run"
+    else
+      _PODMAN_RUNROOT="$_PODMAN_STORE/run"
+    fi
+    mkdir -p "$_PODMAN_CONF" "$_PODMAN_RUNROOT" \
       "$_PODMAN_GRAPHROOT" "$_PODMAN_GRAPHROOT/tmp"
 
     cat > "$_PODMAN_CONF/storage.conf" <<STORAGE
     [storage]
     driver = "overlay"
     graphroot = "$_PODMAN_GRAPHROOT"
-    runroot = "$_PODMAN_STORE/run"
+    runroot = "$_PODMAN_RUNROOT"
     STORAGE
     export CONTAINERS_STORAGE_CONF="$_PODMAN_CONF/storage.conf"
 
