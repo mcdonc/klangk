@@ -28,7 +28,6 @@ jobs:
       - uses: ./.github/actions/devenv-setup
         with:
           build-tasks: klangk:build-workspace-image klangk:flutter-build
-          cache-nix: "false"
 
       - name: Run E2E tests (firefox + webkit)
         run: |
