@@ -150,30 +150,33 @@ class _CredentialDialog extends StatefulWidget {
 }
 
 class _CredentialDialogState extends State<_CredentialDialog> {
+  final _usernameController = TextEditingController();
   final _tokenController = TextEditingController();
-  final _focusNode = FocusNode();
+  final _usernameFocusNode = FocusNode();
+  final _tokenFocusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
+      _usernameFocusNode.requestFocus();
     });
   }
 
   @override
   void dispose() {
+    _usernameController.dispose();
     _tokenController.dispose();
-    _focusNode.dispose();
+    _usernameFocusNode.dispose();
+    _tokenFocusNode.dispose();
     super.dispose();
   }
 
   void _submit() {
+    final username = _usernameController.text.trim();
     final token = _tokenController.text.trim();
-    if (token.isEmpty) return;
-    // PAT-style: username is irrelevant for most git hosts, but required
-    // by the protocol. Use "x-access-token" (GitHub convention).
-    widget.onSubmit('x-access-token', token);
+    if (username.isEmpty || token.isEmpty) return;
+    widget.onSubmit(username, token);
   }
 
   @override
@@ -219,17 +222,51 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Enter a personal access token (PAT):',
+                    'Username:',
                     style: TextStyle(color: Colors.white70, fontSize: 13),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
+                  TextField(
+                    controller: _usernameController,
+                    focusNode: _usernameFocusNode,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'GitHub username',
+                      hintStyle: const TextStyle(color: Colors.white30),
+                      filled: true,
+                      fillColor: Colors.black26,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Colors.white24),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Colors.white24),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Colors.blueAccent),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                    ),
+                    onSubmitted: (_) => _tokenFocusNode.requestFocus(),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Personal access token (PAT):',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
                   TextField(
                     controller: _tokenController,
-                    focusNode: _focusNode,
+                    focusNode: _tokenFocusNode,
                     obscureText: true,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: 'ghp_... or glpat-...',
+                      hintText: 'ghp_... or github_pat_...',
                       hintStyle: const TextStyle(color: Colors.white30),
                       filled: true,
                       fillColor: Colors.black26,
