@@ -102,6 +102,12 @@ class TestActivityTracking:
         assert "ws-rm" not in container.registry.states
         assert "cid-rm" not in container.registry._cid_to_wsid
 
+    def test_remove_state_cleans_up_workspace_lock(self):
+        container.registry._get_workspace_lock("ws-lock-rm")
+        assert "ws-lock-rm" in container.registry._workspace_locks
+        container.registry.remove_state("ws-lock-rm")
+        assert "ws-lock-rm" not in container.registry._workspace_locks
+
     def test_get_state_returns_state(self):
         container.registry.track_activity("cid-1", "ws-1")
         state = container.registry.get_state("ws-1")

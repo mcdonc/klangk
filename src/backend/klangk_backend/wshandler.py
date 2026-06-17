@@ -166,6 +166,7 @@ class WorkspaceSession:
     async def reset(self) -> None:
         self.subscribers.clear()
         self.browser_subscribers.clear()
+        self.terminal_windows.clear()
 
     async def add_subscriber(
         self, sock: SafeWebSocket, container_id: str
@@ -396,6 +397,12 @@ class WebSocketState:
         else:
             container.registry.remove_state(workspace_id)
             logger.info("Reset workspace state for %s", workspace_id)
+
+        # Clean up module-level agent state for this workspace.
+        _agent_conversations.pop(workspace_id, None)
+        task = _agent_tasks.pop(workspace_id, None)
+        if task and not task.done():
+            task.cancel()
 
     async def logout_user(self, user_id: str) -> None:
         """Stop containers for a logging-out user, skipping any that

@@ -2627,6 +2627,32 @@ class TestResetWorkspaceState:
         finally:
             wshandler.state.sessions.pop("ws-reappear", None)
 
+    async def test_reset_cleans_agent_state(self):
+        """reset_workspace removes agent conversations and cancels agent tasks."""
+        ws_id = "ws-agent-cleanup"
+        wshandler._agent_conversations[ws_id] = {"user_id": "u1"}
+
+        async def noop():
+            await asyncio.sleep(999)
+
+        task = asyncio.create_task(noop())
+        wshandler._agent_tasks[ws_id] = task
+        try:
+            await reset_workspace_state(ws_id)
+            assert ws_id not in wshandler._agent_conversations
+            assert ws_id not in wshandler._agent_tasks
+            # Let cancellation propagate
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            assert task.cancelled()
+        finally:
+            wshandler._agent_conversations.pop(ws_id, None)
+            wshandler._agent_tasks.pop(ws_id, None)
+            if not task.done():
+                task.cancel()
+
 
 class TestRemoveSessionLocked:
     async def test_removes_session(self):
