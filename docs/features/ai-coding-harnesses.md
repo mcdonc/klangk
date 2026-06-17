@@ -1,0 +1,144 @@
+# AI Coding Harnesses
+
+Every workspace container ships with two AI coding agents
+pre-installed: **Pi** and **Claude Code**. Both connect to your LLM
+backend through the [LLM proxy](../architecture/llm-proxy.md) so no
+API keys are exposed inside containers.
+
+## Prerequisites
+
+Set these environment variables (in `.env` or your deployment config)
+to enable AI features:
+
+| Variable              | Example                     | Purpose                    |
+| --------------------- | --------------------------- | -------------------------- |
+| `KLANGK_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
+| `KLANGK_LLM_MODEL`    | `gpt-4o`                    | Default model name         |
+| `KLANGK_LLM_API_KEY`  | `sk-...`                    | Provider API key           |
+
+Without these, both agents are non-functional. See
+[Environment Variables](../reference/environment.md) for the full
+list.
+
+## Pi
+
+[Pi](https://github.com/earendil-works/pi-coding-agent) is an
+open-source terminal-based coding agent. It is the default harness
+in klangk workspaces.
+
+### Using Pi from the terminal
+
+Open a terminal tab and run:
+
+```text
+pi
+```
+
+Pi starts in interactive TUI mode with access to the workspace
+filesystem (`/home/work`), shell commands, and all mapped ports. It
+reads its config from `~/.pi/agent/` which is populated automatically
+at first login by `setup-clankers`.
+
+### Using Pi from chat
+
+Mention the agent handle in the [Chat](chat.md) panel:
+
+```text
+@MrBoops create a Python Flask app on port 8000
+```
+
+The agent handle and display name are configurable:
+
+| Variable                   | Default               |
+| -------------------------- | --------------------- |
+| `KLANGK_CHAT_AGENT_HANDLE` | `MrBoops`             |
+| `KLANGK_CHAT_AGENT_EMAIL`  | `MrBoops@example.com` |
+
+When invoked from chat, Pi runs in RPC mode — the backend manages
+the subprocess and streams responses back to the chat panel. See
+[Chat - AI Agent](chat.md#ai-agent-mrboops) for details on
+follow-up conversations and interjections.
+
+### Pi extensions
+
+The workspace image ships with several Pi extensions pre-installed:
+
+- **pi-web-agent** — web-based agent UI
+- **pi-otel-telemetry** — OpenTelemetry tracing (opt-in via
+  `LOGFIRE_TOKEN`)
+- **pi-mcp-extension** — MCP (Model Context Protocol) server support
+- **llm-proxy-models** — dynamically fetches available models from the
+  LLM proxy
+- **minimax-thinking-tags** — strips `<think>` tags from models that
+  emit them
+
+Extensions are installed at image build time into
+`/opt/klangk/pi-agent/extensions/` and symlinked into the user's
+`~/.pi/agent/` at first login. Users can install additional extensions
+with `pi install`.
+
+## Claude Code
+
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) is
+Anthropic's CLI coding agent. It is installed globally in the
+workspace container via npm.
+
+### Using Claude Code from the terminal
+
+Open a terminal tab and run:
+
+```text
+claude
+```
+
+Claude Code connects to the LLM proxy automatically — the workspace
+JWT is used as the API key, and the proxy forwards requests to your
+configured `KLANGK_LLM_BASE_URL` with the real API key injected by
+nginx.
+
+!!! note
+Claude Code requires an Anthropic-compatible API endpoint. If your
+`KLANGK_LLM_BASE_URL` points to a non-Anthropic provider (e.g.
+Ollama, OpenAI), Claude Code will not work. Use Pi instead, which
+supports any OpenAI-compatible endpoint.
+
+### Skills
+
+Both Pi and Claude Code support **skills** — reusable prompt
+templates that can be invoked by name. Plugin-provided skills are
+symlinked into both agents' discovery paths at login:
+
+- Pi: `~/.pi/agent/skills/`
+- Claude Code: `~/.claude/skills/`
+
+Enable skills for a workspace by setting `KLANGK_SKILLS` to a
+comma-separated list of skill names (matching directories under
+`/opt/klangk/pi-agent/skills/`).
+
+## System prompt
+
+Both agents share a system prompt installed at `~/AGENTS.md` on first
+login. This prompt configures workspace-specific behavior:
+
+- File and project creation conventions
+- Hosted app port mappings (`$KLANGK_PORT_MAPPINGS`)
+- The `get_hosted_url` tool for generating user-facing URLs
+- Guidelines for running servers, handling large files, and web search
+
+The system prompt is copied from the image and can be edited per-user
+in the container.
+
+## How the LLM proxy works
+
+Neither agent has direct access to your LLM API key. Instead:
+
+1. `setup-clankers` writes `~/.pi/agent/models.json` with
+   `KLANGK_LLM_PROXY_URL` (pointing to nginx on the host) and the
+   workspace JWT as the API key.
+2. When an agent makes an LLM request, nginx validates the JWT via
+   `auth_request`, strips it, and forwards the request to
+   `KLANGK_LLM_BASE_URL` with the real `KLANGK_LLM_API_KEY` in the
+   `Authorization` header.
+
+This means API keys never enter the container environment. See
+[LLM Proxy](../architecture/llm-proxy.md) for the full architecture.
