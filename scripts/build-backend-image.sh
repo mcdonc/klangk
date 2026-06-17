@@ -49,11 +49,7 @@ if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
 fi
 
 # Build workspace image on top of the base
-POLICY_ARGS=()
-if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
-  POLICY_ARGS+=(--signature-policy "${KLANGK_SIGNATURE_POLICY}")
-fi
-"$PODMAN" build "${POLICY_ARGS[@]}" \
+"$PODMAN" build \
   --pull=newer \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-context plugin-extensions="$STAGING/extensions" \

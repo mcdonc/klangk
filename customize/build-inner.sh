@@ -16,11 +16,6 @@ fi
 
 WORKSPACE_IMAGE="${KLANGK_IMAGE_NAME:-klangk-workspace}"
 PODMAN="${KLANGK_PODMAN_BIN:-podman}"
-POLICY_ARGS=()
-if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
-  POLICY_ARGS+=(--signature-policy "${KLANGK_SIGNATURE_POLICY}")
-fi
-
 export KLANGK_PLUGINS_DIR="$PLUGINS_DIR"
 
 # Fetch plugins
@@ -60,7 +55,7 @@ RUN cp /tmp/ssl/*.pem /usr/local/share/ca-certificates/ 2>/dev/null; \
 USER klangk
 CERTDF
 
-  "$PODMAN" build "${POLICY_ARGS[@]}" \
+  "$PODMAN" build \
     --build-arg BASE="$WORKSPACE_IMAGE" \
     -t "$WORKSPACE_IMAGE:latest" \
     "$WS_CERT_DIR"
@@ -68,4 +63,4 @@ fi
 
 # Export workspace image as tarball
 echo '--- Exporting workspace image ---'
-"$PODMAN" save "${POLICY_ARGS[@]}" -o "$WORKSPACE_TAR_DIR/workspace.tar" "$WORKSPACE_IMAGE"
+"$PODMAN" save -o "$WORKSPACE_TAR_DIR/workspace.tar" "$WORKSPACE_IMAGE"

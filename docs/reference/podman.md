@@ -40,23 +40,7 @@ for rootless podman.
 
 By default, podman stores images and runtime state under
 `~/.local/share/containers/`. To use a different location (e.g. a
-larger volume), two options:
-
-**Option A: `KLANGK_PODMAN_STORAGE` env var** (devenv only)
-
-Set `KLANGK_PODMAN_STORAGE` in your `.env` file:
-
-```sh
-KLANGK_PODMAN_STORAGE=/path/to/podman
-```
-
-The devenv shell generates a `storage.conf` that puts both `graphroot`
-and `runroot` under this path. This only applies inside the devenv
-shell — podman outside of devenv is unaffected.
-
-**Option B: `~/.config/containers/storage.conf`** (system-wide)
-
-Create or edit `~/.config/containers/storage.conf`:
+larger volume), create or edit `~/.config/containers/storage.conf`:
 
 ```toml
 [storage]
@@ -64,8 +48,6 @@ driver = "overlay"
 graphroot = "/path/to/podman/storage"
 runroot = "/path/to/podman/run"
 ```
-
-This applies to all rootless podman usage, not just Klangk.
 
 ### NixOS
 
