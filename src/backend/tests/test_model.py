@@ -671,6 +671,7 @@ class TestChatMessages:
         assert msg["workspace_id"] == workspace["id"]
         assert msg["user_id"] == user["id"]
         assert msg["user_email"] == "testuser@example.com"
+        assert msg["user_handle"] == "testuser"
         assert msg["message"] == "hello"
         assert msg["message_type"] == model.MSG_USER
         assert "id" in msg
@@ -698,15 +699,17 @@ class TestChatMessages:
 
     async def test_get_chat_messages(self, workspace, user):
         await model.add_chat_message(
-            workspace["id"], "uid-a", "a@test.com", "first"
+            workspace["id"], user["id"], "testuser@example.com", "first"
         )
         await model.add_chat_message(
-            workspace["id"], "uid-b", "b@test.com", "second"
+            workspace["id"], user["id"], "testuser@example.com", "second"
         )
         msgs = await model.get_chat_messages(workspace["id"])
         assert len(msgs) == 2
         assert msgs[0]["message"] == "first"
         assert msgs[1]["message"] == "second"
+        assert msgs[0]["user_handle"] == "testuser"
+        assert msgs[1]["user_handle"] == "testuser"
         assert msgs[0]["message_type"] == model.MSG_USER
         assert msgs[1]["message_type"] == model.MSG_USER
         assert msgs[0]["mentions"] == []

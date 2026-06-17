@@ -491,18 +491,18 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   Widget _buildMessageContent(
     BuildContext context, {
-    required String email,
+    required String senderName,
     required String text,
     required bool isAgent,
     required bool isDeleted,
   }) {
-    final nameColor = isAgent ? KColors.accentCyan : _colorForEmail(email);
+    final nameColor = isAgent ? KColors.accentCyan : _colorForEmail(senderName);
 
     if (isDeleted) {
       return Text.rich(
         TextSpan(children: [
           TextSpan(
-            text: '$email  ',
+            text: '$senderName  ',
             style: TextStyle(
               fontWeight: FontWeight.bold,
               color: nameColor,
@@ -525,7 +525,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          email,
+          senderName,
           style: TextStyle(
             fontWeight: FontWeight.bold,
             color: nameColor,
@@ -773,7 +773,11 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                       }
                       final msgIndex = _loadingOlder ? index - 1 : index;
                       final msg = _messages[msgIndex];
+                      final handle = msg['user_handle'] as String?;
                       final email = msg['user_email'] as String? ?? '';
+                      final senderName = (handle != null && handle.isNotEmpty)
+                          ? handle
+                          : email;
                       final text = msg['message'] as String? ?? '';
                       final createdAt = _formatTime(
                         msg['created_at'] as String? ?? '',
@@ -866,7 +870,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                                 },
                                 child: _buildMessageContent(
                                   context,
-                                  email: email,
+                                  senderName: senderName,
                                   text: text,
                                   isAgent: isAgent,
                                   isDeleted: isDeleted,

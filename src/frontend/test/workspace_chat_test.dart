@@ -111,6 +111,7 @@ void main() {
           'type': 'chat_message',
           'id': 'msg-1',
           'user_email': 'alice@test.com',
+          'user_handle': 'alice',
           'message': 'hello world',
           'created_at': '2026-01-01 00:00:00',
         });
@@ -121,8 +122,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(find.text('No messages yet'), findsNothing);
-      // Sender email rendered as Text widget
-      expect(find.text('alice@test.com'), findsOneWidget);
+      // Sender handle rendered (not email) when handle is present
+      expect(find.text('alice'), findsOneWidget);
+      expect(find.text('alice@test.com'), findsNothing);
       // Message rendered via MarkdownBody
       expect(find.byType(MarkdownBody), findsOneWidget);
       expect(_findMarkdownData(tester), 'hello world');
