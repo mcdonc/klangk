@@ -575,6 +575,13 @@ class TestEnsureHome:
         result = await session._ensure_home()
         assert result == "/home/MrBoops"
 
+    async def test_ensure_home_no_workspace_for_container(self):
+        from klangk_backend.agent import AgentSetupError
+
+        session = AgentSession("unknown-cid")
+        with pytest.raises(AgentSetupError, match="No workspace found"):
+            await session._ensure_home()
+
     async def test_ensure_home_workspace_not_in_db(self):
         from klangk_backend import container, model
         from klangk_backend.agent import AgentSetupError
