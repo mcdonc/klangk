@@ -18,6 +18,10 @@ src/backend/uv.lock
 src/frontend/.dart_tool/
 src/frontend/.packages
 src/frontend/build/
+
+# Plugin build artifacts
+plugins/**/klangk/.dart_tool/
+plugins/**/klangk/build/
 src/frontend/.flutter-plugins
 src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec_overrides.yaml
