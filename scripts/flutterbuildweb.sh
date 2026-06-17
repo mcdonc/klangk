@@ -82,4 +82,6 @@ for f in main.dart.wasm main.dart.js; do
   fi
 done
 sed -i "s|flutter_bootstrap.js|flutter_bootstrap.js?v=${HASH}|" "$BUILD_DIR/index.html"
+# Inject build hash as a meta tag so the Dart app can detect stale builds.
+sed -i "s|</head>|<meta name=\"klangk-build-hash\" content=\"${HASH}\" />\n</head>|" "$BUILD_DIR/index.html"
 echo "Cache-bust: v=$HASH"

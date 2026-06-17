@@ -113,6 +113,13 @@ Future<String?> readClipboardText() async {
   }
 }
 
+/// Read the build hash from the <meta name="klangk-build-hash"> tag.
+/// Returns empty string if not found (e.g. dev server without build script).
+String getBuildHash() {
+  final meta = web.document.querySelector('meta[name="klangk-build-hash"]');
+  return meta?.getAttribute('content') ?? '';
+}
+
 /// Web implementation — suppresses native browser context menu on right-click.
 Widget buildSuppressor(Widget child) {
   return Listener(
