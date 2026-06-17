@@ -64,8 +64,7 @@ class GitCredentialPlugin extends ToolPlugin with ChangeNotifier {
       return jsonEncode({'error': 'cancelled'});
     }
 
-    // Cache for this session.
-    _cache[key] = result;
+    // Don't cache here — wait for git to call "store" after successful auth.
     return jsonEncode({
       'username': result.username,
       'password': result.password,
