@@ -96,6 +96,12 @@ def main():
 
     browser_id = _get_browser_id()
 
+    # "klangkshell" sentinel means we're in klangk shell (CLI), not a
+    # browser — skip the bridge and go straight to OSC 52.
+    if browser_id == "klangkshell":
+        _osc52(text)
+        return
+
     # Try bridge first (web frontend); fall back to OSC 52 (CLI terminal).
     if not _try_bridge(text, browser_id):
         _osc52(text)

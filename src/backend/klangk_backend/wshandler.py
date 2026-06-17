@@ -943,9 +943,12 @@ class Connection:
 
         # Register browser ID for bridge routing.  The browser sends
         # its sessionStorage UUID with terminal_start; on refresh the
-        # same ID re-registers with the new WebSocket.
+        # same ID re-registers with the new WebSocket.  The CLI sends
+        # "klangkshell" as a sentinel — store it in tmux env (so
+        # klangk-copy-to-clipboard can skip the bridge) but don't
+        # register it for bridge routing.
         browser_id = msg.get("browser_id")
-        if browser_id:
+        if browser_id and browser_id != "klangkshell":
             container.registry.revoke_browser(self.sock)
             container.registry.register_browser(
                 browser_id, self.workspace_id, self.sock
