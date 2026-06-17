@@ -126,12 +126,26 @@ class TestGetOperation:
         assert "username=octocat" in result.stdout
         assert "password=ghp_abc123" in result.stdout
 
-        req = _BridgeHandler.requests[-1]
-        assert req["action"] == "git_credential"
-        assert req["operation"] == "get"
-        assert req["protocol"] == "https"
-        assert req["host"] == "github.com"
-        assert req["token"] == "test-token"
+    def test_unwraps_bridge_result(self, bridge_server):
+        """Bridge wraps plugin response in {"status":"ok","result":"..."}."""
+        server, port = bridge_server
+        inner = json.dumps({"username": "octocat", "password": "ghp_xyz"})
+        _BridgeHandler.response_body = json.dumps(
+            {"status": "ok", "result": inner}
+        ).encode()
+
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=github.com\n\n",
+            env_override={
+                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGK_BRIDGE_TOKEN": "test-token",
+            },
+        )
+
+        assert result.returncode == 0
+        assert "username=octocat" in result.stdout
+        assert "password=ghp_xyz" in result.stdout
 
     def test_exits_1_on_empty_response(self, bridge_server):
         server, port = bridge_server

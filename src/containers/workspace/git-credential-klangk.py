@@ -84,6 +84,15 @@ def main():
         if not resp:
             sys.exit(1)
 
+        # The bridge wraps the plugin response in {"status": "ok",
+        # "result": "<json-string>"}. Unwrap if needed.
+        result = resp.get("result")
+        if isinstance(result, str):
+            try:
+                resp = json.loads(result)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
         username = resp.get("username", "")
         password = resp.get("password", "")
         if not username or not password:
