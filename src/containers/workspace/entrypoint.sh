@@ -6,6 +6,12 @@
 # klangk — no root privileges needed.
 set -e
 
+# Run plugin on-entrypoint hooks (alphabetical by plugin name).
+# These run once per container start, as root (inside userns).
+for f in /opt/klangk/hooks/*/on-entrypoint.sh; do
+  [ -x "$f" ] && "$f" || true
+done
+
 # Signal that setup is complete. Terminal sessions (podman exec) source
 # /etc/bash.bashrc which waits for this file before showing a prompt.
 # Per-user Pi agent config is handled by setup-clankers (called from

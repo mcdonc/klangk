@@ -54,6 +54,10 @@ plugins:
     git: git@github.com:mcdonc/klangk.git
     path: plugins/marquee
     ref: main
+  - name: git-credential
+    git: git@github.com:mcdonc/klangk.git
+    path: plugins/git-credential
+    ref: 410-plugin-hooks
   # Add more plugins:
   # - name: my-plugin
   #   git: git@github.com:user/repo.git

@@ -1,0 +1,5 @@
+{
+  "name": "@klangk/git-credential",
+  "version": "1.0.0",
+  "description": "Git credential helper: browser-side PAT dialog and credential cache"
+}

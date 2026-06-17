@@ -36,14 +36,28 @@ fi
 # Stage plugin files outside the source tree
 STAGING="$KLANGK_PLUGINS_DIR/.docker"
 rm -rf "$STAGING"
-mkdir -p "$STAGING/extensions" "$STAGING/tools"
+mkdir -p "$STAGING/extensions" "$STAGING/tools" "$STAGING/hooks"
 for d in "$KLANGK_PLUGINS_DIR"/*/; do
   [ -d "$d" ] || continue
   name=$(basename "$d")
   [ -f "$d/extension.ts" ] && cp "$d/extension.ts" "$STAGING/extensions/$name.ts"
+  # Flatten all plugin tools into a single directory (/opt/klangk/bin/)
   if [ -d "$d/tools" ]; then
-    mkdir -p "$STAGING/tools/$name"
-    cp -r "$d/tools/"* "$STAGING/tools/$name/" 2>/dev/null
+    cp -r "$d/tools/"* "$STAGING/tools/" 2>/dev/null
+  fi
+  # Stage lifecycle hooks per-plugin (/opt/klangk/hooks/<plugin>/)
+  has_hooks=false
+  for hook in on-image-build.sh on-entrypoint.sh on-shell-init.sh; do
+    if [ -f "$d/$hook" ]; then
+      has_hooks=true
+      break
+    fi
+  done
+  if $has_hooks; then
+    mkdir -p "$STAGING/hooks/$name"
+    for hook in on-image-build.sh on-entrypoint.sh on-shell-init.sh; do
+      [ -f "$d/$hook" ] && cp "$d/$hook" "$STAGING/hooks/$name/$hook"
+    done
   fi
 done
 
@@ -66,6 +80,7 @@ fi
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-context plugin-extensions="$STAGING/extensions" \
   --build-context plugin-tools="$STAGING/tools" \
+  --build-context plugin-hooks="$STAGING/hooks" \
   -t "${KLANGK_IMAGE_NAME}:latest" \
   -t "${KLANGK_IMAGE_NAME}:${VERSION}" \
   "$@" src/containers/workspace/

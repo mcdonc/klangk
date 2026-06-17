@@ -1,20 +1,26 @@
 # Plugin System
 
-All plugins live in `$KLANGK_PLUGINS_DIR/<name>/` directories (defaults to `.devenv/state/klangk/plugins/`). A plugin can contain:
+All plugins live in `$KLANGK_PLUGINS_DIR/<name>/` directories (defaults to `.devenv/state/klangk/plugins/`). A plugin can contain any combination of:
 
-- `extension.ts` — Pi extension with `pi.registerTool()`. Copied to `src/containers/extensions/` at build time.
-- `klangk/` — Optional Dart package for client-side browser actions:
+- `extension.ts` — Pi extension with `pi.registerTool()`. Copied into the workspace image at build time.
+- `klangk/` — Dart package for client-side browser actions:
   - `klangk/pubspec.yaml` — Package definition, depends on `klangk_plugin_api` (git)
   - `klangk/lib/plugin.dart` — Class extending `ToolPlugin` with action handlers
   - `klangk/lib/*.dart` — Supporting Dart files (widgets, utilities)
-- `tools/` — Server-side scripts. Everything in this subdirectory is copied to `/opt/klangk/plugin-tools/<name>/` in the workspace image.
+- `tools/` — Server-side scripts and commands. Copied to `/opt/klangk/bin/` in the workspace image (on `PATH`).
+- `on-image-build.sh` — Lifecycle hook: runs at image build time (see [Lifecycle Hooks](#lifecycle-hooks))
+- `on-entrypoint.sh` — Lifecycle hook: runs at container start
+- `on-shell-init.sh` — Lifecycle hook: runs on every shell open
 
-A plugin needs at minimum an `extension.ts`. The `klangk/` subdirectory is only needed for client-side browser actions (e.g., celebrate, beep, authenticated fetch) that are dispatched via the [browser bridge](../architecture/browser-bridge.md).
+No single component is required — a plugin can be an extension + Dart UI, just lifecycle hooks + tools, or any combination. The `klangk/` subdirectory is only needed for client-side browser actions (e.g., celebrate, beep, authenticated fetch) that are dispatched via the [browser bridge](../architecture/browser-bridge.md).
 
 ## Build Integration
 
 - `scripts/import_dart_plugins.py` scans `$KLANGK_PLUGINS_DIR/*/klangk/` for plugin Dart packages and generates `$KLANGK_PLUGINS_DIR/.dart/` (the `klangk_plugins` package with path deps and `createAllPlugins()`)
-- `build-workspace-image` stages `extension.ts` and `tools/` files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named build contexts (`plugin-extensions`, `plugin-tools`)
+- `build-workspace-image` stages files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named build contexts:
+  - `plugin-extensions` — `extension.ts` files
+  - `plugin-tools` — flat directory of all `tools/*` files (installed to `/opt/klangk/bin/`)
+  - `plugin-hooks` — per-plugin lifecycle hook directories (installed to `/opt/klangk/hooks/<name>/`)
 - `flutterbuildweb` runs the codegen before compiling
 - `stub_dart_plugins.sh` creates a minimal stub at `$KLANGK_PLUGINS_DIR/.dart/` so `flutter pub get` works before plugins are fetched (runs automatically at devenv shell startup via `enterShell`; skips if `pubspec_overrides.yaml` already exists)
 - Both build tasks are triggered automatically by `devenv up` via `execIfModified`
@@ -51,6 +57,58 @@ plugins:
 - `plugins.lock` — records resolved commit SHAs for reproducible builds
 - Local plugin development: drop a directory into `$KLANGK_PLUGINS_DIR` directly — the build system treats it the same as a fetched plugin
 - `execIfModified` watches `$KLANGK_PLUGINS_DIR` to trigger rebuilds when plugin content or the lockfile changes
+
+## Lifecycle Hooks
+
+Plugins can include shell scripts at their root that run automatically at specific points in the container lifecycle. All hooks are optional.
+
+### `on-image-build.sh`
+
+Runs once at **image build time** via `RUN` in the Dockerfile. Use for system-level configuration that applies to all users and persists in the image.
+
+- Runs as root
+- No runtime environment variables available (only build-time values)
+- Examples: `git config --system`, installing system packages, writing config files
+
+```bash
+#!/usr/bin/env bash
+# plugins/git-credential/on-image-build.sh
+set -e
+git config --system credential.helper klangk
+```
+
+### `on-entrypoint.sh`
+
+Runs once per **container start** from the entrypoint, before any shell opens. Use for setup that depends on runtime environment variables but only needs to happen once.
+
+- Runs as the container's initial user (root inside the user namespace, mapped to the host user outside)
+- Runtime environment variables are available (`KLANGK_WORKSPACE_ID`, etc.)
+- Examples: writing runtime config files, one-time service initialization
+
+### `on-shell-init.sh`
+
+Runs on **every shell open** from `bash.bashrc`. Use for per-user, per-session setup.
+
+- Runs as the `klangk` user
+- User environment is available (`HOME`, `KLANGK_USER_ID`, etc.)
+- Runs after `setup-clankers` (Pi agent config)
+- Keep it fast — this runs on every new terminal tab and window
+- Examples: per-user symlinks, session-specific env setup
+
+### Execution Order
+
+Hooks execute **alphabetically by plugin name**. Within each plugin, only the relevant hook for the current lifecycle phase runs. If ordering between plugins matters, use numeric prefixes on plugin directory names (e.g., `00-core`, `50-git-credential`).
+
+### Container Layout
+
+```text
+/opt/klangk/hooks/
+  git-credential/
+    on-image-build.sh
+  some-other-plugin/
+    on-entrypoint.sh
+    on-shell-init.sh
+```
 
 ## Plugin Configuration
 

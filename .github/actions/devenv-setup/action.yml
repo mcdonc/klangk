@@ -6,11 +6,6 @@ inputs:
     description: "Space-separated devenv tasks to run (e.g. 'klangk:build-workspace-image klangk:flutter-build'). Empty to skip."
     required: false
     default: ""
-  cache-nix:
-    description: "Enable nix store caching (default true)"
-    required: false
-    default: "true"
-
 runs:
   using: composite
   steps:
@@ -29,14 +24,6 @@ runs:
           /usr/lib/google-cloud-sdk \
           /usr/local/powershell /usr/local/.ghcup \
           /usr/local/julia* &
-
-    - name: Cache Nix store
-      if: inputs.cache-nix == 'true'
-      uses: nix-community/cache-nix-action@v7
-      with:
-        primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'devenv.nix', 'devenv.yaml') }}
-        restore-prefixes-first-match: nix-${{ runner.os }}-
-        gc-max-store-size-linux: 8000000000
 
     - name: Bootstrap
       shell: bash

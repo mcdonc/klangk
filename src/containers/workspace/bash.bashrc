@@ -19,6 +19,13 @@ cd "$HOME" 2>/dev/null
 # Per-user Pi agent config (extensions, settings, models, skills).
 python3 /opt/klangk/bin/setup-clankers
 
+# Run plugin on-shell-init hooks (alphabetical by plugin name).
+# These run as the klangk user on every shell open.
+for f in /opt/klangk/hooks/*/on-shell-init.sh; do
+  # shellcheck disable=SC2181
+  [ -x "$f" ] && "$f" || true
+done
+
 # Determine which command to exec into (if any).
 # KLANGK_CMD_OVERRIDE (set per-session via podman exec -e) takes priority.
 # Otherwise fall back to the workspace default from the config mount.

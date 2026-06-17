@@ -9,9 +9,11 @@ RUN mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-otel-telemetry \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-mcp-extension
 
-# Server-side tools per plugin (from plugin-tools named build context)
-# Layout: /opt/klangk/plugin-tools/<name>/<script>
-COPY --from=plugin-tools / /opt/klangk/plugin-tools/
+# Plugin tools: flat directory, all on PATH via /opt/klangk/bin/
+COPY --from=plugin-tools / /opt/klangk/bin/
+
+# Plugin lifecycle hooks: /opt/klangk/hooks/<plugin>/{on-image-build,on-entrypoint,on-shell-init}.sh
+COPY --from=plugin-hooks / /opt/klangk/hooks/
 
 # Pi extensions from plugins and builtins (changes when plugins change)
 COPY --from=plugin-extensions / /opt/klangk/pi-agent/extensions/
@@ -37,10 +39,11 @@ RUN chmod +x /opt/klangk/entrypoint.sh \
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 
-# Git credential helper: delegates to the user's browser via the bridge.
-COPY git-credential-klangk.py /usr/local/bin/git-credential-klangk
-RUN chmod +x /usr/local/bin/git-credential-klangk
-RUN git config --system credential.helper klangk
+# Run plugin on-image-build hooks (alphabetical by plugin name).
+# These run as root at image build time for system-level config.
+RUN for f in /opt/klangk/hooks/*/on-image-build.sh; do \
+      [ -x "$f" ] && "$f"; \
+    done 2>/dev/null; true
 
 # Fix non-root group ownership that causes crun fchownat errors with
 # --userns=keep-id. crun cannot remap groups like utmp, shadow, adm, ssh

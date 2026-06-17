@@ -56,7 +56,6 @@ jobs:
         if: steps.filter.outputs.e2e == 'true'
         with:
           build-tasks: klangk:build-workspace-image klangk:flutter-build
-          cache-nix: "false"
 
       - name: Run E2E tests (chromium + API)
         if: steps.filter.outputs.e2e == 'true'
