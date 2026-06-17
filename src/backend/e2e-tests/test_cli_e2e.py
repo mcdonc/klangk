@@ -8,6 +8,7 @@ Requires: podman available, klangk image built.
 Run with: devenv shell -- test-cli-e2e
 """
 
+import logging
 import os
 import shutil
 import subprocess
@@ -15,6 +16,8 @@ import tempfile
 import time
 
 import pytest
+
+logger = logging.getLogger(__name__)
 
 
 def _run(args, timeout=120, input=None, **kwargs):
@@ -51,6 +54,11 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         "LOGFIRE_TOKEN": "",
         **(extra_env or {}),
     }
+    # Write server output to a temp file instead of PIPE.  With PIPE,
+    # the OS buffer (64 KB) fills up when the server emits enough log
+    # lines, deadlocking the event loop — the root cause of #364.
+    log_path = os.path.join(data_dir, "server.log")
+    log_file = open(log_path, "w")  # noqa: SIM115
     proc = subprocess.Popen(
         [
             "uvicorn",
@@ -68,9 +76,11 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         ],
         cwd=os.path.join(os.path.dirname(__file__), ".."),
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=log_file,
         stderr=subprocess.STDOUT,
     )
+    proc._log_file = log_file  # keep reference for cleanup
+    proc._log_path = log_path
     base_url = f"http://localhost:{port}"
     for _ in range(60):
         try:
@@ -81,13 +91,16 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         time.sleep(1)
     else:
         proc.kill()
-        stdout = proc.stdout.read().decode() if proc.stdout else ""
+        log_file.close()
+        stdout = open(log_path).read() if os.path.exists(log_path) else ""
         raise RuntimeError(f"Server failed to start:\n{stdout}")
     return proc, base_url
 
 
 def _stop_server(proc, data_dir, instance_id):
     """Stop a server, clean up containers and data."""
+    if hasattr(proc, "_log_file"):
+        proc._log_file.close()
     try:
         proc.kill()
         proc.wait(timeout=5)
@@ -1058,12 +1071,11 @@ class TestExportImport:
             env=cli_config["env"],
         )
         yield
-        # Clean up workspaces created during tests
-        result = _run(["klangk", "list", "--plain"], env=cli_config["env"])
-        for line in result.stdout.strip().splitlines():
-            parts = line.split()
-            if parts and parts[0].startswith("export-"):
-                _run(["klangk", "rm", parts[0]], env=cli_config["env"])
+        # No explicit workspace cleanup here — the shared server fixture
+        # tears down the entire server process (and its data dir) after
+        # the test session, so leftover workspaces are harmless.  Previous
+        # attempts at per-test CLI cleanup caused cascade failures on CI
+        # when `klangk rm` was slow (see #364).
 
     def test_export_and_import_round_trip(self, cli_config, tmp_path):
         env = cli_config["env"]
@@ -1103,8 +1115,13 @@ class TestExportImport:
             assert meta["name"] == "export-test"
             assert meta["env"] == {"MY_VAR": "hello"}
 
-        # Delete the original
-        _run(["klangk", "rm", "export-test"], env=env)
+        # Delete the original (not needed for import, but keeps things tidy)
+        try:
+            _run(["klangk", "rm", "export-test"], env=env)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "Timeout removing export-test, deferring to teardown"
+            )
 
         # Import with a new name
         result = _run(
@@ -1124,9 +1141,6 @@ class TestExportImport:
         result = _run(["klangk", "list", "--plain"], env=env)
         assert "export-restored" in result.stdout
 
-        # Clean up
-        _run(["klangk", "rm", "export-restored"], env=env)
-
     def test_export_import_round_trip_with_symlinks(
         self, server, cli_config, tmp_path
     ):
@@ -1145,10 +1159,13 @@ class TestExportImport:
             resp = httpx.post(
                 f"{server['url']}/auth/login",
                 json={"email": "test@example.com", "password": "testpass"},
+                timeout=30,
             )
             token = resp.json()["access_token"]
             headers = {"Authorization": f"Bearer {token}"}
-            resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+            resp = httpx.get(
+                f"{server['url']}/workspaces", headers=headers, timeout=30
+            )
             ws = [w for w in resp.json() if w["name"] == "export-symlink"][0]
             ws_id = ws["id"]
             ws_root = Path(server["data_dir"]) / "workspaces"
@@ -1196,8 +1213,13 @@ class TestExportImport:
                     assert len(members) == 1, f"{link_name} not found"
                     assert members[0].issym(), f"{link_name} not a symlink"
 
-            # Delete original and import
-            _run(["klangk", "rm", "export-symlink"], env=env)
+            # Delete original (not required for import — uses a different name)
+            try:
+                _run(["klangk", "rm", "export-symlink"], env=env)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Timeout removing export-symlink, deferring to teardown"
+                )
 
             result = _run(
                 [
@@ -1213,7 +1235,9 @@ class TestExportImport:
             assert result.returncode == 0, result.stderr or result.stdout
 
             # Find the imported workspace's home dir
-            resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+            resp = httpx.get(
+                f"{server['url']}/workspaces", headers=headers, timeout=30
+            )
             imported = [
                 w
                 for w in resp.json()
@@ -1240,9 +1264,19 @@ class TestExportImport:
                 == "/home/klangk/.local/bin/test"
             )
 
-            _run(["klangk", "rm", "export-symlink-imported"], env=env)
+            try:
+                _run(["klangk", "rm", "export-symlink-imported"], env=env)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Timeout removing export-symlink-imported, deferring to teardown"
+                )
         finally:
-            _run(["klangk", "rm", "export-symlink"], env=env)
+            try:
+                _run(["klangk", "rm", "export-symlink"], env=env)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Timeout removing export-symlink in finally, deferring to teardown"
+                )
 
 
 class TestAllowedMountRoots:

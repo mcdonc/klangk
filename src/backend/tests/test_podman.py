@@ -1,5 +1,6 @@
 """Tests for the podman CLI wrapper."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -117,6 +118,52 @@ class TestRun:
         with patch(EXEC, _exec(("ok", "", None))):
             rc, _out, _err = await podman._run(["x"], check=False)
         assert rc == 0
+
+    async def test_timeout_kills_process(self):
+        """A hanging podman process is killed after the timeout."""
+        proc = _procs(("", "", 0))[0]
+        killed = False
+
+        async def slow_wait():
+            if not killed:
+                await asyncio.sleep(999)
+
+        def do_kill():
+            nonlocal killed
+            killed = True
+
+        proc.wait = AsyncMock(side_effect=slow_wait)
+        proc.kill = MagicMock(side_effect=do_kill)
+
+        with patch(EXEC, AsyncMock(return_value=proc)):
+            rc, _out, err = await podman._run(
+                ["rm", "-f", "cid"], check=False, timeout=0.1
+            )
+        assert rc == -1
+        proc.kill.assert_called_once()
+        assert "timed out" in err
+
+    async def test_timeout_with_check_raises(self):
+        """Timeout + check=True raises PodmanError."""
+        proc = _procs(("", "", 0))[0]
+        killed = False
+
+        async def slow_wait():
+            if not killed:
+                await asyncio.sleep(999)
+
+        def do_kill():
+            nonlocal killed
+            killed = True
+
+        proc.wait = AsyncMock(side_effect=slow_wait)
+        proc.kill = MagicMock(side_effect=do_kill)
+
+        with patch(EXEC, AsyncMock(return_value=proc)):
+            with pytest.raises(podman.PodmanError) as exc:
+                await podman._run(["rm", "-f", "cid"], timeout=0.1)
+        assert exc.value.status == 500
+        assert "timed out" in exc.value.message
 
 
 # --- containers ---
