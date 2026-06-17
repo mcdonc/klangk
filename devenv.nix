@@ -136,19 +136,9 @@ in
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
   # Rootless podman from nix (Linux) has no default policy.json; it is
-  # generated in enterShell and scripts pass it via --signature-policy.
-  # On macOS podman runs in *remote* mode against the VM, which has its own
-  # policy and rejects the local-storage --signature-policy flag, so leave
-  # this empty there (scripts skip the flag when the var is unset).
-  env.KLANGK_SIGNATURE_POLICY = lib.mkOverride 1500 (
-    if pkgs.stdenv.hostPlatform.isDarwin then
-      ""
-    else
-      config.devenv.state + "/klangk/podman/policy.json"
-  );
-  # Tell podman where to find the signature policy globally (not just via
-  # --signature-policy flags in build scripts). Fixes `podman save`, `podman
-  # run`, etc. which only check default paths.
+  # generated in enterShell. CONTAINERS_SIGNATURE_POLICY tells podman
+  # where to find it.  On macOS podman runs in *remote* mode against
+  # the VM, which has its own policy, so leave this empty there.
   env.CONTAINERS_SIGNATURE_POLICY = lib.mkOverride 1500 (
     if pkgs.stdenv.hostPlatform.isDarwin then
       ""
@@ -338,42 +328,11 @@ in
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
 
-    # Podman storage config — generated on every shell entry so
-    # KLANGK_PODMAN_STORAGE changes take effect immediately.
-    # IMPORTANT: if you change KLANGK_PODMAN_STORAGE after podman has
-    # already been used, run `podman system reset --force` first —
-    # podman caches paths in db.sql and ignores config changes.
-    #
-    # Requirements for --userns=keep-id (rootless user namespaces):
-    #   - graphroot AND runroot must be on ext4/btrfs (not ZFS).
-    #     ZFS lacks idmapped mount support, causing podman to fall back
-    #     to storage-chown-by-maps which hangs or takes minutes.
-    #   - Verify with: podman info | grep "Supports shifting"
-    #     (must be "true" for fast container creation)
+    # Podman uses its default storage (~/.local/share/containers/).
+    # To customize, create ~/.config/containers/storage.conf.
+    # See docs/reference/podman.md.
     _PODMAN_CONF="$DEVENV_STATE/klangk/podman"
-    _PODMAN_STORE="$HOME/.local/share/containers"
-    _PODMAN_GRAPHROOT="''${KLANGK_PODMAN_STORAGE:-$_PODMAN_STORE/storage}"
-    if [ -n "''${KLANGK_PODMAN_STORAGE:-}" ]; then
-      _PODMAN_RUNROOT="$KLANGK_PODMAN_STORAGE/run"
-    else
-      _PODMAN_RUNROOT="$_PODMAN_STORE/run"
-    fi
-    mkdir -p "$_PODMAN_CONF" "$_PODMAN_RUNROOT" \
-      "$_PODMAN_GRAPHROOT" "$_PODMAN_GRAPHROOT/tmp"
-
-    cat > "$_PODMAN_CONF/storage.conf" <<STORAGE
-    [storage]
-    driver = "overlay"
-    graphroot = "$_PODMAN_GRAPHROOT"
-    runroot = "$_PODMAN_RUNROOT"
-    STORAGE
-    export CONTAINERS_STORAGE_CONF="$_PODMAN_CONF/storage.conf"
-
-    cat > "$_PODMAN_CONF/containers.conf" <<CONTAINERS
-    [engine]
-    image_copy_tmp_dir = "storage"
-    CONTAINERS
-    export CONTAINERS_CONF="$_PODMAN_CONF/containers.conf"
+    mkdir -p "$_PODMAN_CONF"
     if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
       echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
         > "$_PODMAN_CONF/policy.json"

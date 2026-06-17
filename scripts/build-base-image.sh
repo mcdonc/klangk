@@ -15,11 +15,7 @@ VERSION="${CALVER}-${COMMIT}"
 IMAGE="ghcr.io/mcdonc/klangk/klangk-workspace-base"
 
 echo "==> Building base image $VERSION (${KLANGK_PLATFORM:-linux/amd64})"
-POLICY_ARGS=()
-if [ -n "${KLANGK_SIGNATURE_POLICY:-}" ]; then
-  POLICY_ARGS+=(--signature-policy "${KLANGK_SIGNATURE_POLICY}")
-fi
-"$PODMAN" build "${POLICY_ARGS[@]}" \
+"$PODMAN" build \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   -f src/containers/workspace/Dockerfile.base \
   -t "$IMAGE:latest" \

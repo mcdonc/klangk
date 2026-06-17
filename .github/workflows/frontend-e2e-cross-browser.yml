@@ -21,7 +21,6 @@ jobs:
       KLANGK_DEFAULT_PASSWORD: admin
       KLANGK_TEST_MODE: "1"
       KLANGK_PODMAN_BIN: /usr/bin/podman
-      KLANGK_PODMAN_STORAGE: /home/runner/.local/share/containers/storage
     steps:
       - uses: actions/checkout@v6
 
