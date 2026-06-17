@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import time
-import uuid
 
 from . import auth, model, plugins, podman, util
 
@@ -202,8 +201,12 @@ class ContainerRegistry:
         self.states: dict[str, ContainerState] = {}
         # Reverse lookup: container_id -> workspace_id
         self._cid_to_wsid: dict[str, str] = {}
-        # Bridge token -> (workspace_id, sock_or_none) for browser-delegate auth.
-        self._bridge_tokens: dict[str, tuple[str, object | None]] = {}
+        # browser_id -> (workspace_id, sock) for browser-delegate routing.
+        # Browser IDs are browser-generated UUIDs (sessionStorage) sent
+        # with terminal_start.  Unlike the old bridge tokens they survive
+        # browser refresh because the same sessionStorage UUID re-registers
+        # with the new WebSocket.
+        self._browsers: dict[str, tuple[str, object | None]] = {}
         self.cleanup_task: asyncio.Task | None = None
         self.port_lock: asyncio.Lock = asyncio.Lock()
         # Per-workspace locks to serialize container creation.
@@ -248,41 +251,40 @@ class ContainerRegistry:
             if state:
                 state.record_activity()
 
-    def create_bridge_token(self, workspace_id: str, sock: object) -> str:
-        """Generate a unique token that maps to (workspace_id, sock).
+    def register_browser(
+        self, browser_id: str, workspace_id: str, sock: object
+    ) -> None:
+        """Register a browser ID for bridge routing.
 
-        Each terminal exec session gets its own token so browser-delegate
-        requests route to the specific browser connection that owns the
-        terminal.
+        Idempotent: the same *browser_id* can re-register with a new
+        *sock* after a browser refresh (sessionStorage keeps the ID).
         """
-        token = str(uuid.uuid4())
-        self._bridge_tokens[token] = (workspace_id, sock)
-        return token
+        self._browsers[browser_id] = (workspace_id, sock)
 
-    def resolve_bridge_token(self, token: str) -> tuple[str, object] | None:
-        """Look up (workspace_id, sock) for a bridge token."""
-        return self._bridge_tokens.get(token)
+    def resolve_browser(self, browser_id: str) -> tuple[str, object] | None:
+        """Look up (workspace_id, sock) for a browser ID."""
+        return self._browsers.get(browser_id)
 
-    def revoke_bridge_token(self, workspace_id: str) -> None:
-        """Remove ALL bridge tokens for a workspace.
+    def revoke_workspace_browsers(self, workspace_id: str) -> None:
+        """Remove ALL browser registrations for a workspace.
 
         Called when a container is recreated or stopped.
         """
         to_remove = [
-            t
-            for t, (ws, _s) in self._bridge_tokens.items()
+            bid
+            for bid, (ws, _s) in self._browsers.items()
             if ws == workspace_id
         ]
-        for t in to_remove:
-            del self._bridge_tokens[t]
+        for bid in to_remove:
+            del self._browsers[bid]
 
-    def revoke_connection_token(self, sock: object) -> None:
-        """Remove all bridge tokens bound to a specific connection."""
+    def revoke_browser(self, sock: object) -> None:
+        """Remove all browser registrations bound to a specific socket."""
         to_remove = [
-            t for t, (_ws, s) in self._bridge_tokens.items() if s is sock
+            bid for bid, (_ws, s) in self._browsers.items() if s is sock
         ]
-        for t in to_remove:
-            del self._bridge_tokens[t]
+        for bid in to_remove:
+            del self._browsers[bid]
 
     def get_state(self, workspace_id: str) -> ContainerState | None:
         return self.states.get(workspace_id)
@@ -684,7 +686,7 @@ class ContainerRegistry:
             )
         ws_id = self._cid_to_wsid.pop(container_id, None)
         if ws_id:
-            self.revoke_bridge_token(ws_id)
+            self.revoke_workspace_browsers(ws_id)
             self.states.pop(ws_id, None)
 
     async def _notify_workspace_killed(self, workspace_id: str) -> None:

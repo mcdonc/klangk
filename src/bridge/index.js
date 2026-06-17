@@ -3,11 +3,28 @@
  *
  * Routes requests through the Klangk backend to the user's browser,
  * which executes them with its session credentials (cookies, OAuth tokens, etc.).
+ *
+ * The browser ID is read dynamically per-request via `klangk-browser-id`
+ * (which reads from tmux's global environment, updated on every browser
+ * attach/reattach).  Do NOT cache it — it changes on browser refresh.
  */
+
+const { execSync } = require("child_process");
+
+/**
+ * Read the current browser ID from klangk-browser-id.
+ * Returns empty string if unavailable.
+ */
+function getBrowserId() {
+  try {
+    return execSync("klangk-browser-id", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
 
 function getConfig() {
   const bridgeUrl = process.env.KLANGK_BRIDGE_URL;
-  const token = process.env.KLANGK_BRIDGE_TOKEN;
   const workspaceToken = process.env.KLANGK_WORKSPACE_TOKEN;
   if (!bridgeUrl) {
     throw new Error(
@@ -15,15 +32,16 @@ function getConfig() {
         "Are you running inside a Klangk container?",
     );
   }
-  if (!token) {
+  const browserId = getBrowserId();
+  if (!browserId) {
     throw new Error(
-      "@klangk/bridge: KLANGK_BRIDGE_TOKEN is not set. " +
-        "Are you running inside a Klangk container?",
+      "@klangk/bridge: klangk-browser-id returned nothing. " +
+        "Is a browser tab connected?",
     );
   }
   return {
     bridgeUrl: `${bridgeUrl}/api/browser-delegate`,
-    token,
+    browserId,
     workspaceToken: workspaceToken || null,
   };
 }
@@ -39,7 +57,7 @@ function getConfig() {
  * @returns {Promise<{status: number, headers: Record<string, string>, body: string}>}
  */
 async function browserFetch(url, options = {}) {
-  const { bridgeUrl, token, workspaceToken } = getConfig();
+  const { bridgeUrl, browserId, workspaceToken } = getConfig();
 
   const headers = { "Content-Type": "application/json" };
   if (workspaceToken) {
@@ -51,7 +69,7 @@ async function browserFetch(url, options = {}) {
     headers,
     body: JSON.stringify({
       action: "fetch",
-      token,
+      browser_id: browserId,
       url,
       method: options.method || "GET",
       headers: options.headers || {},
@@ -82,10 +100,10 @@ async function browserFetch(url, options = {}) {
  * @returns {Promise<{status: string}>}
  */
 async function browserAction(action, payload = {}) {
-  const { bridgeUrl, token, workspaceToken } = getConfig();
+  const { bridgeUrl, browserId, workspaceToken } = getConfig();
 
-  // Prevent payload from overwriting action or token
-  const { action: _a, token: _t, ...safePayload } = payload;
+  // Prevent payload from overwriting action or browser_id
+  const { action: _a, browser_id: _b, ...safePayload } = payload;
 
   const headers = { "Content-Type": "application/json" };
   if (workspaceToken) {
@@ -97,7 +115,7 @@ async function browserAction(action, payload = {}) {
     headers,
     body: JSON.stringify({
       action,
-      token,
+      browser_id: browserId,
       ...safePayload,
     }),
   });
@@ -123,8 +141,9 @@ async function browserAction(action, payload = {}) {
  */
 async function isBridgeAvailable() {
   const bridgeUrl = process.env.KLANGK_BRIDGE_URL;
-  const token = process.env.KLANGK_BRIDGE_TOKEN;
-  if (!bridgeUrl || !token) return false;
+  if (!bridgeUrl) return false;
+  const browserId = getBrowserId();
+  if (!browserId) return false;
   try {
     const resp = await fetch(`${bridgeUrl}/health`, {
       signal: AbortSignal.timeout(2000),

@@ -123,6 +123,10 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       _terminal.write(utf8.encode(data));
     });
     _eventSub = widget.wsClient.customEvents.listen(_handleEvent);
+    // When the terminal gains focus (e.g. user clicks the terminal or
+    // switches tabs), re-register this tab's browser ID so bridge
+    // requests route to the active browser tab.
+    _focusNode.addListener(_onFocusChange);
     // Paste arrives via the browser's native `paste` event (works on Firefox
     // too, unlike Clipboard.getData). Only consume it when the terminal is
     // focused, so pastes into other inputs (e.g. chat) are left untouched.
@@ -146,6 +150,12 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     if (!_focusNode.hasFocus) return false;
     _terminal.paste(text);
     return true;
+  }
+
+  void _onFocusChange() {
+    if (_focusNode.hasFocus) {
+      widget.wsClient.sendBrowserReattach();
+    }
   }
 
   /// Forwards a ⌘/Ctrl-click on a link cell to [GhosttyTerminal.onPathTap],
@@ -342,6 +352,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
 
   @override
   void dispose() {
+    _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
     _scrollController.dispose();
     _outputSub?.cancel();

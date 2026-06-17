@@ -14,6 +14,7 @@ from klangk_backend.terminal import (
     TerminalSession,
     _build_shell_command,
     _make_shell_process,
+    attach_browser,
     close_window,
     kill_joiner_sessions,
     list_windows,
@@ -184,19 +185,13 @@ class TestStart:
         assert not any("KLANGK_CMD_OVERRIDE" in a for a in fake.argv)
         await s.stop()
 
-    async def test_bridge_token_sets_env_var(self):
-        fake = FakeShell(block_after_chunks=True)
-        with _patch(fake):
-            s = TerminalSession("cid")
-            await s.start(bridge_token="tok-123")
-        assert "KLANGK_BRIDGE_TOKEN=tok-123" in fake.argv
-        await s.stop()
-
-    async def test_no_bridge_token_by_default(self):
+    async def test_no_browser_id_env_var(self):
+        """browser_id is no longer passed as an env var (uses klangk-attach-browser)."""
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
             s = TerminalSession("cid")
             await s.start()
+        assert not any("KLANGK_BROWSER_ID" in a for a in fake.argv)
         assert not any("KLANGK_BRIDGE_TOKEN" in a for a in fake.argv)
         await s.stop()
 
@@ -245,6 +240,32 @@ class TestStart:
         assert s._running is False
         assert s._shell is None
         assert s.is_alive is False
+
+
+class TestAttachBrowser:
+    async def test_runs_klangk_attach_browser(self):
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"", b"")
+        mock_proc.returncode = 0
+        with patch(
+            "klangk_backend.terminal.asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ) as mock_exec:
+            await attach_browser("cid-123", "bid-abc")
+        args = mock_exec.call_args[0]
+        assert "klangk-attach-browser" in args
+        assert "bid-abc" in args
+
+    async def test_logs_warning_on_failure(self):
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"", b"attach failed")
+        mock_proc.returncode = 1
+        with patch(
+            "klangk_backend.terminal.asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ):
+            # Should not raise
+            await attach_browser("cid-123", "bid-abc")
 
 
 class TestReadLoop:

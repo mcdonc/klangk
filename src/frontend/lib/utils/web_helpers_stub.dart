@@ -17,6 +17,9 @@ Widget buildSuppressor(Widget child) => child;
 /// Stub — return empty hash in VM tests.
 String getLocationHash() => '';
 
+/// Stub — return empty browser ID in VM tests.
+String getBrowserId() => '';
+
 /// Stub — no DOM paste events outside the browser; returns a no-op disposer.
 void Function() installPasteListener(bool Function(String text) onPaste) =>
     () {};

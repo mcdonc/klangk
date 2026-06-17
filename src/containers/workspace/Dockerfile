@@ -10,7 +10,9 @@ RUN mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-mcp-extension
 
 # Plugin tools: flat directory, all on PATH via /opt/klangk/bin/
+ENV PATH="/opt/klangk/bin:${PATH}"
 COPY --from=plugin-tools / /opt/klangk/bin/
+RUN echo 'PATH="/opt/klangk/bin:${PATH}"' >> /etc/environment
 
 # Plugin lifecycle hooks: /opt/klangk/hooks/<plugin>/{on-image-build,on-entrypoint,on-shell-init}.sh
 COPY --from=plugin-hooks / /opt/klangk/hooks/
@@ -33,9 +35,13 @@ COPY entrypoint.sh /opt/klangk/entrypoint.sh
 COPY otel.sh /opt/klangk/otel.sh
 COPY setup_clankers.py /opt/klangk/bin/setup-clankers
 COPY setup-home.sh /opt/klangk/bin/setup-home
+COPY klangk-attach-browser /opt/klangk/bin/klangk-attach-browser
+COPY klangk-browser-id /opt/klangk/bin/klangk-browser-id
 RUN chmod +x /opt/klangk/entrypoint.sh \
       /opt/klangk/bin/setup-clankers \
-      /opt/klangk/bin/setup-home
+      /opt/klangk/bin/setup-home \
+      /opt/klangk/bin/klangk-attach-browser \
+      /opt/klangk/bin/klangk-browser-id
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 

@@ -119,6 +119,7 @@ void main() {
       client.sendRestartContainer();
       client.sendShutdownContainer();
       client.sendTerminalStart();
+      client.sendBrowserReattach();
       client.sendTerminalInput('ls\n');
       client.sendTerminalResize(120, 40);
       client.sendTerminalNewWindow();
@@ -596,6 +597,7 @@ void main() {
       client.sendRestartContainer();
       client.sendShutdownContainer();
       client.sendTerminalStart(cols: 100, rows: 30);
+      client.sendBrowserReattach();
       client.sendTerminalInput('ls\n');
       client.sendTerminalResize(120, 40);
       client.sendTerminalNewWindow(name: 'build');

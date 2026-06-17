@@ -25,6 +25,7 @@ jobs:
               - 'src/frontend/lib/**'
               - 'src/frontend/test/**'
               - 'src/frontend/pubspec.yaml'
+              - 'plugins/**/klangk/**'
               - '.github/workflows/frontend-tests.yml'
 
       - uses: subosito/flutter-action@v2
@@ -51,6 +52,20 @@ jobs:
         if: steps.filter.outputs.frontend == 'true'
         working-directory: src/frontend
         run: python3 ../../scripts/lcov-report.py coverage/lcov.info
+
+      - name: Run plugin Dart tests
+        if: steps.filter.outputs.frontend == 'true'
+        run: |
+          for pubspec in plugins/*/klangk/pubspec.yaml; do
+            dir=$(dirname "$pubspec")
+            if [ -d "$dir/test" ]; then
+              echo "=== Testing $dir ==="
+              cd "$dir"
+              flutter pub get
+              flutter test
+              cd "$GITHUB_WORKSPACE"
+            fi
+          done
 
       - name: Skip notice
         if: steps.filter.outputs.frontend != 'true'

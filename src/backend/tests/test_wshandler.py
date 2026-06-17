@@ -465,6 +465,7 @@ class TestHandleTerminalStart:
                 return_value={},
             ),
             patch("klangk_backend.terminal.restore_windows"),
+            patch.object(wshandler, "attach_browser"),
         ):
             mock_session = _mock_terminal()
             MockTS.return_value = mock_session
@@ -475,7 +476,9 @@ class TestHandleTerminalStart:
 
             mock_session.output = fake_output
 
-            await conn.handle_terminal_start({"cols": 100, "rows": 30})
+            await conn.handle_terminal_start(
+                {"cols": 100, "rows": 30, "browser_id": "test-browser-id"}
+            )
             # Let the background task run
             await asyncio.sleep(0)
 
@@ -497,11 +500,10 @@ class TestHandleTerminalStart:
             for m in sent
         )
 
-        # bridge_token should be passed (a UUID string)
+        # browser_id should be registered and stored on the connection
         start_kwargs = mock_session.start.call_args
         assert start_kwargs[1]["command_override"] is None
-        assert start_kwargs[1]["bridge_token"] is not None
-        assert conn._bridge_token == start_kwargs[1]["bridge_token"]
+        assert conn._browser_id == "test-browser-id"
         assert conn.terminal_session is mock_session
         assert conn.terminal_task is not None
         # Should have sent terminal_started ack (followed by terminal_windows)
@@ -524,7 +526,7 @@ class TestHandleTerminalStart:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_starts_session_restores_saved_state(self):
@@ -614,7 +616,7 @@ class TestHandleTerminalStart:
             pass
         wshandler.state.sessions.pop("ws", None)
         wshandler.state.connections.pop(sock, None)
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_terminal_start_requires_handle(self):
@@ -672,7 +674,7 @@ class TestHandleTerminalStart:
         # Should be silently ignored (debounced)
         assert conn.terminal_session is None
 
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_start_rename_failure_non_fatal(self):
@@ -728,7 +730,7 @@ class TestHandleTerminalStart:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_start_window_list_failure_non_fatal(self):
@@ -774,7 +776,7 @@ class TestHandleTerminalStart:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_start_shared_list_failure_non_fatal(self):
@@ -822,11 +824,11 @@ class TestHandleTerminalStart:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
-    async def test_restart_revokes_old_bridge_token(self):
-        """Starting a second terminal revokes the previous bridge token."""
+    async def test_restart_revokes_old_browser_registration(self):
+        """Starting a second terminal revokes the previous browser registration."""
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
@@ -839,7 +841,10 @@ class TestHandleTerminalStart:
         conn._has_perm = _perm  # type: ignore[method-assign]
         container.registry.track_activity("cid", "ws")
 
-        with patch.object(wshandler, "TerminalSession") as MockTS:
+        with (
+            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch.object(wshandler, "attach_browser"),
+        ):
             mock_session = _mock_terminal()
             MockTS.return_value = mock_session
 
@@ -849,45 +854,82 @@ class TestHandleTerminalStart:
 
             mock_session.output = fake_output
 
-            # First terminal start
-            await conn.handle_terminal_start({"cols": 80, "rows": 24})
-            await asyncio.sleep(0)
-            first_token = conn._bridge_token
-            assert first_token is not None
-            assert (
-                container.registry.resolve_bridge_token(first_token)
-                is not None
+            # First terminal start with browser_id
+            await conn.handle_terminal_start(
+                {"cols": 80, "rows": 24, "browser_id": "bid-1"}
             )
+            await asyncio.sleep(0)
+            assert conn._browser_id == "bid-1"
+            assert container.registry.resolve_browser("bid-1") is not None
 
-            # Cancel the first terminal task
             conn.terminal_task.cancel()
             try:
                 await conn.terminal_task
             except asyncio.CancelledError:
                 pass
 
-            # Second terminal start — should revoke first token
-            await conn.handle_terminal_start({"cols": 80, "rows": 24})
-            await asyncio.sleep(0)
-            second_token = conn._bridge_token
-            assert second_token is not None
-            assert second_token != first_token
-
-            # Old token should be revoked
-            assert container.registry.resolve_bridge_token(first_token) is None
-            # New token should be valid
-            assert (
-                container.registry.resolve_bridge_token(second_token)
-                is not None
+            # Second terminal start with same browser_id — re-registers
+            await conn.handle_terminal_start(
+                {"cols": 80, "rows": 24, "browser_id": "bid-1"}
             )
+            await asyncio.sleep(0)
+            assert conn._browser_id == "bid-1"
+            assert container.registry.resolve_browser("bid-1") is not None
 
             conn.terminal_task.cancel()
             try:
                 await conn.terminal_task
             except asyncio.CancelledError:
                 pass
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
+
+    async def test_browser_reattach_updates_registration(self):
+        """browser_reattach re-registers the browser ID and calls attach_browser."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+
+        container.registry.register_browser("bid-old", "ws", sock)
+        conn._browser_id = "bid-old"
+
+        with patch.object(wshandler, "attach_browser") as mock_attach:
+            await conn.handle_browser_reattach({"browser_id": "bid-new"})
+
+        assert conn._browser_id == "bid-new"
+        assert container.registry.resolve_browser("bid-new") == ("ws", sock)
+        assert container.registry.resolve_browser("bid-old") is None
+        mock_attach.assert_awaited_once_with("cid", "bid-new")
+
+        container.registry.revoke_workspace_browsers("ws")
+
+    async def test_browser_reattach_no_browser_id_is_noop(self):
+        """browser_reattach with no browser_id does nothing."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._browser_id = "bid-existing"
+
+        with patch.object(wshandler, "attach_browser") as mock_attach:
+            await conn.handle_browser_reattach({})
+
+        assert conn._browser_id == "bid-existing"
+        mock_attach.assert_not_awaited()
+
+    async def test_browser_reattach_no_container_is_noop(self):
+        """browser_reattach without a container does nothing."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = None
+        conn.workspace_id = "ws"
+
+        with patch.object(wshandler, "attach_browser") as mock_attach:
+            await conn.handle_browser_reattach({"browser_id": "bid-new"})
+
+        assert conn._browser_id is None
+        mock_attach.assert_not_awaited()
 
     async def test_passes_command_override(self):
         sock = _mock_sock()
@@ -905,15 +947,23 @@ class TestHandleTerminalStart:
         mock_session = AsyncMock()
         mock_session.is_alive = True
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+        with (
+            patch("klangk_backend.wshandler.TerminalSession", MockTS),
+            patch.object(wshandler, "attach_browser"),
+        ):
             await conn.handle_terminal_start(
-                {"cols": 80, "rows": 24, "commandOverride": "bash"}
+                {
+                    "cols": 80,
+                    "rows": 24,
+                    "commandOverride": "bash",
+                    "browser_id": "bid-cmd",
+                }
             )
             # Let the background task run
             await asyncio.sleep(0)
 
         mock_session.start.assert_awaited_once_with(
-            80, 24, command_override="bash", bridge_token=conn._bridge_token
+            80, 24, command_override="bash"
         )
 
         conn.terminal_task.cancel()
@@ -921,7 +971,7 @@ class TestHandleTerminalStart:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_start_failure_sends_error(self):
@@ -951,7 +1001,7 @@ class TestHandleTerminalStart:
         assert any(call.args[0].get("type") == "error" for call in sent)
         # Session is stored immediately but stop() is called on failure
         mock_session.stop.assert_awaited_once()
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_start_slow_client_cleans_up(self):
@@ -980,7 +1030,7 @@ class TestHandleTerminalStart:
         # No error message sent (client is gone)
         sent = sock.send_json.call_args_list
         assert not any(call.args[0].get("type") == "error" for call in sent)
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_start_failure_send_error_ws_dead(self):
@@ -1008,7 +1058,7 @@ class TestHandleTerminalStart:
             await asyncio.sleep(0)
 
         mock_session.stop.assert_awaited_once()
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_cancellation_during_start_cleans_up(self):
@@ -1035,7 +1085,7 @@ class TestHandleTerminalStart:
 
         # session.stop() must be called to clean up the PTY subprocess
         mock_session.stop.assert_awaited_once()
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_session_replaced_during_start_aborts(self):
@@ -1071,7 +1121,7 @@ class TestHandleTerminalStart:
         # terminal_started must NOT be sent
         for call in sock.send_json.call_args_list:
             assert call.args[0].get("type") != "terminal_started"
-        container.registry.revoke_bridge_token("ws")
+        container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
     async def test_no_container(self):
@@ -1657,6 +1707,12 @@ class TestHandleWebsocketDispatch:
     async def test_dispatch_workspace_disconnect(self, user):
         websocket = await self._run_commands(
             user, [{"cmd": "workspace_disconnect"}]
+        )
+        websocket.accept.assert_awaited_once()
+
+    async def test_dispatch_browser_reattach(self, user):
+        websocket = await self._run_commands(
+            user, [{"cmd": "browser_reattach", "browser_id": "bid-x"}]
         )
         websocket.accept.assert_awaited_once()
 
@@ -2416,16 +2472,16 @@ class TestDispatchBrowserRequestTo:
             wshandler.state.sessions.pop("ws-to-cancel", None)
 
 
-class TestCleanupRevokesBridgeToken:
-    async def test_cleanup_revokes_connection_token(self):
+class TestCleanupRevokesBrowser:
+    async def test_cleanup_revokes_browser_registration(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.workspace_id = "ws-revoke"
         conn.container_id = "cid-revoke"
 
-        # Create a per-connection bridge token
-        token = container.registry.create_bridge_token("ws-revoke", sock)
-        conn._bridge_token = token
+        # Register a browser ID for this connection
+        container.registry.register_browser("bid-revoke", "ws-revoke", sock)
+        conn._browser_id = "bid-revoke"
 
         container.registry.track_activity("cid-revoke", "ws-revoke")
         session = WorkspaceSession("ws-revoke")
@@ -2434,11 +2490,10 @@ class TestCleanupRevokesBridgeToken:
 
         await conn.cleanup()
 
-        # Per-connection token should be revoked
-        assert container.registry.resolve_bridge_token(token) is None
-        assert conn._bridge_token is None
+        assert container.registry.resolve_browser("bid-revoke") is None
+        assert conn._browser_id is None
 
-        container.registry.revoke_bridge_token("ws-revoke")
+        container.registry.revoke_workspace_browsers("ws-revoke")
         container.registry.states.pop("ws-revoke", None)
         wshandler.state.sessions.pop("ws-revoke", None)
 

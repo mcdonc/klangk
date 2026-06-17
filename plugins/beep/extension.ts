@@ -1,9 +1,18 @@
+import { execSync } from "child_process";
+
+function getBrowserId(): string {
+  try {
+    return execSync("klangk-browser-id", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
 const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
-const BRIDGE_TOKEN = process.env.KLANGK_BRIDGE_TOKEN;
 const WORKSPACE_TOKEN = process.env.KLANGK_WORKSPACE_TOKEN;
 
 export default function (pi: any) {
-  if (!BRIDGE_URL || !BRIDGE_TOKEN) return;
+  if (!BRIDGE_URL) return;
 
   pi.registerTool({
     name: "beep",
@@ -28,7 +37,7 @@ export default function (pi: any) {
           },
           body: JSON.stringify({
             action: "beep",
-            token: BRIDGE_TOKEN,
+            browser_id: getBrowserId(),
           }),
         });
 
