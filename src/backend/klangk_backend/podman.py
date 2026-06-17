@@ -63,6 +63,7 @@ async def _run(
     *,
     check: bool = True,
     stdin_data: bytes | None = None,
+    timeout: float | None = 30.0,
 ) -> tuple[int, str, str]:
     """Run ``podman <args>`` and return ``(returncode, stdout, stderr)``.
 
@@ -70,6 +71,10 @@ async def _run(
     ``communicate()``.  Lifecycle commands such as ``podman start`` can
     spawn long-lived helpers (``pasta``) that inherit pipe fds, blocking
     ``communicate()`` forever.  Temp files avoid this.
+
+    *timeout* caps how long we wait for the process (default 30 s).
+    On timeout the process is killed and a ``PodmanError(500, ...)`` is
+    raised (unless *check* is False, in which case rc=-1 is returned).
     """
     cmd_label = f"podman {args[0]}" if args else "podman"
     t0 = time.monotonic()
@@ -93,13 +98,27 @@ async def _run(
             proc.stdin.write(stdin_data)
             await proc.stdin.drain()
             proc.stdin.close()
-        await proc.wait()
+        timed_out = False
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
+            logger.warning(
+                "podman-timeout: %s exceeded %.1fs — killing",
+                cmd_label,
+                timeout,
+            )
+            proc.kill()
+            await proc.wait()
         t3 = time.monotonic()
         out_f.seek(0)
         err_f.seek(0)
         out = out_f.read().decode("utf-8", errors="replace")
         err = err_f.read().decode("utf-8", errors="replace")
     rc = proc.returncode or 0
+    if timed_out:
+        rc = -1
+        err = err or f"{cmd_label} timed out after {timeout}s"
     elapsed = t3 - t0
     logger.info(
         "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",

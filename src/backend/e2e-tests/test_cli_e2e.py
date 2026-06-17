@@ -1058,12 +1058,19 @@ class TestExportImport:
             env=cli_config["env"],
         )
         yield
-        # Clean up workspaces created during tests
-        result = _run(["klangk", "list", "--plain"], env=cli_config["env"])
-        for line in result.stdout.strip().splitlines():
-            parts = line.split()
-            if parts and parts[0].startswith("export-"):
-                _run(["klangk", "rm", parts[0]], env=cli_config["env"])
+        # Clean up workspaces created during tests; tolerate timeouts so
+        # one slow container removal doesn't cascade-fail subsequent tests.
+        try:
+            result = _run(["klangk", "list", "--plain"], env=cli_config["env"])
+            for line in result.stdout.strip().splitlines():
+                parts = line.split()
+                if parts and parts[0].startswith("export-"):
+                    try:
+                        _run(["klangk", "rm", parts[0]], env=cli_config["env"])
+                    except subprocess.TimeoutExpired:
+                        pass
+        except subprocess.TimeoutExpired:
+            pass
 
     def test_export_and_import_round_trip(self, cli_config, tmp_path):
         env = cli_config["env"]
