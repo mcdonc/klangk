@@ -54,6 +54,11 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         "LOGFIRE_TOKEN": "",
         **(extra_env or {}),
     }
+    # Write server output to a temp file instead of PIPE.  With PIPE,
+    # the OS buffer (64 KB) fills up when the server emits enough log
+    # lines, deadlocking the event loop — the root cause of #364.
+    log_path = os.path.join(data_dir, "server.log")
+    log_file = open(log_path, "w")  # noqa: SIM115
     proc = subprocess.Popen(
         [
             "uvicorn",
@@ -71,9 +76,11 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         ],
         cwd=os.path.join(os.path.dirname(__file__), ".."),
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=log_file,
         stderr=subprocess.STDOUT,
     )
+    proc._log_file = log_file  # keep reference for cleanup
+    proc._log_path = log_path
     base_url = f"http://localhost:{port}"
     for _ in range(60):
         try:
@@ -84,13 +91,16 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         time.sleep(1)
     else:
         proc.kill()
-        stdout = proc.stdout.read().decode() if proc.stdout else ""
+        log_file.close()
+        stdout = open(log_path).read() if os.path.exists(log_path) else ""
         raise RuntimeError(f"Server failed to start:\n{stdout}")
     return proc, base_url
 
 
 def _stop_server(proc, data_dir, instance_id):
     """Stop a server, clean up containers and data."""
+    if hasattr(proc, "_log_file"):
+        proc._log_file.close()
     try:
         proc.kill()
         proc.wait(timeout=5)
