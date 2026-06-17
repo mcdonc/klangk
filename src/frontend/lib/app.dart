@@ -13,6 +13,7 @@ import 'auth/accept_invite_page.dart';
 import 'auth/oidc_complete_page.dart';
 import 'auth/reset_password_page.dart';
 import 'auth/settings_page.dart';
+import 'widgets/stale_build_banner.dart';
 import 'workspace/workspace_list_page.dart';
 import 'workspace/workspace_page.dart';
 
@@ -50,6 +51,14 @@ class _KlangkAppState extends State<KlangkApp> {
           debugShowCheckedModeBanner: false,
           theme: _theme,
           routerConfig: _router!,
+          builder: (context, child) {
+            return Stack(
+              children: [
+                child!,
+                const StaleBuildBanner(),
+              ],
+            );
+          },
         );
       },
     );
