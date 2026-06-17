@@ -1,33 +1,22 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:klangk_plugin_git_credential/plugin.dart';
-
-/// Access the pending completer the same way the overlay widget does:
-/// listen for changes, then complete the request.
-void _autoRespond(
-  GitCredentialPlugin plugin,
-  String username,
-  String password,
-) {
-  plugin.addListener(() {
-    final overlay = plugin.buildOverlay(null!);
-    // When _pending is set, buildOverlay returns a Positioned widget.
-    // We can't easily inspect it in a unit test, so we use a different
-    // approach: the test drives the handler and the auto-responder
-    // completes the internal completer via a small hook.
-  });
-}
 
 void main() {
   late GitCredentialPlugin plugin;
 
   setUp(() {
+    testBaseUrlOverride = 'http://localhost:8000';
     plugin = GitCredentialPlugin();
   });
 
   tearDown(() {
     plugin.dispose();
+    testBaseUrlOverride = null;
   });
 
   group('store operation', () {
@@ -175,7 +164,7 @@ void main() {
       // get now has a cache miss — it will block on the completer.
       // Start it and verify it doesn't return the old credentials.
       bool completed = false;
-      final future = plugin.handlers['git_credential']!({
+      plugin.handlers['git_credential']!({
         'operation': 'get',
         'protocol': 'https',
         'host': 'github.com',
@@ -184,9 +173,6 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 50));
       expect(completed, isFalse, reason: 'get should block on cache miss');
-
-      // Clean up: dispose cancels nothing, but the completer stays open.
-      // This is fine for the test.
     });
 
     test('store overwrites previous credentials', () async {
@@ -230,6 +216,74 @@ void main() {
     test('registers git_credential handler', () {
       expect(plugin.handlers, contains('git_credential'));
       expect(plugin.handlers.length, 1);
+    });
+  });
+
+  group('config loading', () {
+    test('loads github client ID from /api/config', () async {
+      final mockClient = MockClient((request) async {
+        if (request.url.path == '/api/config') {
+          return http.Response(
+            jsonEncode({'klangk_github_oauth_client_id': 'Ov23liTestId'}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final p = GitCredentialPlugin(httpClient: mockClient);
+
+      // Store then get — cache hit skips config loading.
+      await p.handlers['git_credential']!({
+        'operation': 'store',
+        'protocol': 'https',
+        'host': 'github.com',
+        'username': 'user',
+        'password': 'pass',
+      });
+      // Erase to force a cache miss on next get.
+      await p.handlers['git_credential']!({
+        'operation': 'erase',
+        'protocol': 'https',
+        'host': 'github.com',
+      });
+
+      // get triggers config load then blocks on completer.
+      bool completed = false;
+      p.handlers['git_credential']!({
+        'operation': 'get',
+        'protocol': 'https',
+        'host': 'github.com',
+      })
+          .then((_) => completed = true);
+
+      // Wait for config load + completer setup.
+      await Future.delayed(const Duration(milliseconds: 100));
+      expect(completed, isFalse, reason: 'get should block on dialog');
+
+      p.dispose();
+    });
+
+    test('works when config endpoint is unavailable', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response('Internal Server Error', 500);
+      });
+
+      final p = GitCredentialPlugin(httpClient: mockClient);
+
+      // get triggers config load (fails gracefully) then blocks.
+      bool completed = false;
+      p.handlers['git_credential']!({
+        'operation': 'get',
+        'protocol': 'https',
+        'host': 'github.com',
+      })
+          .then((_) => completed = true);
+
+      await Future.delayed(const Duration(milliseconds: 100));
+      expect(completed, isFalse, reason: 'get should block on dialog');
+
+      p.dispose();
     });
   });
 }

@@ -1,7 +1,13 @@
 # GitHub Authentication
 
 Klangk workspaces can authenticate with GitHub for HTTPS git operations
-(push, pull, clone of private repos) using a personal access token (PAT).
+(push, pull, clone of private repos). Two methods are available:
+
+- **Sign in with GitHub** (recommended) — one-click OAuth device flow,
+  no token management required. Requires admin configuration.
+- **Personal access token (PAT)** — manual token entry, always available
+  as a fallback.
+
 When git needs credentials, a dialog appears in your browser tab — no
 need to paste tokens into the terminal.
 
@@ -22,7 +28,52 @@ plugins:
 Then run `update-plugins` and rebuild the workspace image (`devenv up`
 will do both automatically).
 
-## Generating a GitHub PAT
+## Sign in with GitHub (recommended)
+
+When the admin has configured GitHub OAuth (see
+[Admin setup](#admin-setup-creating-a-github-oauth-app) below), the
+credential dialog shows a **Sign in with GitHub** button:
+
+![Credential dialog with GitHub sign-in](../assets/github-auth/02-credential-dialog-with-github.png)
+
+### How it works
+
+1. Open a workspace and run a git command that requires authentication:
+
+   ```sh
+   git push
+   ```
+
+2. A dialog appears with a **Sign in with GitHub** button. Click it.
+
+3. The dialog displays a one-time code and a link to GitHub:
+
+   ![Device flow code entry](../assets/github-auth/03-device-flow-code.png)
+
+4. Open the GitHub link in a new tab, enter the code, and authorize the
+   app.
+
+5. The dialog detects authorization automatically and git proceeds. No
+   token to copy or manage.
+
+The OAuth token is cached in memory for the browser session. Subsequent
+git operations reuse it without prompting.
+
+### Scopes
+
+The device flow requests the `repo` scope, which grants read/write
+access to repositories you can access on GitHub. The token is scoped to
+the OAuth App — it cannot access organization resources unless the
+organization has approved the app.
+
+## Using a personal access token
+
+If GitHub OAuth is not configured, or if you prefer to manage tokens
+manually, the dialog shows username and PAT fields:
+
+![Git credentials dialog](../assets/github-auth/01-credential-dialog.png)
+
+### Generating a GitHub PAT
 
 The credential helper needs a **fine-grained personal access token**
 with repository access. To create one:
@@ -45,51 +96,58 @@ The token starts with `github_pat_` (fine-grained) or `ghp_` (classic).
 Both formats work. Classic tokens also work but fine-grained tokens are
 recommended because they can be scoped to specific repositories.
 
-## Using the credential helper
+### Using the PAT
 
-1. Open a workspace in the browser.
-2. Open the terminal.
-3. Run a git command that requires authentication, e.g.:
-
-   ```sh
-   git clone https://github.com/yourname/private-repo.git
-   ```
-
-4. A dialog appears in the browser asking for your **username** and
-   **personal access token**:
-
-   ![Git credentials dialog](../assets/github-auth/01-credential-dialog.png)
-
-5. Enter your GitHub username and paste the PAT you generated.
-6. Click **Authenticate**.
-7. Git proceeds with the operation.
+1. Open a workspace and run a git command that requires authentication.
+2. Enter your GitHub username and paste the PAT.
+3. Click **Authenticate**.
 
 On subsequent git operations to the same host, the cached credentials
 are reused automatically — no dialog appears. The cache lasts until you
 refresh the page or close the tab.
 
-## How it works
+## Admin setup: creating a GitHub OAuth App
 
-When git needs HTTPS credentials, it calls the `git-credential-klangk`
-helper installed in the workspace container. The helper:
+To enable "Sign in with GitHub" for your Klangk instance, you need to
+create a GitHub OAuth App and set one environment variable.
 
-1. Reads the current browser ID (which identifies your browser tab).
-2. Sends a request through the Klangk backend to your browser tab.
-3. The browser-side plugin checks its in-memory cache.
-4. On a cache miss, the PAT dialog appears.
-5. Your credentials are returned to the helper, which passes them to git.
-6. After a successful operation, git tells the helper to cache the
-   credentials for future use.
+1. Go to **GitHub > Settings > Developer settings > OAuth Apps**.
+2. Click **New OAuth App** (or **Register a new application**).
+3. Fill in the form:
+   - **Application name**: e.g. "Klangk — My Instance"
+   - **Homepage URL**: your Klangk instance URL (e.g.
+     `https://klangk.example.com`)
+   - **Authorization callback URL**: use your instance URL (e.g.
+     `https://klangk.example.com`). The device flow does not use
+     redirects, but GitHub requires this field.
+4. Check **Enable Device Flow** on the registration form.
+5. Click **Register application**.
+6. Copy the **Client ID** (you do not need the client secret — the
+   device flow is designed for public clients).
+7. Set the environment variable in your deployment:
 
-The credential cache is **per-tab** and **in-memory only**. Credentials
-are not shared between browser tabs, windows, or browsers — each has
-its own independent cache:
+   ```sh
+   KLANGK_GITHUB_OAUTH_CLIENT_ID=Ov23li...
+   ```
 
-- Opening a new tab or window starts with an empty cache.
-- Refreshing the page clears the cache (you'll be prompted again).
+8. Restart Klangk. The "Sign in with GitHub" button will now appear in
+   the credential dialog.
+
+**Important**: this must be an **OAuth App**, not a GitHub App. The
+device authorization grant is only available on OAuth Apps.
+
+If `KLANGK_GITHUB_OAUTH_CLIENT_ID` is not set, the "Sign in with
+GitHub" button is hidden and only the PAT form is shown.
+
+## Credential cache
+
+The cache is **per-tab** and **in-memory only**:
+
+- Each browser tab has its own `GitCredentialPlugin` instance with its
+  own cache. Credentials entered in tab A are not available in tab B.
+- Refreshing the page clears the cache (new plugin instance).
 - Closing the tab clears the cache.
-- Two users sharing the same workspace each have their own cache.
-- Credentials are never written to disk inside the container.
+- The cache is keyed by `protocol://host` (e.g. `https://github.com`).
 
 ## Multiple browser tabs
 
@@ -108,8 +166,7 @@ helper only activates for HTTPS URLs.
 Note that there is currently no way to keep your GitHub private key
 secure in a Klangk instance — any SSH key placed in the container is
 accessible to anyone with access to the workspace. For this reason,
-HTTPS with PATs is the recommended authentication method. PATs can be
-scoped to specific repositories and revoked easily if compromised.
+HTTPS with PATs or OAuth is the recommended authentication method.
 
 ## Troubleshooting
 
@@ -119,6 +176,17 @@ scoped to specific repositories and revoked easily if compromised.
   `klangk-browser-id` is on PATH inside the container).
 - Verify the browser tab has a WebSocket connection (check for
   errors in the browser console).
+
+### "Sign in with GitHub" button not shown
+
+- Verify `KLANGK_GITHUB_OAUTH_CLIENT_ID` is set in the environment.
+- Check that the OAuth App has **Enable Device Flow** turned on.
+- Restart Klangk after setting the variable.
+
+### Device flow code expired
+
+The code is valid for 15 minutes. If it expires before you authorize,
+click **Try again** to get a new code.
 
 ### Credentials rejected
 

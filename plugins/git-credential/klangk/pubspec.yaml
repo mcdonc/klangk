@@ -10,6 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  http: ^1.2.0
   klangk_plugin_api:
     git:
       url: https://github.com/mcdonc/klangk-plugin-api.git
