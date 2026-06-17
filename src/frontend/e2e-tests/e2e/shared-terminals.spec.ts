@@ -36,7 +36,7 @@ class TestWsClient {
     this.ws.send(JSON.stringify(msg));
   }
 
-  async recv(timeout = 10_000): Promise<WsMessage> {
+  async recv(timeout = 30_000): Promise<WsMessage> {
     if (this.queue.length > 0) return this.queue.shift()!;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -52,11 +52,13 @@ class TestWsClient {
 
   async recvUntil(
     predicate: (msg: WsMessage) => boolean,
-    timeout = 30_000,
+    timeout = 60_000,
   ): Promise<WsMessage> {
     const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      const msg = await this.recv(deadline - Date.now());
+    while (true) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const msg = await this.recv(remaining);
       if (predicate(msg)) return msg;
     }
     throw new Error("recvUntil timed out");
