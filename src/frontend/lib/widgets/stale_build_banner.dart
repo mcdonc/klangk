@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -14,27 +13,43 @@ import '../utils/web_helpers_stub.dart'
 /// has been deployed. Shows a dismissible banner with a reload button when
 /// the hashes differ.
 class StaleBuildBanner extends StatefulWidget {
-  const StaleBuildBanner({super.key});
+  /// Override the build hash for testing (normally read from DOM).
+  final String? testHash;
+
+  /// Override the HTTP client for testing.
+  final http.Client? testClient;
+
+  /// Override the check interval for testing.
+  final Duration? testInterval;
+
+  const StaleBuildBanner({
+    super.key,
+    this.testHash,
+    this.testClient,
+    this.testInterval,
+  });
 
   @override
-  State<StaleBuildBanner> createState() => _StaleBuildBannerState();
+  State<StaleBuildBanner> createState() => StaleBuildBannerState();
 }
 
-class _StaleBuildBannerState extends State<StaleBuildBanner> {
-  static const _checkInterval = Duration(minutes: 2);
+class StaleBuildBannerState extends State<StaleBuildBanner> {
+  static const _defaultInterval = Duration(minutes: 2);
   static final _hashPattern =
       RegExp(r'klangk-build-hash["\s]+content="([^"]+)"');
 
   Timer? _timer;
   bool _stale = false;
   bool _dismissed = false;
-  final String _currentHash = getBuildHash();
+  late final String _currentHash;
 
   @override
   void initState() {
     super.initState();
+    _currentHash = widget.testHash ?? getBuildHash();
     if (_currentHash.isNotEmpty) {
-      _timer = Timer.periodic(_checkInterval, (_) => _check());
+      final interval = widget.testInterval ?? _defaultInterval;
+      _timer = Timer.periodic(interval, (_) => check());
     }
   }
 
@@ -44,16 +59,22 @@ class _StaleBuildBannerState extends State<StaleBuildBanner> {
     super.dispose();
   }
 
-  Future<void> _check() async {
+  /// Check if a new build is available. Public for testing.
+  Future<void> check() async {
     if (_stale || !mounted) return;
     try {
-      final resp = await http.get(Uri.parse('/index.html'));
-      if (resp.statusCode != 200) return;
-      final match = _hashPattern.firstMatch(resp.body);
-      if (match == null) return;
-      final serverHash = match.group(1) ?? '';
-      if (serverHash.isNotEmpty && serverHash != _currentHash) {
-        if (mounted) setState(() => _stale = true);
+      final client = widget.testClient ?? http.Client();
+      try {
+        final resp = await client.get(Uri.parse('/index.html'));
+        if (resp.statusCode != 200) return;
+        final match = _hashPattern.firstMatch(resp.body);
+        if (match == null) return;
+        final serverHash = match.group(1) ?? '';
+        if (serverHash.isNotEmpty && serverHash != _currentHash) {
+          if (mounted) setState(() => _stale = true);
+        }
+      } finally {
+        if (widget.testClient == null) client.close();
       }
     } catch (_) {
       // Network error — skip this check.
