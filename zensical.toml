@@ -23,6 +23,7 @@ nav = [
     { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },
     { "GitHub Authentication" = "features/github-authentication.md" },
+    { "AI Coding Harnesses" = "features/ai-coding-harnesses.md" },
     { "Plugins & Extensions" = "features/plugins.md" },
     { "Export & Import" = "features/export-import.md" },
   ]},
