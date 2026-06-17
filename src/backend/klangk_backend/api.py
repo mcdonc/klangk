@@ -123,20 +123,19 @@ if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
             container.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
         return {"idle_timeout_seconds": seconds}
 
-    @router.get("/api/test/bridge-tokens/{workspace_id}")
-    async def get_bridge_tokens(workspace_id: str):
-        """Return all active bridge tokens for a workspace (test only)."""
-        tokens = []
-        for token, (ws_id, sock) in container.registry._bridge_tokens.items():
+    @router.get("/api/test/browsers/{workspace_id}")
+    async def get_browsers(workspace_id: str):
+        """Return all active browser registrations for a workspace (test only)."""
+        browsers = []
+        for bid, (ws_id, sock) in container.registry._browsers.items():
             if ws_id == workspace_id:
-                # Find the user email for this connection
                 email = None
                 if sock is not None:
                     conn = wshandler.state.connections.get(sock)
                     if conn:
                         email = conn.user.get("email")
-                tokens.append({"token": token, "email": email})
-        return tokens
+                browsers.append({"browser_id": bid, "email": email})
+        return browsers
 
 
 async def _send_email(coro, recipient: str, kind: str = "email") -> None:
@@ -1823,18 +1822,18 @@ async def upload_file(
 class BrowserDelegateRequest(BaseModel):
     model_config = {"extra": "allow"}
     action: str
-    token: str
+    browser_id: str
 
 
 def _resolve_bridge_target(body: BrowserDelegateRequest):
-    """Resolve a bridge token to (session, target_sock, payload).
+    """Resolve a browser ID to (session, target_sock, payload).
 
-    Raises HTTPException (403/502) if the token is invalid, the workspace
-    has no session, or the target browser is not subscribed.
+    Raises HTTPException (403/502) if the browser ID is unknown, the
+    workspace has no session, or the target browser is not subscribed.
     """
-    resolved = container.registry.resolve_bridge_token(body.token)
+    resolved = container.registry.resolve_browser(body.browser_id)
     if resolved is None:
-        raise HTTPException(status_code=403, detail="Invalid bridge token")
+        raise HTTPException(status_code=403, detail="Unknown browser ID")
     workspace_id, target_sock = resolved
 
     session = wshandler.state.get_session(workspace_id)
@@ -1849,17 +1848,16 @@ def _resolve_bridge_target(body: BrowserDelegateRequest):
             status_code=502,
             detail="Browser connection not available",
         )
-    return session, target_sock, body.model_dump(exclude={"token"})
+    return session, target_sock, body.model_dump(exclude={"browser_id"})
 
 
 @router.post("/api/browser-delegate")
 async def browser_delegate(body: BrowserDelegateRequest):
-    """Bridge endpoint for Pi extensions to delegate actions to the browser.
+    """Bridge endpoint for container processes to delegate actions to the browser.
 
-    Each terminal exec session gets a per-connection bridge token
-    (injected via the exec environment).  The backend resolves the
-    token to the specific browser connection that owns the terminal
-    and relays the request over WebSocket.
+    The container reads the current browser ID via ``klangk-browser-id``
+    and includes it in the POST.  The backend resolves the ID to the
+    specific browser tab's WebSocket and relays the request.
     """
     session, target_sock, payload = _resolve_bridge_target(body)
     result = await session.dispatch_browser_request_to(target_sock, payload)

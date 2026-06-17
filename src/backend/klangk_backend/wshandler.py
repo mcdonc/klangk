@@ -12,7 +12,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from . import auth, container, model, workspaces
 from .util import derive_hosting_info, resolve_env_secret
 from .dockerexec import ExecSession
-from .terminal import TerminalSession
+from .terminal import TerminalSession, attach_browser
 
 logger = logging.getLogger(__name__)
 
@@ -569,7 +569,7 @@ class Connection:
         self.workspace: dict | None = None
         self._idle_cb = None
         self.pending_status_msg: str | None = None
-        self._bridge_token: str | None = None
+        self._browser_id: str | None = None
         self._user_home: str | None = None
         self._terminal_cols: int = 80
         self._terminal_rows: int = 24
@@ -941,14 +941,16 @@ class Connection:
             user_handle=self.user.get("handle"),
         )
 
-        # Revoke any existing bridge token from a previous terminal
-        # session before creating a new one to avoid leaking entries.
-        if self._bridge_token:
-            container.registry.revoke_connection_token(self.sock)
-        bridge_token = container.registry.create_bridge_token(
-            self.workspace_id, sock=self.sock
-        )
-        self._bridge_token = bridge_token
+        # Register browser ID for bridge routing.  The browser sends
+        # its sessionStorage UUID with terminal_start; on refresh the
+        # same ID re-registers with the new WebSocket.
+        browser_id = msg.get("browser_id")
+        if browser_id:
+            container.registry.revoke_browser(self.sock)
+            container.registry.register_browser(
+                browser_id, self.workspace_id, self.sock
+            )
+        self._browser_id = browser_id
 
         # Store session immediately so stop_terminal can clean it up
         # if another terminal_start arrives before this one finishes.
@@ -967,10 +969,13 @@ class Connection:
                         cols,
                         rows,
                         command_override=command_override,
-                        bridge_token=bridge_token,
                     ),
                     timeout=30,
                 )
+                # Store the browser ID in the container's tmux
+                # environment so klangk-browser-id can read it.
+                if browser_id:
+                    await attach_browser(conn.container_id, browser_id)
                 if not await conn._activate_session(session, cols, rows):
                     return
                 conn.sock.send_json({"type": "terminal_started"})
@@ -1026,17 +1031,17 @@ class Connection:
                     )
             except asyncio.CancelledError:
                 await session.stop()
-                container.registry.revoke_connection_token(conn.sock)
-                conn._bridge_token = None
+                container.registry.revoke_browser(conn.sock)
+                conn._browser_id = None
                 raise
             except (SlowClientError, WebSocketDisconnect):
                 await session.stop()
-                container.registry.revoke_connection_token(conn.sock)
-                conn._bridge_token = None
+                container.registry.revoke_browser(conn.sock)
+                conn._browser_id = None
             except Exception as e:
                 await session.stop()
-                container.registry.revoke_connection_token(conn.sock)
-                conn._bridge_token = None
+                container.registry.revoke_browser(conn.sock)
+                conn._browser_id = None
                 logger.exception("Terminal start failed: %s", e)
                 try:
                     send_error(conn.sock, f"Terminal start failed: {e}")
@@ -1044,6 +1049,29 @@ class Connection:
                     pass
 
         self.terminal_task = asyncio.create_task(_start_terminal())
+
+    async def handle_browser_reattach(self, msg: dict) -> None:
+        """Re-register the browser ID and update the container's tmux env.
+
+        Sent by the frontend when the terminal gains focus (e.g. tab
+        switch) so the container always routes bridge requests to the
+        active browser tab.
+        """
+        browser_id = msg.get("browser_id")
+        if not browser_id or not self.container_id:
+            return
+        container.registry.revoke_browser(self.sock)
+        container.registry.register_browser(
+            browser_id, self.workspace_id, self.sock
+        )
+        self._browser_id = browser_id
+        logger.info(
+            "browser_reattach: browser_id=%s user=%s workspace=%s",
+            browser_id,
+            self.user.get("email"),
+            self.workspace_id,
+        )
+        await attach_browser(self.container_id, browser_id)
 
     async def handle_terminal_input(self, msg: dict) -> None:
         import time as _time
@@ -1915,9 +1943,9 @@ class Connection:
             container.registry.remove_idle_callback(workspace_id, idle_cb)
             self._idle_cb = None
 
-        # Revoke per-connection bridge tokens
-        container.registry.revoke_connection_token(self.sock)
-        self._bridge_token = None
+        # Revoke per-connection browser registrations
+        container.registry.revoke_browser(self.sock)
+        self._browser_id = None
 
         await self.stop_terminal()
         await self.stop_exec()
@@ -2124,6 +2152,8 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_set_handle(msg)
             elif cmd == "terminal_start":
                 await conn.handle_terminal_start(msg)
+            elif cmd == "browser_reattach":
+                await conn.handle_browser_reattach(msg)
             elif cmd == "terminal_input":
                 await conn.handle_terminal_input(msg)
             elif cmd == "terminal_resize":

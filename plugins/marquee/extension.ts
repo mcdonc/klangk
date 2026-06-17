@@ -1,11 +1,20 @@
 import { Type } from "@sinclair/typebox";
 
+import { execSync } from "child_process";
+
+function getBrowserId(): string {
+  try {
+    return execSync("klangk-browser-id", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
 const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
-const BRIDGE_TOKEN = process.env.KLANGK_BRIDGE_TOKEN;
 const WORKSPACE_TOKEN = process.env.KLANGK_WORKSPACE_TOKEN;
 
 export default function (pi: any) {
-  if (!BRIDGE_URL || !BRIDGE_TOKEN) return;
+  if (!BRIDGE_URL) return;
 
   pi.registerTool({
     name: "marquee",
@@ -30,7 +39,7 @@ export default function (pi: any) {
     ) {
       const payload: Record<string, string> = {
         action: "marquee",
-        token: BRIDGE_TOKEN!,
+        browser_id: getBrowserId(),
       };
       if (params.text) {
         payload.text = params.text;

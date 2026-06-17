@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../auth/auth_service.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// A single WebSocket debug log entry.
@@ -330,7 +332,17 @@ class WsClient extends ChangeNotifier {
     final msg = <String, dynamic>{'cmd': 'terminal_start'};
     if (cols != null) msg['cols'] = cols;
     if (rows != null) msg['rows'] = rows;
+    final bid = getBrowserId();
+    if (bid.isNotEmpty) msg['browser_id'] = bid;
     _send(msg);
+  }
+
+  void sendBrowserReattach() {
+    final bid = getBrowserId();
+    if (bid.isNotEmpty) {
+      debugPrint('[WsClient] browser_reattach: $bid');
+      _send({'cmd': 'browser_reattach', 'browser_id': bid});
+    }
   }
 
   void sendTerminalInput(String data) {

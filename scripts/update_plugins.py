@@ -33,36 +33,36 @@ plugins:
   - name: celebrate
     git: git@github.com:mcdonc/klangk.git
     path: plugins/celebrate
-    ref: main
+    ref: worktree-411-connection-id
   - name: beep
     git: git@github.com:mcdonc/klangk.git
     path: plugins/beep
-    ref: main
+    ref: worktree-411-connection-id
   - name: pig-latin
     git: git@github.com:mcdonc/klangk.git
     path: plugins/pig-latin
-    ref: main
+    ref: worktree-411-connection-id
   - name: word-count
     git: git@github.com:mcdonc/klangk.git
     path: plugins/word-count
-    ref: main
+    ref: worktree-411-connection-id
   - name: browser-fetch
     git: git@github.com:mcdonc/klangk.git
     path: plugins/browser-fetch
-    ref: main
+    ref: worktree-411-connection-id
   - name: marquee
     git: git@github.com:mcdonc/klangk.git
     path: plugins/marquee
-    ref: main
+    ref: worktree-411-connection-id
   - name: git-credential
     git: git@github.com:mcdonc/klangk.git
     path: plugins/git-credential
-    ref: 410-plugin-hooks
+    ref: worktree-411-connection-id
   # Add more plugins:
   # - name: my-plugin
   #   git: git@github.com:user/repo.git
   #   path: subdir              # optional: subdirectory within the repo
-  #   ref: main                 # branch, tag, or commit SHA
+  #   ref: worktree-411-connection-id  # branch, tag, or commit SHA
   #
   # Plugin structure:
   #   extension.ts              # required: Pi extension (TypeScript)
@@ -96,7 +96,7 @@ def resolve_ref(git_url, ref):
 def fetch_plugin(plugin, plugins_dir):
     """Fetch a single plugin from a git repo into plugins_dir."""
     git_url = plugin["git"]
-    ref = plugin.get("ref", "main")
+    ref = plugin.get("ref", "worktree-411-connection-id")
     subpath = plugin.get("path", "")
 
     name = plugin["name"]

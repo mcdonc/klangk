@@ -3,24 +3,24 @@ plugins:
   - name: celebrate
     git: git@github.com:mcdonc/klangk.git
     path: plugins/celebrate
-    ref: main
+    ref: worktree-411-connection-id
   - name: beep
     git: git@github.com:mcdonc/klangk.git
     path: plugins/beep
-    ref: main
+    ref: worktree-411-connection-id
   - name: pig-latin
     git: git@github.com:mcdonc/klangk.git
     path: plugins/pig-latin
-    ref: main
+    ref: worktree-411-connection-id
   - name: word-count
     git: git@github.com:mcdonc/klangk.git
     path: plugins/word-count
-    ref: main
+    ref: worktree-411-connection-id
   - name: browser-fetch
     git: git@github.com:mcdonc/klangk.git
     path: plugins/browser-fetch
-    ref: main
+    ref: worktree-411-connection-id
   - name: bobdobbs
     git: git@github.com:mcdonc/klangk.git
     path: plugins/bobdobbs
-    ref: main
+    ref: worktree-411-connection-id

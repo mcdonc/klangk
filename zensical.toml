@@ -22,6 +22,7 @@ nav = [
     { "Terminal" = "features/terminal.md" },
     { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },
+    { "GitHub Authentication" = "features/github-authentication.md" },
     { "Plugins & Extensions" = "features/plugins.md" },
     { "Export & Import" = "features/export-import.md" },
   ]},

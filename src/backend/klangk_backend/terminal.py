@@ -54,7 +54,6 @@ _SENSITIVE_ENV_PREFIXES = (
 
 def _build_environment(
     command_override: str | None,
-    bridge_token: str | None,
     user_home: str | None = None,
     user_id: str | None = None,
     user_handle: str | None = None,
@@ -68,8 +67,6 @@ def _build_environment(
         env.append(f"KLANGK_USER_HANDLE={user_handle}")
     if command_override is not None:
         env.append(f"KLANGK_CMD_OVERRIDE={command_override}")
-    if bridge_token is not None:
-        env.append(f"KLANGK_BRIDGE_TOKEN={bridge_token}")
     return env
 
 
@@ -158,6 +155,37 @@ def _build_exec_argv(
     argv.append(container_id)
     argv += shell_cmd
     return argv
+
+
+async def attach_browser(container_id: str, browser_id: str) -> None:
+    """Run ``klangk-attach-browser <browser_id>`` inside the container.
+
+    This stores the browser ID in the tmux global environment so that
+    ``klangk-browser-id`` can read it dynamically.  Called after each
+    ``terminal_start`` (including re-attach after browser refresh).
+    """
+    argv = [
+        "exec",
+        "-u",
+        "klangk",
+        container_id,
+        "klangk-attach-browser",
+        browser_id,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
+    )
+    _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    if proc.returncode != 0:
+        logger.warning(
+            "klangk-attach-browser failed (rc=%d): %s",
+            proc.returncode,
+            stderr.decode(errors="replace").strip(),
+        )
 
 
 async def tmux_command(
@@ -595,13 +623,11 @@ class TerminalSession:
         cols: int = 80,
         rows: int = 24,
         command_override: str | None = None,
-        bridge_token: str | None = None,
     ) -> None:
         """Start a shell session via ``podman exec`` over a PTY."""
         self._running = True
         env = _build_environment(
             command_override,
-            bridge_token,
             self.user_home,
             user_id=self.user_id,
             user_handle=self.user_handle,

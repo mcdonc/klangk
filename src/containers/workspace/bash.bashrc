@@ -2,6 +2,9 @@
 # System-wide bash defaults for Klangk containers.
 # Users can override these in ~/.bashrc on the persistent home mount.
 
+# Plugin tools on PATH (ENV in Dockerfile is overridden by login shells).
+export PATH="/opt/klangk/bin:$PATH"
+
 # Ignore Ctrl+C until setup is complete and any default command has started.
 trap '' INT
 

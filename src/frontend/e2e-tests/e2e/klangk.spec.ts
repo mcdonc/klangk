@@ -1091,7 +1091,7 @@ test.describe("Klangk E2E", () => {
       !!process.env.KLANGK_CONTAINER_TEST_MODE,
       "requires local podman access",
     );
-    // Check if test mode is enabled (bridge-tokens endpoint needs it)
+    // Check if test mode is enabled (browsers endpoint needs it)
     const testCheck = await request.get(`${API_BASE}/api/test/idle-timeout`);
     if (!testCheck.ok()) {
       test.skip(true, "KLANGK_TEST_MODE not enabled");
@@ -1111,7 +1111,7 @@ test.describe("Klangk E2E", () => {
     expect(wsResp.ok()).toBeTruthy();
     const workspaceId = (await wsResp.json()).id;
 
-    // Add member as collaborator (needs code-in-isolation for bridge token)
+    // Add member as collaborator
     await request.post(
       `${API_BASE}/workspaces/${workspaceId}/roles/collaborators`,
       { headers: ownerHeaders, data: { email: memberEmail } },
@@ -1160,30 +1160,30 @@ test.describe("Klangk E2E", () => {
       waitForTerminal: true,
     });
 
-    // Poll for bridge tokens until both connections have registered.
-    // openWorkspace waits for the terminal to appear, but the bridge
-    // token may not be created until terminal_start completes.
-    let tokens: Array<{ email: string; token: string }> = [];
+    // Poll for browser registrations until both connections have registered.
+    // openWorkspace waits for the terminal to appear, but the browser ID
+    // may not be registered until terminal_start completes.
+    let browsers: Array<{ email: string; browser_id: string }> = [];
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
-      const tokensResp = await request.get(
-        `${API_BASE}/api/test/bridge-tokens/${workspaceId}`,
+      const browsersResp = await request.get(
+        `${API_BASE}/api/test/browsers/${workspaceId}`,
       );
-      expect(tokensResp.ok()).toBeTruthy();
-      tokens = await tokensResp.json();
-      if (tokens.length >= 2) break;
+      expect(browsersResp.ok()).toBeTruthy();
+      browsers = await browsersResp.json();
+      if (browsers.length >= 2) break;
       await new Promise((r) => setTimeout(r, 500));
     }
-    expect(tokens.length).toBeGreaterThanOrEqual(2);
+    expect(browsers.length).toBeGreaterThanOrEqual(2);
 
-    const ownerToken = tokens.find(
+    const ownerBrowser = browsers.find(
       (t: { email: string }) => t.email === ownerEmail,
     );
-    const memberToken = tokens.find(
+    const memberBrowser = browsers.find(
       (t: { email: string }) => t.email === memberEmail,
     );
-    expect(ownerToken).toBeTruthy();
-    expect(memberToken).toBeTruthy();
+    expect(ownerBrowser).toBeTruthy();
+    expect(memberBrowser).toBeTruthy();
 
     // Send bridge request targeting the OWNER — the auto-responder
     // in page1 will reply with {pong: "ping owner"}.
@@ -1191,7 +1191,7 @@ test.describe("Klangk E2E", () => {
       data: {
         action: "test_ping",
         message: "ping owner",
-        token: ownerToken.token,
+        browser_id: ownerBrowser.browser_id,
       },
     });
     expect(resp1.ok()).toBeTruthy();
@@ -1203,7 +1203,7 @@ test.describe("Klangk E2E", () => {
       data: {
         action: "test_ping",
         message: "ping member",
-        token: memberToken.token,
+        browser_id: memberBrowser.browser_id,
       },
     });
     expect(resp2.ok()).toBeTruthy();

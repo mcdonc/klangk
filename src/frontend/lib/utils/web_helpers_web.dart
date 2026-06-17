@@ -40,6 +40,20 @@ void suppressContextMenuBriefly() {
 /// Get the browser's location hash fragment.
 String getLocationHash() => web.window.location.hash;
 
+/// Return a stable browser tab ID from sessionStorage.
+///
+/// Survives page refresh (same tab) but is unique per tab.
+/// Used to route bridge requests to the correct browser tab.
+String getBrowserId() {
+  const key = 'klangk.browser_id';
+  var id = web.window.sessionStorage.getItem(key);
+  if (id == null || id.isEmpty) {
+    id = web.window.crypto.randomUUID();
+    web.window.sessionStorage.setItem(key, id);
+  }
+  return id;
+}
+
 /// Routes the browser's native `paste` ClipboardEvent text to [onPaste].
 ///
 /// Why this exists: Flutter's `Clipboard.getData` — and flterm's built-in

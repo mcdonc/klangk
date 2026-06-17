@@ -1915,20 +1915,18 @@ class TestUserSearch:
 
 
 class TestBrowserBridge:
-    async def test_invalid_token_returns_403(self, client, user):
+    async def test_unknown_browser_id_returns_403(self, client, user):
         resp = await client.post(
             "/api/browser-delegate",
-            json={"action": "fetch", "token": "bad-token"},
+            json={"action": "fetch", "browser_id": "bad-id"},
         )
         assert resp.status_code == 403
-        assert "Invalid bridge token" in resp.json()["detail"]
+        assert "Unknown browser ID" in resp.json()["detail"]
 
-    async def test_per_connection_token_success(self, client, user):
-        """Per-connection token routes to a specific browser."""
+    async def test_browser_id_routes_to_correct_tab(self, client, user):
+        """Browser ID routes to the specific browser tab."""
         mock_sock = MagicMock()
-        token = container.registry.create_bridge_token(
-            "ws-conn", sock=mock_sock
-        )
+        container.registry.register_browser("bid-conn", "ws-conn", mock_sock)
         mock_session = AsyncMock()
         mock_session.browser_subscribers = {mock_sock}
         mock_session.dispatch_browser_request_to = AsyncMock(
@@ -1942,7 +1940,7 @@ class TestBrowserBridge:
             ):
                 resp = await client.post(
                     "/api/browser-delegate",
-                    json={"action": "fetch", "token": token},
+                    json={"action": "fetch", "browser_id": "bid-conn"},
                 )
             assert resp.status_code == 200
             assert resp.json()["body"] == "targeted"
@@ -1950,18 +1948,14 @@ class TestBrowserBridge:
                 mock_sock, {"action": "fetch"}
             )
         finally:
-            container.registry.revoke_bridge_token("ws-conn")
+            container.registry.revoke_workspace_browsers("ws-conn")
 
-    async def test_per_connection_token_browser_not_subscribed(
-        self, client, user
-    ):
-        """Per-connection token returns 502 when target not in browser_subscribers."""
+    async def test_browser_not_subscribed_returns_502(self, client, user):
+        """Returns 502 when target not in browser_subscribers."""
         mock_sock = MagicMock()
-        token = container.registry.create_bridge_token(
-            "ws-nosub", sock=mock_sock
-        )
+        container.registry.register_browser("bid-nosub", "ws-nosub", mock_sock)
         mock_session = AsyncMock()
-        mock_session.browser_subscribers = set()  # target not subscribed
+        mock_session.browser_subscribers = set()
         try:
             with patch.object(
                 wshandler.state,
@@ -1970,29 +1964,31 @@ class TestBrowserBridge:
             ):
                 resp = await client.post(
                     "/api/browser-delegate",
-                    json={"action": "fetch", "token": token},
+                    json={"action": "fetch", "browser_id": "bid-nosub"},
                 )
             assert resp.status_code == 502
             assert "Browser connection not available" in resp.json()["detail"]
         finally:
-            container.registry.revoke_bridge_token("ws-nosub")
+            container.registry.revoke_workspace_browsers("ws-nosub")
 
-    async def test_valid_token_no_session_returns_502(self, client, user):
+    async def test_no_session_returns_502(self, client, user):
         mock_sock = MagicMock()
-        token = container.registry.create_bridge_token("ws-nosess", mock_sock)
+        container.registry.register_browser(
+            "bid-nosess", "ws-nosess", mock_sock
+        )
         try:
             resp = await client.post(
                 "/api/browser-delegate",
-                json={"action": "fetch", "token": token},
+                json={"action": "fetch", "browser_id": "bid-nosess"},
             )
             assert resp.status_code == 502
             assert "No browser client" in resp.json()["detail"]
         finally:
-            container.registry.revoke_bridge_token("ws-nosess")
+            container.registry.revoke_workspace_browsers("ws-nosess")
 
     async def test_dispatch_error_returns_502(self, client, user):
         mock_sock = MagicMock()
-        token = container.registry.create_bridge_token("ws-err", mock_sock)
+        container.registry.register_browser("bid-err", "ws-err", mock_sock)
         mock_session = AsyncMock()
         mock_session.browser_subscribers = {mock_sock}
         mock_session.dispatch_browser_request_to = AsyncMock(
@@ -2006,18 +2002,18 @@ class TestBrowserBridge:
             ):
                 resp = await client.post(
                     "/api/browser-delegate",
-                    json={"action": "fetch", "token": token},
+                    json={"action": "fetch", "browser_id": "bid-err"},
                 )
             assert resp.status_code == 502
             assert "timeout" in resp.json()["detail"].lower()
         finally:
-            container.registry.revoke_bridge_token("ws-err")
+            container.registry.revoke_workspace_browsers("ws-err")
 
     async def test_stream_endpoint_relays_ndjson(self, client, user):
         """The streaming endpoint relays the generator's NDJSON to the caller."""
         mock_sock = MagicMock()
-        token = container.registry.create_bridge_token(
-            "ws-stream", sock=mock_sock
+        container.registry.register_browser(
+            "bid-stream", "ws-stream", mock_sock
         )
 
         async def fake_stream():
@@ -2037,14 +2033,17 @@ class TestBrowserBridge:
             ):
                 resp = await client.post(
                     "/api/browser-delegate/stream",
-                    json={"action": "soliplex_query", "token": token},
+                    json={
+                        "action": "soliplex_query",
+                        "browser_id": "bid-stream",
+                    },
                 )
             assert resp.status_code == 200
             assert '"chunk"' in resp.text
             assert '"done"' in resp.text
             mock_session.dispatch_browser_request_stream_to.assert_called_once()
         finally:
-            container.registry.revoke_bridge_token("ws-stream")
+            container.registry.revoke_workspace_browsers("ws-stream")
 
 
 # --- Volume routes ---
