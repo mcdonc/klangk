@@ -1,9 +1,10 @@
 # git-credential plugin
 
 Browser-delegated git credential helper for Klangk workspaces. When git
-needs HTTPS credentials (e.g. `git push`), a dialog appears in the
-user's browser tab asking for a username and personal access token (PAT).
-Credentials are cached in memory for the browser session.
+needs HTTPS credentials (e.g. `git push`), the helper either runs the
+GitHub OAuth device flow (if configured) or shows a PAT dialog in the
+user's browser tab. Credentials are cached in memory for the browser
+session.
 
 ## Components
 
@@ -16,10 +17,12 @@ it automatically because `on-image-build.sh` sets
 
 Git invokes the helper with one of three operations:
 
-- **`get`** — git needs credentials. The helper reads the current
-  browser ID via `klangk-browser-id`, then POSTs to the backend's
-  `/api/browser-delegate` endpoint. The backend routes the request to
-  the correct browser tab over WebSocket.
+- **`get`** — git needs credentials. If `KLANGK_GITHUB_OAUTH_CLIENT_ID`
+  is set and the host is `github.com`, the helper runs the GitHub device
+  flow: it requests a code from GitHub, sends it to the browser for
+  display, and polls GitHub for the token. If the device flow is not
+  available or fails, the helper falls back to the bridge-based PAT
+  dialog.
 - **`store`** — git confirms that credentials worked. The helper
   forwards to the bridge so the browser plugin can cache them.
 - **`erase`** — git reports that credentials were rejected. The helper
@@ -35,16 +38,18 @@ credential helper or prompts interactively.
 that runs in the Flutter web app. It registers a handler for the
 `git_credential` bridge action.
 
-On a `get` request:
+The plugin handles these operations:
 
-1. Check the in-memory credential cache (keyed by `protocol://host`).
-2. If cached, return credentials immediately — no dialog shown.
-3. If not cached, show a modal dialog asking for username and PAT.
-4. Wait for the user to submit or cancel.
-5. Return credentials (or an error if cancelled) as the bridge response.
-
-On a `store` request, the plugin adds the credentials to its cache.
-On an `erase` request, the plugin removes them.
+- **`get`** — check the in-memory credential cache. On a hit, return
+  credentials immediately. On a miss, show a modal PAT dialog and wait
+  for the user to submit or cancel.
+- **`store`** / **`erase`** — update or clear the credential cache.
+- **`device_flow_show`** — display the GitHub device flow code and
+  verification link, and auto-open the GitHub authorization page in a
+  popup window.
+- **`device_flow_done`** — dismiss the device flow display.
+- **`device_flow_error`** — show an error message in the device flow
+  display.
 
 ### Image build hook
 
@@ -53,35 +58,60 @@ at image build time so git finds the helper without per-user configuration.
 
 ## Protocol
 
-The full flow for `git push` over HTTPS:
+### GitHub device flow (when configured)
 
 ```text
-git push
+git push (to github.com)
   → git calls: git-credential-klangk get
-    → reads browser ID from klangk-browser-id (tmux env)
-    → POST /api/browser-delegate
-        { action: "git_credential",
-          browser_id: "<uuid>",
-          operation: "get",
-          protocol: "https",
-          host: "github.com" }
-    → backend resolves browser_id to a WebSocket connection
-    → sends browser_request to that browser tab
-    → GitCredentialPlugin._handleGet() runs in the browser
-      → cache hit? return cached credentials
-      → cache miss? show PAT dialog, wait for user
-    → browser sends browser_response with credentials
-    → backend returns HTTP response to the helper
-    → helper prints username=.../password=... to stdout
-  → git authenticates with the credentials
+    → KLANGK_GITHUB_OAUTH_CLIENT_ID is set, host is github.com
+    → POST https://github.com/login/device/code (from container)
+    → GitHub returns device_code, user_code, verification_uri
+    → POST /api/browser-delegate { operation: "device_flow_show",
+        user_code, verification_uri }
+    → browser shows code dialog, opens GitHub auth page in popup
+    → helper polls POST https://github.com/login/oauth/access_token
+    → user authorizes in popup
+    → poll returns access_token
+    → POST /api/browser-delegate { operation: "device_flow_done" }
+    → browser dismisses code dialog
+    → helper prints username=x-access-token / password=<token>
+  → git authenticates with the token
   → push succeeds
   → git calls: git-credential-klangk store
     → POST /api/browser-delegate { operation: "store", username, password }
     → plugin caches credentials for future requests
 ```
 
+The access token never passes through the backend or browser — it goes
+directly from GitHub to the container helper to git's stdout.
+
+### PAT dialog fallback
+
+```text
+git push (to any host, or github.com without device flow)
+  → git calls: git-credential-klangk get
+    → POST /api/browser-delegate { operation: "get", host: "..." }
+    → browser plugin checks cache
+      → cache hit: return cached credentials
+      → cache miss: show PAT dialog, wait for user
+    → browser sends browser_response with credentials
+    → helper prints username=.../password=... to stdout
+  → git authenticates
+  → push succeeds
+  → git calls: git-credential-klangk store
+    → plugin caches credentials
+```
+
 If authentication fails, git calls `erase` instead of `store`, and the
 plugin removes any cached credentials for that host.
+
+## Configuration
+
+The plugin declares one config variable in `package.json`:
+
+- **`KLANGK_GITHUB_OAUTH_CLIENT_ID`** (scope: `container`) — GitHub
+  OAuth App client ID. When set, the device flow activates for
+  `github.com` hosts. No client secret needed.
 
 ## Credential cache
 
@@ -109,8 +139,8 @@ If tab A has cached credentials and you switch to tab B:
 2. `klangk-browser-id` returns tab B's browser ID (set by
    `browser_reattach` when you clicked into the terminal on tab B).
 3. The bridge routes to tab B's plugin, which has an empty cache.
-4. Tab B shows the PAT dialog.
-5. After you enter credentials, tab B caches them independently.
+4. Tab B shows the PAT dialog (or device flow code display).
+5. After authentication, tab B caches credentials independently.
 
 Each tab maintains its own credential cache. There is no cross-tab
 credential sharing.
@@ -126,4 +156,4 @@ git push
 ```
 
 This prints the bridge URL, browser ID, credential input from git,
-and the raw bridge response.
+device flow status, and the raw bridge response.

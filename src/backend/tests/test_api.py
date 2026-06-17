@@ -1945,7 +1945,7 @@ class TestBrowserBridge:
             assert resp.status_code == 200
             assert resp.json()["body"] == "targeted"
             mock_session.dispatch_browser_request_to.assert_awaited_once_with(
-                mock_sock, {"action": "fetch"}
+                mock_sock, {"action": "fetch"}, timeout=30.0
             )
         finally:
             container.registry.revoke_workspace_browsers("ws-conn")

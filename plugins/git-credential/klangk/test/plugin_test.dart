@@ -3,22 +3,6 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_plugin_git_credential/plugin.dart';
 
-/// Access the pending completer the same way the overlay widget does:
-/// listen for changes, then complete the request.
-void _autoRespond(
-  GitCredentialPlugin plugin,
-  String username,
-  String password,
-) {
-  plugin.addListener(() {
-    final overlay = plugin.buildOverlay(null!);
-    // When _pending is set, buildOverlay returns a Positioned widget.
-    // We can't easily inspect it in a unit test, so we use a different
-    // approach: the test drives the handler and the auto-responder
-    // completes the internal completer via a small hook.
-  });
-}
-
 void main() {
   late GitCredentialPlugin plugin;
 
@@ -50,8 +34,6 @@ void main() {
         'username': '',
         'password': 'ghp_abc123',
       });
-      // Cache should be empty — get would block, so verify via
-      // a second store + get cycle.
       await plugin.handlers['git_credential']!({
         'operation': 'store',
         'protocol': 'https',
@@ -172,10 +154,8 @@ void main() {
         'host': 'github.com',
       });
 
-      // get now has a cache miss — it will block on the completer.
-      // Start it and verify it doesn't return the old credentials.
       bool completed = false;
-      final future = plugin.handlers['git_credential']!({
+      plugin.handlers['git_credential']!({
         'operation': 'get',
         'protocol': 'https',
         'host': 'github.com',
@@ -184,9 +164,6 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 50));
       expect(completed, isFalse, reason: 'get should block on cache miss');
-
-      // Clean up: dispose cancels nothing, but the completer stays open.
-      // This is fine for the test.
     });
 
     test('store overwrites previous credentials', () async {
@@ -212,6 +189,59 @@ void main() {
       }));
       expect(result['username'], 'new-user');
       expect(result['password'], 'new-token');
+    });
+  });
+
+  group('device flow operations', () {
+    test('device_flow_show returns ok and notifies', () async {
+      bool notified = false;
+      plugin.addListener(() => notified = true);
+
+      final result = await plugin.handlers['git_credential']!({
+        'operation': 'device_flow_show',
+        'protocol': 'https',
+        'host': 'github.com',
+        'user_code': 'ABCD-1234',
+        'verification_uri':
+            'https://github.com/login/device?user_code=ABCD-1234',
+      });
+      expect(jsonDecode(result), {'status': 'ok'});
+      expect(notified, isTrue);
+    });
+
+    test('device_flow_done returns ok and notifies', () async {
+      await plugin.handlers['git_credential']!({
+        'operation': 'device_flow_show',
+        'protocol': 'https',
+        'host': 'github.com',
+        'user_code': 'ABCD-1234',
+        'verification_uri': 'https://github.com/login/device',
+      });
+
+      bool notified = false;
+      plugin.addListener(() => notified = true);
+
+      final result = await plugin.handlers['git_credential']!({
+        'operation': 'device_flow_done',
+        'protocol': 'https',
+        'host': 'github.com',
+      });
+      expect(jsonDecode(result), {'status': 'ok'});
+      expect(notified, isTrue);
+    });
+
+    test('device_flow_error returns ok and notifies', () async {
+      bool notified = false;
+      plugin.addListener(() => notified = true);
+
+      final result = await plugin.handlers['git_credential']!({
+        'operation': 'device_flow_error',
+        'protocol': 'https',
+        'host': 'github.com',
+        'error': 'Code expired. Please try again.',
+      });
+      expect(jsonDecode(result), {'status': 'ok'});
+      expect(notified, isTrue);
     });
   });
 

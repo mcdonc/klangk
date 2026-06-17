@@ -1,5 +1,13 @@
 {
   "name": "@klangk/git-credential",
   "version": "1.0.0",
-  "description": "Git credential helper: browser-side PAT dialog and credential cache"
+  "description": "Git credential helper: browser-side PAT dialog and credential cache",
+  "klangk": {
+    "config": {
+      "KLANGK_GITHUB_OAUTH_CLIENT_ID": {
+        "description": "GitHub OAuth App client ID for device-flow authentication (no secret needed)",
+        "scope": "container"
+      }
+    }
+  }
 }

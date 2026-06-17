@@ -1860,7 +1860,17 @@ async def browser_delegate(body: BrowserDelegateRequest):
     specific browser tab's WebSocket and relays the request.
     """
     session, target_sock, payload = _resolve_bridge_target(body)
-    result = await session.dispatch_browser_request_to(target_sock, payload)
+    # Credential get operations may wait for user interaction (PAT dialog
+    # or OAuth device flow) — allow up to 15 minutes (matching GitHub's
+    # device code expiry).
+    action = payload.get("action", "")
+    operation = payload.get("operation", "")
+    timeout = (
+        900.0 if action == "git_credential" and operation == "get" else 30.0
+    )
+    result = await session.dispatch_browser_request_to(
+        target_sock, payload, timeout=timeout
+    )
 
     if result.get("error"):
         raise HTTPException(status_code=502, detail=result["error"])
