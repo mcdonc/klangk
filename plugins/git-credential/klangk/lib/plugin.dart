@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -249,10 +250,17 @@ class _CredentialDialogState extends State<_CredentialDialog> {
       _verificationUri = null;
     });
 
-    _deviceFlow = GitHubDeviceFlow(clientId);
+    developer
+        .log('device flow: starting, clientId=$clientId, baseUrl=$baseUrl');
+    _deviceFlow = GitHubDeviceFlow(clientId, baseUrl);
 
     try {
+      developer.log('device flow: requesting device code...');
       final codeResponse = await _deviceFlow!.requestDeviceCode();
+      developer.log(
+        'device flow: got code=${codeResponse.userCode} '
+        'uri=${codeResponse.verificationUri}',
+      );
       if (!mounted) return;
 
       setState(() {
@@ -261,10 +269,12 @@ class _CredentialDialogState extends State<_CredentialDialog> {
       });
 
       _startPolling(codeResponse.deviceCode, codeResponse.interval);
-    } on GitHubDeviceFlowException catch (e) {
+    } catch (e, st) {
+      developer.log('device flow: error: $e', stackTrace: st);
       if (!mounted) return;
       setState(() {
-        _deviceFlowError = e.message;
+        _deviceFlowError =
+            e is GitHubDeviceFlowException ? e.message : e.toString();
         _deviceFlowActive = false;
       });
     }
@@ -307,14 +317,15 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                 _deviceFlowActive = false;
               });
           }
-        } on GitHubDeviceFlowException catch (e) {
+        } catch (e) {
           if (!mounted) {
             timer.cancel();
             return;
           }
           timer.cancel();
           setState(() {
-            _deviceFlowError = e.message;
+            _deviceFlowError =
+                e is GitHubDeviceFlowException ? e.message : e.toString();
             _deviceFlowActive = false;
           });
         }

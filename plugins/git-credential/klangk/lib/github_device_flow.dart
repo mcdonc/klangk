@@ -33,13 +33,15 @@ class DeviceFlowPollResult {
 /// GitHub OAuth device flow client.
 ///
 /// Uses the device authorization grant to obtain an access token without
-/// needing a client secret. Safe to use from browser-side code.
+/// needing a client secret. Calls are proxied through the Klangk backend
+/// because GitHub's device flow endpoints don't send CORS headers.
 class GitHubDeviceFlow {
   final String clientId;
+  final String _baseUrl;
   final http.Client _client;
   final bool _ownsClient;
 
-  GitHubDeviceFlow(this.clientId, {http.Client? client})
+  GitHubDeviceFlow(this.clientId, this._baseUrl, {http.Client? client})
       : _client = client ?? http.Client(),
         _ownsClient = client == null;
 
@@ -47,12 +49,15 @@ class GitHubDeviceFlow {
     if (_ownsClient) _client.close();
   }
 
-  /// Request a device code from GitHub.
+  /// Request a device code from GitHub (via backend proxy).
   Future<DeviceCodeResponse> requestDeviceCode() async {
     final response = await _client.post(
-      Uri.parse('https://github.com/login/device/code'),
-      headers: {'Accept': 'application/json'},
-      body: {'client_id': clientId, 'scope': 'repo'},
+      Uri.parse('$_baseUrl/api/github/device/code'),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'client_id': clientId, 'scope': 'repo'}),
     );
 
     if (response.statusCode != 200) {
@@ -78,16 +83,20 @@ class GitHubDeviceFlow {
     );
   }
 
-  /// Poll GitHub for the access token. Call this every [interval] seconds.
+  /// Poll for the access token (via backend proxy).
+  /// Call this every [interval] seconds.
   Future<DeviceFlowPollResult> pollForToken(String deviceCode) async {
     final response = await _client.post(
-      Uri.parse('https://github.com/login/oauth/access_token'),
-      headers: {'Accept': 'application/json'},
-      body: {
+      Uri.parse('$_baseUrl/api/github/device/token'),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
         'client_id': clientId,
         'device_code': deviceCode,
         'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
-      },
+      }),
     );
 
     if (response.statusCode != 200) {

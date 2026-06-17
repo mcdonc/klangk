@@ -5,15 +5,20 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:klangk_plugin_git_credential/github_device_flow.dart';
 
+const _baseUrl = 'http://localhost:8000';
+
 void main() {
   group('requestDeviceCode', () {
     test('parses success response', () async {
       final client = MockClient((request) async {
-        expect(request.url.toString(), 'https://github.com/login/device/code');
+        expect(
+          request.url.toString(),
+          '$_baseUrl/api/github/device/code',
+        );
         expect(request.method, 'POST');
-        expect(request.headers['Accept'], 'application/json');
-        expect(request.bodyFields['client_id'], 'test-client-id');
-        expect(request.bodyFields['scope'], 'repo');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['client_id'], 'test-client-id');
+        expect(body['scope'], 'repo');
         return http.Response(
           jsonEncode({
             'device_code': 'dev123',
@@ -26,7 +31,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       final result = await flow.requestDeviceCode();
 
       expect(result.deviceCode, 'dev123');
@@ -49,7 +54,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       final result = await flow.requestDeviceCode();
       expect(result.interval, 5);
     });
@@ -59,7 +64,7 @@ void main() {
         return http.Response('Server Error', 500);
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       expect(
         () => flow.requestDeviceCode(),
         throwsA(isA<GitHubDeviceFlowException>()),
@@ -77,7 +82,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       expect(
         () => flow.requestDeviceCode(),
         throwsA(
@@ -96,12 +101,13 @@ void main() {
       final client = MockClient((request) async {
         expect(
           request.url.toString(),
-          'https://github.com/login/oauth/access_token',
+          '$_baseUrl/api/github/device/token',
         );
-        expect(request.bodyFields['client_id'], 'test-client-id');
-        expect(request.bodyFields['device_code'], 'dev123');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['client_id'], 'test-client-id');
+        expect(body['device_code'], 'dev123');
         expect(
-          request.bodyFields['grant_type'],
+          body['grant_type'],
           'urn:ietf:params:oauth:grant-type:device_code',
         );
         return http.Response(
@@ -114,7 +120,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       final result = await flow.pollForToken('dev123');
 
       expect(result.status, DeviceFlowStatus.success);
@@ -129,7 +135,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       final result = await flow.pollForToken('dev123');
 
       expect(result.status, DeviceFlowStatus.pending);
@@ -144,7 +150,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       final result = await flow.pollForToken('dev123');
 
       expect(result.status, DeviceFlowStatus.slowDown);
@@ -158,7 +164,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       final result = await flow.pollForToken('dev123');
 
       expect(result.status, DeviceFlowStatus.expired);
@@ -172,7 +178,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       final result = await flow.pollForToken('dev123');
 
       expect(result.status, DeviceFlowStatus.denied);
@@ -183,7 +189,7 @@ void main() {
         return http.Response('Bad Gateway', 502);
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       expect(
         () => flow.pollForToken('dev123'),
         throwsA(isA<GitHubDeviceFlowException>()),
@@ -201,7 +207,7 @@ void main() {
         );
       });
 
-      final flow = GitHubDeviceFlow('test-client-id', client: client);
+      final flow = GitHubDeviceFlow('test-client-id', _baseUrl, client: client);
       expect(
         () => flow.pollForToken('dev123'),
         throwsA(

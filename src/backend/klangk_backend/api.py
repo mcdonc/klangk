@@ -170,6 +170,64 @@ async def get_config():
     return config
 
 
+# --- GitHub device flow proxy ---
+#
+# GitHub's device flow endpoints don't send CORS headers, so the browser
+# can't call them directly.  These thin proxies forward the request and
+# return GitHub's JSON response.  No client secret is involved.
+
+GITHUB_CLIENT_ID = os.environ.get("KLANGK_GITHUB_OAUTH_CLIENT_ID", "")
+
+
+class _DeviceCodeRequest(BaseModel):
+    client_id: str
+    scope: str = "repo"
+
+
+class _DeviceTokenRequest(BaseModel):
+    client_id: str
+    device_code: str
+    grant_type: str = "urn:ietf:params:oauth:grant-type:device_code"
+
+
+@router.post("/api/github/device/code")
+async def github_device_code(body: _DeviceCodeRequest):
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(
+            status_code=404, detail="GitHub OAuth not configured"
+        )
+    if body.client_id != GITHUB_CLIENT_ID:
+        raise HTTPException(status_code=400, detail="client_id mismatch")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://github.com/login/device/code",
+            data={"client_id": body.client_id, "scope": body.scope},
+            headers={"Accept": "application/json"},
+        )
+    return json.loads(resp.text)
+
+
+@router.post("/api/github/device/token")
+async def github_device_token(body: _DeviceTokenRequest):
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(
+            status_code=404, detail="GitHub OAuth not configured"
+        )
+    if body.client_id != GITHUB_CLIENT_ID:
+        raise HTTPException(status_code=400, detail="client_id mismatch")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://github.com/login/oauth/access_token",
+            data={
+                "client_id": body.client_id,
+                "device_code": body.device_code,
+                "grant_type": body.grant_type,
+            },
+            headers={"Accept": "application/json"},
+        )
+    return json.loads(resp.text)
+
+
 # --- Auth endpoints ---
 
 
