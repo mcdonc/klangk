@@ -27,7 +27,7 @@ class TestWsShell:
         ws_mock.__aexit__ = fake_exit
         ws_mock.recv = AsyncMock(
             return_value=json.dumps(
-                {"type": "not_workspace_ready", "data": "oops"}
+                {"type": "error", "message": "bad workspace"}
             )
         )
         ws_mock.send = AsyncMock()
@@ -35,6 +35,40 @@ class TestWsShell:
         with patch("websockets.connect", return_value=ws_mock):
             with pytest.raises(ConnectionError):
                 await _ws_shell("ws://localhost/ws", "token", "ws1")
+
+    @pytest.mark.asyncio
+    async def test_wait_workspace_ready_timeout(self):
+        """Times out if workspace_ready never arrives."""
+        from klangk_backend.cli.client import _wait_workspace_ready
+
+        ws_mock = AsyncMock()
+        # Always return a non-ready message
+        ws_mock.recv = AsyncMock(
+            return_value=json.dumps({"type": "presence_list", "users": []})
+        )
+        ws_mock.send = AsyncMock()
+
+        with pytest.raises(asyncio.TimeoutError):
+            await _wait_workspace_ready(ws_mock, "ws1", timeout=0.01)
+
+    @pytest.mark.asyncio
+    async def test_wait_workspace_ready_skips_broadcasts(self):
+        """Broadcast messages before workspace_ready are skipped."""
+        from klangk_backend.cli.client import _wait_workspace_ready
+
+        ws_mock = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "presence_list", "users": [{"id": "u1"}]}),
+                json.dumps({"type": "chat_history", "messages": []}),
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+            ]
+        )
+        ws_mock.send = AsyncMock()
+
+        resp = await _wait_workspace_ready(ws_mock, "ws1")
+        assert resp["type"] == "workspace_ready"
+        assert resp["workspaceId"] == "ws1"
 
     @pytest.mark.asyncio
     async def test_ws_shell_success_sends_connect_and_start(self):
