@@ -193,8 +193,9 @@ HTTPS with PATs or OAuth is the recommended authentication method.
 
 ### Dialog doesn't appear
 
-- Make sure the `git-credential` plugin is installed (check that
-  `klangk-browser-id` is on PATH inside the container).
+- Make sure the `git-credential` plugin is installed (run
+  `git config --system credential.helper` in the container — it should
+  print `klangk`).
 - Verify the browser tab has a WebSocket connection (check for
   errors in the browser console).
 
