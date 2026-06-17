@@ -9,7 +9,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**File Viewer**](file-viewer.md) — Directory tree, drag-and-drop upload, preview, download
 - [**Invitations**](invitations.md) — Admin invitation workflow for onboarding new users
 - [**GitHub Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog
-- [**Plugins & Extensions**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
+- [**Pi Extensions**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
 
 ## UI/Theme
 

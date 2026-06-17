@@ -1,4 +1,4 @@
-# Plugins & Extensions
+# Pi Extensions
 
 Extensions are TypeScript files collected from `$KLANGK_PLUGINS_DIR/*/extension.ts` and staged at `$KLANGK_PLUGINS_DIR/.docker/extensions/` at build time (injected via named build contexts).
 
