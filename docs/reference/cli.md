@@ -59,4 +59,4 @@ The following terminal emulators support OSC 52 clipboard integration (auto-copy
 | MATE Terminal    | No             |
 | Terminator       | No             |
 
-If your terminal does not support OSC 52, tmux selections will still be captured in the tmux paste buffer (accessible via tmux commands) but will not automatically appear on your system clipboard. You can work around this by installing `xclip`, `xsel`, or `wl-copy` on your local machine and configuring tmux's `copy-command` in your local tmux config.
+If your terminal does not support OSC 52, tmux selections will still be captured in the tmux paste buffer but will not automatically appear on your system clipboard. Consider switching to a terminal emulator that supports OSC 52 for the best `klangk shell` experience.
