@@ -43,6 +43,7 @@ nav = [
     { "CLI" = "reference/cli.md" },
     { "Environment Variables" = "reference/environment.md" },
     { "OIDC" = "reference/oidc.md" },
+    { "Podman" = "reference/podman.md" },
     { "Plugin System" = "reference/plugin-system.md" },
   ]},
 ]

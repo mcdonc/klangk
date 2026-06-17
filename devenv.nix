@@ -338,40 +338,23 @@ in
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
 
-    # Podman config lives outside the storage directory so
-    # `podman system reset` doesn't delete it.
+    # Podman uses its global user config (~/.config/containers/ and
+    # ~/.local/share/containers/).  We don't override storage.conf here
+    # — podman persists storage paths in a database (db.sql) on first
+    # run and ignores config file changes after that.
+    #
+    # Requirements for --userns=keep-id (rootless user namespaces):
+    #   - Podman's graphroot AND runroot must be on ext4 (or btrfs).
+    #     ZFS lacks idmapped mount support, causing podman to fall back
+    #     to storage-chown-by-maps which hangs or takes minutes.
+    #   - Configure via ~/.config/containers/storage.conf before first
+    #     podman use.
+    #   - Verify with: podman info | grep "Supports shifting"
+    #     (must be "true" for fast container creation)
+
+    # Rootless podman from nix needs a policy.json (see env.KLANGK_SIGNATURE_POLICY).
     _PODMAN_CONF="$DEVENV_STATE/klangk/podman"
-    _PODMAN_STORE="$HOME/.local/share/containers"
-    # KLANGK_PODMAN_STORAGE: custom path for podman image storage.
-    # Use an ext4 filesystem (not ZFS) for --userns=keep-id support.
-    # ZFS lacks idmapped mounts, causing storage-chown-by-maps to hang.
-    _PODMAN_GRAPHROOT="''${KLANGK_PODMAN_STORAGE:-$_PODMAN_STORE/storage}"
-    # Keep runroot on the same filesystem as graphroot to avoid
-    # cross-device issues (e.g. graphroot on ext4, runroot on ZFS).
-    if [ -n "''${KLANGK_PODMAN_STORAGE:-}" ]; then
-      _PODMAN_RUNROOT="$KLANGK_PODMAN_STORAGE/run"
-    else
-      _PODMAN_RUNROOT="$_PODMAN_STORE/run"
-    fi
-    mkdir -p "$_PODMAN_CONF" "$_PODMAN_RUNROOT" \
-      "$_PODMAN_GRAPHROOT" "$_PODMAN_GRAPHROOT/tmp"
-
-    cat > "$_PODMAN_CONF/storage.conf" <<STORAGE
-    [storage]
-    driver = "overlay"
-    graphroot = "$_PODMAN_GRAPHROOT"
-    runroot = "$_PODMAN_RUNROOT"
-    STORAGE
-    export CONTAINERS_STORAGE_CONF="$_PODMAN_CONF/storage.conf"
-
-    # Stage image blob downloads inside the graphroot ("storage" sentinel)
-    # instead of the default /var/tmp, which on this host is the root fs.
-    cat > "$_PODMAN_CONF/containers.conf" <<CONTAINERS
-    [engine]
-    image_copy_tmp_dir = "storage"
-    CONTAINERS
-    export CONTAINERS_CONF="$_PODMAN_CONF/containers.conf"
-
+    mkdir -p "$_PODMAN_CONF"
     if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
       echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
         > "$_PODMAN_CONF/policy.json"
