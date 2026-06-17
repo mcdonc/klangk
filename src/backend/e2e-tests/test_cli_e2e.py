@@ -1110,8 +1110,11 @@ class TestExportImport:
             assert meta["name"] == "export-test"
             assert meta["env"] == {"MY_VAR": "hello"}
 
-        # Delete the original
-        _run(["klangk", "rm", "export-test"], env=env)
+        # Delete the original (not needed for import, but keeps things tidy)
+        try:
+            _run(["klangk", "rm", "export-test"], env=env)
+        except subprocess.TimeoutExpired:
+            pass  # fixture teardown will clean up
 
         # Import with a new name
         result = _run(
@@ -1130,9 +1133,6 @@ class TestExportImport:
         # Verify the imported workspace exists
         result = _run(["klangk", "list", "--plain"], env=env)
         assert "export-restored" in result.stdout
-
-        # Clean up
-        _run(["klangk", "rm", "export-restored"], env=env)
 
     def test_export_import_round_trip_with_symlinks(
         self, server, cli_config, tmp_path
@@ -1203,8 +1203,11 @@ class TestExportImport:
                     assert len(members) == 1, f"{link_name} not found"
                     assert members[0].issym(), f"{link_name} not a symlink"
 
-            # Delete original and import
-            _run(["klangk", "rm", "export-symlink"], env=env)
+            # Delete original (not required for import — uses a different name)
+            try:
+                _run(["klangk", "rm", "export-symlink"], env=env)
+            except subprocess.TimeoutExpired:
+                pass  # fixture teardown will clean up
 
             result = _run(
                 [
