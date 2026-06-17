@@ -43,13 +43,14 @@ the device flow automatically.
    git push
    ```
 
-2. A popup window opens at GitHub's device authorization page with the
-   code pre-filled. A dialog in the Klangk tab shows the code and a
-   spinner while waiting for authorization.
+2. A popup window opens at GitHub's device authorization page. A dialog
+   in the Klangk tab shows the code with a copy button and a spinner
+   while waiting for authorization.
 
    ![Device flow code entry](../assets/github-auth/03-device-flow-code.png)
 
-3. Authorize the app in the popup window. The credential helper detects
+3. Copy the code from the dialog (click the copy icon), paste it into
+   the GitHub page, and authorize the app. The credential helper detects
    authorization automatically — the dialog dismisses and git proceeds.
 
 The entire device flow runs inside the workspace container. The
