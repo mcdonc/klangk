@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
+import 'open_url.dart';
+
 import 'github_device_flow.dart';
 
 /// Git credential plugin: handles bridge requests from the container-side
@@ -268,6 +270,9 @@ class _CredentialDialogState extends State<_CredentialDialog> {
         _verificationUri = codeResponse.verificationUri;
       });
 
+      // Auto-open the verification URL in a new tab.
+      openUrl(codeResponse.verificationUri);
+
       _startPolling(codeResponse.deviceCode, codeResponse.interval);
     } catch (e, st) {
       developer.log('device flow: error: $e', stackTrace: st);
@@ -477,10 +482,7 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                       decoration: TextDecoration.underline,
                     ),
                     recognizer: TapGestureRecognizer()
-                      ..onTap = () {
-                        // The link is for the user to open manually or
-                        // copy — we can't launch URLs from a plugin.
-                      },
+                      ..onTap = () => openUrl(_verificationUri!),
                   ),
                 ],
               ),

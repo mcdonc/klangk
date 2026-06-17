@@ -154,10 +154,9 @@ http {
     }
 ${LLM_BLOCK}
     # Browser-delegate bridge: Pi extensions delegate long-running actions
-    # (soliplex RAG + LLM) through here. The read timeout must comfortably
-    # exceed the backend's per-chunk KLANGK_BRIDGE_TIMEOUT_SECONDS (default
-    # 30s) — well above nginx's 60s default — so nginx never cuts the request
-    # before the backend's own idle timeout fires.
+    # (soliplex RAG + LLM) through here. The read timeout must accommodate
+    # the git-credential device flow (up to 15 min) as well as streaming
+    # RAG/LLM responses, so it exceeds the backend's max bridge timeout.
     location = /api/browser-delegate {
 ${CONTAINER_ACL}
       auth_request /auth/verify-workspace-token;
@@ -166,8 +165,8 @@ ${CONTAINER_ACL}
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
       proxy_http_version 1.1;
-      proxy_read_timeout 300s;
-      proxy_send_timeout 300s;
+      proxy_read_timeout 920s;
+      proxy_send_timeout 920s;
       proxy_buffering off;
     }
 

@@ -176,7 +176,9 @@ async def get_config():
 # can't call them directly.  These thin proxies forward the request and
 # return GitHub's JSON response.  No client secret is involved.
 
-GITHUB_CLIENT_ID = os.environ.get("KLANGK_GITHUB_OAUTH_CLIENT_ID", "")
+
+def _github_client_id():
+    return os.environ.get("KLANGK_GITHUB_OAUTH_CLIENT_ID", "").strip()
 
 
 class _DeviceCodeRequest(BaseModel):
@@ -192,16 +194,17 @@ class _DeviceTokenRequest(BaseModel):
 
 @router.post("/api/github/device/code")
 async def github_device_code(body: _DeviceCodeRequest):
-    if not GITHUB_CLIENT_ID:
+    gh_id = _github_client_id()
+    if not gh_id:
         raise HTTPException(
             status_code=404, detail="GitHub OAuth not configured"
         )
-    if body.client_id != GITHUB_CLIENT_ID:
+    if body.client_id.strip() != gh_id:
         raise HTTPException(status_code=400, detail="client_id mismatch")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             "https://github.com/login/device/code",
-            data={"client_id": body.client_id, "scope": body.scope},
+            data={"client_id": gh_id, "scope": body.scope},
             headers={"Accept": "application/json"},
         )
     return json.loads(resp.text)
@@ -209,17 +212,18 @@ async def github_device_code(body: _DeviceCodeRequest):
 
 @router.post("/api/github/device/token")
 async def github_device_token(body: _DeviceTokenRequest):
-    if not GITHUB_CLIENT_ID:
+    gh_id = _github_client_id()
+    if not gh_id:
         raise HTTPException(
             status_code=404, detail="GitHub OAuth not configured"
         )
-    if body.client_id != GITHUB_CLIENT_ID:
+    if body.client_id.strip() != gh_id:
         raise HTTPException(status_code=400, detail="client_id mismatch")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             "https://github.com/login/oauth/access_token",
             data={
-                "client_id": body.client_id,
+                "client_id": gh_id,
                 "device_code": body.device_code,
                 "grant_type": body.grant_type,
             },
@@ -1918,7 +1922,17 @@ async def browser_delegate(body: BrowserDelegateRequest):
     specific browser tab's WebSocket and relays the request.
     """
     session, target_sock, payload = _resolve_bridge_target(body)
-    result = await session.dispatch_browser_request_to(target_sock, payload)
+    # Credential get operations may wait for user interaction (PAT dialog
+    # or OAuth device flow) — allow up to 15 minutes (matching GitHub's
+    # device code expiry).
+    action = payload.get("action", "")
+    operation = payload.get("operation", "")
+    timeout = (
+        900.0 if action == "git_credential" and operation == "get" else 30.0
+    )
+    result = await session.dispatch_browser_request_to(
+        target_sock, payload, timeout=timeout
+    )
 
     if result.get("error"):
         raise HTTPException(status_code=502, detail=result["error"])
