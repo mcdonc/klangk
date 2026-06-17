@@ -10,10 +10,11 @@ from threading import Thread
 import pytest
 
 SCRIPT = (
-    Path(__file__).resolve().parents[2]
-    / "containers"
-    / "workspace"
-    / "git-credential-klangk.py"
+    Path(__file__).resolve().parents[3]
+    / "plugins"
+    / "git-credential"
+    / "tools"
+    / "git-credential-klangk"
 )
 
 
