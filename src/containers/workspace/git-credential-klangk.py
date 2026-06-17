@@ -22,6 +22,12 @@ BRIDGE_URL = os.environ.get("KLANGK_BRIDGE_URL", "")
 BRIDGE_TOKEN = os.environ.get("KLANGK_BRIDGE_TOKEN", "")
 WORKSPACE_TOKEN = os.environ.get("KLANGK_WORKSPACE_TOKEN", "")
 TIMEOUT = int(os.environ.get("KLANGK_BRIDGE_TIMEOUT_SECONDS", "30"))
+DEBUG = os.environ.get("GIT_CREDENTIAL_KLANGK_DEBUG", "")
+
+
+def _debug(msg):
+    if DEBUG:
+        print(f"git-credential-klangk: {msg}", file=sys.stderr)
 
 
 def read_credential_input():
@@ -66,18 +72,27 @@ def post_bridge(operation, cred):
     )
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return json.loads(resp.read())
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError):
+            body = resp.read()
+            _debug(f"bridge response: {body[:500]}")
+            return json.loads(body)
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as e:
+        _debug(f"bridge error: {e}")
         return None
 
 
 def main():
     operation = sys.argv[1] if len(sys.argv) > 1 else ""
 
+    _debug(
+        f"operation={operation} BRIDGE_URL={BRIDGE_URL!r} BRIDGE_TOKEN={BRIDGE_TOKEN[:8] + '...' if BRIDGE_TOKEN else '(empty)'}"
+    )
+
     if not BRIDGE_URL or not BRIDGE_TOKEN:
+        _debug("no bridge configured, exiting")
         sys.exit(1)
 
     cred = read_credential_input()
+    _debug(f"cred input: {cred}")
 
     if operation == "get":
         resp = post_bridge("get", cred)
