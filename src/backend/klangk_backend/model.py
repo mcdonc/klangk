@@ -1597,11 +1597,17 @@ async def add_chat_message(
             "SELECT created_at FROM chat_messages WHERE id = ?", (msg_id,)
         )
         row = await cursor.fetchone()
+        # Fetch the current handle for the sender.
+        handle_cursor = await db.execute(
+            "SELECT handle FROM users WHERE id = ?", (user_id,)
+        )
+        handle_row = await handle_cursor.fetchone()
         return {
             "id": msg_id,
             "workspace_id": workspace_id,
             "user_id": user_id,
             "user_email": user_email,
+            "user_handle": handle_row["handle"] if handle_row else None,
             "message": message,
             "message_type": message_type,
             "created_at": row["created_at"],
@@ -1648,11 +1654,13 @@ async def get_chat_messages_before(
         anchor_rowid = anchor["rowid"]
 
         cursor = await db.execute(
-            "SELECT id, workspace_id, user_id, user_email, message,"
-            " message_type, created_at"
-            " FROM chat_messages WHERE workspace_id = ?"
-            " AND (created_at < ? OR (created_at = ? AND rowid < ?))"
-            " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            "SELECT c.id, c.workspace_id, c.user_id, c.user_email,"
+            " c.message, c.message_type, c.created_at,"
+            " u.handle AS user_handle"
+            " FROM chat_messages c LEFT JOIN users u ON c.user_id = u.id"
+            " WHERE c.workspace_id = ?"
+            " AND (c.created_at < ? OR (c.created_at = ? AND c.rowid < ?))"
+            " ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?",
             (workspace_id, anchor_ts, anchor_ts, anchor_rowid, limit),
         )
         rows = await cursor.fetchall()
@@ -1664,6 +1672,7 @@ async def get_chat_messages_before(
                         "workspace_id": row["workspace_id"],
                         "user_id": row["user_id"],
                         "user_email": row["user_email"],
+                        "user_handle": row["user_handle"],
                         "message": row["message"],
                         "message_type": row["message_type"],
                         "created_at": row["created_at"],
@@ -1698,10 +1707,11 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT id, workspace_id, user_id, user_email, message,"
-            " message_type, created_at"
-            " FROM chat_messages WHERE workspace_id = ?"
-            " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            "SELECT c.id, c.workspace_id, c.user_id, c.user_email,"
+            " c.message, c.message_type, c.created_at, u.handle AS user_handle"
+            " FROM chat_messages c LEFT JOIN users u ON c.user_id = u.id"
+            " WHERE c.workspace_id = ?"
+            " ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?",
             (workspace_id, limit),
         )
         rows = await cursor.fetchall()
@@ -1713,6 +1723,7 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
                         "workspace_id": row["workspace_id"],
                         "user_id": row["user_id"],
                         "user_email": row["user_email"],
+                        "user_handle": row["user_handle"],
                         "message": row["message"],
                         "message_type": row["message_type"],
                         "created_at": row["created_at"],
