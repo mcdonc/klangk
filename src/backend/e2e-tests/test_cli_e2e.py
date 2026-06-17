@@ -8,6 +8,7 @@ Requires: podman available, klangk image built.
 Run with: devenv shell -- test-cli-e2e
 """
 
+import logging
 import os
 import shutil
 import subprocess
@@ -15,6 +16,8 @@ import tempfile
 import time
 
 import pytest
+
+logger = logging.getLogger(__name__)
 
 
 def _run(args, timeout=120, input=None, **kwargs):
@@ -1068,9 +1071,12 @@ class TestExportImport:
                     try:
                         _run(["klangk", "rm", parts[0]], env=cli_config["env"])
                     except subprocess.TimeoutExpired:
-                        pass
+                        logger.warning(
+                            "Timeout removing workspace %s in teardown",
+                            parts[0],
+                        )
         except subprocess.TimeoutExpired:
-            pass
+            logger.warning("Timeout listing workspaces in teardown")
 
     def test_export_and_import_round_trip(self, cli_config, tmp_path):
         env = cli_config["env"]
@@ -1114,7 +1120,9 @@ class TestExportImport:
         try:
             _run(["klangk", "rm", "export-test"], env=env)
         except subprocess.TimeoutExpired:
-            pass  # fixture teardown will clean up
+            logger.warning(
+                "Timeout removing export-test, deferring to teardown"
+            )
 
         # Import with a new name
         result = _run(
@@ -1207,7 +1215,9 @@ class TestExportImport:
             try:
                 _run(["klangk", "rm", "export-symlink"], env=env)
             except subprocess.TimeoutExpired:
-                pass  # fixture teardown will clean up
+                logger.warning(
+                    "Timeout removing export-symlink, deferring to teardown"
+                )
 
             result = _run(
                 [
@@ -1253,12 +1263,16 @@ class TestExportImport:
             try:
                 _run(["klangk", "rm", "export-symlink-imported"], env=env)
             except subprocess.TimeoutExpired:
-                pass  # fixture teardown will clean up
+                logger.warning(
+                    "Timeout removing export-symlink-imported, deferring to teardown"
+                )
         finally:
             try:
                 _run(["klangk", "rm", "export-symlink"], env=env)
             except subprocess.TimeoutExpired:
-                pass  # fixture teardown will clean up
+                logger.warning(
+                    "Timeout removing export-symlink in finally, deferring to teardown"
+                )
 
 
 class TestAllowedMountRoots:
