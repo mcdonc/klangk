@@ -173,7 +173,8 @@ class ContainerTerminalState extends State<ContainerTerminal> {
             // Check if right-click is on a URL
             final tappedUrl = _getUrlAtOffset(offset); // coverage:ignore-line
             // Build menu items based on whether text is selected
-            final hasSelection = _controller.selection != null;
+            // Copy is handled by tmux (mouse-on + copy-pipe routes
+            // selections to the system clipboard via the bridge).
             final items = <PopupMenuEntry<String>>[
               // coverage:ignore-start
               if (tappedUrl != null) ...[
@@ -190,13 +191,6 @@ class ContainerTerminalState extends State<ContainerTerminal> {
                         leading: Icon(Icons.link, size: 18),
                         title: Text('Copy Link'))),
               ],
-              if (hasSelection)
-                const PopupMenuItem(
-                    value: 'copy',
-                    child: ListTile(
-                        dense: true,
-                        leading: Icon(Icons.copy, size: 18),
-                        title: Text('Copy'))),
               // coverage:ignore-end
               const PopupMenuItem(
                   value: 'paste',
@@ -216,12 +210,6 @@ class ContainerTerminalState extends State<ContainerTerminal> {
                 openUrl(tappedUrl);
               } else if (action == 'copy_link' && tappedUrl != null) {
                 Clipboard.setData(ClipboardData(text: tappedUrl));
-              } else if (action == 'copy') {
-                final selection = _controller.selection;
-                if (selection != null) {
-                  final text = _terminal.buffer.getText(selection);
-                  Clipboard.setData(ClipboardData(text: text));
-                }
               } else // coverage:ignore-end
               if (action == 'paste') {
                 Clipboard.getData(Clipboard.kTextPlain).then((data) {

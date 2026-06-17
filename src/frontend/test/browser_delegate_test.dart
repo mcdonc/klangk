@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -93,6 +94,8 @@ List<Map<String, dynamic>> _browserChunks(_FakeWebSocketChannel channel) {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
     SharedPreferences.setMockInitialValues({});
@@ -249,6 +252,88 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
 
       expect(_browserResponses(channel), isEmpty);
+    });
+
+    test('clipboard_write copies text to clipboard', () async {
+      // Mock the platform clipboard channel so Clipboard.setData works.
+      String? clipboardText;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') {
+          clipboardText = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      });
+
+      channel.serverSend({
+        'type': 'browser_request',
+        'id': 'req-clip-1',
+        'action': 'clipboard_write',
+        'text': 'hello clipboard',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final responses = _browserResponses(channel);
+      expect(responses.length, 1);
+      expect(responses[0]['id'], 'req-clip-1');
+      expect(responses[0]['status'], 'ok');
+      expect(clipboardText, 'hello clipboard');
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    test('clipboard_write with missing text returns error', () async {
+      channel.serverSend({
+        'type': 'browser_request',
+        'id': 'req-clip-empty',
+        'action': 'clipboard_write',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final responses = _browserResponses(channel);
+      expect(responses.length, 1);
+      expect(responses[0]['error'], contains('missing text'));
+    });
+
+    test('clipboard_write failure returns error', () async {
+      // Make Clipboard.setData throw.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') {
+          throw PlatformException(code: 'FAIL', message: 'clipboard denied');
+        }
+        return null;
+      });
+
+      channel.serverSend({
+        'type': 'browser_request',
+        'id': 'req-clip-fail',
+        'action': 'clipboard_write',
+        'text': 'denied text',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final responses = _browserResponses(channel);
+      expect(responses.length, 1);
+      expect(responses[0]['error'], contains('clipboard write failed'));
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    test('clipboard_write with empty text returns error', () async {
+      channel.serverSend({
+        'type': 'browser_request',
+        'id': 'req-clip-blank',
+        'action': 'clipboard_write',
+        'text': '',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final responses = _browserResponses(channel);
+      expect(responses.length, 1);
+      expect(responses[0]['error'], contains('missing text'));
     });
 
     test('fetch returns response from HTTP client', () async {

@@ -217,25 +217,24 @@ void main() {
       client.close();
     });
 
-    testWidgets('right-click with selection shows copy option', (tester) async {
+    testWidgets('right-click menu has Paste but not Copy', (tester) async {
       final client = _MockWsClient();
       await tester.pumpWidget(_buildTerminal(client));
       await tester.pumpAndSettle();
 
-      // Write some text to the terminal so there's content to select
+      // Write some text to the terminal so there's content
       client.emitTerminal('hello world\r\n');
       await tester.pump();
 
       final terminalView = find.byType(ContainerTerminal);
       final center = tester.getCenter(terminalView);
 
-      // Right-click to open menu — Copy only shows when there's a selection
-      // but we can't easily create a selection in tests, so just verify
-      // the menu opens and Paste is available
+      // Copy is handled by tmux copy-pipe, not the context menu.
       await tester.tapAt(center, buttons: kSecondaryMouseButton);
       await tester.pumpAndSettle();
 
       expect(find.text('Paste'), findsOneWidget);
+      expect(find.text('Copy'), findsNothing);
 
       // Dismiss by tapping away
       await tester.tapAt(Offset.zero);
