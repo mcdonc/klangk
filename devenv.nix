@@ -338,23 +338,42 @@ in
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
 
-    # Podman uses its global user config (~/.config/containers/ and
-    # ~/.local/share/containers/).  We don't override storage.conf here
-    # — podman persists storage paths in a database (db.sql) on first
-    # run and ignores config file changes after that.
+    # Podman storage config — generated on every shell entry so
+    # KLANGK_PODMAN_STORAGE changes take effect immediately.
+    # IMPORTANT: if you change KLANGK_PODMAN_STORAGE after podman has
+    # already been used, run `podman system reset --force` first —
+    # podman caches paths in db.sql and ignores config changes.
     #
     # Requirements for --userns=keep-id (rootless user namespaces):
-    #   - Podman's graphroot AND runroot must be on ext4 (or btrfs).
+    #   - graphroot AND runroot must be on ext4/btrfs (not ZFS).
     #     ZFS lacks idmapped mount support, causing podman to fall back
     #     to storage-chown-by-maps which hangs or takes minutes.
-    #   - Configure via ~/.config/containers/storage.conf before first
-    #     podman use.
     #   - Verify with: podman info | grep "Supports shifting"
     #     (must be "true" for fast container creation)
-
-    # Rootless podman from nix needs a policy.json (see env.KLANGK_SIGNATURE_POLICY).
     _PODMAN_CONF="$DEVENV_STATE/klangk/podman"
-    mkdir -p "$_PODMAN_CONF"
+    _PODMAN_STORE="$HOME/.local/share/containers"
+    _PODMAN_GRAPHROOT="''${KLANGK_PODMAN_STORAGE:-$_PODMAN_STORE/storage}"
+    if [ -n "''${KLANGK_PODMAN_STORAGE:-}" ]; then
+      _PODMAN_RUNROOT="$KLANGK_PODMAN_STORAGE/run"
+    else
+      _PODMAN_RUNROOT="$_PODMAN_STORE/run"
+    fi
+    mkdir -p "$_PODMAN_CONF" "$_PODMAN_RUNROOT" \
+      "$_PODMAN_GRAPHROOT" "$_PODMAN_GRAPHROOT/tmp"
+
+    cat > "$_PODMAN_CONF/storage.conf" <<STORAGE
+    [storage]
+    driver = "overlay"
+    graphroot = "$_PODMAN_GRAPHROOT"
+    runroot = "$_PODMAN_RUNROOT"
+    STORAGE
+    export CONTAINERS_STORAGE_CONF="$_PODMAN_CONF/storage.conf"
+
+    cat > "$_PODMAN_CONF/containers.conf" <<CONTAINERS
+    [engine]
+    image_copy_tmp_dir = "storage"
+    CONTAINERS
+    export CONTAINERS_CONF="$_PODMAN_CONF/containers.conf"
     if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
       echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
         > "$_PODMAN_CONF/policy.json"
