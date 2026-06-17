@@ -3,8 +3,8 @@
 Klangk workspaces can authenticate with GitHub for HTTPS git operations
 (push, pull, clone of private repos). Two methods are available:
 
-- **Sign in with GitHub** (recommended) — one-click OAuth device flow,
-  no token management required. Requires admin configuration.
+- **Sign in with GitHub** (recommended) — OAuth device flow, no token
+  management required. Requires admin configuration.
 - **Personal access token (PAT)** — manual token entry, always available
   as a fallback.
 
@@ -31,33 +31,35 @@ will do both automatically).
 ## Sign in with GitHub (recommended)
 
 When the admin has configured GitHub OAuth (see
-[Admin setup](#admin-setup-creating-a-github-oauth-app) below), the
-credential dialog shows a **Sign in with GitHub** button:
-
-![Credential dialog with GitHub sign-in](../assets/github-auth/02-credential-dialog-with-github.png)
+[Admin setup](#admin-setup-creating-a-github-oauth-app) below), running
+a git command that requires authentication for `github.com` triggers
+the device flow automatically.
 
 ### How it works
 
-1. Open a workspace and run a git command that requires authentication:
+1. Run a git command that requires authentication:
 
    ```sh
    git push
    ```
 
-2. A dialog appears with a **Sign in with GitHub** button. Click it.
-
-3. The dialog displays a one-time code and a link to GitHub:
+2. A popup window opens at GitHub's device authorization page with the
+   code pre-filled. A dialog in the Klangk tab shows the code and a
+   spinner while waiting for authorization.
 
    ![Device flow code entry](../assets/github-auth/03-device-flow-code.png)
 
-4. Open the GitHub link in a new tab, enter the code, and authorize the
-   app.
+3. Authorize the app in the popup window. The credential helper detects
+   authorization automatically — the dialog dismisses and git proceeds.
 
-5. The dialog detects authorization automatically and git proceeds. No
-   token to copy or manage.
+The entire device flow runs inside the workspace container. The
+container-side credential helper (`git-credential-klangk`) talks to
+GitHub directly, and only sends the display code to the browser for the
+user to see. The access token never leaves the container — it goes
+straight from GitHub to git via the helper's stdout.
 
-The OAuth token is cached in memory for the browser session. Subsequent
-git operations reuse it without prompting.
+If the device flow fails (network error, expired code, denied), the
+helper falls back to the PAT dialog automatically.
 
 ### Scopes
 
@@ -66,10 +68,21 @@ access to repositories you can access on GitHub. The token is scoped to
 the OAuth App — it cannot access organization resources unless the
 organization has approved the app.
 
+### When does the device flow activate?
+
+The device flow only activates when all of these are true:
+
+- `KLANGK_GITHUB_OAUTH_CLIENT_ID` is set in the container environment
+- The git host is `github.com` (or `www.github.com`)
+- A browser tab is connected (the helper needs to show the code)
+
+For non-GitHub hosts, or when the client ID is not configured, the
+helper falls through to the PAT dialog.
+
 ## Using a personal access token
 
-If GitHub OAuth is not configured, or if you prefer to manage tokens
-manually, the dialog shows username and PAT fields:
+If GitHub OAuth is not configured, or for non-GitHub hosts, the
+credential dialog shows username and PAT fields:
 
 ![Git credentials dialog](../assets/github-auth/01-credential-dialog.png)
 
@@ -130,24 +143,31 @@ create a GitHub OAuth App and set one environment variable.
    KLANGK_GITHUB_OAUTH_CLIENT_ID=Ov23li...
    ```
 
-8. Restart Klangk. The "Sign in with GitHub" button will now appear in
-   the credential dialog.
+8. Rebuild the workspace image so the variable is injected into
+   containers. The device flow will activate automatically for
+   `github.com` hosts.
 
 **Important**: this must be an **OAuth App**, not a GitHub App. The
 device authorization grant is only available on OAuth Apps.
 
-If `KLANGK_GITHUB_OAUTH_CLIENT_ID` is not set, the "Sign in with
-GitHub" button is hidden and only the PAT form is shown.
+If `KLANGK_GITHUB_OAUTH_CLIENT_ID` is not set, the device flow is
+disabled and the PAT dialog is used for all hosts.
 
 ## Credential cache
 
-The cache is **per-tab** and **in-memory only**:
+The PAT cache is **per-tab** and **in-memory only**:
 
 - Each browser tab has its own `GitCredentialPlugin` instance with its
   own cache. Credentials entered in tab A are not available in tab B.
 - Refreshing the page clears the cache (new plugin instance).
 - Closing the tab clears the cache.
 - The cache is keyed by `protocol://host` (e.g. `https://github.com`).
+
+Device flow tokens are not cached in the browser — the token goes
+directly from the container helper to git. However, after a successful
+`git push`, git calls the helper's `store` operation, which caches the
+credentials in the browser for subsequent operations within the same
+session.
 
 ## Multiple browser tabs
 
@@ -177,16 +197,20 @@ HTTPS with PATs or OAuth is the recommended authentication method.
 - Verify the browser tab has a WebSocket connection (check for
   errors in the browser console).
 
-### "Sign in with GitHub" button not shown
+### Device flow not activating
 
-- Verify `KLANGK_GITHUB_OAUTH_CLIENT_ID` is set in the environment.
+- Verify `KLANGK_GITHUB_OAUTH_CLIENT_ID` is set in the container
+  environment (check with `echo $KLANGK_GITHUB_OAUTH_CLIENT_ID` in the
+  workspace terminal).
 - Check that the OAuth App has **Enable Device Flow** turned on.
-- Restart Klangk after setting the variable.
+- The device flow only activates for `github.com` hosts.
+- Rebuild the workspace image after setting the variable.
 
 ### Device flow code expired
 
 The code is valid for 15 minutes. If it expires before you authorize,
-click **Try again** to get a new code.
+the helper falls back to the PAT dialog. Run the git command again to
+get a new code.
 
 ### Credentials rejected
 
@@ -204,5 +228,5 @@ export GIT_CREDENTIAL_KLANGK_DEBUG=1
 git push
 ```
 
-This prints the browser ID, the bridge request/response, and any
-errors to stderr.
+This prints the browser ID, the bridge request/response, device flow
+status, and any errors to stderr.
