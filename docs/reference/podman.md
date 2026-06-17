@@ -55,8 +55,23 @@ idmapped mounts won't work.
 
 ## Configuring Storage
 
-To move podman storage to a supported filesystem, create or edit
-`~/.config/containers/storage.conf`:
+Two options for moving podman storage to a supported filesystem:
+
+**Option A: `KLANGK_PODMAN_STORAGE` env var** (devenv only)
+
+Set `KLANGK_PODMAN_STORAGE` in your `.env` file:
+
+```sh
+KLANGK_PODMAN_STORAGE=/path/to/ext4/podman
+```
+
+The devenv shell generates a `storage.conf` that puts both `graphroot`
+and `runroot` under this path. This only applies inside the devenv
+shell — podman outside of devenv is unaffected.
+
+**Option B: `~/.config/containers/storage.conf`** (system-wide)
+
+Create or edit `~/.config/containers/storage.conf`:
 
 ```toml
 [storage]
@@ -64,6 +79,8 @@ driver = "overlay"
 graphroot = "/path/to/ext4/podman/storage"
 runroot = "/path/to/ext4/podman/run"
 ```
+
+This applies to all rootless podman usage, not just Klangk.
 
 Both `graphroot` and `runroot` must be on a supported filesystem.
 
