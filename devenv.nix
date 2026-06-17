@@ -338,16 +338,21 @@ in
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
 
-    # Podman config lives outside the storage directory so
-    # `podman system reset` doesn't delete it.
+    # Podman storage config — generated on every shell entry so
+    # KLANGK_PODMAN_STORAGE changes take effect immediately.
+    # IMPORTANT: if you change KLANGK_PODMAN_STORAGE after podman has
+    # already been used, run `podman system reset --force` first —
+    # podman caches paths in db.sql and ignores config changes.
+    #
+    # Requirements for --userns=keep-id (rootless user namespaces):
+    #   - graphroot AND runroot must be on ext4/btrfs (not ZFS).
+    #     ZFS lacks idmapped mount support, causing podman to fall back
+    #     to storage-chown-by-maps which hangs or takes minutes.
+    #   - Verify with: podman info | grep "Supports shifting"
+    #     (must be "true" for fast container creation)
     _PODMAN_CONF="$DEVENV_STATE/klangk/podman"
     _PODMAN_STORE="$HOME/.local/share/containers"
-    # KLANGK_PODMAN_STORAGE: custom path for podman image storage.
-    # Use an ext4 filesystem (not ZFS) for --userns=keep-id support.
-    # ZFS lacks idmapped mounts, causing storage-chown-by-maps to hang.
     _PODMAN_GRAPHROOT="''${KLANGK_PODMAN_STORAGE:-$_PODMAN_STORE/storage}"
-    # Keep runroot on the same filesystem as graphroot to avoid
-    # cross-device issues (e.g. graphroot on ext4, runroot on ZFS).
     if [ -n "''${KLANGK_PODMAN_STORAGE:-}" ]; then
       _PODMAN_RUNROOT="$KLANGK_PODMAN_STORAGE/run"
     else
@@ -364,14 +369,11 @@ in
     STORAGE
     export CONTAINERS_STORAGE_CONF="$_PODMAN_CONF/storage.conf"
 
-    # Stage image blob downloads inside the graphroot ("storage" sentinel)
-    # instead of the default /var/tmp, which on this host is the root fs.
     cat > "$_PODMAN_CONF/containers.conf" <<CONTAINERS
     [engine]
     image_copy_tmp_dir = "storage"
     CONTAINERS
     export CONTAINERS_CONF="$_PODMAN_CONF/containers.conf"
-
     if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
       echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
         > "$_PODMAN_CONF/policy.json"
