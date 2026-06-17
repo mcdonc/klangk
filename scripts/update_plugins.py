@@ -33,31 +33,31 @@ plugins:
   - name: celebrate
     git: git@github.com:mcdonc/klangk.git
     path: plugins/celebrate
-    ref: worktree-411-connection-id
+    ref: main
   - name: beep
     git: git@github.com:mcdonc/klangk.git
     path: plugins/beep
-    ref: worktree-411-connection-id
+    ref: main
   - name: pig-latin
     git: git@github.com:mcdonc/klangk.git
     path: plugins/pig-latin
-    ref: worktree-411-connection-id
+    ref: main
   - name: word-count
     git: git@github.com:mcdonc/klangk.git
     path: plugins/word-count
-    ref: worktree-411-connection-id
+    ref: main
   - name: browser-fetch
     git: git@github.com:mcdonc/klangk.git
     path: plugins/browser-fetch
-    ref: worktree-411-connection-id
+    ref: main
   - name: marquee
     git: git@github.com:mcdonc/klangk.git
     path: plugins/marquee
-    ref: worktree-411-connection-id
+    ref: main
   - name: git-credential
     git: git@github.com:mcdonc/klangk.git
     path: plugins/git-credential
-    ref: worktree-411-connection-id
+    ref: main
   # Add more plugins:
   # - name: my-plugin
   #   git: git@github.com:user/repo.git
