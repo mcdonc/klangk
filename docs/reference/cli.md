@@ -32,3 +32,31 @@ klangk volumes rm nix-store         # delete a volume (must be yours)
 ```
 
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
+
+## Terminal behavior differences
+
+`klangk shell` provides the same tmux-based terminal as the web frontend, but clipboard behavior differs:
+
+- **Web frontend**: Text selections auto-copy to the system clipboard via the browser bridge. Mouse wheel scrolls through scrollback. No extra setup needed.
+- **CLI (`klangk shell`)**: Text selections auto-copy to the system clipboard via [OSC 52](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands), which requires your terminal emulator to support it. Mouse wheel scrollback works. Native text selection (viewport-only) is available via **Shift+drag**.
+
+### OSC 52 terminal support
+
+The following terminal emulators support OSC 52 clipboard integration (auto-copy from tmux selections will work):
+
+| Terminal         | OSC 52 support |
+| ---------------- | -------------- |
+| iTerm2           | Yes            |
+| kitty            | Yes            |
+| alacritty        | Yes            |
+| WezTerm          | Yes            |
+| foot             | Yes            |
+| Windows Terminal | Yes            |
+| Konsole          | Yes (22.04+)   |
+| xterm            | Yes            |
+| GNOME Terminal   | No             |
+| Tilix            | No             |
+| MATE Terminal    | No             |
+| Terminator       | No             |
+
+If your terminal does not support OSC 52, tmux selections will still be captured in the tmux paste buffer (accessible via tmux commands) but will not automatically appear on your system clipboard. You can work around this by installing `xclip`, `xsel`, or `wl-copy` on your local machine and configuring tmux's `copy-command` in your local tmux config.
