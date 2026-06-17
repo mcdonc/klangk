@@ -23,19 +23,6 @@ chown of the layer tree. This is slow on first container creation
 (10-30s depending on image size) but subsequent creates reuse cached
 layers and are fast.
 
-## First Container Creation is Slow
-
-The first `podman create` with `--userns=keep-id` triggers
-`storage-chown-by-maps` on every image layer, which can take 10-30s
-depending on image size. This is normal for rootless podman.
-Subsequent creates reuse cached layers and are fast.
-
-**ZFS note:** ZFS's copy-on-write semantics may make the recursive
-chown even slower since every chowned file creates a new copy. If
-your home directory is on ZFS (common on NixOS) and container
-creation is unacceptably slow, moving podman storage to ext4/btrfs/XFS
-may help. See [Configuring Storage](#configuring-storage) below.
-
 ### A note on "Supports shifting"
 
 Running `podman info | grep "Supports shifting"` shows whether the
@@ -47,19 +34,20 @@ which rootless users don't have. Only rootful (`sudo`) podman can
 achieve `Supports shifting: true`.
 
 This means `storage-chown-by-maps` is the normal and expected path
-for rootless podman. The goal is not to eliminate it, but to ensure
-it runs on a filesystem where it completes quickly (i.e., not ZFS).
+for rootless podman.
 
 ## Configuring Storage
 
-Two options for moving podman storage to a supported filesystem:
+By default, podman stores images and runtime state under
+`~/.local/share/containers/`. To use a different location (e.g. a
+larger volume), two options:
 
 **Option A: `KLANGK_PODMAN_STORAGE` env var** (devenv only)
 
 Set `KLANGK_PODMAN_STORAGE` in your `.env` file:
 
 ```sh
-KLANGK_PODMAN_STORAGE=/path/to/ext4/podman
+KLANGK_PODMAN_STORAGE=/path/to/podman
 ```
 
 The devenv shell generates a `storage.conf` that puts both `graphroot`
@@ -73,13 +61,11 @@ Create or edit `~/.config/containers/storage.conf`:
 ```toml
 [storage]
 driver = "overlay"
-graphroot = "/path/to/ext4/podman/storage"
-runroot = "/path/to/ext4/podman/run"
+graphroot = "/path/to/podman/storage"
+runroot = "/path/to/podman/run"
 ```
 
 This applies to all rootless podman usage, not just Klangk.
-
-Both `graphroot` and `runroot` must be on a non-ZFS filesystem.
 
 ### NixOS
 
@@ -113,9 +99,8 @@ image afterward with `devenv up`.
 ### Container creation is slow
 
 First container creation with `--userns=keep-id` is always slow
-(10-30s) due to `storage-chown-by-maps`. This is normal. If it's
-consistently over 30s and your storage is on ZFS, try moving to ext4 —
-see [Configuring Storage](#configuring-storage).
+(10-30s) due to `storage-chown-by-maps`. This is normal for rootless
+podman. Subsequent creates reuse cached layers and are fast.
 
 ### "database run root does not match our run root"
 
