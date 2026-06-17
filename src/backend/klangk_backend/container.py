@@ -316,6 +316,7 @@ class ContainerRegistry:
         state = self.states.pop(workspace_id, None)
         if state:
             self._cid_to_wsid.pop(state.container_id, None)
+        self._workspace_locks.pop(workspace_id, None)
 
     # --- Port allocation ---
 
