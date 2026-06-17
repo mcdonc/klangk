@@ -56,3 +56,5 @@ Open [http://localhost:8995](http://localhost:8995) and log in with `admin@examp
 ## Architecture
 
 ![Architecture Overview](docs/architecture-overview.svg)
+foo
+foo
