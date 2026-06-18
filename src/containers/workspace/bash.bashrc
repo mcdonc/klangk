@@ -6,8 +6,9 @@
 export PATH="/opt/klangk/bin:$PATH"
 
 # Keep herdr's API socket on tmpfs — virtiofs (macOS) rejects chmod on sockets.
-# Per-user socket since multiple users share the same container.
-export HERDR_SOCKET_PATH="/tmp/herdr-${KLANGK_USER_ID:-default}.sock"
+# Per-user with random suffix to prevent predictable-path attacks in /tmp.
+_herdr_dir=$(mktemp -d "/tmp/herdr-${KLANGK_USER_ID:-default}-XXXXXXXX")
+export HERDR_SOCKET_PATH="$_herdr_dir/herdr.sock"
 
 # Ignore Ctrl+C until setup is complete and any default command has started.
 trap '' INT
