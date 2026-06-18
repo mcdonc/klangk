@@ -135,19 +135,6 @@ def _build_shell_command(
         *session_args,
         *tmux_env,
     ]
-    # Respawn the shell on exit only for owner sessions — NOT for
-    # session-group joiners, where it creates zombie panes on teardown.
-    if join_session is None and socket_path is None:
-        cmd += [
-            "\\;",
-            "set-option",
-            "remain-on-exit",
-            "on",
-            "\\;",
-            "set-hook",
-            "pane-died",
-            "respawn-pane",
-        ]
     # Note: no refresh-client here for joins — the caller selects the
     # target window first, then triggers a refresh via resize.
     # Read-only is enforced in handle_terminal_input (wshandler.py),
