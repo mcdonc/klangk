@@ -134,7 +134,11 @@ class TestStart:
         assert argv[argv.index("-u") + 1] == "klangk"
         assert argv[argv.index("-w") + 1] == "/home"
         assert "cid" in argv
-        assert argv[-2:] == ["tmux", "new-session"]
+        assert "tmux" in argv
+        assert "new-session" in argv
+        # Owner sessions get remain-on-exit to respawn on shell exit
+        assert "remain-on-exit" in argv
+        assert "respawn-pane" in argv
         assert (fake.rows, fake.cols) == (40, 120)
         assert s._running is True
         await s.stop()
@@ -760,6 +764,8 @@ class TestBuildShellCommandJoinSession:
         assert cmd[s_idx + 1].startswith("joiner-uid-")
         assert unique == cmd[s_idx + 1]
         assert "-A" not in cmd
+        # Joiners must NOT get remain-on-exit (causes zombie panes)
+        assert "remain-on-exit" not in cmd
 
     def test_read_only_join(self):
         cmd, unique = _build_shell_command(

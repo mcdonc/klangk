@@ -739,11 +739,6 @@ test.describe("shared terminal visibility", () => {
         specWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
         await specWs.recvUntil((m) => m.type === "terminal_started");
 
-        // Wait for the spectator's own terminal session to fully
-        // initialise before tearing it down with join_shared_terminal.
-        // The output forwarding task needs time to start.
-        await new Promise((r) => setTimeout(r, 1000));
-
         specWs.send({
           cmd: "join_shared_terminal",
           user_id: terminal.user_id,
@@ -752,7 +747,6 @@ test.describe("shared terminal visibility", () => {
         const joined = await specWs.recvUntil(
           (m) =>
             m.type === "terminal_started" && m.shared_window === "watch-me",
-          120_000,
         );
         expect(joined.readOnly).toBe(true);
 
