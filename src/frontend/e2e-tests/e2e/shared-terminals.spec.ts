@@ -921,11 +921,17 @@ test.describe("shared terminal visibility", () => {
         ].join("");
         expect(firstText).toContain("bashbashbash");
 
+        // Drain any stale admin output before typing fresh input
+        await adminWs.collectUntilQuiet(
+          (m) => m.type === "terminal_output",
+          2000,
+        );
+
         // Coadmin types "abc" — admin should see it too
         coadminWs.send({ cmd: "terminal_input", data: "abc" });
         const adminSees = await adminWs.collectUntilQuiet(
           (m) => m.type === "terminal_output",
-          2000,
+          3000,
         );
         expect(
           adminSees.map((m) => (m.data as string) ?? "").join(""),
