@@ -912,15 +912,46 @@ void main() {
 
     testWidgets('presence bar shows connected users', (tester) async {
       client.presenceUsers = [
-        {'user_id': 'u1', 'user_email': 'alice@test.com'},
-        {'user_id': 'u2', 'user_email': 'bob@test.com'},
+        {
+          'user_id': 'u1',
+          'user_email': 'alice@test.com',
+          'user_handle': 'alice',
+        },
+        {
+          'user_id': 'u2',
+          'user_email': 'bob@test.com',
+          'user_handle': 'bob',
+        },
       ];
 
       await tester.pumpWidget(buildChat());
 
-      // Green dot + avatar initials
+      // Green dot + avatar initials (from handle)
       expect(find.text('A'), findsOneWidget);
       expect(find.text('B'), findsOneWidget);
+    });
+
+    testWidgets('presence tooltip shows handle instead of email',
+        (tester) async {
+      client.presenceUsers = [
+        {
+          'user_id': 'u1',
+          'user_email': 'alice@test.com',
+          'user_handle': 'alice',
+        },
+        {
+          'user_id': 'u2',
+          'user_email': 'bob@test.com',
+          'user_handle': '',
+        },
+      ];
+
+      await tester.pumpWidget(buildChat());
+
+      // Tooltip for user with handle shows handle
+      expect(find.byTooltip('alice'), findsOneWidget);
+      // Tooltip for user without handle falls back to email
+      expect(find.byTooltip('bob@test.com'), findsOneWidget);
     });
 
     testWidgets('presence bar hidden when no users', (tester) async {

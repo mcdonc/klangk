@@ -5140,7 +5140,12 @@ class TestPresence:
         )
         sock2 = _mock_sock()
         conn2 = _base_conn(
-            user={"id": other["id"], "email": "other@test.com"}, ws=sock2
+            user={
+                "id": other["id"],
+                "email": "other@test.com",
+                "handle": other.get("handle", ""),
+            },
+            ws=sock2,
         )
         wshandler.state.connections[sock2] = conn2
 
@@ -5172,6 +5177,7 @@ class TestPresence:
             assert len(joins) == 1
             assert joins[0]["user_id"] == other["id"]
             assert joins[0]["user_email"] == "other@test.com"
+            assert "user_handle" in joins[0]
         finally:
             wshandler.state.sessions.pop(workspace["id"], None)
             wshandler.state.connections.pop(sock1, None)
