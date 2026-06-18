@@ -57,6 +57,7 @@ def _build_environment(
     user_home: str | None = None,
     user_id: str | None = None,
     user_handle: str | None = None,
+    ssh_agent_socket: str | None = None,
 ) -> list[str]:
     env = ["TERM=xterm-256color"]
     if user_home is not None:
@@ -67,6 +68,8 @@ def _build_environment(
         env.append(f"KLANGK_USER_HANDLE={user_handle}")
     if command_override is not None:
         env.append(f"KLANGK_CMD_OVERRIDE={command_override}")
+    if ssh_agent_socket is not None:
+        env.append(f"SSH_AUTH_SOCK={ssh_agent_socket}")
     return env
 
 
@@ -80,6 +83,7 @@ def _build_shell_command(
     join_session: str | None = None,
     read_only: bool = False,
     tmux_enabled: bool = True,
+    ssh_agent_socket: str | None = None,
 ) -> tuple[list[str], str | None]:
     """Build the shell command for a terminal session.
 
@@ -117,6 +121,8 @@ def _build_shell_command(
         socket_args = ["-S", socket_path]
     if user_home is not None:
         tmux_env = ["-e", f"HOME={user_home}"]
+    if ssh_agent_socket is not None:
+        tmux_env += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
     if session_name is not None:
         if join_session is not None:
             # Join an existing session group.  Use a unique session name
@@ -601,6 +607,7 @@ class TerminalSession:
         read_only: bool = False,
         user_id: str | None = None,
         user_handle: str | None = None,
+        ssh_agent_socket: str | None = None,
     ):
         self.container_id = container_id
         self.session_name = session_name
@@ -610,6 +617,7 @@ class TerminalSession:
         self.read_only = read_only
         self.user_id = user_id
         self.user_handle = user_handle
+        self.ssh_agent_socket = ssh_agent_socket
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -631,6 +639,7 @@ class TerminalSession:
             self.user_home,
             user_id=self.user_id,
             user_handle=self.user_handle,
+            ssh_agent_socket=self.ssh_agent_socket,
         )
         shell_cmd, self._tmux_session_name = _build_shell_command(
             session_name=self.session_name,
@@ -639,6 +648,7 @@ class TerminalSession:
             join_session=self.join_session,
             read_only=self.read_only,
             tmux_enabled=terminal_tmux_enabled(),
+            ssh_agent_socket=self.ssh_agent_socket,
         )
         work_dir = "/home"
         argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)
@@ -656,6 +666,26 @@ class TerminalSession:
         logger.info(
             "Terminal session started for container %s", self.container_id
         )
+
+        # If SSH agent forwarding is active, inject SSH_AUTH_SOCK into
+        # the tmux session environment.  This is needed because
+        # `tmux new-session -A` reattaches to an existing session and
+        # ignores the `-e` flags — the env var must be set explicitly.
+        if self.ssh_agent_socket and self.session_name:
+            try:
+                await podman.exec_container(
+                    self.container_id,
+                    [
+                        "tmux",
+                        "set-environment",
+                        "-t",
+                        self.session_name,
+                        "SSH_AUTH_SOCK",
+                        self.ssh_agent_socket,
+                    ],
+                )
+            except OSError as e:  # pragma: no cover
+                logger.warning("Failed to set SSH_AUTH_SOCK in tmux: %s", e)
 
     async def _read_loop(self) -> None:
         """Read PTY output and queue it as text.

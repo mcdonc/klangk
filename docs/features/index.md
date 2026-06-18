@@ -12,6 +12,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**GitHub Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog
 - [**Pi Extensions**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
 - [**Container Packages**](container-packages.md) — Pre-installed languages, tools, and CLI utilities in workspace containers
+- [**SSH Agent Forwarding**](ssh-agent-forwarding.md) — Forward local SSH keys into containers via `klangkc shell`
 
 ## UI/Theme
 

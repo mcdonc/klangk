@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import asyncio
+import os
 from pathlib import Path
 
 import httpx
@@ -599,8 +600,18 @@ def shell(
         "-c",
         help="Override the default shell command",
     ),
+    forward_agent: bool = typer.Option(
+        False,
+        "--forward-agent",
+        "-A",
+        help="Forward local SSH agent into the container",
+    ),
 ) -> None:
     """Connect to a workspace and execute the default shell command."""
+    # When called directly (not via typer CLI), forward_agent may be a
+    # typer.models.OptionInfo instead of a bool.  Treat that as False.
+    if not isinstance(forward_agent, bool):
+        forward_agent = False
     cfg = _cfg()
     if not cfg.auth.token:  # pragma: no cover
         _err.print(
@@ -649,6 +660,25 @@ def shell(
     token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
+    # Resolve agent forwarding: --forward-agent (-A) flag takes highest
+    # precedence.  KLANGKC_FORWARD_AGENT env var is only consulted when
+    # -A is not passed:
+    #   "true"/"1"/"yes" — forward to any server
+    #   "false"/"0"/"no" — don't forward (no-op since default is False,
+    #       but useful to override a broader env setting)
+    #   space-separated URLs — forward only to listed servers
+    if not forward_agent:
+        env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")
+        if env_val.lower() in ("1", "true", "yes"):
+            forward_agent = True
+        elif env_val and env_val.lower() not in ("0", "false", "no"):
+            forward_agent = server_url in env_val.split()
+    if forward_agent:
+        if not os.environ.get("SSH_AUTH_SOCK"):
+            _err.print(
+                "[yellow]Warning: --forward-agent set but SSH_AUTH_SOCK"
+                " is not set. Agent forwarding will be skipped.[/yellow]"
+            )
     try:
         asyncio.run(
             _ws_shell(
@@ -657,6 +687,7 @@ def shell(
                 ws.id,
                 command_override=command,
                 window=terminal,
+                forward_agent=forward_agent,
             )
         )
     except websockets.exceptions.InvalidStatusCode as e:

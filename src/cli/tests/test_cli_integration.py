@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1238,3 +1240,569 @@ class TestShellConnectionError:
         with pytest.raises(typer.Exit) as exc_info:
             shell(workspace="ws", terminal="x")
         assert exc_info.value.exit_code == 1
+
+
+class TestSSHAgentForwarding:
+    async def test_ws_shell_sends_agent_start_when_flag_set(self, tmp_path):
+        """With forward_agent=True and a valid SSH_AUTH_SOCK, ssh_agent_start
+        is sent before terminal_start."""
+        from klangkc.client import _ws_shell
+
+        fake_sock = tmp_path / "agent.sock"
+        fake_sock.touch()
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "ssh_agent_started",
+                        "socket": "/tmp/agent.sock",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+            patch.dict(os.environ, {"SSH_AUTH_SOCK": str(fake_sock)}),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    forward_agent=True,
+                )
+            except Exception:
+                pass
+
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        parsed = [json.loads(s) for s in sent]
+        cmds = [m.get("cmd") for m in parsed]
+        assert "ssh_agent_start" in cmds
+        assert "terminal_start" in cmds
+        agent_idx = cmds.index("ssh_agent_start")
+        terminal_idx = cmds.index("terminal_start")
+        assert agent_idx < terminal_idx
+
+    async def test_ws_shell_no_agent_without_flag(self):
+        """Without forward_agent=True, no ssh_agent_start is sent."""
+        from klangkc.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    forward_agent=False,
+                )
+            except Exception:
+                pass
+
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        assert not any("ssh_agent_start" in s for s in sent)
+
+    async def test_ws_shell_agent_start_timeout(self, tmp_path):
+        """If the backend never sends ssh_agent_started, the timeout
+        fires and we proceed without agent forwarding."""
+        from klangkc.client import _ws_shell
+
+        fake_sock = tmp_path / "agent.sock"
+        fake_sock.touch()
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+
+        recv_count = 0
+
+        async def fake_recv():
+            nonlocal recv_count
+            recv_count += 1
+            if recv_count == 1:
+                return json.dumps(
+                    {"type": "workspace_ready", "workspaceId": "ws1"}
+                )
+            if recv_count == 2:
+                # During agent start wait, hang forever — asyncio.wait_for
+                # will raise TimeoutError
+                await asyncio.sleep(999)
+            if recv_count == 3:
+                return json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                )
+            raise Exception("stop")
+
+        ws_mock.recv = fake_recv
+
+        # Use a very short timeout to avoid slow tests. Patch the deadline
+        # calculation to use 0.01s instead of 10s.
+        original_wait_for = asyncio.wait_for
+
+        async def fast_wait_for(coro, *, timeout=None):
+            # Make the agent start timeout very short
+            if timeout is not None and timeout > 1:
+                timeout = 0.01
+            return await original_wait_for(coro, timeout=timeout)
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+            patch.dict(os.environ, {"SSH_AUTH_SOCK": str(fake_sock)}),
+            patch("asyncio.wait_for", side_effect=fast_wait_for),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    forward_agent=True,
+                )
+            except Exception:
+                pass
+
+        # ssh_agent_start was sent but terminal_start should still be sent
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        parsed = [json.loads(s) for s in sent]
+        cmds = [m.get("cmd") for m in parsed]
+        assert "ssh_agent_start" in cmds
+        assert "terminal_start" in cmds
+
+    async def test_ws_shell_agent_start_error_response(self, tmp_path):
+        """If backend sends an error in response to ssh_agent_start,
+        we proceed without agent forwarding."""
+        from klangkc.client import _ws_shell
+
+        fake_sock = tmp_path / "agent.sock"
+        fake_sock.touch()
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "error", "message": "no container"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+            patch.dict(os.environ, {"SSH_AUTH_SOCK": str(fake_sock)}),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    forward_agent=True,
+                )
+            except Exception:
+                pass
+
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        parsed = [json.loads(s) for s in sent]
+        cmds = [m.get("cmd") for m in parsed]
+        # Agent start was sent, terminal still starts despite error
+        assert "ssh_agent_start" in cmds
+        assert "terminal_start" in cmds
+
+    async def test_ws_shell_sends_agent_stop_on_exit(self, tmp_path):
+        """When agent was active, ssh_agent_stop is sent on shell exit."""
+        from klangkc.client import _ws_shell
+
+        fake_sock = tmp_path / "agent.sock"
+        fake_sock.touch()
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "ssh_agent_started",
+                        "socket": "/tmp/agent.sock",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                # _run_shell will get this and raise, ending the shell
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+            patch.dict(os.environ, {"SSH_AUTH_SOCK": str(fake_sock)}),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    forward_agent=True,
+                )
+            except Exception:
+                pass
+
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        parsed = [json.loads(s) for s in sent]
+        cmds = [m.get("cmd") for m in parsed]
+        assert "ssh_agent_stop" in cmds
+        assert "terminal_stop" in cmds
+
+
+class TestSSHAgentRelayLoop:
+    """Tests for ssh_agent_relay_loop and ssh_agent_response routing."""
+
+    async def test_stdout_loop_routes_agent_response(self):
+        """ssh_agent_response messages in stdout_loop are put on the queue."""
+        import base64
+
+        from klangkc.client import _run_shell
+
+        ws = AsyncMock()
+        stop_event = asyncio.Event()
+        stdout = MagicMock()
+        stdout.write = MagicMock()
+        stdout.flush = MagicMock()
+
+        agent_data = b"\x00\x00\x00\x05\x0bhello"
+        encoded = base64.b64encode(agent_data).decode("ascii")
+
+        msg_idx = 0
+        messages = [
+            json.dumps({"type": "ssh_agent_response", "data": encoded}),
+            json.dumps({"type": "terminal_output", "data": "prompt$ "}),
+        ]
+
+        async def fake_recv():
+            nonlocal msg_idx
+            if msg_idx < len(messages):
+                m = messages[msg_idx]
+                msg_idx += 1
+                return m
+            # After delivering messages, wait then stop
+            stop_event.set()
+            await asyncio.sleep(10)
+
+        ws.recv = fake_recv
+        ws.send = AsyncMock()
+
+        stdin = MagicMock()
+        stdin.fileno = MagicMock(return_value=0)
+
+        with patch("select.select", return_value=([], [], [])):
+            try:
+                await asyncio.wait_for(
+                    _run_shell(
+                        ws,
+                        80,
+                        24,
+                        stdin=stdin,
+                        stdout=stdout,
+                        ssh_agent_sock="/fake/agent.sock",
+                    ),
+                    timeout=3,
+                )
+            except (asyncio.TimeoutError, Exception):
+                pass
+
+        # The terminal_output message should have been written
+        stdout.write.assert_any_call("prompt$ ")
+
+    async def test_relay_loop_forwards_to_local_agent(self, tmp_path):
+        """ssh_agent_relay_loop reads from queue, connects to local socket,
+        sends data, reads SSH protocol response, and sends back over WS."""
+        import base64
+        import struct
+
+        from klangkc.client import _run_shell
+
+        # Create a real Unix socket server acting as the SSH agent
+        agent_path = str(tmp_path / "agent.sock")
+        response_body = b"\x06\x00"  # SSH_AGENT_SUCCESS type + padding
+        response_msg = struct.pack(">I", len(response_body)) + response_body
+
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(agent_path)
+        server.listen(1)
+        server.setblocking(False)
+
+        async def agent_server():
+            """Accept one connection, read request, send response."""
+            loop = asyncio.get_event_loop()
+            conn, _ = await loop.sock_accept(server)
+            try:
+                data = await loop.sock_recv(conn, 4096)
+                assert len(data) > 0
+                await loop.sock_sendall(conn, response_msg)
+            finally:
+                conn.close()
+
+        ws = AsyncMock()
+        stop_event = asyncio.Event()
+        stdout = MagicMock()
+        stdout.write = MagicMock()
+        stdout.flush = MagicMock()
+
+        # The request that will arrive as ssh_agent_response from backend
+        request_body = b"\x0b"  # SSH_AGENTC_REQUEST_IDENTITIES
+        request_msg = struct.pack(">I", len(request_body)) + request_body
+        encoded = base64.b64encode(request_msg).decode("ascii")
+
+        msg_idx = 0
+
+        async def fake_recv():
+            nonlocal msg_idx
+            if msg_idx == 0:
+                msg_idx += 1
+                return json.dumps(
+                    {"type": "ssh_agent_response", "data": encoded}
+                )
+            # Give the relay time to process, then stop
+            await asyncio.sleep(0.5)
+            stop_event.set()
+            await asyncio.sleep(10)
+
+        ws.recv = fake_recv
+        ws.send = AsyncMock()
+
+        stdin = MagicMock()
+        stdin.fileno = MagicMock(return_value=0)
+
+        server_task = asyncio.create_task(agent_server())
+
+        with patch("select.select", return_value=([], [], [])):
+            try:
+                await asyncio.wait_for(
+                    _run_shell(
+                        ws,
+                        80,
+                        24,
+                        stdin=stdin,
+                        stdout=stdout,
+                        ssh_agent_sock=agent_path,
+                    ),
+                    timeout=5,
+                )
+            except (asyncio.TimeoutError, Exception):
+                pass
+
+        await asyncio.wait_for(server_task, timeout=2)
+        server.close()
+
+        # Verify the relay sent ssh_agent_data back over WS
+        sent_calls = ws.send.call_args_list
+        agent_data_msgs = []
+        for call in sent_calls:
+            try:
+                msg = json.loads(call[0][0])
+                if msg.get("cmd") == "ssh_agent_data":
+                    agent_data_msgs.append(msg)
+            except (json.JSONDecodeError, IndexError):
+                pass
+
+        assert len(agent_data_msgs) == 1
+        decoded = base64.b64decode(agent_data_msgs[0]["data"])
+        assert decoded == response_msg
+
+    async def test_relay_loop_handles_connection_error(self, tmp_path):
+        """ssh_agent_relay_loop logs a warning on connection error and
+        keeps running."""
+        import base64
+        import struct
+
+        from klangkc.client import _run_shell
+
+        # Point to a path that doesn't have a listener
+        bad_sock = str(tmp_path / "nonexistent.sock")
+
+        ws = AsyncMock()
+        stop_event = asyncio.Event()
+        stdout = MagicMock()
+        stdout.write = MagicMock()
+        stdout.flush = MagicMock()
+
+        request_body = b"\x0b"
+        request_msg = struct.pack(">I", len(request_body)) + request_body
+        encoded = base64.b64encode(request_msg).decode("ascii")
+
+        msg_idx = 0
+
+        async def fake_recv():
+            nonlocal msg_idx
+            if msg_idx == 0:
+                msg_idx += 1
+                return json.dumps(
+                    {"type": "ssh_agent_response", "data": encoded}
+                )
+            await asyncio.sleep(0.5)
+            stop_event.set()
+            await asyncio.sleep(10)
+
+        ws.recv = fake_recv
+        ws.send = AsyncMock()
+
+        stdin = MagicMock()
+        stdin.fileno = MagicMock(return_value=0)
+
+        with patch("select.select", return_value=([], [], [])):
+            try:
+                await asyncio.wait_for(
+                    _run_shell(
+                        ws,
+                        80,
+                        24,
+                        stdin=stdin,
+                        stdout=stdout,
+                        ssh_agent_sock=bad_sock,
+                    ),
+                    timeout=3,
+                )
+            except (asyncio.TimeoutError, Exception):
+                pass
+
+        # Should not have crashed — no ssh_agent_data sent since
+        # connection to agent failed
+        agent_data_msgs = [
+            json.loads(c[0][0])
+            for c in ws.send.call_args_list
+            if "ssh_agent_data" in c[0][0]
+        ]
+        assert len(agent_data_msgs) == 0

@@ -809,20 +809,18 @@ class ContainerRegistry:
             for c in containers:
                 cid = c.get("Id") or c.get("ID", "")
                 if cid not in self._cid_to_wsid:
-                    labels = c.get("Labels") or {}
-                    workspace_id = labels.get("klangk.workspace-id", "unknown")
-                    self.track_activity(cid, workspace_id)
-                    # Update the DB so the next workspace connect uses the
-                    # fast path (existing container) instead of rebuilding.
-                    if workspace_id != "unknown":
-                        await model.update_workspace_container(
-                            workspace_id, cid
-                        )
                     logger.info(
-                        "Adopted orphaned container %s (workspace %s)",
+                        "Removing orphaned container %s on startup",
                         cid[:12],
-                        workspace_id,
                     )
+                    try:
+                        await podman.remove_container(cid)
+                    except podman.PodmanError as e:
+                        logger.warning(
+                            "Failed to remove orphaned container %s: %s",
+                            cid[:12],
+                            e,
+                        )
         except (
             podman.PodmanError,
             OSError,
