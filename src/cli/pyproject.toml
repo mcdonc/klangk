@@ -28,7 +28,7 @@ klangkc = "klangkc.main:main"
 [tool.hatch.version]
 source = "vcs"
 raw-options.root = "../.."
-raw-options.tag_pattern = "cli-v(?P<version>.*)"
+raw-options.tag_regex = "^cli-v(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^\\+]*)(?:\\+.*)?$"
 
 [tool.hatch.build.targets.wheel]
 packages = ["klangkc"]
