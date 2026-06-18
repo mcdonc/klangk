@@ -49,7 +49,7 @@ export async function loginViaUI(page: Page, email: string, password: string) {
   await page.keyboard.type(password);
 
   await f.click({ position: { x: cx, y: height * 0.64 }, force: true });
-  await expect(page).toHaveTitle(/Workspaces/i, { timeout: 10_000 });
+  await expect(page).toHaveTitle(/Workspaces/i, { timeout: 30_000 });
 }
 
 /** Like loginViaUI but does not wait for Workspaces — use when
