@@ -670,3 +670,57 @@ class TestAnyRunning:
         s._proc.returncode = 0
         _agents["cid"] = s
         assert not any_running()
+
+
+class TestMonitorProcess:
+    async def test_monitor_broadcasts_on_death(self):
+        from klangk_backend import container, model
+        from klangk_backend.agent import _broadcast_agent_disconnect
+
+        container.registry.track_activity("cid-mon", "ws-mon")
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={
+                    "id": "msg-1",
+                    "message": "MrBoops has disconnected",
+                },
+            ) as mock_chat,
+            patch(
+                "klangk_backend.wshandler.state.get_session"
+            ) as mock_get_session,
+        ):
+            mock_session = MagicMock()
+            mock_get_session.return_value = mock_session
+
+            await _broadcast_agent_disconnect("cid-mon")
+
+            mock_chat.assert_awaited_once()
+            assert "disconnected" in mock_chat.call_args[0][3]
+            assert mock_session.broadcast.call_count == 3
+
+        container.registry.states.pop("ws-mon", None)
+
+    async def test_monitor_no_workspace(self):
+        from klangk_backend.agent import _broadcast_agent_disconnect
+
+        # Should not raise when container has no workspace
+        await _broadcast_agent_disconnect("no-such-container")
+
+    async def test_stop_cancels_monitor(self):
+        session = _make_session()
+        mock_task = MagicMock()
+        session._monitor_task = mock_task
+        session._proc = AsyncMock()
+        session._proc.returncode = None
+        session._proc.kill = MagicMock()
+        session._proc.wait = AsyncMock()
+
+        await session.stop()
+
+        mock_task.cancel.assert_called_once()
+        assert session._monitor_task is None
+        assert session._proc is None
