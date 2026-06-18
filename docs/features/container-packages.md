@@ -97,5 +97,5 @@ When sudo is disabled, you can still:
 
 Packages installed inside a running container are lost when the
 container restarts. To make system-level packages permanent, build a
-custom container image (see the `customize/` directory in the
-repository root).
+custom container image (see the [Customizing](../deployment/customizing.md)
+guide).
