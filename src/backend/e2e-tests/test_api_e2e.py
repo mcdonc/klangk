@@ -3,7 +3,7 @@
 Exercises group management, ACL permissions, workspace sharing via ACL,
 and permission denials.
 
-Run with: devenv shell -- test-cli-e2e test_api_e2e.py
+Run with: devenv shell -- test-backend-e2e test_api_e2e.py
 """
 
 import os

@@ -1,11 +1,11 @@
-"""CLI end-to-end tests against a real Klangk server.
+"""Backend end-to-end tests against a real Klangk server.
 
 These tests start a real uvicorn server, run klangk CLI commands as
 subprocesses, and verify behavior against real podman containers.
 
 Requires: podman available, klangk image built.
 
-Run with: devenv shell -- test-cli-e2e
+Run with: devenv shell -- test-backend-e2e
 """
 
 import logging

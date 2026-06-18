@@ -9,7 +9,7 @@ state between tests.
 
 Requires: podman available, klangk image built.
 
-Run with: devenv shell -- test-cli-e2e
+Run with: devenv shell -- test-backend-e2e
 """
 
 import asyncio

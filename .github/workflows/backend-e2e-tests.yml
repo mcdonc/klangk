@@ -44,7 +44,7 @@ jobs:
         if: steps.filter.outputs.e2e == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- test-cli-e2e
+          devenv shell -- test-backend-e2e
 
       - name: Skip notice
         if: steps.filter.outputs.e2e != 'true'
