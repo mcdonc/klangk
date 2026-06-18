@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import socket
 from contextlib import asynccontextmanager
@@ -25,9 +24,42 @@ MSG_SYSTEM = 2
 
 # Agent identity
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
-AGENT_EMAIL = os.environ.get("KLANGK_CHAT_AGENT_EMAIL", "MrBoops@example.com")
-AGENT_HANDLE = os.environ.get("KLANGK_CHAT_AGENT_HANDLE", "MrBoops")
-AGENT_MENTION = AGENT_HANDLE
+
+# Cached agent user dict (populated after seeding).
+_agent_user_cache: dict | None = None
+
+
+def clear_agent_cache() -> None:
+    """Clear the cached agent user so the next lookup hits the DB."""
+    global _agent_user_cache
+    _agent_user_cache = None
+
+
+async def get_agent_user() -> dict:
+    """Return the agent user dict from DB, cached after first call."""
+    global _agent_user_cache
+    if _agent_user_cache is not None:
+        return _agent_user_cache
+    user = await get_user_by_id(AGENT_USER_ID)
+    if user is None:
+        # Fallback before seeding has run (should not happen at runtime).
+        return {
+            "id": AGENT_USER_ID,
+            "email": "MrBoops@example.com",
+            "handle": "MrBoops",
+        }
+    _agent_user_cache = user
+    return user
+
+
+async def agent_email() -> str:
+    """Return the agent's email from the DB."""
+    return (await get_agent_user())["email"]
+
+
+async def agent_handle() -> str:
+    """Return the agent's handle from the DB."""
+    return (await get_agent_user())["handle"]
 
 
 async def get_db() -> aiosqlite.Connection:

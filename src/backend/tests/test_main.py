@@ -51,6 +51,44 @@ class TestSeedDefaultUser:
         assert "log-test" in caplog.text
 
 
+# --- Seed agent user ---
+
+
+class TestSeedAgentUser:
+    async def test_creates_agent_user(self, db):
+        await main.seed_agent_user()
+        user = await model.get_user_by_id(model.AGENT_USER_ID)
+        assert user is not None
+        assert user["email"] == "MrBoops@example.com"
+        assert user["handle"] == "MrBoops"
+
+    async def test_custom_env_vars(self, db, monkeypatch):
+        monkeypatch.setenv("KLANGK_CHAT_AGENT_EMAIL", "bot@test.com")
+        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "TestBot")
+        await main.seed_agent_user()
+        user = await model.get_user_by_id(model.AGENT_USER_ID)
+        assert user is not None
+        assert user["email"] == "bot@test.com"
+        assert user["handle"] == "TestBot"
+
+    async def test_upserts_existing(self, db, monkeypatch):
+        await main.seed_agent_user()
+        monkeypatch.setenv("KLANGK_CHAT_AGENT_EMAIL", "new@test.com")
+        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "NewBot")
+        await main.seed_agent_user()
+        user = await model.get_user_by_id(model.AGENT_USER_ID)
+        assert user["email"] == "new@test.com"
+        assert user["handle"] == "NewBot"
+
+    async def test_clears_cache(self, db):
+        # Prime cache with fallback
+        await model.get_agent_user()
+        await main.seed_agent_user()
+        # Cache should now reflect DB values
+        agent = await model.get_agent_user()
+        assert agent["email"] == "MrBoops@example.com"
+
+
 # --- Lifespan ---
 
 

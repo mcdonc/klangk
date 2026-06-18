@@ -33,6 +33,11 @@ def temp_data_dir(tmp_path, monkeypatch):
     us.DB_PATH = tmp_path / "klangk.db"
     wm._data_dir = tmp_path
     wm.WORKSPACES_ROOT = tmp_path / "workspaces"
+    # Clear agent caches so each test starts fresh.
+    us.clear_agent_cache()
+    import klangk_backend.wshandler as wsh
+
+    wsh._agent_mention_re = None
     return tmp_path
 
 
@@ -43,6 +48,25 @@ async def db(temp_data_dir):
 
     await us.init_db()
     return temp_data_dir
+
+
+@pytest.fixture
+async def agent_user(db):
+    """Seed the chat agent user into the DB."""
+    import klangk_backend.model as us
+
+    agent_db = await us.get_db()
+    try:
+        await agent_db.execute(
+            "INSERT OR REPLACE INTO users"
+            " (id, email, password_hash, verified, provider, handle)"
+            " VALUES (?, ?, NULL, 1, 'system', ?)",
+            (us.AGENT_USER_ID, "MrBoops@example.com", "MrBoops"),
+        )
+        await agent_db.commit()
+    finally:
+        await agent_db.close()
+    us.clear_agent_cache()
 
 
 @pytest.fixture

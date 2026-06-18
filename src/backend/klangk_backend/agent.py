@@ -70,7 +70,8 @@ class AgentSession:
         if self._home_ready:
             from . import model
 
-            return f"/home/{model.AGENT_HANDLE}"
+            handle = await model.agent_handle()
+            return f"/home/{handle}"
 
         from . import model
         from . import workspaces
@@ -90,8 +91,9 @@ class AgentSession:
         owner_id = ws["user_id"]
         workspace_home = workspaces.home_path(owner_id, workspace_id)
 
+        agent_handle = await model.agent_handle()
         container_home, created = workspaces.ensure_home_symlink(
-            workspace_home, model.AGENT_HANDLE, model.AGENT_USER_ID
+            workspace_home, agent_handle, model.AGENT_USER_ID
         )
         if created:
             await workspaces.populate_home_skel(
@@ -134,7 +136,8 @@ class AgentSession:
         from . import model
 
         container_home = await self._ensure_home()
-        system_prompt = _CHAT_SYSTEM_PROMPT.format(name=model.AGENT_HANDLE)
+        agent_handle = await model.agent_handle()
+        system_prompt = _CHAT_SYSTEM_PROMPT.format(name=agent_handle)
         argv = [
             "exec",
             "-i",

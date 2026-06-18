@@ -1413,7 +1413,7 @@ class TestHandleWorkspaceConnect:
         await conn.handle_workspace_connect({"workspaceId": "fake"})
         assert "Permission denied" in sock.send_json.call_args[0][0]["message"]
 
-    async def test_connect_success(self, user):
+    async def test_connect_success(self, user, agent_user):
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(user["id"], "test-ws")
         conn = _base_conn(user=user, ws=sock)
@@ -1445,7 +1445,7 @@ class TestHandleWorkspaceConnect:
         # Integer timeout (default 30m) should show as "30m" not "30.0m"
         assert "30m" in conn.pending_status_msg
 
-    async def test_connect_sends_default_command(self, user):
+    async def test_connect_sends_default_command(self, user, agent_user):
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(
             user["id"], "cmd-ws", default_command="pi"
@@ -4350,7 +4350,9 @@ class TestShareWindowHandlers:
 
 
 class TestFractionalTimeout:
-    async def test_fractional_timeout_display(self, user, monkeypatch):
+    async def test_fractional_timeout_display(
+        self, user, monkeypatch, agent_user
+    ):
         monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(user["id"], "frac-ws")
@@ -4515,50 +4517,54 @@ class TestSendQueueBehavior:
 
 
 class TestMentionsAgent:
-    def test_detects_mention(self):
+    async def test_detects_mention(self, agent_user):
         from klangk_backend.wshandler import _mentions_agent
 
-        assert _mentions_agent("@MrBoops hello")
-        assert _mentions_agent("hey @MrBoops what's up")
-        assert _mentions_agent("@MRBOOPS help")
-        assert _mentions_agent("@MrBoops@klangk.local hello")
-        assert _mentions_agent("hey @MrBoops@klangk.local")
+        assert await _mentions_agent("@MrBoops hello")
+        assert await _mentions_agent("hey @MrBoops what's up")
+        assert await _mentions_agent("@MRBOOPS help")
+        assert await _mentions_agent("@MrBoops@klangk.local hello")
+        assert await _mentions_agent("hey @MrBoops@klangk.local")
 
-    def test_no_false_positives(self):
+    async def test_no_false_positives(self, agent_user):
         from klangk_backend.wshandler import _mentions_agent
 
-        assert not _mentions_agent("hello everyone")
-        assert not _mentions_agent("@someone else")
-        assert not _mentions_agent("MrBoops without at sign")
-        assert not _mentions_agent("@MrBoopsy partial match")
+        assert not await _mentions_agent("hello everyone")
+        assert not await _mentions_agent("@someone else")
+        assert not await _mentions_agent("MrBoops without at sign")
+        assert not await _mentions_agent("@MrBoopsy partial match")
 
 
 class TestAddressesOtherUser:
-    def test_starts_with_other_mention(self):
+    async def test_starts_with_other_mention(self, agent_user):
         from klangk_backend.wshandler import _addresses_other_user
 
-        assert _addresses_other_user("@bob hello")
-        assert _addresses_other_user("@alice@test.com what do you think?")
+        assert await _addresses_other_user("@bob hello")
+        assert await _addresses_other_user(
+            "@alice@test.com what do you think?"
+        )
 
-    def test_starts_with_agent_mention(self):
+    async def test_starts_with_agent_mention(self, agent_user):
         from klangk_backend.wshandler import _addresses_other_user
 
-        assert not _addresses_other_user("@MrBoops hello")
-        assert not _addresses_other_user("@MRBOOPS help")
+        assert not await _addresses_other_user("@MrBoops hello")
+        assert not await _addresses_other_user("@MRBOOPS help")
 
-    def test_no_mention(self):
+    async def test_no_mention(self, agent_user):
         from klangk_backend.wshandler import _addresses_other_user
 
-        assert not _addresses_other_user("hello everyone")
+        assert not await _addresses_other_user("hello everyone")
 
-    def test_mention_in_middle(self):
+    async def test_mention_in_middle(self, agent_user):
         from klangk_backend.wshandler import _addresses_other_user
 
-        assert not _addresses_other_user("I think @bob is right")
+        assert not await _addresses_other_user("I think @bob is right")
 
 
 class TestChatFollowUp:
-    async def test_same_user_no_interjection(self, workspace, user):
+    async def test_same_user_no_interjection(
+        self, workspace, user, agent_user
+    ):
         """Same user's follow-up routes without timer."""
         from klangk_backend.wshandler import state, _agent_conversations
 
@@ -4594,7 +4600,9 @@ class TestChatFollowUp:
             _agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
-    async def test_interjection_within_window(self, workspace, user):
+    async def test_interjection_within_window(
+        self, workspace, user, agent_user
+    ):
         """After interjection, follow-up within 30s still routes."""
         from klangk_backend.wshandler import state, _agent_conversations
 
@@ -4630,7 +4638,7 @@ class TestChatFollowUp:
             _agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
-    async def test_interjection_expired(self, workspace, user):
+    async def test_interjection_expired(self, workspace, user, agent_user):
         """After interjection + 30s, follow-up does NOT route."""
         from klangk_backend.wshandler import state, _agent_conversations
 
@@ -4659,7 +4667,9 @@ class TestChatFollowUp:
             _agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
-    async def test_different_user_marks_interjection(self, workspace, user):
+    async def test_different_user_marks_interjection(
+        self, workspace, user, agent_user
+    ):
         """A different user's message marks interjection."""
         from klangk_backend.wshandler import state, _agent_conversations
 
@@ -4683,7 +4693,9 @@ class TestChatFollowUp:
             _agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
-    async def test_addressed_to_other_breaks(self, workspace, user):
+    async def test_addressed_to_other_breaks(
+        self, workspace, user, agent_user
+    ):
         """Message starting with @someone else breaks conversation."""
         from klangk_backend.wshandler import state, _agent_conversations
 
@@ -4708,7 +4720,7 @@ class TestChatFollowUp:
 
 
 class TestChatSend:
-    async def test_chat_send_broadcasts(self, workspace, user):
+    async def test_chat_send_broadcasts(self, workspace, user, agent_user):
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         conn = _base_conn(user=user, ws=sock1)
@@ -4732,7 +4744,7 @@ class TestChatSend:
         finally:
             wshandler.state.sessions.pop(workspace["id"], None)
 
-    async def test_chat_send_with_mention(self, workspace, user):
+    async def test_chat_send_with_mention(self, workspace, user, agent_user):
         """Broadcast includes mention user IDs when @email is used."""
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
@@ -4761,15 +4773,16 @@ class TestChatSend:
         await conn.handle_chat_send({"message": "   "})
         sock.send_json.assert_not_called()
 
-    async def test_chat_send_agent_mention(self, workspace, user):
+    async def test_chat_send_agent_mention(self, workspace, user, agent_user):
         """@MrBoops sends thinking event + agent response."""
         from klangk_backend.wshandler import state
 
         # Seed a prior agent message so context filtering is exercised
+        agent_email = await model.agent_email()
         await model.add_chat_message(
             workspace["id"],
             model.AGENT_USER_ID,
-            model.AGENT_EMAIL,
+            agent_email,
             "I was here before",
             message_type=model.MSG_AGENT,
         )
@@ -4826,7 +4839,9 @@ class TestChatSend:
         finally:
             await session.remove_subscriber(sock)
 
-    async def test_chat_send_agent_mention_empty_prompt(self, workspace, user):
+    async def test_chat_send_agent_mention_empty_prompt(
+        self, workspace, user, agent_user
+    ):
         """@MrBoops with no prompt uses default greeting."""
         from klangk_backend.wshandler import state
 
@@ -4858,7 +4873,7 @@ class TestChatSend:
         finally:
             await session.remove_subscriber(sock)
 
-    async def test_chat_send_agent_error(self, workspace, user):
+    async def test_chat_send_agent_error(self, workspace, user, agent_user):
         """Agent error posts error message."""
         from klangk_backend.wshandler import state
 
@@ -4887,7 +4902,9 @@ class TestChatSend:
         finally:
             await session.remove_subscriber(sock)
 
-    async def test_chat_send_agent_process_died(self, workspace, user):
+    async def test_chat_send_agent_process_died(
+        self, workspace, user, agent_user
+    ):
         """Agent process death posts system message."""
         from klangk_backend.wshandler import state
         from klangk_backend.agent import AgentProcessDied
@@ -4922,7 +4939,9 @@ class TestChatSend:
         finally:
             await session.remove_subscriber(sock)
 
-    async def test_chat_send_no_agent_mention(self, workspace, user):
+    async def test_chat_send_no_agent_mention(
+        self, workspace, user, agent_user
+    ):
         """Messages without @MrBoops don't trigger agent response."""
         from klangk_backend.wshandler import state
 
@@ -4945,7 +4964,7 @@ class TestChatSend:
         finally:
             await session.remove_subscriber(sock)
 
-    async def test_chat_history_on_connect(self, user):
+    async def test_chat_history_on_connect(self, user, agent_user):
         from klangk_backend import model
 
         workspace = await _create_workspace_with_acl(user["id"], "chat-ws")
@@ -5016,7 +5035,7 @@ class TestChatSend:
         await conn.handle_chat_load_more({})
         sock.send_json.assert_not_called()
 
-    async def test_workspace_members_on_connect(self, user):
+    async def test_workspace_members_on_connect(self, user, agent_user):
         """Workspace members list is sent on connect."""
         workspace = await _create_workspace_with_acl(user["id"], "members-ws")
 
@@ -5052,7 +5071,7 @@ class TestChatSend:
 
 
 class TestPresence:
-    async def test_presence_list_on_connect(self, user):
+    async def test_presence_list_on_connect(self, user, agent_user):
         """Joining user receives presence_list with current users."""
         workspace = await _create_workspace_with_acl(user["id"], "pres-ws")
 
@@ -5090,7 +5109,7 @@ class TestPresence:
             wshandler.state.sessions.pop(workspace["id"], None)
             wshandler.state.connections.pop(sock, None)
 
-    async def test_presence_join_broadcast(self, user):
+    async def test_presence_join_broadcast(self, user, agent_user):
         """Existing subscribers receive presence_join when someone connects."""
         from klangk_backend import model
 

@@ -19,6 +19,7 @@ from .model import (
     SYSTEM_AUTHENTICATED,
     SYSTEM_EVERYONE,
 )
+from .model import AGENT_USER_ID
 from .util import resolve_env_secret
 from .wshandler import handle_websocket
 
@@ -137,6 +138,32 @@ async def seed_default_user() -> None:
         await model.add_user_to_group(existing["id"], admin_group_id)
 
 
+async def seed_agent_user() -> None:
+    """Ensure the chat agent user exists in the DB.
+
+    Reads email/handle from env vars (with defaults) and upserts the
+    agent row.  This is the ONLY place the env vars are consulted.
+    """
+    email = resolve_env_secret(
+        "KLANGK_CHAT_AGENT_EMAIL", "MrBoops@example.com"
+    )
+    handle = resolve_env_secret("KLANGK_CHAT_AGENT_HANDLE", "MrBoops")
+    db = await model.get_db()
+    try:
+        await db.execute(
+            "INSERT INTO users (id, email, password_hash, verified,"
+            " provider, handle)"
+            " VALUES (?, ?, NULL, 1, 'system', ?)"
+            " ON CONFLICT(id) DO UPDATE SET email = ?, handle = ?",
+            (AGENT_USER_ID, email, handle, email, handle),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+    model.clear_agent_cache()
+    logger.info("Seeded agent user '%s' (%s)", handle, email)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from . import auth
@@ -147,6 +174,7 @@ async def lifespan(app: FastAPI):
     oidc.init_providers()
     oidc.load_login_hook()
     await seed_default_user()
+    await seed_agent_user()
     from . import wshandler
 
     container.registry.set_on_workspace_killed(wshandler.reset_workspace_state)

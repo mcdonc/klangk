@@ -24,6 +24,25 @@ def _clear_agents():
     _agents.clear()
 
 
+@pytest.fixture(autouse=True)
+async def _seed_agent_db(db):
+    """Seed the agent user so agent_handle()/agent_email() work."""
+    import klangk_backend.model as model
+
+    agent_db = await model.get_db()
+    try:
+        await agent_db.execute(
+            "INSERT OR REPLACE INTO users"
+            " (id, email, password_hash, verified, provider, handle)"
+            " VALUES (?, ?, NULL, 1, 'system', ?)",
+            (model.AGENT_USER_ID, "MrBoops@example.com", "MrBoops"),
+        )
+        await agent_db.commit()
+    finally:
+        await agent_db.close()
+    model.clear_agent_cache()
+
+
 def _make_session(container_id="cid"):
     """Create an AgentSession with home setup already done."""
     s = AgentSession(container_id)
