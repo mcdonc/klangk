@@ -384,6 +384,33 @@ void main() {
       client.dispose();
     });
 
+    test('server error with auth close code triggers logout', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      final errors = <String>[];
+      client.errors.listen(errors.add);
+
+      // Set close code before emitting error
+      channels[0]._closeCode = 4002;
+      channels[0].serverError(Exception('auth failure'));
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isFalse);
+      expect(client.reconnectAttempt, 0);
+
+      client.disconnect();
+      client.dispose();
+    });
+
     test('successful reconnect clears reconnect state', () async {
       final auth = AuthService();
       await Future.delayed(Duration.zero);
