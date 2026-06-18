@@ -1503,34 +1503,15 @@ class Connection:
         async def _start_shared() -> None:
             try:
                 await session.start(cols, rows)
-                # Disable remain-on-exit for joiner sessions so
-                # stop_terminal() doesn't create zombie panes via
-                # the global pane-died respawn hook.
-                from .terminal import tmux_command
-
-                joiner_session = session._tmux_session_name
-                if joiner_session:
-                    try:
-                        await tmux_command(
-                            conn.container_id,
-                            joiner_session,
-                            [
-                                "set-option",
-                                "-t",
-                                joiner_session,
-                                "remain-on-exit",
-                                "off",
-                            ],
-                        )
-                    except RuntimeError:
-                        pass  # best-effort
-
                 # Select the target window BEFORE activating output
                 # forwarding, so the initial output burst is from
                 # the correct window.  Target the joiner's session
                 # specifically so the active window changes for the
                 # joiner, not the group owner.  Fall back to bare @N
                 # if the session isn't ready yet (race on rapid joins).
+                from .terminal import tmux_command
+
+                joiner_session = session._tmux_session_name
                 if joiner_session:
                     try:
                         await tmux_command(
