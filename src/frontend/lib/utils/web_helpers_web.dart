@@ -118,6 +118,17 @@ Future<String?> readClipboardText() async {
   }
 }
 
+/// Register a callback to run when the page is about to unload (reload,
+/// close tab, navigate away). Used to send a clean WebSocket close frame
+/// so Firefox's FailDelayManager doesn't throttle the next connection.
+void Function() onBeforeUnload(void Function() callback) {
+  final handler = ((web.Event _) {
+    callback();
+  }).toJS;
+  web.window.addEventListener('beforeunload', handler);
+  return () => web.window.removeEventListener('beforeunload', handler);
+}
+
 /// Read the build hash from the <meta name="klangk-build-hash"> tag.
 /// Returns empty string if not found (e.g. dev server without build script).
 String getBuildHash() {

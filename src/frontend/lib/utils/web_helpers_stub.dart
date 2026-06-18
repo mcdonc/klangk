@@ -32,5 +32,8 @@ void Function() installPageKeyListener(bool Function() shouldSuppress) => () {};
 /// Stub — no system clipboard outside the browser.
 Future<String?> readClipboardText() async => null;
 
+/// Stub — no beforeunload outside the browser.
+void Function() onBeforeUnload(void Function() callback) => () {};
+
 /// Stub — no build hash outside the browser.
 String getBuildHash() => '';
