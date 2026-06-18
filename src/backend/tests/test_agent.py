@@ -666,3 +666,250 @@ class TestAnyRunning:
         s._proc.returncode = 0
         _agents["cid"] = s
         assert not any_running()
+
+
+class TestMonitorProcess:
+    async def test_monitor_broadcasts_on_death(self):
+        from klangk_backend import container, model
+        from klangk_backend.agent import _broadcast_agent_disconnect
+
+        container.registry.track_activity("cid-mon", "ws-mon")
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={
+                    "id": "msg-1",
+                    "message": "MrBoops has disconnected",
+                },
+            ) as mock_chat,
+            patch(
+                "klangk_backend.wshandler.state.get_session"
+            ) as mock_get_session,
+        ):
+            mock_session = MagicMock()
+            mock_get_session.return_value = mock_session
+
+            await _broadcast_agent_disconnect("cid-mon")
+
+            mock_chat.assert_awaited_once()
+            assert "disconnected" in mock_chat.call_args[0][3]
+            assert mock_session.broadcast.call_count == 3
+
+        container.registry.states.pop("ws-mon", None)
+
+    async def test_monitor_no_workspace(self):
+        from klangk_backend.agent import _broadcast_agent_disconnect
+
+        # Should not raise when container has no workspace
+        await _broadcast_agent_disconnect("no-such-container")
+
+    async def test_stop_cancels_monitor(self):
+        session = _make_session()
+        mock_task = MagicMock()
+        session._monitor_task = mock_task
+        session._proc = AsyncMock()
+        session._proc.returncode = None
+        session._proc.kill = MagicMock()
+        session._proc.wait = AsyncMock()
+
+        await session.stop()
+
+        mock_task.cancel.assert_called_once()
+        assert session._monitor_task is None
+        assert session._proc is None
+
+    async def test_monitor_auto_restarts(self):
+        from klangk_backend import container, model
+
+        container.registry.track_activity("cid-restart", "ws-restart")
+
+        session = _make_session("cid-restart")
+        _agents["cid-restart"] = session
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock()
+        session._proc = mock_proc
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "msg"},
+            ),
+            patch(
+                "klangk_backend.wshandler.state.get_session",
+                return_value=MagicMock(),
+            ),
+            patch.object(
+                session,
+                "_ensure_started",
+                new_callable=AsyncMock,
+            ) as mock_start,
+            patch(
+                "klangk_backend.agent.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
+            await session._monitor_process(mock_proc)
+
+            mock_start.assert_awaited_once()
+            assert session._restart_attempts == 0
+
+        container.registry.states.pop("ws-restart", None)
+
+    async def test_monitor_gives_up_after_max_retries(self):
+        from klangk_backend import container, model
+
+        container.registry.track_activity("cid-giveup", "ws-giveup")
+
+        session = _make_session("cid-giveup")
+        _agents["cid-giveup"] = session
+        session._restart_attempts = 2  # already at limit
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock()
+        session._proc = mock_proc
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "msg"},
+            ),
+            patch(
+                "klangk_backend.wshandler.state.get_session",
+                return_value=MagicMock(),
+            ),
+            patch.object(
+                session,
+                "_ensure_started",
+                new_callable=AsyncMock,
+            ) as mock_start,
+        ):
+            await session._monitor_process(mock_proc)
+
+            mock_start.assert_not_awaited()
+            assert session._restart_attempts == 3
+
+        container.registry.states.pop("ws-giveup", None)
+
+    async def test_monitor_restart_failure_logged(self):
+        from klangk_backend import container, model
+
+        container.registry.track_activity("cid-fail", "ws-fail")
+
+        session = _make_session("cid-fail")
+        _agents["cid-fail"] = session
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock()
+        session._proc = mock_proc
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "msg"},
+            ),
+            patch(
+                "klangk_backend.wshandler.state.get_session",
+                return_value=MagicMock(),
+            ),
+            patch.object(
+                session,
+                "_ensure_started",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("startup failed"),
+            ),
+            patch(
+                "klangk_backend.agent.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
+            await session._monitor_process(mock_proc)
+            # Should not raise, just log
+
+        container.registry.states.pop("ws-fail", None)
+
+    async def test_broadcast_reconnect(self):
+        from klangk_backend import container, model
+        from klangk_backend.agent import _broadcast_agent_reconnect
+
+        container.registry.track_activity("cid-rc", "ws-rc")
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "reconnected"},
+            ) as mock_chat,
+            patch(
+                "klangk_backend.wshandler.state.get_session"
+            ) as mock_get_session,
+        ):
+            mock_session = MagicMock()
+            mock_get_session.return_value = mock_session
+
+            await _broadcast_agent_reconnect("cid-rc")
+
+            mock_chat.assert_awaited_once()
+            assert "reconnected" in mock_chat.call_args[0][3]
+            assert mock_session.broadcast.call_count == 2
+
+        container.registry.states.pop("ws-rc", None)
+
+    async def test_broadcast_reconnect_no_workspace(self):
+        from klangk_backend.agent import _broadcast_agent_reconnect
+
+        await _broadcast_agent_reconnect("no-such-container")
+
+    async def test_monitor_skips_restart_if_already_restarted(self):
+        from klangk_backend import container, model
+
+        container.registry.track_activity("cid-skip", "ws-skip")
+
+        session = _make_session("cid-skip")
+        _agents["cid-skip"] = session
+
+        dead_proc = AsyncMock()
+        dead_proc.returncode = 1
+        dead_proc.wait = AsyncMock()
+        session._proc = dead_proc
+
+        async def fake_sleep(_):
+            # Simulate something else restarting the proc during sleep
+            session._proc = AsyncMock()
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "msg"},
+            ),
+            patch(
+                "klangk_backend.wshandler.state.get_session",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "klangk_backend.agent.asyncio.sleep",
+                side_effect=fake_sleep,
+            ),
+            patch.object(
+                session,
+                "_ensure_started",
+                new_callable=AsyncMock,
+            ) as mock_start,
+        ):
+            await session._monitor_process(dead_proc)
+            mock_start.assert_not_awaited()
+
+        container.registry.states.pop("ws-skip", None)

@@ -58,6 +58,8 @@ class AgentSession:
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._home_ready = False
+        self._monitor_task: asyncio.Task | None = None
+        self._restart_attempts = 0
 
     async def _ensure_home(self) -> str:
         """Ensure the agent has a home directory with Pi config.
@@ -163,7 +165,44 @@ class AgentSession:
             stderr=asyncio.subprocess.PIPE,
             env=podman.subprocess_env(),
         )
+        self._monitor_task = asyncio.create_task(
+            self._monitor_process(self._proc)
+        )
         return self._proc
+
+    async def _monitor_process(self, proc: asyncio.subprocess.Process) -> None:
+        """Wait for the agent subprocess to exit, broadcast disconnect, and restart."""
+        await proc.wait()
+        # Only act if this is still our current process (not replaced)
+        if self._proc is not proc:
+            return
+        self._proc = None
+        logger.warning(
+            "Agent process died (rc=%s) for container %s",
+            proc.returncode,
+            self.container_id,
+        )
+        await _broadcast_agent_disconnect(self.container_id)
+        # Auto-restart after a brief delay to avoid tight loops
+        self._restart_attempts += 1
+        if self._restart_attempts > 2:
+            logger.error(
+                "Agent exceeded 3 restart attempts for container %s, giving up",
+                self.container_id,
+            )
+            return
+        await asyncio.sleep(2)
+        if self._proc is not None:
+            return  # something else already restarted it
+        try:
+            await self._ensure_started()
+            self._restart_attempts = 0
+            await _broadcast_agent_reconnect(self.container_id)
+        except Exception:
+            logger.exception(
+                "Failed to auto-restart agent for container %s",
+                self.container_id,
+            )
 
     async def send_prompt(self, message: str, timeout: float = 120) -> str:
         """Send a prompt to Pi and return the accumulated text response."""
@@ -347,6 +386,9 @@ class AgentSession:
 
     async def stop(self) -> None:
         """Kill the Pi subprocess."""
+        if self._monitor_task is not None:
+            self._monitor_task.cancel()
+            self._monitor_task = None
         if self._proc is not None and self._proc.returncode is None:
             try:
                 self._proc.kill()
@@ -384,3 +426,66 @@ async def stop_session(container_id: str) -> None:
     session = _agents.pop(container_id, None)
     if session:
         await session.stop()
+
+
+async def _broadcast_agent_disconnect(container_id: str) -> None:
+    """Broadcast a disconnect system message when the agent process dies."""
+    from . import container as container_mod
+    from . import model
+    from . import wshandler
+
+    workspace_id = container_mod.registry.workspace_id_for(container_id)
+    if not workspace_id:
+        return
+    agent_handle = await model.agent_handle()
+    agent_email = await model.agent_email()
+    sys_msg = await model.add_chat_message(
+        workspace_id,
+        model.AGENT_USER_ID,
+        agent_email,
+        f"{agent_handle} has disconnected",
+        message_type=model.MSG_SYSTEM,
+    )
+    session = wshandler.state.get_session(workspace_id)
+    if session:
+        session.broadcast({"type": "agent_thinking", "thinking": False})
+        session.broadcast({"type": "chat_message", **sys_msg})
+        session.broadcast(
+            {
+                "type": "presence_leave",
+                "user_id": model.AGENT_USER_ID,
+                "user_email": agent_email,
+                "user_handle": agent_handle,
+            }
+        )
+
+
+async def _broadcast_agent_reconnect(container_id: str) -> None:
+    """Broadcast a reconnect system message after auto-restart."""
+    from . import container as container_mod
+    from . import model
+    from . import wshandler
+
+    workspace_id = container_mod.registry.workspace_id_for(container_id)
+    if not workspace_id:
+        return
+    agent_handle = await model.agent_handle()
+    agent_email = await model.agent_email()
+    sys_msg = await model.add_chat_message(
+        workspace_id,
+        model.AGENT_USER_ID,
+        agent_email,
+        f"{agent_handle} has reconnected",
+        message_type=model.MSG_SYSTEM,
+    )
+    session = wshandler.state.get_session(workspace_id)
+    if session:
+        session.broadcast({"type": "chat_message", **sys_msg})
+        session.broadcast(
+            {
+                "type": "presence_join",
+                "user_id": model.AGENT_USER_ID,
+                "user_email": agent_email,
+                "user_handle": agent_handle,
+            }
+        )
