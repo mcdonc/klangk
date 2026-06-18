@@ -11,6 +11,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**AI Coding Harnesses**](ai-coding-harnesses.md) — Pi and Claude Code agents pre-installed in every workspace
 - [**GitHub Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog
 - [**Pi Extensions**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
+- [**Container Packages**](container-packages.md) — Pre-installed languages, tools, and CLI utilities in workspace containers
 
 ## UI/Theme
 
