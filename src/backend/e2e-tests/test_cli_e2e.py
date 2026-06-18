@@ -165,7 +165,7 @@ def _ensure_login(cli_config):
     """
     _run(
         [
-            "klangk",
+            "klangkc",
             "login",
             "test@example.com",
             "--server",
@@ -182,7 +182,7 @@ class TestLogin:
     def test_login_with_email_arg(self, server, cli_config):
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -204,7 +204,7 @@ class TestLogin:
     def test_login_reuses_token(self, server, cli_config):
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -220,7 +220,7 @@ class TestLogin:
 
     def test_status_shows_logged_in(self, cli_config):
         result = _run(
-            ["klangk", "status", "--plain"],
+            ["klangkc", "status", "--plain"],
             env=cli_config["env"],
         )
         assert result.returncode == 0
@@ -231,7 +231,7 @@ class TestLogin:
 class TestWorkspaceCRUD:
     def test_create_workspace(self, cli_config):
         result = _run(
-            ["klangk", "create", "e2e-crud"],
+            ["klangkc", "create", "e2e-crud"],
             env=cli_config["env"],
         )
         assert result.returncode == 0
@@ -239,7 +239,7 @@ class TestWorkspaceCRUD:
 
     def test_list_workspaces(self, cli_config):
         result = _run(
-            ["klangk", "ls", "--plain"],
+            ["klangkc", "ls", "--plain"],
             env=cli_config["env"],
         )
         assert result.returncode == 0
@@ -247,21 +247,21 @@ class TestWorkspaceCRUD:
 
     def test_create_duplicate_fails(self, cli_config):
         result = _run(
-            ["klangk", "create", "e2e-crud"],
+            ["klangkc", "create", "e2e-crud"],
             env=cli_config["env"],
         )
         assert result.returncode != 0
 
     def test_delete_nonexistent_fails(self, cli_config):
         result = _run(
-            ["klangk", "rm", "nonexistent-ws"],
+            ["klangkc", "rm", "nonexistent-ws"],
             env=cli_config["env"],
         )
         assert result.returncode != 0
 
     def test_delete_workspace(self, cli_config):
         result = _run(
-            ["klangk", "rm", "e2e-crud"],
+            ["klangkc", "rm", "e2e-crud"],
             env=cli_config["env"],
         )
         assert result.returncode == 0
@@ -269,7 +269,7 @@ class TestWorkspaceCRUD:
 
     def test_list_after_delete(self, cli_config):
         result = _run(
-            ["klangk", "ls", "--plain"],
+            ["klangkc", "ls", "--plain"],
             env=cli_config["env"],
         )
         assert "e2e-crud" not in result.stdout
@@ -280,7 +280,7 @@ class TestDuplicate:
         env = cli_config["env"]
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -296,12 +296,12 @@ class TestDuplicate:
         env = cli_config["env"]
         self._login(cli_config)
         _run(
-            ["klangk", "create", "e2e-dup-src", "--env", "FOO=bar"],
+            ["klangkc", "create", "e2e-dup-src", "--env", "FOO=bar"],
             env=env,
         )
         try:
             result = _run(
-                ["klangk", "dup", "e2e-dup-src", "e2e-dup-copy"],
+                ["klangkc", "dup", "e2e-dup-src", "e2e-dup-copy"],
                 env=env,
             )
             assert result.returncode == 0
@@ -309,20 +309,20 @@ class TestDuplicate:
 
             # Verify copy appears in list
             result = _run(
-                ["klangk", "ls", "--plain"],
+                ["klangkc", "ls", "--plain"],
                 env=env,
             )
             assert "e2e-dup-src" in result.stdout
             assert "e2e-dup-copy" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-dup-copy"], env=env)
-            _run(["klangk", "rm", "e2e-dup-src"], env=env)
+            _run(["klangkc", "rm", "e2e-dup-copy"], env=env)
+            _run(["klangkc", "rm", "e2e-dup-src"], env=env)
 
     def test_dup_nonexistent(self, cli_config):
         env = cli_config["env"]
         self._login(cli_config)
         result = _run(
-            ["klangk", "dup", "no-such-ws", "copy"],
+            ["klangkc", "dup", "no-such-ws", "copy"],
             env=env,
         )
         assert result.returncode != 0
@@ -331,13 +331,13 @@ class TestDuplicate:
 class TestExec:
     @pytest.fixture(autouse=True, scope="class")
     def workspace(self, cli_config):
-        _run(["klangk", "create", "e2e-exec"], env=cli_config["env"])
+        _run(["klangkc", "create", "e2e-exec"], env=cli_config["env"])
         yield
-        _run(["klangk", "rm", "e2e-exec"], env=cli_config["env"])
+        _run(["klangkc", "rm", "e2e-exec"], env=cli_config["env"])
 
     def test_exec_echo(self, cli_config):
         result = _run(
-            ["klangk", "exec", "e2e-exec", "echo", "hello from exec"],
+            ["klangkc", "exec", "e2e-exec", "echo", "hello from exec"],
             env=cli_config["env"],
             timeout=120,
         )
@@ -346,7 +346,7 @@ class TestExec:
 
     def test_exec_piped_stdin(self, cli_config):
         result = _run(
-            ["klangk", "exec", "e2e-exec", "cat"],
+            ["klangkc", "exec", "e2e-exec", "cat"],
             input="piped data\n",
             env=cli_config["env"],
             timeout=120,
@@ -356,7 +356,7 @@ class TestExec:
 
     def test_exec_exit_code(self, cli_config):
         result = _run(
-            ["klangk", "exec", "e2e-exec", "false"],
+            ["klangkc", "exec", "e2e-exec", "false"],
             env=cli_config["env"],
             timeout=120,
         )
@@ -366,7 +366,7 @@ class TestExec:
         """Smoke test: run `yes` briefly to exercise bounded queue back-pressure."""
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "exec",
                 "e2e-exec",
                 "bash",
@@ -385,9 +385,9 @@ class TestExec:
 class TestSync:
     @pytest.fixture(autouse=True, scope="class")
     def workspace(self, cli_config):
-        _run(["klangk", "create", "e2e-sync"], env=cli_config["env"])
+        _run(["klangkc", "create", "e2e-sync"], env=cli_config["env"])
         yield
-        _run(["klangk", "rm", "e2e-sync"], env=cli_config["env"])
+        _run(["klangkc", "rm", "e2e-sync"], env=cli_config["env"])
 
     def test_sync_to_container(self, cli_config, tmp_path):
         # Create local files
@@ -398,7 +398,7 @@ class TestSync:
 
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "sync",
                 str(src) + "/",
                 "e2e-sync:/home/work/synced/",
@@ -411,7 +411,7 @@ class TestSync:
         # Verify files arrived
         verify = _run(
             [
-                "klangk",
+                "klangkc",
                 "exec",
                 "e2e-sync",
                 "cat",
@@ -427,7 +427,7 @@ class TestSync:
         # Create a file in the container
         _run(
             [
-                "klangk",
+                "klangkc",
                 "exec",
                 "e2e-sync",
                 "bash",
@@ -443,7 +443,7 @@ class TestSync:
 
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "sync",
                 "e2e-sync:/home/work/remote-file.txt",
                 str(dest) + "/",
@@ -460,9 +460,9 @@ class TestSyncLarge:
 
     @pytest.fixture(autouse=True, scope="class")
     def workspace(self, cli_config):
-        _run(["klangk", "create", "e2e-sync-large"], env=cli_config["env"])
+        _run(["klangkc", "create", "e2e-sync-large"], env=cli_config["env"])
         yield
-        _run(["klangk", "rm", "e2e-sync-large"], env=cli_config["env"])
+        _run(["klangkc", "rm", "e2e-sync-large"], env=cli_config["env"])
 
     def _make_large_tree(self, root, rng, target_bytes=10 * 1024 * 1024):
         """Create a directory tree with ~target_bytes of data."""
@@ -501,7 +501,7 @@ class TestSyncLarge:
         # Sync to container
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "sync",
                 str(src) + "/",
                 "e2e-sync-large:/home/work/large-upload/",
@@ -514,7 +514,7 @@ class TestSyncLarge:
         # Verify file count in container
         verify = _run(
             [
-                "klangk",
+                "klangkc",
                 "exec",
                 "e2e-sync-large",
                 "bash",
@@ -530,7 +530,7 @@ class TestSyncLarge:
         # Verify total size in container
         verify = _run(
             [
-                "klangk",
+                "klangkc",
                 "exec",
                 "e2e-sync-large",
                 "bash",
@@ -548,7 +548,7 @@ class TestSyncLarge:
         for rel, expected_hash in list(src_hashes.items())[:3]:
             verify = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "exec",
                     "e2e-sync-large",
                     "sha256sum",
@@ -568,7 +568,7 @@ class TestSyncLarge:
         # Create large data in the container
         _run(
             [
-                "klangk",
+                "klangkc",
                 "exec",
                 "e2e-sync-large",
                 "bash",
@@ -585,7 +585,7 @@ class TestSyncLarge:
         # Verify size in container (~10.5 MB)
         verify = _run(
             [
-                "klangk",
+                "klangkc",
                 "exec",
                 "e2e-sync-large",
                 "bash",
@@ -601,7 +601,7 @@ class TestSyncLarge:
         # Get hashes in container
         verify = _run(
             [
-                "klangk",
+                "klangkc",
                 "exec",
                 "e2e-sync-large",
                 "bash",
@@ -626,7 +626,7 @@ class TestSyncLarge:
 
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "sync",
                 "e2e-sync-large:/home/work/large-download/",
                 str(dest) + "/",
@@ -649,7 +649,7 @@ class TestDefaultCommand:
         env = cli_config["env"]
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -665,11 +665,11 @@ class TestDefaultCommand:
         """set-command → container gets KLANGK_DEFAULT_COMMAND → .klangk-command."""
         env = cli_config["env"]
         self._login(cli_config)
-        _run(["klangk", "create", "e2e-defcmd"], env=env)
+        _run(["klangkc", "create", "e2e-defcmd"], env=env)
         try:
             # Set command before container starts
             result = _run(
-                ["klangk", "edit", "e2e-defcmd", "--command", "echo hello"],
+                ["klangkc", "edit", "e2e-defcmd", "--command", "echo hello"],
                 env=env,
             )
             assert result.returncode == 0
@@ -678,7 +678,7 @@ class TestDefaultCommand:
             # exec triggers container start; config mount has the command
             result = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "exec",
                     "e2e-defcmd",
                     "cat",
@@ -692,26 +692,26 @@ class TestDefaultCommand:
 
             # Clear
             result = _run(
-                ["klangk", "edit", "e2e-defcmd", "--command", ""], env=env
+                ["klangkc", "edit", "e2e-defcmd", "--command", ""], env=env
             )
             assert result.returncode == 0
             assert "Updated" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-defcmd"], env=env)
+            _run(["klangkc", "rm", "e2e-defcmd"], env=env)
 
     def test_default_command_bash_no_infinite_loop(self, cli_config):
         """Setting default command to bash should not cause infinite recursion."""
         env = cli_config["env"]
         self._login(cli_config)
-        _run(["klangk", "create", "e2e-defbash"], env=env)
+        _run(["klangkc", "create", "e2e-defbash"], env=env)
         try:
             _run(
-                ["klangk", "edit", "e2e-defbash", "--command", "bash"],
+                ["klangkc", "edit", "e2e-defbash", "--command", "bash"],
                 env=env,
             )
             # Start the container first
             _run(
-                ["klangk", "exec", "e2e-defbash", "true"],
+                ["klangkc", "exec", "e2e-defbash", "true"],
                 env=env,
                 timeout=30,
             )
@@ -721,7 +721,7 @@ class TestDefaultCommand:
             # and times out. We pipe "exit" to terminate the shell.
             result = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "exec",
                     "e2e-defbash",
                     "bash",
@@ -733,7 +733,7 @@ class TestDefaultCommand:
             )
             assert result.returncode == 0
         finally:
-            _run(["klangk", "rm", "e2e-defbash"], env=env)
+            _run(["klangkc", "rm", "e2e-defbash"], env=env)
 
 
 class TestMounts:
@@ -741,7 +741,7 @@ class TestMounts:
         env = cli_config["env"]
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -759,7 +759,7 @@ class TestMounts:
         try:
             result = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "create",
                     "e2e-mount",
                     "--mount",
@@ -770,16 +770,16 @@ class TestMounts:
             assert result.returncode == 0
             assert "e2e-mount" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-mount"], env=env)
+            _run(["klangkc", "rm", "e2e-mount"], env=env)
 
     def test_edit_with_mount_flags(self, cli_config):
         env = cli_config["env"]
         self._login(cli_config)
-        _run(["klangk", "create", "e2e-mount-edit"], env=env)
+        _run(["klangkc", "create", "e2e-mount-edit"], env=env)
         try:
             result = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "edit",
                     "e2e-mount-edit",
                     "--mount",
@@ -792,25 +792,25 @@ class TestMounts:
             assert result.returncode == 0
             assert "Updated" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-mount-edit"], env=env)
+            _run(["klangkc", "rm", "e2e-mount-edit"], env=env)
 
     def test_edit_interactive_add_mount(self, cli_config):
         env = cli_config["env"]
         self._login(cli_config)
-        _run(["klangk", "create", "e2e-mount-int"], env=env)
+        _run(["klangkc", "create", "e2e-mount-int"], env=env)
         try:
             # Interactive: keep name, keep image, keep command,
             # add mount "/tmp:/mnt/test", skip add, skip remove,
             # skip add env
             result = _run(
-                ["klangk", "edit", "e2e-mount-int"],
+                ["klangkc", "edit", "e2e-mount-int"],
                 input="\n\n\n/tmp:/mnt/test\n\n\n\n",
                 env=env,
             )
             assert result.returncode == 0
             assert "Updated" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-mount-int"], env=env)
+            _run(["klangkc", "rm", "e2e-mount-int"], env=env)
 
 
 class TestEnvVars:
@@ -818,7 +818,7 @@ class TestEnvVars:
         env = cli_config["env"]
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -836,7 +836,7 @@ class TestEnvVars:
         try:
             result = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "create",
                     "e2e-env",
                     "--env",
@@ -849,16 +849,16 @@ class TestEnvVars:
             assert result.returncode == 0
             assert "e2e-env" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-env"], env=env)
+            _run(["klangkc", "rm", "e2e-env"], env=env)
 
     def test_edit_with_env_flag(self, cli_config):
         env = cli_config["env"]
         self._login(cli_config)
-        _run(["klangk", "create", "e2e-env-edit"], env=env)
+        _run(["klangkc", "create", "e2e-env-edit"], env=env)
         try:
             result = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "edit",
                     "e2e-env-edit",
                     "--env",
@@ -869,7 +869,7 @@ class TestEnvVars:
             assert result.returncode == 0
             assert "Updated" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-env-edit"], env=env)
+            _run(["klangkc", "rm", "e2e-env-edit"], env=env)
 
 
 class TestVolumes:
@@ -877,7 +877,7 @@ class TestVolumes:
         env = cli_config["env"]
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -894,38 +894,38 @@ class TestVolumes:
         self._login(cli_config)
 
         # Create
-        result = _run(["klangk", "volumes", "create", "e2e-vol"], env=env)
+        result = _run(["klangkc", "volumes", "create", "e2e-vol"], env=env)
         assert result.returncode == 0
         assert "Created" in result.stdout
 
         # List
-        result = _run(["klangk", "volumes", "ls", "--plain"], env=env)
+        result = _run(["klangkc", "volumes", "ls", "--plain"], env=env)
         assert result.returncode == 0
         assert "e2e-vol" in result.stdout
 
         # Create duplicate fails
-        result = _run(["klangk", "volumes", "create", "e2e-vol"], env=env)
+        result = _run(["klangkc", "volumes", "create", "e2e-vol"], env=env)
         assert result.returncode != 0
 
         # Remove
-        result = _run(["klangk", "volumes", "rm", "e2e-vol"], env=env)
+        result = _run(["klangkc", "volumes", "rm", "e2e-vol"], env=env)
         assert result.returncode == 0
         assert "Deleted" in result.stdout
 
         # List after delete
-        result = _run(["klangk", "volumes", "ls", "--plain"], env=env)
+        result = _run(["klangkc", "volumes", "ls", "--plain"], env=env)
         assert "e2e-vol" not in result.stdout
 
     def test_volumes_rm_nonexistent(self, cli_config):
         env = cli_config["env"]
         self._login(cli_config)
-        result = _run(["klangk", "volumes", "rm", "no-such-vol"], env=env)
+        result = _run(["klangkc", "volumes", "rm", "no-such-vol"], env=env)
         assert result.returncode != 0
 
     def test_volumes_empty_list(self, cli_config):
         env = cli_config["env"]
         self._login(cli_config)
-        result = _run(["klangk", "volumes", "ls"], env=env)
+        result = _run(["klangkc", "volumes", "ls"], env=env)
         assert result.returncode == 0
         # May show "No volumes." or an empty table
 
@@ -940,7 +940,7 @@ class TestAuthError:
         klangk_config.mkdir(parents=True)
         env = {**os.environ, "HOME": str(config_dir)}
         result = _run(
-            ["klangk", "ls"],
+            ["klangkc", "ls"],
             env=env,
         )
         assert result.returncode != 0
@@ -951,14 +951,14 @@ class TestAuthError:
 class TestLogout:
     def test_logout(self, cli_config):
         result = _run(
-            ["klangk", "logout"],
+            ["klangkc", "logout"],
             env=cli_config["env"],
         )
         assert result.returncode == 0
 
     def test_status_after_logout(self, cli_config):
         result = _run(
-            ["klangk", "status", "--plain"],
+            ["klangkc", "status", "--plain"],
             env=cli_config["env"],
         )
         assert "not_logged_in" in result.stdout
@@ -970,7 +970,7 @@ class TestExportSymlinks:
         """Ensure logged in for this test class."""
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -1013,7 +1013,7 @@ class TestExportSymlinks:
         """All symlinks are preserved (stored as links, not content)."""
         env = cli_config["env"]
 
-        result = _run(["klangk", "create", "e2e-symlink"], env=env)
+        result = _run(["klangkc", "create", "e2e-symlink"], env=env)
         assert result.returncode == 0
 
         try:
@@ -1030,7 +1030,7 @@ class TestExportSymlinks:
 
             archive = tmp_path / "symlink-test.tar.gz"
             result = _run(
-                ["klangk", "export", "e2e-symlink", "-o", str(archive)],
+                ["klangkc", "export", "e2e-symlink", "-o", str(archive)],
                 env=env,
                 timeout=120,
             )
@@ -1050,7 +1050,7 @@ class TestExportSymlinks:
                 assert len(ext) == 1
                 assert ext[0].issym()
         finally:
-            _run(["klangk", "rm", "e2e-symlink"], env=env)
+            _run(["klangkc", "rm", "e2e-symlink"], env=env)
 
 
 class TestExportImport:
@@ -1059,7 +1059,7 @@ class TestExportImport:
         """Ensure logged in for this test class."""
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -1083,7 +1083,7 @@ class TestExportImport:
         # Create a workspace with metadata
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "create",
                 "export-test",
                 "--env",
@@ -1096,7 +1096,7 @@ class TestExportImport:
         # Export (workspace has no container started yet — just metadata)
         archive = tmp_path / "export-test.tar.gz"
         result = _run(
-            ["klangk", "export", "export-test", "-o", str(archive)],
+            ["klangkc", "export", "export-test", "-o", str(archive)],
             env=env,
             timeout=120,
         )
@@ -1117,7 +1117,7 @@ class TestExportImport:
 
         # Delete the original (not needed for import, but keeps things tidy)
         try:
-            _run(["klangk", "rm", "export-test"], env=env)
+            _run(["klangkc", "rm", "export-test"], env=env)
         except subprocess.TimeoutExpired:
             logger.warning(
                 "Timeout removing export-test, deferring to teardown"
@@ -1126,7 +1126,7 @@ class TestExportImport:
         # Import with a new name
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "import",
                 str(archive),
                 "--name",
@@ -1138,7 +1138,7 @@ class TestExportImport:
         assert result.returncode == 0, result.stderr or result.stdout
 
         # Verify the imported workspace exists
-        result = _run(["klangk", "ls", "--plain"], env=env)
+        result = _run(["klangkc", "ls", "--plain"], env=env)
         assert "export-restored" in result.stdout
 
     def test_export_import_round_trip_with_symlinks(
@@ -1147,7 +1147,7 @@ class TestExportImport:
         """Symlinks survive an export→import round-trip intact."""
         env = cli_config["env"]
 
-        result = _run(["klangk", "create", "export-symlink"], env=env)
+        result = _run(["klangkc", "create", "export-symlink"], env=env)
         assert result.returncode == 0
 
         try:
@@ -1185,7 +1185,7 @@ class TestExportImport:
             # Export
             archive = tmp_path / "symlink-roundtrip.tar.gz"
             result = _run(
-                ["klangk", "export", "export-symlink", "-o", str(archive)],
+                ["klangkc", "export", "export-symlink", "-o", str(archive)],
                 env=env,
                 timeout=120,
             )
@@ -1215,7 +1215,7 @@ class TestExportImport:
 
             # Delete original (not required for import — uses a different name)
             try:
-                _run(["klangk", "rm", "export-symlink"], env=env)
+                _run(["klangkc", "rm", "export-symlink"], env=env)
             except subprocess.TimeoutExpired:
                 logger.warning(
                     "Timeout removing export-symlink, deferring to teardown"
@@ -1223,7 +1223,7 @@ class TestExportImport:
 
             result = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "import",
                     str(archive),
                     "--name",
@@ -1265,14 +1265,14 @@ class TestExportImport:
             )
 
             try:
-                _run(["klangk", "rm", "export-symlink-imported"], env=env)
+                _run(["klangkc", "rm", "export-symlink-imported"], env=env)
             except subprocess.TimeoutExpired:
                 logger.warning(
                     "Timeout removing export-symlink-imported, deferring to teardown"
                 )
         finally:
             try:
-                _run(["klangk", "rm", "export-symlink"], env=env)
+                _run(["klangkc", "rm", "export-symlink"], env=env)
             except subprocess.TimeoutExpired:
                 logger.warning(
                     "Timeout removing export-symlink in finally, deferring to teardown"
@@ -1297,7 +1297,7 @@ class TestAllowedMountRoots:
         klangk_config_dir.mkdir(parents=True)
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -1318,7 +1318,7 @@ class TestAllowedMountRoots:
         try:
             result = _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "create",
                     "e2e-mount-ok",
                     "--mount",
@@ -1329,13 +1329,13 @@ class TestAllowedMountRoots:
             assert result.returncode == 0
             assert "e2e-mount-ok" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-mount-ok"], env=env)
+            _run(["klangkc", "rm", "e2e-mount-ok"], env=env)
 
     def test_denied_mount_fails(self):
         env = self._env
         result = _run(
             [
-                "klangk",
+                "klangkc",
                 "create",
                 "e2e-mount-denied",
                 "--mount",
@@ -1383,7 +1383,7 @@ class TestVolumeUserIsolation:
             (config_dir / ".config" / "klangk").mkdir(parents=True)
             _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "login",
                     email,
                     "--server",
@@ -1407,7 +1407,7 @@ class TestVolumeUserIsolation:
         # User A creates workspace with a named volume
         _run(
             [
-                "klangk",
+                "klangkc",
                 "create",
                 "ws-a",
                 "--mount",
@@ -1418,7 +1418,7 @@ class TestVolumeUserIsolation:
         try:
             # User A execs to trigger container start (creates the volume)
             result = _run(
-                ["klangk", "exec", "ws-a", "echo", "ok"],
+                ["klangkc", "exec", "ws-a", "echo", "ok"],
                 env=env_a,
                 timeout=120,
             )
@@ -1427,7 +1427,7 @@ class TestVolumeUserIsolation:
             # User B creates workspace with the same volume
             _run(
                 [
-                    "klangk",
+                    "klangkc",
                     "create",
                     "ws-b",
                     "--mount",
@@ -1438,15 +1438,15 @@ class TestVolumeUserIsolation:
             try:
                 # User B execs — should fail because the volume belongs to A
                 result = _run(
-                    ["klangk", "exec", "ws-b", "echo", "stolen"],
+                    ["klangkc", "exec", "ws-b", "echo", "stolen"],
                     env=env_b,
                     timeout=120,
                 )
                 assert result.returncode != 0
             finally:
-                _run(["klangk", "rm", "ws-b"], env=env_b)
+                _run(["klangkc", "rm", "ws-b"], env=env_b)
         finally:
-            _run(["klangk", "rm", "ws-a"], env=env_a)
+            _run(["klangkc", "rm", "ws-a"], env=env_a)
             subprocess.run(
                 ["podman", "volume", "rm", "shared-vol"],
                 capture_output=True,
@@ -1458,30 +1458,30 @@ class TestVolumeUserIsolation:
         env_b = self._env_b
 
         # User A creates a volume
-        result = _run(["klangk", "volumes", "create", "vol-a"], env=env_a)
+        result = _run(["klangkc", "volumes", "create", "vol-a"], env=env_a)
         assert result.returncode == 0
         try:
             # User B creates a volume
-            result = _run(["klangk", "volumes", "create", "vol-b"], env=env_b)
+            result = _run(["klangkc", "volumes", "create", "vol-b"], env=env_b)
             assert result.returncode == 0
             try:
                 # User A should see vol-a but not vol-b
                 result = _run(
-                    ["klangk", "volumes", "ls", "--plain"], env=env_a
+                    ["klangkc", "volumes", "ls", "--plain"], env=env_a
                 )
                 assert "vol-a" in result.stdout
                 assert "vol-b" not in result.stdout
 
                 # User B should see vol-b but not vol-a
                 result = _run(
-                    ["klangk", "volumes", "ls", "--plain"], env=env_b
+                    ["klangkc", "volumes", "ls", "--plain"], env=env_b
                 )
                 assert "vol-b" in result.stdout
                 assert "vol-a" not in result.stdout
             finally:
-                _run(["klangk", "volumes", "rm", "vol-b"], env=env_b)
+                _run(["klangkc", "volumes", "rm", "vol-b"], env=env_b)
         finally:
-            _run(["klangk", "volumes", "rm", "vol-a"], env=env_a)
+            _run(["klangkc", "volumes", "rm", "vol-a"], env=env_a)
 
     def test_volumes_rm_other_user_rejected(self):
         """A user cannot delete another user's volume."""
@@ -1490,17 +1490,17 @@ class TestVolumeUserIsolation:
 
         # User A creates a volume
         result = _run(
-            ["klangk", "volumes", "create", "vol-private"], env=env_a
+            ["klangkc", "volumes", "create", "vol-private"], env=env_a
         )
         assert result.returncode == 0
         try:
             # User B tries to delete it — should fail
             result = _run(
-                ["klangk", "volumes", "rm", "vol-private"], env=env_b
+                ["klangkc", "volumes", "rm", "vol-private"], env=env_b
             )
             assert result.returncode != 0
         finally:
-            _run(["klangk", "volumes", "rm", "vol-private"], env=env_a)
+            _run(["klangkc", "volumes", "rm", "vol-private"], env=env_a)
 
 
 class TestTerminalSharing:
@@ -1521,7 +1521,7 @@ class TestTerminalSharing:
         (config_dir / ".config" / "klangk").mkdir(parents=True)
         _run(
             [
-                "klangk",
+                "klangkc",
                 "login",
                 "test@example.com",
                 "--server",
@@ -1532,21 +1532,21 @@ class TestTerminalSharing:
             input="testpass\n",
             env=env,
         )
-        _run(["klangk", "create", "e2e-share"], env=env)
+        _run(["klangkc", "create", "e2e-share"], env=env)
         # Start container so terminal commands work
         _run(
-            ["klangk", "exec", "e2e-share", "true"],
+            ["klangkc", "exec", "e2e-share", "true"],
             env=env,
             timeout=120,
         )
         self.__class__._env = env
         yield
-        _run(["klangk", "rm", "e2e-share"], env=env)
+        _run(["klangkc", "rm", "e2e-share"], env=env)
         _stop_server(proc, data_dir, "terminal-sharing-e2e")
 
     def test_terminals_lists_windows(self):
         result = _run(
-            ["klangk", "terminals", "e2e-share"],
+            ["klangkc", "terminals", "e2e-share"],
             env=self._env,
             timeout=120,
         )
@@ -1556,7 +1556,7 @@ class TestTerminalSharing:
         env = self._env
         # First discover the window name via `klangk terminals`
         list_result = _run(
-            ["klangk", "terminals", "e2e-share"],
+            ["klangkc", "terminals", "e2e-share"],
             env=env,
             timeout=120,
         )
@@ -1576,7 +1576,7 @@ class TestTerminalSharing:
         )
 
         result = _run(
-            ["klangk", "share", "e2e-share", terminal_name],
+            ["klangkc", "share", "e2e-share", terminal_name],
             env=env,
             timeout=120,
         )
@@ -1584,7 +1584,7 @@ class TestTerminalSharing:
         assert "shared" in result.stderr.lower()
 
         result = _run(
-            ["klangk", "unshare", "e2e-share", terminal_name],
+            ["klangkc", "unshare", "e2e-share", terminal_name],
             env=env,
             timeout=120,
         )
@@ -1593,7 +1593,7 @@ class TestTerminalSharing:
 
     def test_share_nonexistent_terminal(self):
         result = _run(
-            ["klangk", "share", "e2e-share", "nonexistent"],
+            ["klangkc", "share", "e2e-share", "nonexistent"],
             env=self._env,
             timeout=120,
         )
@@ -1613,11 +1613,11 @@ class TestContainerReplace:
         stopped container so the next exec succeeds.
         """
         env = cli_config["env"]
-        _run(["klangk", "create", "e2e-replace"], env=env)
+        _run(["klangkc", "create", "e2e-replace"], env=env)
         try:
             # Start the container via exec
             result = _run(
-                ["klangk", "exec", "e2e-replace", "echo", "first"],
+                ["klangkc", "exec", "e2e-replace", "echo", "first"],
                 env=env,
                 timeout=120,
             )
@@ -1648,11 +1648,11 @@ class TestContainerReplace:
 
             # Exec again — --replace should create a fresh container
             result = _run(
-                ["klangk", "exec", "e2e-replace", "echo", "second"],
+                ["klangkc", "exec", "e2e-replace", "echo", "second"],
                 env=env,
                 timeout=120,
             )
             assert result.returncode == 0
             assert "second" in result.stdout
         finally:
-            _run(["klangk", "rm", "e2e-replace"], env=env)
+            _run(["klangkc", "rm", "e2e-replace"], env=env)
