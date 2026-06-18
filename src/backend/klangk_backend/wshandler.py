@@ -779,7 +779,7 @@ class Connection:
                 workspace_id,
                 self.user["id"],
                 self.user["email"],
-                f"{self.user['email']} joined",
+                f"{self.user.get('handle') or self.user['email']} joined",
                 message_type=model.MSG_SYSTEM,
             )
             session.broadcast({"type": "chat_message", **sys_msg})
@@ -2001,7 +2001,7 @@ class Connection:
                         workspace_id,
                         self.user["id"],
                         self.user["email"],
-                        f"{self.user['email']} left",
+                        f"{self.user.get('handle') or self.user['email']} left",
                         message_type=model.MSG_SYSTEM,
                     )
                     session.broadcast({"type": "chat_message", **sys_msg})
