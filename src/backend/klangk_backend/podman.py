@@ -195,13 +195,13 @@ async def create_container(
     for entry in env or []:
         args += ["-e", entry]
     args.append(image)
-    _rc, out, _err = await _run(args)
+    _rc, out, _err = await _run(args, timeout=120.0)
     return out.strip()
 
 
 async def start_container(container_id: str) -> None:
     """Start a created container."""
-    await _run(["start", container_id])
+    await _run(["start", container_id], timeout=120.0)
 
 
 async def exec_container(
