@@ -1,5 +1,27 @@
 # Getting Started
 
+## What is Klangk?
+
+Klangk is a general-purpose container orchestration system with a
+web-based multi-user interface. Each user gets isolated workspace
+containers with a full terminal, file browser, and real-time chat.
+
+While it works well as a general container management platform, Klangk
+has features that make it especially suited as a coding environment and
+AI isolation system:
+
+- **AI coding harnesses** — Pi and Claude Code agents come
+  pre-installed in every workspace, with LLM access configurable per
+  deployment
+- **SSH agent forwarding** — use your local SSH keys inside
+  containers without copying them
+- **GitHub HTTPS authentication** — browser-based credential flow
+  for git operations
+- **Plugin system** — extend the AI agent and browser with
+  TypeScript and Dart extensions
+- **ACL authorization** — fine-grained access control for
+  multi-tenant deployments
+
 ## Prerequisites
 
 - macOS or Linux
