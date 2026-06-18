@@ -46,6 +46,7 @@ in
       podman
       sqlite.bin
       rsync
+      twine
       zensical
     ]
     ++ (
