@@ -56,6 +56,13 @@ test.describe("terminal keymap (web)", () => {
     });
     try {
       await focusTerminal(page);
+      // Type a throwaway key to confirm the terminal is accepting input
+      // before measuring — CI can be slow to wire up the WS listener.
+      await page.keyboard.press("a");
+      const deadline = Date.now() + 5000;
+      while (sent.length === 0 && Date.now() < deadline) {
+        await page.waitForTimeout(50);
+      }
       const n = sent.length;
       await page.keyboard.press("PageUp");
       const nBeforeSentinel = await waitForSentinel(page, sent);

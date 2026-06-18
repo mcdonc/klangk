@@ -721,6 +721,12 @@ test.describe("shared terminal visibility", () => {
       });
 
       const ownerWs = await connectWs(owner.token, workspaceId);
+
+      // Ensure the owner WS has an active terminal session so
+      // create_shared_terminal can create a tmux window.
+      ownerWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+      await ownerWs.recvUntil((m) => m.type === "terminal_started");
+
       ownerWs.send({ cmd: "create_shared_terminal", name: "watch-me" });
       const sharedMsg = await ownerWs.recvUntil(
         (m) =>
@@ -759,28 +765,24 @@ test.describe("shared terminal visibility", () => {
           data: "echo SPECTATOR_WAS_HERE\r",
         });
 
-        // Wait a bit for any output, then check owner's terminal
-        // for the distinctive string. Owner sends a command that
-        // WILL produce output, proving the terminal is working.
+        // Owner sends a command that WILL produce output, proving
+        // the terminal is working. Wait until the spectator sees it.
         ownerWs.send({
           cmd: "terminal_input",
           data: "echo OWNER_CHECK\r",
         });
 
-        // Collect output from the spectator's view
-        const output = await specWs.collectUntilQuiet(
-          (m) => m.type === "terminal_output",
-          2000,
-        );
-        const allOutput = output
-          .map((m) => {
-            const data = m.data as string | undefined;
-            return data ?? "";
-          })
-          .join("");
+        // Accumulate spectator output until OWNER_CHECK appears
+        let specOutput = "";
+        await specWs.recvUntil((m) => {
+          if (m.type === "terminal_output") {
+            specOutput += (m.data as string) ?? "";
+          }
+          return specOutput.includes("OWNER_CHECK");
+        });
 
         // The owner's echo should appear but the spectator's should not
-        expect(allOutput).not.toContain("SPECTATOR_WAS_HERE");
+        expect(specOutput).not.toContain("SPECTATOR_WAS_HERE");
       } finally {
         specWs.close();
         ownerWs.close();
@@ -921,15 +923,17 @@ test.describe("shared terminal visibility", () => {
         ].join("");
         expect(firstText).toContain("bashbashbash");
 
-        // Coadmin types "abc" — admin should see it too
+        // Coadmin types "abc" — wait until admin sees it in output.
+        // Use recvUntil with accumulation so we don't miss it during
+        // quiet gaps between terminal_output bursts.
         coadminWs.send({ cmd: "terminal_input", data: "abc" });
-        const adminSees = await adminWs.collectUntilQuiet(
-          (m) => m.type === "terminal_output",
-          2000,
-        );
-        expect(
-          adminSees.map((m) => (m.data as string) ?? "").join(""),
-        ).toContain("abc");
+        let adminOutputAcc = "";
+        await adminWs.recvUntil((m) => {
+          if (m.type === "terminal_output") {
+            adminOutputAcc += (m.data as string) ?? "";
+          }
+          return adminOutputAcc.includes("abc");
+        });
 
         // NOW: admin creates a second terminal window
         adminWs.send({ cmd: "terminal_new_window" });
