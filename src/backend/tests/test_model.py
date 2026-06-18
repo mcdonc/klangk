@@ -1047,3 +1047,9 @@ class TestOIDCUsers:
         assert user["provider"] == "google"
         assert user["external_id"] == "g-789"
         assert user["password_hash"] is None
+
+
+class TestUpdatePasswordAgentGuard:
+    async def test_update_password_rejects_agent_user(self, db):
+        with pytest.raises(ValueError, match="system agent"):
+            await model.update_password(model.AGENT_USER_ID, "hash")

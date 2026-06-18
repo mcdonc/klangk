@@ -573,6 +573,15 @@ class TestResetPassword:
         assert resp.status_code == 400
         assert "4 characters" in resp.json()["detail"]
 
+    async def test_reset_agent_user_rejected(self, client, db):
+        token = auth.create_password_reset_token(model.AGENT_USER_ID)
+        resp = await client.post(
+            "/auth/reset-password",
+            json={"token": token, "password": "newpass"},
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+
 
 class TestChangePassword:
     async def test_change_password_success(self, client, user):
@@ -2866,6 +2875,22 @@ class TestAdminEndpoints:
             headers=headers,
         )
         assert resp.status_code == 404
+
+    async def test_update_agent_password_rejected(
+        self, client, admin_user, db
+    ):
+        # Seed the agent user so it exists in the DB
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            f"/admin/users/{model.AGENT_USER_ID}",
+            json={"password": "sneaky"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
 
 
 class TestGroupEndpoints:

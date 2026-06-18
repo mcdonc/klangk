@@ -1010,7 +1010,13 @@ async def update_email(user_id: str, email: str) -> None:
 
 
 async def update_password(user_id: str, password_hash: str) -> None:
-    """Update a user's password hash."""
+    """Update a user's password hash.
+
+    Raises ``ValueError`` if the target is the system agent user
+    (the agent must never have a password).
+    """
+    if user_id == AGENT_USER_ID:
+        raise ValueError("Cannot set a password on the system agent user")
     db = await get_db()
     try:
         await db.execute(

@@ -347,6 +347,11 @@ async def reset_password(req: ResetPasswordRequest):
             status_code=400,
             detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
         )
+    if user_id == model.AGENT_USER_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot set a password on the system agent user",
+        )
     password_hash = auth.hash_password(req.password)
     await model.update_password(user_id, password_hash)
     # Auto-login after reset
@@ -2006,6 +2011,11 @@ async def update_user(
     if req.email is not None:
         await model.update_email(user_id, req.email)
     if req.password is not None:
+        if user_id == model.AGENT_USER_ID:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot set a password on the system agent user",
+            )
         password_hash = auth.hash_password(req.password)
         await model.update_password(user_id, password_hash)
     return {"status": "updated"}
