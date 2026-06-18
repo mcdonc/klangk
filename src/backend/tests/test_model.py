@@ -1053,3 +1053,9 @@ class TestUpdatePasswordAgentGuard:
     async def test_update_password_rejects_agent_user(self, db):
         with pytest.raises(ValueError, match="system agent"):
             await model.update_password(model.AGENT_USER_ID, "hash")
+
+
+class TestDeleteUserAgentGuard:
+    async def test_delete_user_rejects_agent_user(self, db):
+        with pytest.raises(ValueError, match="system agent"):
+            await model.delete_user(model.AGENT_USER_ID)
