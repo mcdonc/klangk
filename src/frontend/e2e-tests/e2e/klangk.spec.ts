@@ -1453,12 +1453,13 @@ test.describe("Klangk E2E", () => {
     });
 
     // Wait for join message to arrive
+    const memberHandle = memberEmail.split("@")[0];
     await page1.waitForTimeout(2000);
     const joinMsgs = systemMessages.filter(
-      (m) => m.message.includes("joined") && m.message.includes(memberEmail),
+      (m) => m.message.includes("joined") && m.message.includes(memberHandle),
     );
     expect(joinMsgs.length).toBeGreaterThan(0);
-    expect(joinMsgs[0].message).toBe(`${memberEmail} joined`);
+    expect(joinMsgs[0].message).toBe(`${memberHandle} joined`);
 
     // Member leaves — owner should see a "left" system message
     const beforeLeave = systemMessages.length;
@@ -1466,10 +1467,10 @@ test.describe("Klangk E2E", () => {
     await page1.waitForTimeout(2000);
 
     const leaveMsgs = systemMessages.filter(
-      (m) => m.message.includes("left") && m.message.includes(memberEmail),
+      (m) => m.message.includes("left") && m.message.includes(memberHandle),
     );
     expect(leaveMsgs.length).toBeGreaterThan(0);
-    expect(leaveMsgs[0].message).toBe(`${memberEmail} left`);
+    expect(leaveMsgs[0].message).toBe(`${memberHandle} left`);
 
     await ctx1.close();
     await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {

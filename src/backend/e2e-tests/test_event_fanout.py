@@ -314,7 +314,7 @@ class TestEventFanout:
                 msgs = await recv_until(ws1, is_join_chat, timeout=15)
                 join_msgs = [m for m in msgs if is_join_chat(m)]
                 assert len(join_msgs) >= 1
-                assert join_msgs[0]["message"] == "test@example.com joined"
+                assert join_msgs[0]["message"] == "test joined"
                 assert join_msgs[0]["message_type"] == 2
             finally:
                 await ws1.close()
@@ -361,7 +361,7 @@ class TestEventFanout:
                 msgs = await recv_until(ws1, is_leave_chat, timeout=10)
                 leave_msgs = [m for m in msgs if is_leave_chat(m)]
                 assert len(leave_msgs) >= 1
-                assert leave_msgs[0]["message"] == "user2@example.com left"
+                assert leave_msgs[0]["message"] == "user2 left"
                 assert leave_msgs[0]["message_type"] == 2
             finally:
                 await ws1.close()
