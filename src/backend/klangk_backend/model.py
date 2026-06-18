@@ -1,14 +1,19 @@
 import json
+import logging
 import re
 import socket
 from contextlib import asynccontextmanager
 
-import aiosqlite
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import create_async_engine
+
 from .util import resolve_env_secret
+
+logger = logging.getLogger(__name__)
 
 _data_dir = Path(
     resolve_env_secret(
@@ -16,6 +21,145 @@ _data_dir = Path(
     )
 )
 DB_PATH = _data_dir / "klangk.db"
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy async engine + compatibility wrappers
+# ---------------------------------------------------------------------------
+
+_engine = None
+
+
+class _Row:
+    """Row wrapper supporting both row["col"] and row[int] access."""
+
+    __slots__ = ("_row",)
+
+    def __init__(self, row):
+        self._row = row
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._row[key]
+        return self._row._mapping[key]
+
+    def keys(self):
+        return self._row._mapping.keys()
+
+
+class _CursorResult:
+    """Wrap SQLAlchemy CursorResult to match the aiosqlite cursor API."""
+
+    __slots__ = ("_result",)
+
+    def __init__(self, result):
+        self._result = result
+
+    async def fetchone(self):
+        row = self._result.fetchone()
+        return None if row is None else _Row(row)
+
+    async def fetchall(self):
+        return [_Row(row) for row in self._result.fetchall()]
+
+    @property
+    def rowcount(self):
+        return self._result.rowcount
+
+    @property
+    def lastrowid(self):
+        return self._result.lastrowid
+
+
+class _Connection:
+    """Wrap SQLAlchemy AsyncConnection to match the aiosqlite API.
+
+    Callers keep using ``db.execute(sql, params)``, ``db.commit()``,
+    ``db.rollback()``, and ``db.close()`` exactly as before.
+    """
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def execute(self, sql, params=None):
+        if params is not None:
+            if isinstance(params, list):
+                params = tuple(params)
+            result = await self._conn.exec_driver_sql(sql, params)
+        else:
+            result = await self._conn.exec_driver_sql(sql)
+        return _CursorResult(result)
+
+    async def commit(self):
+        await self._conn.commit()
+
+    async def rollback(self):
+        await self._conn.rollback()
+
+    async def close(self):
+        await self._conn.close()
+
+
+def _make_engine(db_path: Path | str, **kwargs):
+    """Create a new async engine with PRAGMA listeners."""
+    url = f"sqlite+aiosqlite:///{db_path}"
+    engine = create_async_engine(
+        url,
+        pool_size=5,
+        max_overflow=5,
+        **kwargs,
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_pragmas(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode = WAL")
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("PRAGMA busy_timeout = 15000")
+        cursor.close()
+
+    return engine
+
+
+def _ensure_engine():
+    global _engine
+    if _engine is None:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _engine = _make_engine(DB_PATH)
+    return _engine
+
+
+async def dispose_engine() -> None:
+    """Dispose the current engine (shutdown / test teardown)."""
+    global _engine
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
+
+
+async def get_db() -> _Connection:
+    engine = _ensure_engine()
+    conn = await engine.connect()
+    return _Connection(conn)
+
+
+@asynccontextmanager
+async def transaction():
+    """Async context manager with transaction semantics.
+
+    Commits on clean exit, rolls back on exception.
+    """
+    db = await get_db()
+    try:
+        yield db
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
 
 # Chat message types
 MSG_USER = 0
@@ -60,16 +204,6 @@ async def agent_email() -> str:
 async def agent_handle() -> str:
     """Return the agent's handle from the DB."""
     return (await get_agent_user())["handle"]
-
-
-async def get_db() -> aiosqlite.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    db = await aiosqlite.connect(str(DB_PATH))
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA journal_mode = WAL")
-    await db.execute("PRAGMA foreign_keys = ON")
-    await db.execute("PRAGMA busy_timeout = 15000")
-    return db
 
 
 async def init_db() -> None:
@@ -335,23 +469,6 @@ PRINCIPAL_GROUP = 2
 
 SYSTEM_EVERYONE = 0
 SYSTEM_AUTHENTICATED = 1
-
-
-@asynccontextmanager
-async def transaction():
-    """Async context manager with transaction semantics.
-
-    Commits on clean exit, rolls back on exception.
-    """
-    db = await get_db()
-    try:
-        yield db
-        await db.commit()
-    except BaseException:
-        await db.rollback()
-        raise
-    finally:
-        await db.close()
 
 
 async def create_user(
@@ -1609,7 +1726,7 @@ _MENTION_RE = re.compile(r"@(\S+)")
 
 
 async def parse_mentions(
-    db: aiosqlite.Connection, message: str, workspace_id: str
+    db: _Connection, message: str, workspace_id: str
 ) -> list[str]:
     """Extract @email mentions from message text and resolve to user IDs.
 

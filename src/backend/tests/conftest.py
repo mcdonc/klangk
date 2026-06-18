@@ -1,5 +1,11 @@
 """Shared fixtures for backend unit tests."""
 
+import os
+
+# Must be set before coverage.py initialises in each xdist worker so that
+# code executed inside SQLAlchemy's greenlet context is tracked.
+os.environ.setdefault("COVERAGE_CORE", "sysmon")
+
 import bcrypt
 
 import pytest
@@ -31,6 +37,8 @@ def temp_data_dir(tmp_path, monkeypatch):
 
     us._data_dir = tmp_path
     us.DB_PATH = tmp_path / "klangk.db"
+    # Reset the SQLAlchemy engine so it reconnects to the new DB path.
+    us._engine = None
     wm._data_dir = tmp_path
     wm.WORKSPACES_ROOT = tmp_path / "workspaces"
     # Clear agent caches so each test starts fresh.
