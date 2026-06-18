@@ -840,6 +840,39 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         mock_rm.assert_awaited_once_with("fake-container-id")
 
+    async def test_delete_workspace_cleans_up_groups(self, client, user):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "cleanup-test"}
+        )
+        ws_id = create_resp.json()["id"]
+
+        # Verify role groups were created
+        for suffix in ["owners", "coders", "collaborators", "spectators"]:
+            group = await model.get_group_by_name(f"{suffix}-{ws_id}")
+            assert group is not None, f"expected {suffix} group to exist"
+
+        # Verify ACL entries exist for the workspace
+        acl = await model.get_acl_entries(f"/workspaces/{ws_id}")
+        assert len(acl) > 0
+
+        with patch.object(
+            api.container.registry,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
+        ):
+            resp = await client.delete(f"/workspaces/{ws_id}", headers=headers)
+        assert resp.status_code == 200
+
+        # Role groups should be gone
+        for suffix in ["owners", "coders", "collaborators", "spectators"]:
+            group = await model.get_group_by_name(f"{suffix}-{ws_id}")
+            assert group is None, f"expected {suffix} group to be deleted"
+
+        # ACL entries should be gone
+        acl = await model.get_acl_entries(f"/workspaces/{ws_id}")
+        assert len(acl) == 0
+
     async def test_list_no_auth(self, client):
         resp = await client.get("/workspaces")
         assert resp.status_code == 401
