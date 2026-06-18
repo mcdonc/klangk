@@ -12,6 +12,7 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
   final _incoming = StreamController<dynamic>.broadcast();
   final _sink = _FakeSink();
   bool failReady = false;
+  int? _closeCode;
 
   @override
   Stream<dynamic> get stream => _incoming.stream;
@@ -20,12 +21,18 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
   WebSocketSink get sink => _sink;
 
   @override
+  int? get closeCode => _closeCode;
+
+  @override
   Future<void> get ready =>
       failReady ? Future.error('Connection refused') : Future.value();
 
   void serverSend(Map<String, dynamic> msg) => _incoming.add(jsonEncode(msg));
 
-  void serverClose() => _incoming.close();
+  void serverClose([int? code]) {
+    _closeCode = code;
+    _incoming.close();
+  }
 
   void serverError(Object error) => _incoming.addError(error);
 
@@ -608,6 +615,60 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(attempts, [1]);
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('auth close code 4001 triggers logout instead of reconnect', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      final errors = <String>[];
+      client.errors.listen(errors.add);
+
+      // Server closes with auth failure code
+      channels[0].serverClose(4001);
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isFalse);
+      expect(client.reconnectAttempt, 0);
+      expect(errors, contains('Session expired, please log in again'));
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('auth close code 4002 triggers logout instead of reconnect', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      final errors = <String>[];
+      client.errors.listen(errors.add);
+
+      // Server closes with token expired code
+      channels[0].serverClose(4002);
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isFalse);
+      expect(client.reconnectAttempt, 0);
+      expect(errors, contains('Session expired, please log in again'));
 
       client.disconnect();
       client.dispose();

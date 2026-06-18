@@ -909,6 +909,43 @@ class TestStdoutLoopExited:
         assert "Enter, then ~." in output
 
 
+class TestStdoutLoopAuthClose:
+    @pytest.mark.asyncio
+    async def test_auth_close_shows_session_expired(self):
+        """Mid-session close with code 4002 shows session expired message."""
+        import websockets
+        from websockets.frames import Close
+
+        from klangk_backend.cli.client import _run_shell
+
+        ws = AsyncMock()
+        exc = websockets.ConnectionClosed(Close(4002, "Token expired"), None)
+        ws.recv = AsyncMock(side_effect=exc)
+
+        captured = []
+
+        class CaptureWriter:
+            def write(self, data):
+                captured.append(data)
+
+            def flush(self):
+                pass
+
+        task = asyncio.create_task(
+            _run_shell(ws, 80, 24, stdout=CaptureWriter())
+        )
+        await asyncio.sleep(0.3)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        output = "".join(captured)
+        assert "Session expired" in output
+        assert "klangk login" in output
+
+
 class TestStdinTerminalResponseFilter:
     @pytest.mark.asyncio
     async def test_terminal_response_filtered_from_stdin(self):
@@ -1155,6 +1192,66 @@ class TestShellConnectionError:
         monkeypatch.setattr(
             "klangk_backend.cli.client.reset_terminal", lambda: None
         )
+
+        import typer
+
+        with pytest.raises(typer.Exit) as exc_info:
+            shell(workspace="ws", terminal="x")
+        assert exc_info.value.exit_code == 1
+
+    def _shell_with_side_effect(self, monkeypatch, side_effect):
+        """Helper: run shell() with a mocked asyncio.run side_effect."""
+        from klangk_backend.cli.client import Workspace
+        from klangk_backend.cli.config import AuthConfig, ServerConfig
+
+        fake_cfg = CLIConfig(
+            server=ServerConfig(url="http://localhost:8995"),
+            auth=AuthConfig(token="fake", email="test@test.com"),
+        )
+        monkeypatch.setattr("klangk_backend.cli.main._cfg", lambda: fake_cfg)
+
+        fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
+        monkeypatch.setattr(
+            "klangk_backend.cli.main._client",
+            lambda: MagicMock(
+                resolve_workspace=MagicMock(return_value=fake_ws)
+            ),
+        )
+
+        monkeypatch.setattr(
+            "klangk_backend.cli.main.asyncio.run",
+            MagicMock(side_effect=side_effect),
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client._drain_stdin", lambda: None
+        )
+        monkeypatch.setattr(
+            "klangk_backend.cli.client.reset_terminal", lambda: None
+        )
+
+    def test_shell_catches_expired_token(self, monkeypatch):
+        """shell() catches InvalidStatusCode with 4001/4002 and shows auth error."""
+        from websockets.exceptions import InvalidStatusCode
+
+        from klangk_backend.cli.main import shell
+
+        self._shell_with_side_effect(
+            monkeypatch, InvalidStatusCode(4002, None)
+        )
+
+        import typer
+
+        with pytest.raises(typer.Exit) as exc_info:
+            shell(workspace="ws", terminal="x")
+        assert exc_info.value.exit_code == 1
+
+    def test_shell_catches_non_auth_invalid_status(self, monkeypatch):
+        """shell() catches InvalidStatusCode with non-auth code (e.g. 500)."""
+        from websockets.exceptions import InvalidStatusCode
+
+        from klangk_backend.cli.main import shell
+
+        self._shell_with_side_effect(monkeypatch, InvalidStatusCode(500, None))
 
         import typer
 

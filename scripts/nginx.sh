@@ -91,6 +91,8 @@ if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
     location ~ ^/llm-proxy/(.*)\$ {
 ${CONTAINER_ACL}
       auth_request /auth/verify-workspace-token;
+      auth_request_set \$auth_token_error \$upstream_http_x_token_error;
+      error_page 401 = @token_auth_failed;
       resolver ${DNS_RESOLVERS} valid=30s;
       set \$llm_backend ${KLANGK_LLM_BASE_URL}/\$1;
       proxy_pass \$llm_backend;
@@ -160,6 +162,8 @@ ${LLM_BLOCK}
     location = /api/browser-delegate {
 ${CONTAINER_ACL}
       auth_request /auth/verify-workspace-token;
+      auth_request_set \$auth_token_error \$upstream_http_x_token_error;
+      error_page 401 = @token_auth_failed;
       proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/browser-delegate;
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
@@ -174,6 +178,8 @@ ${CONTAINER_ACL}
     location = /api/workspace/post-chat-message {
 ${CONTAINER_ACL}
       auth_request /auth/verify-workspace-token;
+      auth_request_set \$auth_token_error \$upstream_http_x_token_error;
+      error_page 401 = @token_auth_failed;
       proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/workspace/post-chat-message;
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
@@ -182,12 +188,22 @@ ${CONTAINER_ACL}
     }
 
     # Workspace token verification subrequest (nginx auth_request target).
+    # X-Token-Error is captured so the 401 error page can return a
+    # meaningful JSON body to containers (expired vs invalid vs missing).
     location = /auth/verify-workspace-token {
       internal;
       proxy_pass http://127.0.0.1:${KLANGK_PORT}/auth/verify-workspace-token;
       proxy_pass_request_body off;
       proxy_set_header Content-Length "";
       proxy_set_header Authorization \$http_authorization;
+    }
+
+    # JSON 401 error page for auth_request failures.  The \$auth_token_error
+    # variable is set from the X-Token-Error header of the auth subrequest.
+    location @token_auth_failed {
+      internal;
+      default_type application/json;
+      return 401 '{\"error\":\"\$auth_token_error\",\"detail\":\"Workspace token \$auth_token_error\"}';
     }
 
     location / {

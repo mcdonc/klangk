@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 from pydantic import BaseModel
 
 from . import model
@@ -324,13 +324,25 @@ def create_workspace_token(workspace_id: str) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
+# Sentinel returned by decode_workspace_token when the JWT is expired.
+WORKSPACE_TOKEN_EXPIRED = "WORKSPACE_TOKEN_EXPIRED"
+
+
 def decode_workspace_token(token: str) -> str | None:
-    """Decode a workspace token. Returns workspace_id or None if invalid."""
+    """Decode a workspace token.
+
+    Returns:
+        str workspace_id on success.
+        WORKSPACE_TOKEN_EXPIRED if the token is expired.
+        None for all other failures.
+    """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("purpose") != "workspace":
             return None
         return payload.get("sub")
+    except ExpiredSignatureError:
+        return WORKSPACE_TOKEN_EXPIRED
     except JWTError:
         return None
 
@@ -380,8 +392,18 @@ async def get_current_user_optional(
         return None
 
 
-async def get_user_from_token(token: str) -> dict | None:
-    """Validate a token string (used for WebSocket auth)."""
+# Sentinel returned by get_user_from_token when the JWT is expired.
+TOKEN_EXPIRED = "TOKEN_EXPIRED"
+
+
+async def get_user_from_token(token: str) -> dict | str | None:
+    """Validate a token string (used for WebSocket auth).
+
+    Returns:
+        dict: the user record on success.
+        TOKEN_EXPIRED: if the token signature is valid but expired.
+        None: for all other failures (malformed, revoked, missing user).
+    """
     try:
         payload = decode_token(token)
         user_id = payload.get("sub")
@@ -391,6 +413,8 @@ async def get_user_from_token(token: str) -> dict | None:
         if await model.is_token_blocklisted(jti):
             return None
         return await model.get_user_by_id(user_id)
+    except ExpiredSignatureError:
+        return TOKEN_EXPIRED
     except JWTError:
         return None
 

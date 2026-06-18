@@ -2167,10 +2167,14 @@ async def handle_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=4001, reason="Missing token")
         return
 
-    user = await auth.get_user_from_token(token)
-    if user is None:
+    result = await auth.get_user_from_token(token)
+    if result is auth.TOKEN_EXPIRED:
+        await websocket.close(code=4002, reason="Token expired")
+        return
+    if result is None:
         await websocket.close(code=4001, reason="Invalid token")
         return
+    user = result
 
     await websocket.accept()
     safe_ws = SafeWebSocket(websocket)

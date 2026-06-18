@@ -766,9 +766,15 @@ async def _run_shell(
                         logging.info("[container stopped]")
                         stop_event.set()
                         break
-        except websockets.ConnectionClosed:
+        except websockets.ConnectionClosed as exc:
             if not stop_event.is_set():
-                stdout.write("\r\nServer disconnected.\r\n")
+                if exc.code in (4001, 4002):
+                    stdout.write(
+                        "\r\nSession expired. Run `klangk login` to"
+                        " re-authenticate.\r\n"
+                    )
+                else:
+                    stdout.write("\r\nServer disconnected.\r\n")
                 stdout.flush()
         stop_event.set()
 

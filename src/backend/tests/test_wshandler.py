@@ -1781,6 +1781,29 @@ class TestHandleWebsocket:
             code=4001, reason="Invalid token"
         )
 
+    async def test_expired_token(self, user):
+        from datetime import datetime, timedelta, timezone
+
+        from jose import jwt
+
+        from klangk_backend import auth as auth_mod
+
+        expired = datetime.now(timezone.utc) - timedelta(hours=1)
+        payload = {
+            "sub": user["id"],
+            "email": user["email"],
+            "jti": "test-jti",
+            "exp": expired,
+        }
+        token = jwt.encode(
+            payload, auth_mod.SECRET_KEY, algorithm=auth_mod.ALGORITHM
+        )
+        websocket = _mock_raw_sock(query_params={"token": token})
+        await handle_websocket(websocket)
+        websocket.close.assert_awaited_once_with(
+            code=4002, reason="Token expired"
+        )
+
     async def test_valid_token_then_disconnect(self, user):
         from klangk_backend import auth as auth_mod
 
