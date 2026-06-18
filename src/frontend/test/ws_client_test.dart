@@ -231,6 +231,30 @@ void main() {
       expect(errors[0], startsWith('Connection failed:'));
       client.dispose();
     });
+
+    test('connect failure with auth close code triggers logout', () async {
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+      final failChannel = _FakeWebSocketChannel();
+      failChannel.failReady = true;
+      failChannel._closeCode = 4001;
+      WsClient.testChannelFactory = (_) => failChannel;
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+
+      final errors = <String>[];
+      client.errors.listen(errors.add);
+
+      await client.connect();
+      await Future.delayed(Duration.zero);
+      expect(client.connected, isFalse);
+      expect(errors.length, 1);
+      expect(errors[0], 'Session expired, please log in again');
+      client.dispose();
+    });
   });
 
   group('WsClient.dispose', () {
