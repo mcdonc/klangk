@@ -174,7 +174,7 @@ class WsClient extends ChangeNotifier {
     // treat it as a failure and throttle the next connection by up to 60s.
     _removeBeforeUnload?.call();
     _removeBeforeUnload = onBeforeUnload(() {
-      _channel?.sink.close(1000, 'page unload');
+      _channel?.sink.close(1000, 'page unload'); // coverage:ignore-line
     });
     notifyListeners();
     _listenToChannel();
