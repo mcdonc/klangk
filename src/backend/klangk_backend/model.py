@@ -1390,8 +1390,47 @@ async def delete_workspace(workspace_id: str, user_id: str) -> bool:
             "DELETE FROM workspaces WHERE id = ? AND user_id = ?",
             (workspace_id, user_id),
         )
+        if cursor.rowcount == 0:
+            await db.commit()
+            return False
+        # Clean up ACL entries for this workspace
+        resource = f"/workspaces/{workspace_id}"
+        await db.execute(
+            "DELETE FROM acl_entries WHERE resource = ?", (resource,)
+        )
+        # Clean up per-workspace role groups and their memberships
+        role_suffixes = ["owners", "coders", "collaborators", "spectators"]
+        for suffix in role_suffixes:
+            group_name = f"{suffix}-{workspace_id}"
+            cursor_g = await db.execute(
+                "SELECT id FROM groups WHERE name = ?", (group_name,)
+            )
+            row = await cursor_g.fetchone()
+            if row:
+                group_id = row["id"]
+                await db.execute(
+                    "DELETE FROM user_groups WHERE group_id = ?",
+                    (group_id,),
+                )
+                await db.execute(
+                    "DELETE FROM acl_entries WHERE group_id = ?",
+                    (group_id,),
+                )
+                await db.execute(
+                    "DELETE FROM groups WHERE id = ?", (group_id,)
+                )
+        # Clean up port allocations
+        await db.execute(
+            "DELETE FROM port_allocations WHERE workspace_id = ?",
+            (workspace_id,),
+        )
+        # Clean up chat messages
+        await db.execute(
+            "DELETE FROM chat_messages WHERE workspace_id = ?",
+            (workspace_id,),
+        )
         await db.commit()
-        return cursor.rowcount > 0
+        return True
     finally:
         await db.close()
 
