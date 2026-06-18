@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import asyncio
+import base64
 import io
 import json
 import logging
@@ -11,6 +12,8 @@ import os
 from pathlib import Path
 import re
 import select
+import socket
+import struct
 import sys
 import termios
 import tty
@@ -482,6 +485,7 @@ async def _ws_shell(
     raw_mode: bool = True,
     command_override: str | None = None,
     window: str | None = None,
+    forward_agent: bool = False,
 ) -> None:
     """Run the interactive PTY shell over WebSocket.
 
@@ -497,7 +501,31 @@ async def _ws_shell(
         # 1. Connect to workspace
         await _wait_workspace_ready(ws, workspace_id)
 
-        # 2. Start terminal
+        # 2a. Start SSH agent forwarding if requested and available.
+        ssh_agent_active = False
+        local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
+        if (
+            forward_agent
+            and local_agent_sock
+            and os.path.exists(local_agent_sock)
+        ):
+            await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
+            # Wait for confirmation before starting the terminal so
+            # SSH_AUTH_SOCK is included in the shell environment.
+            deadline = asyncio.get_event_loop().time() + 10
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "ssh_agent_started":
+                    ssh_agent_active = True
+                    break
+                if msg.get("type") == "error":  # pragma: no cover
+                    break
+
+        # 2b. Start terminal
         cols, rows = _get_terminal_size()
         start_msg: dict = {
             "cmd": "terminal_start",
@@ -612,7 +640,12 @@ async def _ws_shell(
             old_settings = _raw_mode_enter()
             tty.setraw(sys.stdin)
         try:
-            await _run_shell(ws, cols, rows)
+            await _run_shell(
+                ws,
+                cols,
+                rows,
+                ssh_agent_sock=local_agent_sock if ssh_agent_active else None,
+            )
         finally:
             if raw_mode:
                 _raw_mode_exit(old_settings)
@@ -620,6 +653,10 @@ async def _ws_shell(
             # Drain any terminal query responses still buffered in stdin
             # so they don't leak to the host shell after exit.
             _drain_stdin()
+        if ssh_agent_active:  # pragma: no cover
+            await _send_ignore_closed(
+                ws, json.dumps({"cmd": "ssh_agent_stop"})
+            )
         await _send_ignore_closed(  # pragma: no cover
             ws, json.dumps({"cmd": "terminal_stop"})
         )
@@ -631,9 +668,13 @@ async def _run_shell(
     rows: int,
     stdin: io.RawIOBase | None = None,
     stdout: io.TextIOBase | None = None,
+    ssh_agent_sock: str | None = None,
 ) -> None:
     """Run stdin/stdout forwarding loop with SIGWINCH support.
 
+    ssh_agent_sock: path to the local SSH agent socket. When set, an
+    additional relay loop forwards SSH agent protocol messages between
+    the container and the local agent.
     stdin/stdout default to sys.stdin.buffer / sys.stdout when None.
     Pass explicit streams in tests to avoid mutating globals.
     """
@@ -741,6 +782,10 @@ async def _run_shell(
                 )
             )
 
+    # Queue for SSH agent response messages (filled by stdout_loop,
+    # consumed by ssh_agent_relay_loop).
+    agent_queue: asyncio.Queue[bytes] = asyncio.Queue()
+
     async def stdout_loop() -> None:
         try:
             while not stop_event.is_set():
@@ -757,6 +802,12 @@ async def _run_shell(
                             "\r\nPress Enter, then ~. to disconnect.\r\n"
                         )
                         stdout.flush()
+                elif (
+                    data.get("type") == "ssh_agent_response"
+                ):  # pragma: no cover
+                    raw = base64.b64decode(data.get("data", ""))
+                    if raw:
+                        await agent_queue.put(raw)
                 elif data.get("type") == "event":
                     event = data.get("event", {})
                     if (
@@ -804,9 +855,62 @@ async def _run_shell(
                 elapsed = 0
                 await ws.send(json.dumps({"cmd": "heartbeat"}))
 
-    await asyncio.gather(
-        stdin_loop(), stdout_loop(), resize_loop(), heartbeat_loop()
-    )
+    async def ssh_agent_relay_loop() -> None:  # pragma: no cover
+        """Relay SSH agent protocol between container and local agent.
+
+        Reads ssh_agent_response messages from the queue (put there by
+        stdout_loop), forwards them to the local SSH agent socket, reads
+        the agent's reply, and sends it back over the WebSocket.
+        """
+        if not ssh_agent_sock:
+            return
+        while not stop_event.is_set():
+            try:
+                data = await asyncio.wait_for(agent_queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                # Connect to local agent, forward data, read response.
+                agent = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    agent.connect(ssh_agent_sock)
+                    agent.sendall(data)
+                    # SSH agent protocol: 4-byte big-endian length prefix
+                    # followed by the message body.
+                    header = b""
+                    while len(header) < 4:
+                        chunk = agent.recv(4 - len(header))
+                        if not chunk:
+                            break
+                        header += chunk
+                    if len(header) == 4:
+                        msg_len = struct.unpack(">I", header)[0]
+                        body = b""
+                        while len(body) < msg_len:
+                            chunk = agent.recv(msg_len - len(body))
+                            if not chunk:
+                                break
+                            body += chunk
+                        response = header + body
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "cmd": "ssh_agent_data",
+                                    "data": base64.b64encode(response).decode(
+                                        "ascii"
+                                    ),
+                                }
+                            )
+                        )
+                finally:
+                    agent.close()
+            except (OSError, ConnectionError) as e:
+                logger.warning("SSH agent relay: %s", e)
+
+    tasks = [stdin_loop(), stdout_loop(), resize_loop(), heartbeat_loop()]
+    if ssh_agent_sock:
+        tasks.append(ssh_agent_relay_loop())
+    await asyncio.gather(*tasks)
 
 
 async def _ws_exec(

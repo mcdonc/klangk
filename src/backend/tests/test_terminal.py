@@ -12,6 +12,7 @@ import pytest
 
 from klangk_backend.terminal import (
     TerminalSession,
+    _build_environment,
     _build_shell_command,
     _make_shell_process,
     attach_browser,
@@ -734,6 +735,16 @@ class TestRenameWindow:
         ):
             with pytest.raises(ValueError, match="already exists"):
                 await rename_window("cid", "sess", 0, "build")
+
+
+class TestBuildEnvironment:
+    def test_ssh_agent_socket_included(self):
+        env = _build_environment(None, ssh_agent_socket="/tmp/agent.sock")
+        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in env
+
+    def test_ssh_agent_socket_omitted_when_none(self):
+        env = _build_environment(None)
+        assert not any(e.startswith("SSH_AUTH_SOCK=") for e in env)
 
 
 class TestBuildShellCommandSocketPath:

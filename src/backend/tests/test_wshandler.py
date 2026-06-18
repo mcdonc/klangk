@@ -488,6 +488,7 @@ class TestHandleTerminalStart:
             user_home="/home/testuser",
             user_id="uid",
             user_handle="testuser",
+            ssh_agent_socket=None,
         )
         # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -2093,6 +2094,182 @@ class TestExecHandlers:
         await conn.cleanup()
         session.stop.assert_awaited_once()
         assert conn.exec_session is None
+
+
+class TestSSHAgentHandlers:
+    async def test_ssh_agent_start_no_container(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        await conn.handle_ssh_agent_start()
+        sock.send_json.assert_called()
+        msg = sock.send_json.call_args[0][0]
+        assert msg.get("type") == "error"
+
+    async def test_ssh_agent_start_success(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        # Return empty immediately so the relay task exits cleanly.
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = AsyncMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        with (
+            patch(
+                "klangk_backend.wshandler.podman.exec_container",
+                new=AsyncMock(),
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+        ):
+            await conn.handle_ssh_agent_start()
+            # Let the relay task run and finish (stdout returns b"").
+            assert conn._ssh_agent_task is not None
+            await conn._ssh_agent_task
+        assert conn._ssh_agent_proc is mock_proc
+        assert conn._ssh_agent_socket is not None
+        sock.send_json.assert_called()
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "ssh_agent_started"
+        assert "socket" in msg
+
+    async def test_ssh_agent_data_writes_to_stdin(self):
+        import base64
+
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.stdin = AsyncMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        conn._ssh_agent_proc = mock_proc
+        data = base64.b64encode(b"agent-request").decode()
+        await conn.handle_ssh_agent_data({"data": data})
+        mock_proc.stdin.write.assert_called_once_with(b"agent-request")
+
+    async def test_ssh_agent_data_no_proc(self):
+        conn = _base_conn()
+        # Should not raise when no process is active.
+        await conn.handle_ssh_agent_data({"data": ""})
+
+    async def test_ssh_agent_stop(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        conn._ssh_agent_proc = mock_proc
+        conn._ssh_agent_socket = "/tmp/test.sock"
+        conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
+        with patch(
+            "klangk_backend.wshandler.podman.exec_container", new=AsyncMock()
+        ):
+            await conn.handle_ssh_agent_stop()
+        assert conn._ssh_agent_proc is None
+        assert conn._ssh_agent_socket is None
+        sock.send_json.assert_called()
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "ssh_agent_stopped"
+
+    async def test_stop_ssh_agent_cleanup_on_disconnect(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        conn._ssh_agent_proc = mock_proc
+        conn._ssh_agent_socket = "/tmp/test.sock"
+        conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
+        with patch(
+            "klangk_backend.wshandler.podman.exec_container", new=AsyncMock()
+        ):
+            await conn._stop_ssh_agent()
+        assert conn._ssh_agent_proc is None
+        assert conn._ssh_agent_task is None
+        assert conn._ssh_agent_socket is None
+
+    async def test_forward_ssh_agent_output(self):
+        import base64
+
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        read_data = [b"agent-response", b""]
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(side_effect=read_data)
+        conn._ssh_agent_proc = mock_proc
+        await conn._forward_ssh_agent_output()
+        calls = [
+            c[0][0]
+            for c in sock.send_json.call_args_list
+            if c[0][0].get("type") == "ssh_agent_response"
+        ]
+        assert len(calls) == 1
+        assert base64.b64decode(calls[0]["data"]) == b"agent-response"
+
+    async def test_ssh_agent_start_with_terminal(self):
+        """SSH_AUTH_SOCK is passed to TerminalSession when agent is active."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/testuser"
+        conn._ssh_agent_socket = "/tmp/klangk-ssh-agent-uid.sock"
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+        mock_session.session_name = "uid"
+        mock_session._tmux_session_name = "uid"
+
+        async def empty_output():
+            return
+            yield  # pragma: no cover
+
+        mock_session.output = empty_output
+        with (
+            patch(
+                "klangk_backend.wshandler.TerminalSession",
+                return_value=mock_session,
+            ) as MockTS,
+            patch.object(container.registry, "record_activity"),
+            patch(
+                "klangk_backend.wshandler.attach_browser",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[],
+            ),
+            patch(
+                "klangk_backend.terminal.load_workspace_state",
+                return_value=None,
+            ),
+            patch.object(
+                conn,
+                "_has_perm",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            # Let the background task run.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        MockTS.assert_called_once_with(
+            "cid",
+            session_name="uid",
+            user_home="/home/testuser",
+            user_id="uid",
+            user_handle="testuser",
+            ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
+        )
 
 
 class TestExecDispatch:
@@ -5681,3 +5858,56 @@ class TestTokenExpiryWarnings:
         finally:
             wshandler.state.sessions.pop(workspace["id"], None)
             wshandler.state.connections.pop(sock, None)
+
+
+class TestSSHAgentDispatch:
+    async def test_dispatch_ssh_agent_start(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "ssh_agent_start"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_ssh_agent_start", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+    async def test_dispatch_ssh_agent_data(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "ssh_agent_data", "data": "AA=="}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_ssh_agent_data", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+    async def test_dispatch_ssh_agent_stop(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "ssh_agent_stop"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_ssh_agent_stop", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()

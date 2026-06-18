@@ -57,6 +57,7 @@ def _build_environment(
     user_home: str | None = None,
     user_id: str | None = None,
     user_handle: str | None = None,
+    ssh_agent_socket: str | None = None,
 ) -> list[str]:
     env = ["TERM=xterm-256color"]
     if user_home is not None:
@@ -67,6 +68,8 @@ def _build_environment(
         env.append(f"KLANGK_USER_HANDLE={user_handle}")
     if command_override is not None:
         env.append(f"KLANGK_CMD_OVERRIDE={command_override}")
+    if ssh_agent_socket is not None:
+        env.append(f"SSH_AUTH_SOCK={ssh_agent_socket}")
     return env
 
 
@@ -601,6 +604,7 @@ class TerminalSession:
         read_only: bool = False,
         user_id: str | None = None,
         user_handle: str | None = None,
+        ssh_agent_socket: str | None = None,
     ):
         self.container_id = container_id
         self.session_name = session_name
@@ -610,6 +614,7 @@ class TerminalSession:
         self.read_only = read_only
         self.user_id = user_id
         self.user_handle = user_handle
+        self.ssh_agent_socket = ssh_agent_socket
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -631,6 +636,7 @@ class TerminalSession:
             self.user_home,
             user_id=self.user_id,
             user_handle=self.user_handle,
+            ssh_agent_socket=self.ssh_agent_socket,
         )
         shell_cmd, self._tmux_session_name = _build_shell_command(
             session_name=self.session_name,

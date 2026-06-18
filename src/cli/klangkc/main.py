@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import asyncio
+import os
 from pathlib import Path
 
 import httpx
@@ -599,6 +600,12 @@ def shell(
         "-c",
         help="Override the default shell command",
     ),
+    forward_agent: bool = typer.Option(
+        False,
+        "--forward-agent",
+        "-A",
+        help="Forward local SSH agent into the container",
+    ),
 ) -> None:
     """Connect to a workspace and execute the default shell command."""
     cfg = _cfg()
@@ -649,6 +656,25 @@ def shell(
     token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
+    # Resolve agent forwarding: --forward-agent flag or KLANGKC_FORWARD_AGENT
+    # env var. The env var can be:
+    #   "true"/"1"/"yes" — forward to any server
+    #   "false"/"0"/"no" — never forward (overrides --forward-agent)
+    #   space-separated URLs — forward only to listed servers
+    env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")  # pragma: no cover
+    if env_val.lower() in ("0", "false", "no"):  # pragma: no cover
+        forward_agent = False
+    elif not forward_agent:  # pragma: no cover
+        if env_val.lower() in ("1", "true", "yes"):
+            forward_agent = True
+        elif env_val:
+            forward_agent = server_url in env_val.split()
+    if forward_agent:  # pragma: no cover
+        if not os.environ.get("SSH_AUTH_SOCK"):
+            _err.print(
+                "[yellow]Warning: --forward-agent set but SSH_AUTH_SOCK"
+                " is not set. Agent forwarding will be skipped.[/yellow]"
+            )
     try:
         asyncio.run(
             _ws_shell(
@@ -657,6 +683,7 @@ def shell(
                 ws.id,
                 command_override=command,
                 window=terminal,
+                forward_agent=forward_agent,
             )
         )
     except websockets.exceptions.InvalidStatusCode as e:

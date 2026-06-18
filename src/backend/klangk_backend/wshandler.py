@@ -1,6 +1,7 @@
 """WebSocket handler: auth, workspace routing, terminal/exec/bridge."""
 
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from . import auth, container, model, workspaces
+from . import auth, container, model, podman, workspaces
 from .util import derive_hosting_info, resolve_env_secret
 from .dockerexec import ExecSession
 from .terminal import TerminalSession, attach_browser
@@ -656,6 +657,10 @@ class Connection:
         # Tracks which shared terminal this connection is viewing.
         # Set on join_shared_terminal, cleared on stop_terminal/terminal_start.
         self._viewing_shared: dict | None = None  # {user_id, window_id}
+        # SSH agent forwarding state.
+        self._ssh_agent_proc: asyncio.subprocess.Process | None = None
+        self._ssh_agent_task: asyncio.Task | None = None
+        self._ssh_agent_socket: str | None = None
 
     async def start_workspace_container(
         self, workspace_id: str, workspace: dict
@@ -1040,6 +1045,7 @@ class Connection:
             user_home=self._user_home,
             user_id=self.user["id"],
             user_handle=self.user.get("handle"),
+            ssh_agent_socket=self._ssh_agent_socket,
         )
 
         # Register browser ID for bridge routing.  The browser sends
@@ -1712,8 +1718,6 @@ class Connection:
         session = self.exec_session
         if session is None or not session.is_alive:
             return
-        import base64
-
         raw = base64.b64decode(msg.get("data", ""))
         if len(raw) > _MAX_INPUT_SIZE:
             logger.warning(
@@ -1731,6 +1735,115 @@ class Connection:
 
     async def handle_exec_stop(self) -> None:
         await self.stop_exec()
+
+    # --- SSH agent forwarding ---
+
+    async def handle_ssh_agent_start(self) -> None:
+        """Start SSH agent forwarding via socat inside the container."""
+        if not self.container_id:
+            send_error(self.sock, "No container for SSH agent forwarding")
+            return
+        # Clean up any existing agent relay.
+        await self._stop_ssh_agent()
+        user_id = self.user["id"]
+        sock_path = f"/tmp/klangk-ssh-agent-{user_id}.sock"
+        # Remove stale socket if it exists from a previous session.
+        await podman.exec_container(self.container_id, ["rm", "-f", sock_path])
+        # Start socat: listen on the Unix socket, relay to stdin/stdout.
+        proc = await asyncio.create_subprocess_exec(
+            podman.PODMAN_BIN,
+            "exec",
+            "-i",
+            self.container_id,
+            "socat",
+            f"UNIX-LISTEN:{sock_path},mode=600,unlink-early",
+            "STDIO",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        self._ssh_agent_proc = proc
+        self._ssh_agent_socket = sock_path
+        self._ssh_agent_task = asyncio.create_task(
+            self._forward_ssh_agent_output()
+        )
+        self.sock.send_json(
+            {
+                "type": "ssh_agent_started",
+                "socket": sock_path,
+            }
+        )
+        logger.info(
+            "SSH agent forwarding started for user %s at %s",
+            user_id,
+            sock_path,
+        )
+
+    async def _forward_ssh_agent_output(self) -> None:
+        """Read from socat stdout and send to the CLI as ssh_agent_response."""
+        proc = self._ssh_agent_proc
+        if proc is None or proc.stdout is None:  # pragma: no cover
+            return
+        try:
+            while True:
+                data = await proc.stdout.read(65536)
+                if not data:
+                    break
+                self.sock.send_json(
+                    {
+                        "type": "ssh_agent_response",
+                        "data": base64.b64encode(data).decode("ascii"),
+                    }
+                )
+        except asyncio.CancelledError:  # pragma: no cover
+            logger.debug("SSH agent output relay cancelled")
+        except OSError as e:  # pragma: no cover
+            logger.warning("SSH agent output relay error: %s", e)
+
+    async def handle_ssh_agent_data(self, msg: dict) -> None:
+        """Write data from the CLI's local agent into socat stdin."""
+        proc = self._ssh_agent_proc
+        if proc is None or proc.stdin is None:
+            return
+        raw = msg.get("data", "")
+        if raw:
+            proc.stdin.write(base64.b64decode(raw))
+            await proc.stdin.drain()
+
+    async def handle_ssh_agent_stop(self) -> None:
+        """Stop SSH agent forwarding."""
+        await self._stop_ssh_agent()
+        self.sock.send_json({"type": "ssh_agent_stopped"})
+
+    async def _stop_ssh_agent(self) -> None:
+        """Clean up the SSH agent relay process."""
+        if self._ssh_agent_task is not None:
+            self._ssh_agent_task.cancel()
+            try:
+                await self._ssh_agent_task
+            except asyncio.CancelledError:
+                pass
+            self._ssh_agent_task = None
+        if self._ssh_agent_proc is not None:
+            try:
+                self._ssh_agent_proc.kill()
+                await self._ssh_agent_proc.wait()
+            except ProcessLookupError:  # pragma: no cover
+                logger.debug("SSH agent process already exited")
+            self._ssh_agent_proc = None
+        if self._ssh_agent_socket and self.container_id:
+            try:
+                await podman.exec_container(
+                    self.container_id,
+                    ["rm", "-f", self._ssh_agent_socket],
+                )
+            except OSError as e:  # pragma: no cover
+                logger.warning(
+                    "Failed to remove SSH agent socket %s: %s",
+                    self._ssh_agent_socket,
+                    e,
+                )
+        self._ssh_agent_socket = None
 
     async def handle_heartbeat(self) -> None:
         if self.container_id is not None:
@@ -2053,6 +2166,7 @@ class Connection:
 
         await self.stop_terminal()
         await self.stop_exec()
+        await self._stop_ssh_agent()
 
         # Remove this connection from the workspace session's subscriber sets.
         # If no subscribers remain, remove the session entirely. The container
@@ -2317,6 +2431,12 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_exec_close_stdin()
             elif cmd == "exec_stop":
                 await conn.handle_exec_stop()
+            elif cmd == "ssh_agent_start":
+                await conn.handle_ssh_agent_start()
+            elif cmd == "ssh_agent_data":
+                await conn.handle_ssh_agent_data(msg)
+            elif cmd == "ssh_agent_stop":
+                await conn.handle_ssh_agent_stop()
             elif cmd == "heartbeat":
                 await conn.handle_heartbeat()
             elif cmd == "chat_send":

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1238,3 +1239,130 @@ class TestShellConnectionError:
         with pytest.raises(typer.Exit) as exc_info:
             shell(workspace="ws", terminal="x")
         assert exc_info.value.exit_code == 1
+
+
+class TestSSHAgentForwarding:
+    async def test_ws_shell_sends_agent_start_when_flag_set(self, tmp_path):
+        """With forward_agent=True and a valid SSH_AUTH_SOCK, ssh_agent_start
+        is sent before terminal_start."""
+        from klangkc.client import _ws_shell
+
+        fake_sock = tmp_path / "agent.sock"
+        fake_sock.touch()
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "ssh_agent_started",
+                        "socket": "/tmp/agent.sock",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+            patch.dict(os.environ, {"SSH_AUTH_SOCK": str(fake_sock)}),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    forward_agent=True,
+                )
+            except Exception:
+                pass
+
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        parsed = [json.loads(s) for s in sent]
+        cmds = [m.get("cmd") for m in parsed]
+        assert "ssh_agent_start" in cmds
+        assert "terminal_start" in cmds
+        agent_idx = cmds.index("ssh_agent_start")
+        terminal_idx = cmds.index("terminal_start")
+        assert agent_idx < terminal_idx
+
+    async def test_ws_shell_no_agent_without_flag(self):
+        """Without forward_agent=True, no ssh_agent_start is sent."""
+        from klangkc.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    forward_agent=False,
+                )
+            except Exception:
+                pass
+
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        assert not any("ssh_agent_start" in s for s in sent)
