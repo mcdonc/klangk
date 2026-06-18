@@ -721,6 +721,12 @@ test.describe("shared terminal visibility", () => {
       });
 
       const ownerWs = await connectWs(owner.token, workspaceId);
+
+      // Ensure the owner WS has an active terminal session so
+      // create_shared_terminal can create a tmux window.
+      ownerWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+      await ownerWs.recvUntil((m) => m.type === "terminal_started");
+
       ownerWs.send({ cmd: "create_shared_terminal", name: "watch-me" });
       const sharedMsg = await ownerWs.recvUntil(
         (m) =>
