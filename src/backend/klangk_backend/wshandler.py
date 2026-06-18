@@ -1741,7 +1741,7 @@ class Connection:
 
     async def handle_ssh_agent_start(self) -> None:
         """Start SSH agent forwarding via socat inside the container."""
-        _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         if not self.container_id:
             send_error(self.sock, "No container for SSH agent forwarding")
             return
@@ -1788,7 +1788,7 @@ class Connection:
         )
 
     async def _log_ssh_agent_stderr(self) -> None:  # pragma: no cover
-        """Log socat stderr when KLANGK_DEBUG_SSH_AGENT is set."""
+        """Log socat stderr when KLANGKC_DEBUG_SSH_AGENT is set."""
         proc = self._ssh_agent_proc
         if proc is None or proc.stderr is None:
             return
@@ -1805,7 +1805,7 @@ class Connection:
 
     async def _forward_ssh_agent_output(self) -> None:
         """Read from socat stdout and send to the CLI as ssh_agent_response."""
-        _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         proc = self._ssh_agent_proc
         if proc is None or proc.stdout is None:  # pragma: no cover
             return
@@ -1833,7 +1833,7 @@ class Connection:
 
     async def handle_ssh_agent_data(self, msg: dict) -> None:
         """Write data from the CLI's local agent into socat stdin."""
-        _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         proc = self._ssh_agent_proc
         if proc is None or proc.stdin is None:
             if _debug_agent:  # pragma: no cover

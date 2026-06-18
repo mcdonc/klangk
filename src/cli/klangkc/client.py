@@ -504,7 +504,7 @@ async def _ws_shell(
         # 2a. Start SSH agent forwarding if requested and available.
         ssh_agent_active = False
         local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
-        _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         if _debug_agent:
             # Log to file to avoid corrupting the terminal display.
             _agent_log = os.path.expanduser("~/.klangkc-ssh-agent.log")
@@ -709,7 +709,7 @@ async def _run_shell(
     stdin/stdout default to sys.stdin.buffer / sys.stdout when None.
     Pass explicit streams in tests to avoid mutating globals.
     """
-    _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
+    _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
     if stdin is None:
         stdin = sys.stdin.buffer
     if stdout is None:
