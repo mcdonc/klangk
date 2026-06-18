@@ -76,7 +76,7 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 
 **API**: `GET /api/my-permissions` returns your effective permissions on all static resources. Add `?resource=/workspaces/{id}` to check a specific resource.
 
-**CLI**: `klangk ls --shared` shows workspaces shared with you.
+**CLI**: `klangkc ls --shared` shows workspaces shared with you.
 
 ## Troubleshooting: "Why can't I access this workspace?"
 

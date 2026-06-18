@@ -1161,9 +1161,9 @@ class TestMisc:
         )
 
     def test_auth_error_message(self):
-        err = AuthError("Session expired — run `klangk login`")
+        err = AuthError("Session expired — run `klangkc login`")
         assert "Session expired" in str(err)
-        assert "klangk login" in str(err)
+        assert "klangkc login" in str(err)
 
     def test_workspace_dataclass_fields(self):
         ws = Workspace(id="x", name="y", created_at="z")

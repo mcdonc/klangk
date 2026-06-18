@@ -30,7 +30,7 @@ from .config import CLIConfig
 from ..container import validate_mount_spec
 
 app = typer.Typer(
-    name="klangk",
+    name="klangkc",
     help="Klangk — containerized development shell.",
     rich_markup_mode="rich",
 )
@@ -56,7 +56,7 @@ def _require_auth() -> None:
     cfg = _cfg()
     if not cfg.auth.token:
         _err.print(
-            "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
+            "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
         )
         raise typer.Exit(code=1)
 
@@ -171,7 +171,7 @@ def list_workspaces(
 def create(
     name: str = typer.Argument(..., help="Workspace name"),
     image: str | None = typer.Option(
-        None, "--image", help="Container image to use (see `klangk images`)"
+        None, "--image", help="Container image to use (see `klangkc images`)"
     ),
     mount: list[str] | None = typer.Option(
         None,
@@ -604,7 +604,7 @@ def shell(
     cfg = _cfg()
     if not cfg.auth.token:  # pragma: no cover
         _err.print(
-            "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
+            "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
         )  # pragma: no cover
         raise typer.Exit(code=1)  # pragma: no cover
 
@@ -620,7 +620,7 @@ def shell(
     else:
         workspaces = client.list_workspaces()
         if not workspaces:
-            typer.echo("No workspaces found — create one with klangk create.")
+            typer.echo("No workspaces found — create one with klangkc create.")
             raise typer.Exit(code=1)
         if len(workspaces) == 1:
             ws = workspaces[0]
@@ -666,7 +666,7 @@ def shell(
         _drain_stdin()
         if e.status_code in (4001, 4002):
             _err.print(
-                "[red]Session expired. Run `klangk login`"
+                "[red]Session expired. Run `klangkc login`"
                 " to re-authenticate.[/red]"
             )
         else:
@@ -957,7 +957,7 @@ def exec_cmd(
 ) -> None:
     """Run a command in a workspace container.
 
-    Also usable as an rsync transport: rsync -avz -e "klangk exec" src/ ws:/dest/
+    Also usable as an rsync transport: rsync -avz -e "klangkc exec" src/ ws:/dest/
     """
     cfg = _cfg()
     _require_auth()
@@ -1008,20 +1008,20 @@ def sync(
 
     Examples:
 
-        klangk sync ~/project my-workspace:/work/project
+        klangkc sync ~/project my-workspace:/work/project
 
-        klangk sync my-workspace:/work/output ~/output
+        klangkc sync my-workspace:/work/output ~/output
 
-        klangk sync ~/src ws:/work/src --delete --exclude .git
+        klangkc sync ~/src ws:/work/src --delete --exclude .git
     """
     import shutil
     import subprocess
 
     _require_auth()
 
-    klangk_bin = shutil.which("klangk")
-    if not klangk_bin:  # pragma: no cover
-        _err.print("[red]Cannot find klangk in PATH[/red]")
+    klangkc_bin = shutil.which("klangkc")
+    if not klangkc_bin:  # pragma: no cover
+        _err.print("[red]Cannot find klangkc in PATH[/red]")
         raise typer.Exit(code=1)
 
     rsync_bin = shutil.which("rsync")
@@ -1034,7 +1034,7 @@ def sync(
         "-avz",
         "--blocking-io",
         "-e",
-        f"{klangk_bin} exec",
+        f"{klangkc_bin} exec",
         *ctx.args,
         src,
         dest,

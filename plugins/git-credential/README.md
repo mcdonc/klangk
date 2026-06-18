@@ -28,7 +28,7 @@ Git invokes the helper with one of three operations:
 - **`erase`** — git reports that credentials were rejected. The helper
   forwards to the bridge so the browser plugin can clear its cache.
 
-If no browser is connected (e.g. `klangk shell` without a browser),
+If no browser is connected (e.g. `klangkc shell` without a browser),
 the helper exits non-zero and git falls through to its next configured
 credential helper or prompts interactively.
 

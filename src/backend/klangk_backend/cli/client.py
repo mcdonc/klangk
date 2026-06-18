@@ -177,7 +177,7 @@ class KlangkClient:
     def _check_auth(self, resp: httpx.Response) -> None:
         """Raise AuthError if the server returned 401."""
         if resp.status_code == 401:
-            raise AuthError("Session expired — run `klangk login`")
+            raise AuthError("Session expired — run `klangkc login`")
 
     def list_workspaces(self) -> list[Workspace]:
         resp = self.get("/workspaces")
@@ -770,7 +770,7 @@ async def _run_shell(
             if not stop_event.is_set():
                 if exc.code in (4001, 4002):
                     stdout.write(
-                        "\r\nSession expired. Run `klangk login` to"
+                        "\r\nSession expired. Run `klangkc login` to"
                         " re-authenticate.\r\n"
                     )
                 else:
@@ -869,7 +869,7 @@ async def _ws_exec(
                 if data.get("type") == "exec_output":
                     raw = base64.b64decode(data["data"])
                     # Offload: when the downstream consumer (e.g. rsync over
-                    # `klangk exec`) is slow, the stdout pipe fills and this
+                    # `klangkc exec`) is slow, the stdout pipe fills and this
                     # write blocks. On the event loop that would also stall
                     # stdin_forward and the heartbeat — a sync deadlock.
                     await loop.run_in_executor(None, os.write, 1, raw)

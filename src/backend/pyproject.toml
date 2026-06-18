@@ -33,7 +33,7 @@ addopts = "--capture=no --cov=klangk_backend --cov-report=term-missing --no-cov-
 line-length = 79
 
 [project.scripts]
-klangk = "klangk_backend.cli.main:main"
+klangkc = "klangk_backend.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["klangk_backend"]
