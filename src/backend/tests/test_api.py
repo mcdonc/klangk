@@ -2843,6 +2843,17 @@ class TestAdminEndpoints:
         )
         assert resp.status_code == 404
 
+    async def test_delete_agent_user_rejected(self, client, admin_user, db):
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        headers = await self._admin_headers(client)
+        resp = await client.delete(
+            f"/admin/users/{model.AGENT_USER_ID}", headers=headers
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+
     async def test_delete_user_cascades_workspaces(
         self, client, admin_user, user
     ):

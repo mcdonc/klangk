@@ -37,11 +37,14 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   void _resolvePermissions() {
     final auth = context.read<AuthService>();
-    _canUsers = auth.hasPermission('/admin', '*') ||
+    _canUsers =
+        auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/users', 'view');
-    _canGroups = auth.hasPermission('/admin', '*') ||
+    _canGroups =
+        auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/groups', 'view');
-    _canInvitations = auth.hasPermission('/admin', '*') ||
+    _canInvitations =
+        auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/invitations', 'view');
   }
 
@@ -129,18 +132,21 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
             const SizedBox(height: 8),
             TextField(
               controller: descCtrl,
-              decoration:
-                  const InputDecoration(labelText: 'Description (optional)'),
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Create')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Create'),
+          ),
         ],
       ),
     );
@@ -167,17 +173,20 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Group'),
-        content:
-            Text('Delete group "$groupName"? All ACL entries for this group '
-                'will be removed.'),
+        content: Text(
+          'Delete group "$groupName"? All ACL entries for this group '
+          'will be removed.',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: FilledButton.styleFrom(backgroundColor: KColors.accentRed),
-              child: const Text('Delete')),
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: KColors.accentRed),
+            child: const Text('Delete'),
+          ),
         ],
       ),
     );
@@ -202,9 +211,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (!mounted) return;
     if (membersResp.statusCode != 200 || usersResp.statusCode != 200) return;
 
-    var members = List<Map<String, dynamic>>.from(
-      jsonDecode(membersResp.body),
-    );
+    var members = List<Map<String, dynamic>>.from(jsonDecode(membersResp.body));
     final allUsers = List<Map<String, dynamic>>.from(
       jsonDecode(usersResp.body),
     );
@@ -214,8 +221,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final memberIds = members.map((m) => m['id']).toSet();
-          final nonMembers =
-              allUsers.where((u) => !memberIds.contains(u['id'])).toList();
+          final nonMembers = allUsers
+              .where((u) => !memberIds.contains(u['id']))
+              .toList();
 
           return AlertDialog(
             title: Text('Members of "$groupName"'),
@@ -242,8 +250,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                           body: jsonEncode({'user_id': userId}),
                         );
                         if (resp.statusCode == 200) {
-                          final r = await auth
-                              .authGet('/admin/groups/$groupId/members');
+                          final r = await auth.authGet(
+                            '/admin/groups/$groupId/members',
+                          );
                           if (r.statusCode == 200) {
                             setDialogState(() {
                               members = List<Map<String, dynamic>>.from(
@@ -258,8 +267,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                   Expanded(
                     child: members.isEmpty
                         ? const Center(
-                            child: Text('No members',
-                                style: TextStyle(color: KColors.textSecondary)))
+                            child: Text(
+                              'No members',
+                              style: TextStyle(color: KColors.textSecondary),
+                            ),
+                          )
                         : ListView.builder(
                             itemCount: members.length,
                             itemBuilder: (ctx, i) {
@@ -275,8 +287,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                                 ),
                                 title: Text(member['email'] as String),
                                 trailing: IconButton(
-                                  icon: const Icon(Icons.remove_circle_outline,
-                                      color: KColors.accentRed),
+                                  icon: const Icon(
+                                    Icons.remove_circle_outline,
+                                    color: KColors.accentRed,
+                                  ),
                                   tooltip: 'Remove from group',
                                   onPressed: () async {
                                     final resp = await auth.authDelete(
@@ -347,8 +361,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               children: [
                 if (name != 'admin')
                   IconButton(
-                    icon: const Icon(Icons.delete_outline,
-                        color: KColors.accentRed),
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: KColors.accentRed,
+                    ),
                     tooltip: 'Delete group',
                     onPressed: () => _deleteGroup(group['id'], name),
                   ),
@@ -380,16 +396,17 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (resp.statusCode == 200) {
       _loadInvitations();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Invitation sent to $email')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Invitation sent to $email')));
       }
     } else {
       if (mounted) {
         final error = jsonDecode(resp.body);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(error['detail'] ?? 'Failed to send invitation')),
+            content: Text(error['detail'] ?? 'Failed to send invitation'),
+          ),
         );
       }
     }
@@ -410,8 +427,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(
-                backgroundColor: KColors.accentRed,
-                foregroundColor: Colors.white),
+              backgroundColor: KColors.accentRed,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Revoke'),
           ),
         ],
@@ -428,7 +446,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         final error = jsonDecode(resp.body);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(error['detail'] ?? 'Failed to revoke invitation')),
+            content: Text(error['detail'] ?? 'Failed to revoke invitation'),
+          ),
         );
       }
     }
@@ -439,14 +458,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final resp = await auth.authPost('/admin/invitations/$invitationId/resend');
     if (mounted) {
       if (resp.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Invitation resent to $email')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Invitation resent to $email')));
       } else {
         final error = jsonDecode(resp.body);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(error['detail'] ?? 'Failed to resend invitation')),
+            content: Text(error['detail'] ?? 'Failed to resend invitation'),
+          ),
         );
       }
     }
@@ -460,10 +480,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (result == null) return;
 
     final auth = context.read<AuthService>();
-    final resp = await auth.authPost(
-      '/admin/users',
-      body: jsonEncode(result),
-    );
+    final resp = await auth.authPost('/admin/users', body: jsonEncode(result));
     if (resp.statusCode == 200) {
       _loadUsers();
     } else {
@@ -493,8 +510,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(
-                backgroundColor: KColors.accentRed,
-                foregroundColor: Colors.white),
+              backgroundColor: KColors.accentRed,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Delete'),
           ),
         ],
@@ -519,9 +537,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Future<void> _editUser(Map<String, dynamic> user) async {
     final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (ctx) => _EditUserDialog(
-        currentEmail: user['email'] as String,
-      ),
+      builder: (ctx) => _EditUserDialog(currentEmail: user['email'] as String),
     );
     if (result == null) return;
 
@@ -557,13 +573,17 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         final groupNames = groups.map((g) => g['name'] as String).toList();
         final isAdmin = groupNames.contains('admin');
         final isSelf = user['id'] == context.read<AuthService>().userId;
+        final isSystem = user['provider'] == 'system';
         final email = user['email'] as String? ?? '';
         final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
           child: ListTile(
-            leading:
-                _UserAvatar(initial: initial, email: email, isAdmin: isAdmin),
+            leading: _UserAvatar(
+              initial: initial,
+              email: email,
+              isAdmin: isAdmin,
+            ),
             title: Text(email),
             subtitle: Text(
               groupNames.isEmpty
@@ -575,15 +595,14 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (!isSelf) ...[
+                if (!isSelf && !isSystem) ...[
                   IconButton(
-                    icon: const Icon(Icons.delete_outline,
-                        color: KColors.accentRed),
-                    tooltip: 'Delete user',
-                    onPressed: () => _deleteUser(
-                      user['id'],
-                      user['email'],
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: KColors.accentRed,
                     ),
+                    tooltip: 'Delete user',
+                    onPressed: () => _deleteUser(user['id'], user['email']),
                   ),
                 ],
               ],
@@ -618,11 +637,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               backgroundColor: isPending
                   ? KColors.accentAmber
                   : status == 'accepted'
-                      ? KColors.accentGreen
-                      : KColors.textMuted,
-              child: Text(initial,
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w600)),
+                  ? KColors.accentGreen
+                  : KColors.textMuted,
+              child: Text(
+                initial,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
             title: Text(email),
             subtitle: Text(
@@ -639,8 +662,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                         onPressed: () => _resendInvitation(inv['id'], email),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.cancel_outlined,
-                            color: KColors.accentRed),
+                        icon: const Icon(
+                          Icons.cancel_outlined,
+                          color: KColors.accentRed,
+                        ),
                         tooltip: 'Revoke invitation',
                         onPressed: () => _revokeInvitation(inv['id'], email),
                       ),
@@ -665,53 +690,62 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   @override
   Widget build(BuildContext context) {
-    final pendingCount =
-        _invitations.where((i) => i['status'] == 'pending').length;
+    final pendingCount = _invitations
+        .where((i) => i['status'] == 'pending')
+        .length;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
     final tabTypes = _tabTypes;
 
     if (_canUsers) {
       final idx = tabs.length;
-      tabs.add(SkeuoTab(
-        label: 'Users',
-        icon: Icons.people,
-        isSelected: _selectedIndex == idx,
-        onTap: () => setState(() => _selectedIndex = idx),
-      ));
+      tabs.add(
+        SkeuoTab(
+          label: 'Users',
+          icon: Icons.people,
+          isSelected: _selectedIndex == idx,
+          onTap: () => setState(() => _selectedIndex = idx),
+        ),
+      );
       views.add(_buildUsersTab());
     }
     if (_canGroups) {
       final idx = tabs.length;
-      tabs.add(SkeuoTab(
-        label: 'Groups',
-        icon: Icons.group,
-        isSelected: _selectedIndex == idx,
-        onTap: () => setState(() => _selectedIndex = idx),
-      ));
+      tabs.add(
+        SkeuoTab(
+          label: 'Groups',
+          icon: Icons.group,
+          isSelected: _selectedIndex == idx,
+          onTap: () => setState(() => _selectedIndex = idx),
+        ),
+      );
       views.add(_buildGroupsTab());
     }
     if (_canInvitations) {
       final idx = tabs.length;
-      tabs.add(SkeuoTab(
-        label: 'Invitations',
-        icon: Icons.mail_outline,
-        isSelected: _selectedIndex == idx,
-        badge: pendingCount > 0 ? pendingCount : null,
-        onTap: () => setState(() => _selectedIndex = idx),
-      ));
+      tabs.add(
+        SkeuoTab(
+          label: 'Invitations',
+          icon: Icons.mail_outline,
+          isSelected: _selectedIndex == idx,
+          badge: pendingCount > 0 ? pendingCount : null,
+          onTap: () => setState(() => _selectedIndex = idx),
+        ),
+      );
       views.add(_buildInvitationsTab());
     }
 
     // ACL tab — always visible for admins
     if (tabTypes.isNotEmpty) {
       final idx = tabs.length;
-      tabs.add(SkeuoTab(
-        label: 'Access Control',
-        icon: Icons.security,
-        isSelected: _selectedIndex == idx,
-        onTap: () => setState(() => _selectedIndex = idx),
-      ));
+      tabs.add(
+        SkeuoTab(
+          label: 'Access Control',
+          icon: Icons.security,
+          isSelected: _selectedIndex == idx,
+          onTap: () => setState(() => _selectedIndex = idx),
+        ),
+      );
       views.add(const _AclBrowserTab());
     }
 
@@ -749,9 +783,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     return Scaffold(
       appBar: AppBar(
         title: const AppBarTitle(title: 'Admin'),
-        actions: const [
-          AppBarActions(),
-        ],
+        actions: const [AppBarActions()],
       ),
       floatingActionButton: fab,
       body: Column(
@@ -843,10 +875,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
             final email = _emailController.text.trim();
             final password = _passwordController.text;
             if (email.isEmpty || password.isEmpty) return;
-            Navigator.pop(context, {
-              'email': email,
-              'password': password,
-            });
+            Navigator.pop(context, {'email': email, 'password': password});
           },
           child: const Text('Add'),
         ),
@@ -1100,9 +1129,7 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
           width: 220,
           child: Container(
             decoration: const BoxDecoration(
-              border: Border(
-                right: BorderSide(color: KColors.borderDefault),
-              ),
+              border: Border(right: BorderSide(color: KColors.borderDefault)),
             ),
             child: ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1124,11 +1151,13 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
                     ),
                     child: Row(
                       children: [
-                        Icon(icon,
-                            size: 16,
-                            color: isSelected
-                                ? KColors.accentGreen
-                                : KColors.textSecondary),
+                        Icon(
+                          icon,
+                          size: 16,
+                          color: isSelected
+                              ? KColors.accentGreen
+                              : KColors.textSecondary,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(

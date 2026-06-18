@@ -958,7 +958,8 @@ async def list_users() -> list[dict]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT id, email, verified, created_at FROM users ORDER BY created_at"
+            "SELECT id, email, verified, provider, created_at"
+            " FROM users ORDER BY created_at"
         )
         users = []
         for row in await cursor.fetchall():
@@ -977,6 +978,7 @@ async def list_users() -> list[dict]:
                     "id": row["id"],
                     "email": row["email"],
                     "verified": bool(row["verified"]),
+                    "provider": row["provider"],
                     "created_at": row["created_at"],
                     "groups": groups,
                 }
@@ -987,7 +989,12 @@ async def list_users() -> list[dict]:
 
 
 async def delete_user(user_id: str) -> bool:
-    """Delete a user. Returns True if deleted, False if not found."""
+    """Delete a user. Returns True if deleted, False if not found.
+
+    Raises ``ValueError`` if the target is the system agent user.
+    """
+    if user_id == AGENT_USER_ID:
+        raise ValueError("Cannot delete the system agent user")
     db = await get_db()
     try:
         cursor = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
