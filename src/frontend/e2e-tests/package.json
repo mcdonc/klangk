@@ -9,8 +9,10 @@
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@types/adm-zip": "^0.5.8",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/ws": "^8.18.1",
     "adm-zip": "^0.5.17",
+    "jsonwebtoken": "^9.0.3",
     "ws": "^8.18.2"
   }
 }
