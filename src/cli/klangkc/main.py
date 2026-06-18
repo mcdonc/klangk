@@ -27,7 +27,7 @@ from .client import (
     _ws_shell,
 )
 from .config import CLIConfig
-from ..container import validate_mount_spec
+from .mount import validate_mount_spec
 
 app = typer.Typer(
     name="klangkc",

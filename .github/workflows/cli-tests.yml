@@ -1,0 +1,44 @@
+name: CLI Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/**]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cli:
+              - 'src/cli/**'
+              - '.github/workflows/cli-tests.yml'
+
+      - uses: actions/setup-python@v6
+        if: steps.filter.outputs.cli == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.filter.outputs.cli == 'true'
+        run: pip install -e src/cli/
+
+      - name: Run tests
+        if: steps.filter.outputs.cli == 'true'
+        run: python -m pytest src/cli/tests -v -n auto
+
+      - name: Skip notice
+        if: steps.filter.outputs.cli != 'true'
+        run: echo "No CLI changes — skipping tests"
