@@ -4,6 +4,10 @@ Every workspace runs inside a container built from
 `node:26-slim` (Debian). The image ships a curated set of packages
 so common development tasks work out of the box.
 
+> **Note:** This page documents the default `klangk-workspace` image.
+> If your deployment uses a custom container image, the available
+> packages may differ.
+
 ## Language Runtimes
 
 | Runtime        | Source                      | Notes                          |
