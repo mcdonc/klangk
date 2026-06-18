@@ -8,16 +8,16 @@ import httpx
 import pytest
 import typer
 
-from klangk_backend.cli.client import WorkspaceNotFoundError
-from klangk_backend.cli.config import CLIConfig
-from klangk_backend.cli.client import Workspace
+from klangkc.client import WorkspaceNotFoundError
+from klangkc.config import CLIConfig
+from klangkc.client import Workspace
 
 
 @pytest.fixture
 def logged_in_cfg(tmp_path, monkeypatch):
     """Config with a valid token and email pre-loaded."""
     config_path = tmp_path / "cli.toml"
-    monkeypatch.setattr("klangk_backend.cli.config._CONFIG_PATH", config_path)
+    monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
     cfg = CLIConfig()
     cfg.server.url = "http://localhost:8995"
     cfg.auth.token = "test-token"
@@ -30,7 +30,7 @@ def logged_in_cfg(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def reset_main_state():
     """Reset module-level CLI state before and after each test."""
-    import klangk_backend.cli.main as _main
+    import klangkc.main as _main
 
     orig = _main._cfg_cache
     _main._cfg_cache = None
@@ -50,23 +50,19 @@ def reset_env():
 class TestMainCLI:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config", lambda _: None
-        )
+        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: None)
 
     def test_login_cmd_stores_token(self, tmp_path, monkeypatch):
-        from klangk_backend.cli.main import login_cmd
+        from klangkc.main import login_cmd
 
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "new-token"}
         with patch("httpx.post", return_value=mock_resp):
             with patch(
-                "klangk_backend.cli.auth.Prompt.ask",
+                "klangkc.auth.Prompt.ask",
                 side_effect=["u@test.com", "pw"],
             ):
                 login_cmd(
@@ -79,12 +75,10 @@ class TestMainCLI:
         assert cfg.auth.email == "u@test.com"
 
     def test_login_cmd_with_password_file(self, tmp_path, monkeypatch):
-        from klangk_backend.cli.main import login_cmd
+        from klangkc.main import login_cmd
 
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         pw_file = tmp_path / "pw.txt"
         pw_file.write_text("file-pw\n")
         mock_resp = MagicMock()
@@ -100,12 +94,10 @@ class TestMainCLI:
         assert cfg.auth.token == "file-token"
 
     def test_login_cmd_with_password_stdin(self, tmp_path, monkeypatch):
-        from klangk_backend.cli.main import login_cmd
+        from klangkc.main import login_cmd
 
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "stdin-token"}
@@ -124,12 +116,10 @@ class TestMainCLI:
         self, tmp_path, monkeypatch
     ):
         import typer
-        from klangk_backend.cli import main
+        from klangkc import main
 
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.auth.token = None
         cfg.save()
@@ -138,12 +128,12 @@ class TestMainCLI:
             main._require_auth()
 
     def test_require_auth_passes_when_logged_in(self, logged_in_cfg):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         main._require_auth()  # Should not raise
 
     def test_list_workspaces_empty(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         client = MagicMock()
@@ -156,7 +146,7 @@ class TestMainCLI:
         assert any("No workspaces" in str(c) for c in mock_echo.call_args_list)
 
     def test_list_shared_workspaces_plain(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         shared_ws = Workspace(
             id="sw1" + "0" * 52,
@@ -180,7 +170,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangk_backend.cli import main
+        from klangkc import main
 
         shared_ws = Workspace(
             id="sw1" + "0" * 52,
@@ -205,7 +195,7 @@ class TestMainCLI:
         assert "owner@example.com" in output
 
     def test_list_workspaces_plain(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -225,7 +215,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -252,7 +242,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="new-id", name="new-ws", created_at="2025-01-01T00:00:00Z"
@@ -273,7 +263,7 @@ class TestMainCLI:
     def test_create_workspace_error(self, logged_in_cfg, monkeypatch):
         import typer
 
-        from klangk_backend.cli import main
+        from klangkc import main
 
         mock_response = MagicMock()
         mock_response.status_code = 400
@@ -289,7 +279,7 @@ class TestMainCLI:
             main.create("dup")
 
     def test_delete_workspace(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         monkeypatch.setattr(main, "_client", lambda: client)
@@ -301,8 +291,8 @@ class TestMainCLI:
     def test_delete_workspace_not_found(self, logged_in_cfg, monkeypatch):
         import typer
 
-        from klangk_backend.cli.client import WorkspaceNotFoundError
-        from klangk_backend.cli import main
+        from klangkc.client import WorkspaceNotFoundError
+        from klangkc import main
 
         client = MagicMock()
         client.delete_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -313,12 +303,10 @@ class TestMainCLI:
 
     def test_shell_requires_auth(self, tmp_path, monkeypatch):
         import typer
-        from klangk_backend.cli import main
+        from klangkc import main
 
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.auth.token = None
         cfg.save()
@@ -327,12 +315,10 @@ class TestMainCLI:
             main.shell(None)
 
     def test_status_not_logged_in(self, tmp_path, monkeypatch, capsys):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://custom:1234"
         cfg.auth.token = None
@@ -344,7 +330,7 @@ class TestMainCLI:
         assert "not_logged_in" in output
 
     def test_status_logged_in(self, logged_in_cfg, capsys):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         main.status(plain=True)
         output = capsys.readouterr().out
@@ -356,7 +342,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangk_backend.cli import main
+        from klangkc import main
 
         buf = StringIO()
         with patch.object(
@@ -374,12 +360,10 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangk_backend.cli import main
+        from klangkc import main
 
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.auth.token = None
         cfg.save()
@@ -395,7 +379,7 @@ class TestMainCLI:
         assert "not logged in" in output
 
     def test_status_plain_logged_in(self, logged_in_cfg, capsys):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         main.status(plain=True)
         output = capsys.readouterr().out
@@ -404,12 +388,10 @@ class TestMainCLI:
         assert "status=logged_in" in output
 
     def test_status_plain_not_logged_in(self, tmp_path, monkeypatch, capsys):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://custom:1234"
         cfg.auth.token = None
@@ -422,7 +404,7 @@ class TestMainCLI:
         assert "user=" not in output
 
     def test_logout_command(self, logged_in_cfg):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         with patch("httpx.post", return_value=MagicMock(status_code=200)):
             main.logout()
@@ -430,7 +412,7 @@ class TestMainCLI:
         assert cfg.auth.token is None
 
     def test_logout_network_error_does_not_propagate(self, logged_in_cfg):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         with patch("httpx.post", side_effect=httpx.ConnectError("no route")):
             main.logout()  # must not raise
@@ -438,7 +420,7 @@ class TestMainCLI:
     def test_shell_with_single_workspace_auto_selects(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -462,7 +444,7 @@ class TestMainCLI:
 
     def test_shell_no_workspaces_exits(self, logged_in_cfg, monkeypatch):
         import typer
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.list_workspaces.return_value = []
@@ -474,7 +456,7 @@ class TestMainCLI:
     def test_shell_multiple_workspaces_prompts(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws1 = Workspace(
             id="id1" + "0" * 52, name="ws-a", created_at="2025-01-01T00:00:00Z"
@@ -495,7 +477,7 @@ class TestMainCLI:
                         main.shell(None)
 
     def test_shell_by_name(self, logged_in_cfg, monkeypatch, reset_env):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="target" + "0" * 52,
@@ -519,7 +501,7 @@ class TestMainCLI:
     def test_shell_with_terminal_arg(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="target" + "0" * 52,
@@ -543,7 +525,7 @@ class TestMainCLI:
         assert captured_kwargs["window"] == "build"
 
     def test_terminals_command(self, logged_in_cfg, monkeypatch, reset_env):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -601,7 +583,7 @@ class TestMainCLI:
             main.terminals("my-ws")
 
     def test_share_command(self, logged_in_cfg, monkeypatch, reset_env):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -667,7 +649,7 @@ class TestMainCLI:
         assert any(s.get("cmd") == "share_window" for s in sent)
 
     def test_unshare_command(self, logged_in_cfg, monkeypatch, reset_env):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -723,7 +705,7 @@ class TestMainCLI:
     def test_share_terminal_not_found(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -764,7 +746,7 @@ class TestMainCLI:
                 main.share("my-ws", "nonexistent")
 
     def test_terminals_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -776,7 +758,7 @@ class TestMainCLI:
     def test_terminals_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -807,7 +789,7 @@ class TestMainCLI:
     def test_share_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -838,7 +820,7 @@ class TestMainCLI:
     def test_unshare_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -869,7 +851,7 @@ class TestMainCLI:
     def test_unshare_terminal_not_found(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -910,7 +892,7 @@ class TestMainCLI:
                 main.unshare("my-ws", "nonexistent")
 
     def test_edit_with_flags(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -940,7 +922,7 @@ class TestMainCLI:
         assert "image" not in body  # not provided, not sent
 
     def test_edit_clear_command(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -965,7 +947,7 @@ class TestMainCLI:
         assert call_args[1]["json"]["default_command"] is None
 
     def test_edit_interactive(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -994,7 +976,7 @@ class TestMainCLI:
         assert body["default_command"] == "pi"
 
     def test_edit_interactive_change_all(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1025,7 +1007,7 @@ class TestMainCLI:
         assert body["default_command"] == "pi"
 
     def test_edit_interactive_add_mount(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1053,7 +1035,7 @@ class TestMainCLI:
         assert body["mounts"] == ["/host:/container"]
 
     def test_edit_interactive_remove_mount(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1083,7 +1065,7 @@ class TestMainCLI:
     def test_edit_interactive_add_and_remove_mount(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1114,7 +1096,7 @@ class TestMainCLI:
     def test_edit_interactive_invalid_remove_number(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1145,7 +1127,7 @@ class TestMainCLI:
     def test_edit_interactive_remove_all_mounts(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1175,7 +1157,7 @@ class TestMainCLI:
     def test_edit_interactive_invalid_mount_rejected(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1204,7 +1186,7 @@ class TestMainCLI:
         assert body["mounts"] == ["/a:/b"]
 
     def test_create_invalid_mount_flag(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_client", lambda: MagicMock())
 
@@ -1217,7 +1199,7 @@ class TestMainCLI:
         assert result.exit_code == 1
 
     def test_edit_invalid_mount_flag(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1235,7 +1217,7 @@ class TestMainCLI:
         assert result.exit_code == 1
 
     def test_edit_with_image_flag(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1259,7 +1241,7 @@ class TestMainCLI:
         assert body["image"] == "klangk-custom"
 
     def test_edit_with_mount_flag(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1294,7 +1276,7 @@ class TestMainCLI:
         ]
 
     def test_edit_interactive_no_changes(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1317,7 +1299,7 @@ class TestMainCLI:
         client.put.assert_not_called()
 
     def test_edit_interactive_add_env(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1346,7 +1328,7 @@ class TestMainCLI:
     def test_edit_interactive_invalid_env_rejected(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1374,7 +1356,7 @@ class TestMainCLI:
         assert body["env"] == {"A": "1"}
 
     def test_create_with_env_flag(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
@@ -1395,7 +1377,7 @@ class TestMainCLI:
         )
 
     def test_create_with_invalid_env_flag(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_client", lambda: MagicMock())
 
@@ -1408,7 +1390,7 @@ class TestMainCLI:
         assert result.exit_code == 1
 
     def test_edit_interactive_remove_env(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1438,7 +1420,7 @@ class TestMainCLI:
     def test_edit_interactive_invalid_env_remove_number(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1465,7 +1447,7 @@ class TestMainCLI:
         client.put.assert_not_called()
 
     def test_edit_with_env_flag(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1487,7 +1469,7 @@ class TestMainCLI:
         assert body["env"] == {"A": "1"}
 
     def test_dup_workspace(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1510,7 +1492,7 @@ class TestMainCLI:
             assert "copy" in result.stdout
 
     def test_dup_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -1523,7 +1505,7 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_dup_workspace_conflict(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1542,7 +1524,7 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_dup_workspace_404(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1561,7 +1543,7 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_edit_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -1576,7 +1558,7 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_edit_404_from_server(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1597,8 +1579,8 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_exec_runs_command(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
-        from klangk_backend.cli.client import Workspace
+        from klangkc import main
+        from klangkc.client import Workspace
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1620,7 +1602,7 @@ class TestMainCLI:
                 assert exc_info.value.exit_code == 0
 
     def test_exec_no_command(self, logged_in_cfg):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ctx = MagicMock()
         ctx.args = []
@@ -1629,8 +1611,8 @@ class TestMainCLI:
         assert exc_info.value.exit_code == 1
 
     def test_exec_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
-        from klangk_backend.cli.client import WorkspaceNotFoundError
+        from klangkc import main
+        from klangkc.client import WorkspaceNotFoundError
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -1643,7 +1625,7 @@ class TestMainCLI:
         assert exc_info.value.exit_code == 1
 
     def test_sync_runs_rsync(self, logged_in_cfg):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ctx = MagicMock()
         ctx.args = []
@@ -1662,7 +1644,7 @@ class TestMainCLI:
         assert "klangkc exec" in " ".join(cmd)
 
     def test_sync_no_rsync(self, logged_in_cfg):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         def which_no_rsync(name):
             return "/usr/bin/klangkc" if name == "klangkc" else None
@@ -1675,7 +1657,7 @@ class TestMainCLI:
         assert exc_info.value.exit_code == 1
 
     def test_sync_passes_extra_args(self, logged_in_cfg):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ctx = MagicMock()
         ctx.args = ["--delete", "--exclude=.git"]
@@ -1690,7 +1672,7 @@ class TestMainCLI:
         assert "--exclude=.git" in cmd
 
     def test_sync_rsync_failure(self, logged_in_cfg):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         ctx = MagicMock()
         ctx.args = []
@@ -1705,7 +1687,7 @@ class TestMainCLI:
 
 class TestVolumes:
     def test_volumes_ls(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -1726,7 +1708,7 @@ class TestVolumes:
         assert "vol-1" in result.stdout
 
     def test_volumes_ls_empty(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -1743,7 +1725,7 @@ class TestVolumes:
         assert "No volumes" in result.stdout
 
     def test_volumes_ls_plain(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -1762,7 +1744,7 @@ class TestVolumes:
         assert "vol-1" in result.stdout
 
     def test_volumes_create(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(status_code=200)
@@ -1776,7 +1758,7 @@ class TestVolumes:
         assert "Created" in result.stdout
 
     def test_volumes_create_duplicate(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(status_code=409)
@@ -1789,7 +1771,7 @@ class TestVolumes:
         assert result.exit_code == 1
 
     def test_volumes_rm(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=200)
@@ -1803,7 +1785,7 @@ class TestVolumes:
         assert "Deleted" in result.stdout
 
     def test_volumes_rm_not_found(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=404)
@@ -1816,7 +1798,7 @@ class TestVolumes:
         assert result.exit_code == 1
 
     def test_volumes_rm_in_use(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=409)
@@ -1829,7 +1811,7 @@ class TestVolumes:
         assert result.exit_code == 1
 
     def test_volumes_rm_permission_denied(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=403)
@@ -1844,7 +1826,7 @@ class TestVolumes:
 
 class TestExportImportCLI:
     def test_export_success(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(
@@ -1870,7 +1852,7 @@ class TestExportImportCLI:
 
     def test_export_default_filename(self, logged_in_cfg, monkeypatch):
         from pathlib import Path
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(id="ws-exp-id", name="test-ws", created_at="2025-01-01")
@@ -1894,7 +1876,7 @@ class TestExportImportCLI:
         self, logged_in_cfg, monkeypatch, tmp_path, monkeypatch_cwd=None
     ):
         from pathlib import Path
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(id="ws-ow-id", name="ow-ws", created_at="2025-01-01")
@@ -1917,7 +1899,7 @@ class TestExportImportCLI:
         assert args[0][1] == Path("ow-ws-2.tar.gz")
 
     def test_export_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         client = MagicMock()
@@ -1928,7 +1910,7 @@ class TestExportImportCLI:
             main.export_workspace(name="nope", output=None)
 
     def test_export_http_error(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(id="ws-err-id", name="err-ws", created_at="2025-01-01")
@@ -1946,7 +1928,7 @@ class TestExportImportCLI:
             main.export_workspace(name="err-ws", output=tmp_path / "o.tar.gz")
 
     def test_import_success(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(
@@ -1972,7 +1954,7 @@ class TestExportImportCLI:
         assert args[1]["name"] == "imported"
 
     def test_import_file_not_found(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
 
@@ -1982,7 +1964,7 @@ class TestExportImportCLI:
             )
 
     def test_import_http_error(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         resp = MagicMock()
@@ -2002,7 +1984,7 @@ class TestExportImportCLI:
 
 class TestInviteCLI:
     def test_invite_success(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(
@@ -2023,7 +2005,7 @@ class TestInviteCLI:
         assert "a@b.com" in result.stdout
 
     def test_invite_error(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(
@@ -2040,7 +2022,7 @@ class TestInviteCLI:
         assert result.exit_code == 1
 
     def test_invite_forbidden(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(
@@ -2057,7 +2039,7 @@ class TestInviteCLI:
         assert result.exit_code == 1
 
     def test_invitations_list(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -2081,7 +2063,7 @@ class TestInviteCLI:
         assert "a@b.com" in result.stdout
 
     def test_invitations_empty(self, logged_in_cfg, monkeypatch):
-        from klangk_backend.cli import main
+        from klangkc import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(

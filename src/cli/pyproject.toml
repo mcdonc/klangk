@@ -1,0 +1,33 @@
+[project]
+name = "klangkc"
+version = "0.1.0"
+description = "Klangk CLI client"
+requires-python = ">=3.12"
+dependencies = [
+    "typer[all]>=0.12.0",
+    "tomli-w>=1.0.0",
+    "httpx>=0.28.0",
+    "websockets>=14.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-xdist>=3.0.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--capture=no --cov=klangkc --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100"
+
+[tool.ruff]
+line-length = 79
+
+[project.scripts]
+klangkc = "klangkc.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["klangkc"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

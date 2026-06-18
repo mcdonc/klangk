@@ -29,7 +29,7 @@ in
       enable = true;
       sync.enable = true;
     };
-    directory = "./src/backend";
+    directory = ".";
   };
 
   packages =
@@ -199,7 +199,20 @@ in
     exec python -m pytest src/backend/tests -v -n auto "$@"
   '';
 
-  # Backend E2E tests: start real server, run klangk commands
+  # CLI unit tests
+  scripts.test-cli.exec = ''
+    cd $DEVENV_ROOT
+    exec python -m pytest src/cli/tests -v -n auto "$@"
+  '';
+
+  # CLI E2E tests: start real server, run klangkc commands
+  scripts.test-cli-e2e.exec = ''
+    cd $DEVENV_ROOT
+    exec python -m pytest src/cli/e2e-tests \
+      -v -p no:xdist --no-cov "$@"
+  '';
+
+  # Backend E2E tests: start real server, run backend E2E tests
   scripts.test-backend-e2e.exec = ''
     cd $DEVENV_ROOT
     exec python -m pytest src/backend/e2e-tests \

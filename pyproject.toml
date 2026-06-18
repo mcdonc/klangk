@@ -1,0 +1,2 @@
+[tool.uv.workspace]
+members = ["src/backend", "src/cli"]

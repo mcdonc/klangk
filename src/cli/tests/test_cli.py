@@ -12,8 +12,8 @@ import pytest
 import io
 from io import BytesIO
 
-from klangk_backend.cli.config import CLIConfig
-from klangk_backend.cli.client import (
+from klangkc.config import CLIConfig
+from klangkc.client import (
     AuthError,
     KlangkClient,
     Workspace,
@@ -28,7 +28,7 @@ from klangk_backend.cli.client import (
 class TestCLIConfig:
     def test_load_empty(self, monkeypatch):
         monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH",
+            "klangkc.config._CONFIG_PATH",
             Path("/nonexistent/config.toml"),
         )
         cfg = CLIConfig.load()
@@ -42,9 +42,7 @@ class TestCLIConfig:
             '[server]\nurl = "http://custom:9999"\n\n'
             '[auth]\ntoken = "abc123"\nemail = "test@example.com"\n'
         )
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.server.url == "http://custom:9999"
         assert cfg.auth.token == "abc123"
@@ -52,9 +50,7 @@ class TestCLIConfig:
 
     def test_save_roundtrip(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://saved:5678"
         cfg.auth.token = "token456"
@@ -67,9 +63,7 @@ class TestCLIConfig:
 
     def test_save_creates_parent_dirs(self, tmp_path, monkeypatch):
         config_path = tmp_path / "sub" / "dir" / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.save()
         assert config_path.exists()
@@ -77,9 +71,7 @@ class TestCLIConfig:
     def test_load_token_only(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
         config_path.write_text('[auth]\ntoken = "tok"\n')
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.auth.token == "tok"
         assert cfg.auth.email is None
@@ -91,24 +83,20 @@ class TestCLIConfig:
 class TestAuth:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config", lambda _: None
-        )
+        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: None)
 
     def test_login_success(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt123"}
         with patch("httpx.post", return_value=mock_resp):
             with patch(
-                "klangk_backend.cli.auth.Prompt.ask",
+                "klangkc.auth.Prompt.ask",
                 side_effect=["u@test.com", "pass123"],
             ):
-                from klangk_backend.cli import auth
+                from klangkc import auth
 
                 auth.login("http://localhost:8995")
         cfg = CLIConfig.load()
@@ -117,19 +105,17 @@ class TestAuth:
 
     def test_login_with_user_flag(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt456"}
         with patch("httpx.post", return_value=mock_resp):
             # Only one Prompt.ask call (password) since email is provided
             with patch(
-                "klangk_backend.cli.auth.Prompt.ask",
+                "klangkc.auth.Prompt.ask",
                 return_value="secret",
             ):
-                from klangk_backend.cli import auth
+                from klangkc import auth
 
                 auth.login("http://localhost:8995", email="cli@test.com")
         cfg = CLIConfig.load()
@@ -138,16 +124,14 @@ class TestAuth:
 
     def test_login_with_password_file(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         pw_file = tmp_path / "pw.txt"
         pw_file.write_text("file-secret\n")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt789"}
         with patch("httpx.post", return_value=mock_resp):
-            from klangk_backend.cli import auth
+            from klangkc import auth
 
             auth.login(
                 "http://localhost:8995",
@@ -160,9 +144,7 @@ class TestAuth:
 
     def test_login_reuses_valid_token(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         # Save a config with an existing token
         cfg = CLIConfig()
         cfg.server.url = "http://localhost:8995"
@@ -173,7 +155,7 @@ class TestAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         with patch("httpx.get", return_value=mock_resp):
-            from klangk_backend.cli import auth
+            from klangkc import auth
 
             auth.login("http://localhost:8995")
 
@@ -184,9 +166,7 @@ class TestAuth:
 
     def test_login_network_error_falls_through(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://localhost:8995"
         cfg.auth.token = "old-token"
@@ -200,10 +180,10 @@ class TestAuth:
         with patch("httpx.get", side_effect=httpx.ConnectError("unreachable")):
             with patch("httpx.post", return_value=post_resp):
                 with patch(
-                    "klangk_backend.cli.auth.Prompt.ask",
+                    "klangkc.auth.Prompt.ask",
                     side_effect=["new@test.com", "pw"],
                 ):
-                    from klangk_backend.cli import auth
+                    from klangkc import auth
 
                     auth.login("http://localhost:8995")
 
@@ -212,9 +192,7 @@ class TestAuth:
 
     def test_login_expired_token_prompts(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://localhost:8995"
         cfg.auth.token = "expired-token"
@@ -230,10 +208,10 @@ class TestAuth:
         with patch("httpx.get", return_value=get_resp):
             with patch("httpx.post", return_value=post_resp):
                 with patch(
-                    "klangk_backend.cli.auth.Prompt.ask",
+                    "klangkc.auth.Prompt.ask",
                     side_effect=["new@test.com", "pw"],
                 ):
-                    from klangk_backend.cli import auth
+                    from klangkc import auth
 
                     auth.login("http://localhost:8995")
 
@@ -243,18 +221,16 @@ class TestAuth:
 
     def test_login_failure(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 401
         mock_resp.json.return_value = {"detail": "Bad credentials"}
         with patch("httpx.post", return_value=mock_resp):
             with patch(
-                "klangk_backend.cli.auth.Prompt.ask",
+                "klangkc.auth.Prompt.ask",
                 side_effect=["u@test.com", "wrong"],
             ):
-                from klangk_backend.cli import auth
+                from klangkc import auth
 
                 with pytest.raises(SystemExit):
                     auth.login("http://localhost:8995")
@@ -262,13 +238,11 @@ class TestAuth:
     def test_logout_clears_token(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
         config_path.write_text('[auth]\ntoken = "tok"\nemail = "x@y.com"\n')
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         with patch("httpx.post", return_value=mock_resp):
-            from klangk_backend.cli import auth
+            from klangkc import auth
 
             auth.logout()
         cfg = CLIConfig.load()
@@ -277,20 +251,18 @@ class TestAuth:
 
     def test_logout_swallows_server_error(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.save()
         with patch("httpx.post", side_effect=Exception("no server")):
-            from klangk_backend.cli import auth
+            from klangkc import auth
 
             auth.logout()  # Should not raise
 
 
 class TestOIDCCLILogin:
     def test_fetch_config_success(self, monkeypatch):
-        from klangk_backend.cli.auth import _fetch_config
+        from klangkc.auth import _fetch_config
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -300,7 +272,7 @@ class TestOIDCCLILogin:
         assert result == {"auth_modes": "both"}
 
     def test_fetch_config_failure(self, monkeypatch):
-        from klangk_backend.cli.auth import _fetch_config
+        from klangkc.auth import _fetch_config
 
         with patch("httpx.get", side_effect=httpx.ConnectError("fail")):
             result = _fetch_config("http://localhost:8995")
@@ -308,14 +280,12 @@ class TestOIDCCLILogin:
 
     def test_oidc_single_provider(self, tmp_path, monkeypatch):
         """OIDC login with single provider goes straight to browser."""
-        from klangk_backend.cli import auth
+        from klangkc import auth
 
         config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config",
+            "klangkc.auth._fetch_config",
             lambda _: {
                 "oidc_providers": [{"id": "test", "display_name": "Test"}],
                 "auth_modes": "oidc",
@@ -328,14 +298,12 @@ class TestOIDCCLILogin:
 
     def test_oidc_multiple_providers_prompts(self, tmp_path, monkeypatch):
         """OIDC login with multiple providers prompts for selection."""
-        from klangk_backend.cli import auth
+        from klangkc import auth
 
         config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config",
+            "klangkc.auth._fetch_config",
             lambda _: {
                 "oidc_providers": [
                     {"id": "a", "display_name": "A"},
@@ -347,7 +315,7 @@ class TestOIDCCLILogin:
         with (
             patch.object(auth, "_oidc_browser_login") as mock_browser,
             patch(
-                "klangk_backend.cli.auth.Prompt.ask",
+                "klangkc.auth.Prompt.ask",
                 return_value="2",
             ),
         ):
@@ -359,14 +327,12 @@ class TestOIDCCLILogin:
         self, tmp_path, monkeypatch
     ):
         """Explicit email+password skips OIDC even in both mode."""
-        from klangk_backend.cli import auth
+        from klangkc import auth
 
         config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config",
+            "klangkc.auth._fetch_config",
             lambda _: {
                 "oidc_providers": [{"id": "test", "display_name": "Test"}],
                 "auth_modes": "both",
@@ -385,14 +351,12 @@ class TestOIDCCLILogin:
         assert cfg.auth.token == "jwt"
 
     def test_oidc_invalid_provider_choice(self, tmp_path, monkeypatch):
-        from klangk_backend.cli import auth
+        from klangkc import auth
 
         config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config",
+            "klangkc.auth._fetch_config",
             lambda _: {
                 "oidc_providers": [
                     {"id": "a", "display_name": "A"},
@@ -403,7 +367,7 @@ class TestOIDCCLILogin:
         )
         with (
             patch(
-                "klangk_backend.cli.auth.Prompt.ask",
+                "klangkc.auth.Prompt.ask",
                 return_value="bad",
             ),
             pytest.raises(SystemExit),
@@ -412,14 +376,12 @@ class TestOIDCCLILogin:
 
     def test_login_redirect_shows_hint(self, tmp_path, monkeypatch):
         """301 redirect shows a helpful hint about HTTPS."""
-        from klangk_backend.cli import auth
+        from klangkc import auth
 
         config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config",
+            "klangkc.auth._fetch_config",
             lambda _: None,
         )
         mock_resp = MagicMock()
@@ -437,14 +399,12 @@ class TestOIDCCLILogin:
 
     def test_login_error_empty_body(self, tmp_path, monkeypatch):
         """Login with empty error response doesn't crash."""
-        from klangk_backend.cli import auth
+        from klangkc import auth
 
         config_path = tmp_path / "cli.toml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config",
+            "klangkc.auth._fetch_config",
             lambda _: None,
         )
         mock_resp = MagicMock()
@@ -470,7 +430,7 @@ class TestRequestWithRetry:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         monkeypatch.setattr(
-            "klangk_backend.cli.client.httpx.request",
+            "klangkc.client.httpx.request",
             lambda *a, **kw: mock_resp,
         )
         resp = _request_with_retry("GET", "http://test/path")
@@ -488,12 +448,8 @@ class TestRequestWithRetry:
                 raise httpx.ReadTimeout("timed out")
             return mock_resp
 
-        monkeypatch.setattr(
-            "klangk_backend.cli.client.httpx.request", fake_request
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.client._time.sleep", lambda _: None
-        )
+        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
         resp = _request_with_retry("GET", "http://test/path")
         assert resp.status_code == 200
         assert call_count == 3
@@ -510,12 +466,8 @@ class TestRequestWithRetry:
                 raise httpx.ConnectError("connection refused")
             return mock_resp
 
-        monkeypatch.setattr(
-            "klangk_backend.cli.client.httpx.request", fake_request
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.client._time.sleep", lambda _: None
-        )
+        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
         resp = _request_with_retry("GET", "http://test/path")
         assert resp.status_code == 200
         assert call_count == 2
@@ -530,12 +482,8 @@ class TestRequestWithRetry:
             resp.status_code = 503 if call_count < 3 else 200
             return resp
 
-        monkeypatch.setattr(
-            "klangk_backend.cli.client.httpx.request", fake_request
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.client._time.sleep", lambda _: None
-        )
+        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
         resp = _request_with_retry("GET", "http://test/path")
         assert resp.status_code == 200
         assert call_count == 3
@@ -544,12 +492,8 @@ class TestRequestWithRetry:
         def fake_request(*args, **kwargs):
             raise httpx.ReadTimeout("timed out")
 
-        monkeypatch.setattr(
-            "klangk_backend.cli.client.httpx.request", fake_request
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.client._time.sleep", lambda _: None
-        )
+        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
         with pytest.raises(httpx.ReadTimeout):
             _request_with_retry("GET", "http://test/path")
 
@@ -559,12 +503,8 @@ class TestRequestWithRetry:
             resp.status_code = 503
             return resp
 
-        monkeypatch.setattr(
-            "klangk_backend.cli.client.httpx.request", fake_request
-        )
-        monkeypatch.setattr(
-            "klangk_backend.cli.client._time.sleep", lambda _: None
-        )
+        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
         resp = _request_with_retry("GET", "http://test/path")
         assert resp.status_code == 503
 
@@ -777,7 +717,7 @@ class TestShellProtocol:
 
 class TestTerminalSize:
     def test_get_terminal_size_positive_ints(self):
-        from klangk_backend.cli.client import _get_terminal_size
+        from klangkc.client import _get_terminal_size
 
         cols, rows = _get_terminal_size()
         assert isinstance(cols, int) and cols > 0
@@ -785,7 +725,7 @@ class TestTerminalSize:
 
     def test_get_terminal_size_returns_default_when_not_tty(self, monkeypatch):
         """When stdin is not a TTY, _get_terminal_size returns (80, 24) without calling os."""
-        from klangk_backend.cli import client as cli_client
+        from klangkc import client as cli_client
 
         called = []
 
@@ -801,7 +741,7 @@ class TestTerminalSize:
         assert len(called) == 0  # os.get_terminal_size was never invoked
 
     def test_get_terminal_size_calls_os_when_tty(self, monkeypatch):
-        from klangk_backend.cli import client as cli_client
+        from klangkc import client as cli_client
 
         called_with = []
 
@@ -828,7 +768,7 @@ class TestTerminalSize:
 class TestRunShell:
     @pytest.mark.asyncio
     async def test_stdin_loop_sends_terminal_input(self):
-        from klangk_backend.cli.client import _run_shell
+        from klangkc.client import _run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -863,12 +803,10 @@ class TestRunShell:
 
         with (
             patch(
-                "klangk_backend.cli.client.select.select",
+                "klangkc.client.select.select",
                 side_effect=fake_select,
             ),
-            patch(
-                "klangk_backend.cli.client.os.read", side_effect=fake_os_read
-            ),
+            patch("klangkc.client.os.read", side_effect=fake_os_read),
         ):
             task = asyncio.create_task(_run_shell(ws, 80, 24, stdin=fake_buf))
             await asyncio.sleep(0.5)
@@ -883,7 +821,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_stdin_loop_batches_escape_sequences(self):
-        from klangk_backend.cli.client import _run_shell
+        from klangkc.client import _run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -927,12 +865,10 @@ class TestRunShell:
 
         with (
             patch(
-                "klangk_backend.cli.client.select.select",
+                "klangkc.client.select.select",
                 side_effect=fake_select,
             ),
-            patch(
-                "klangk_backend.cli.client.os.read", side_effect=fake_os_read
-            ),
+            patch("klangkc.client.os.read", side_effect=fake_os_read),
         ):
             task = asyncio.create_task(_run_shell(ws, 80, 24, stdin=fake_buf))
             await asyncio.sleep(0.5)
@@ -948,7 +884,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_stdout_loop_writes_data(self):
-        from klangk_backend.cli.client import _run_shell
+        from klangkc.client import _run_shell
 
         ws = AsyncMock()
         ws.recv = AsyncMock(
@@ -986,11 +922,11 @@ class TestRunShell:
         # it blocks forever. Returning b"" makes the read an explicit EOF.
         with (
             patch(
-                "klangk_backend.cli.client.select.select",
+                "klangkc.client.select.select",
                 return_value=([0], [], []),
             ),
             patch(
-                "klangk_backend.cli.client.os.read",
+                "klangkc.client.os.read",
                 return_value=b"",
             ),
         ):
@@ -1008,7 +944,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_ws_shell_connection_failure(self):
-        from klangk_backend.cli.client import _ws_shell
+        from klangkc.client import _ws_shell
 
         ws_mock = MagicMock()
 
@@ -1033,7 +969,7 @@ class TestRunShell:
     @pytest.mark.asyncio
     async def test_tilde_dot_disconnects(self):
         """Enter then ~ then . cleanly exits the shell."""
-        from klangk_backend.cli.client import _run_shell
+        from klangkc.client import _run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -1076,11 +1012,11 @@ class TestRunShell:
 
         with (
             patch(
-                "klangk_backend.cli.client.select.select",
+                "klangkc.client.select.select",
                 side_effect=fake_select,
             ),
             patch(
-                "klangk_backend.cli.client.os.read",
+                "klangkc.client.os.read",
                 side_effect=fake_os_read,
             ),
         ):
@@ -1091,7 +1027,7 @@ class TestRunShell:
     @pytest.mark.asyncio
     async def test_tilde_without_dot_sends_tilde(self):
         """~ followed by a non-dot sends the ~ normally."""
-        from klangk_backend.cli.client import _run_shell
+        from klangkc.client import _run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -1127,11 +1063,11 @@ class TestRunShell:
 
         with (
             patch(
-                "klangk_backend.cli.client.select.select",
+                "klangkc.client.select.select",
                 side_effect=fake_select,
             ),
             patch(
-                "klangk_backend.cli.client.os.read",
+                "klangkc.client.os.read",
                 side_effect=fake_os_read,
             ),
         ):
@@ -1156,9 +1092,7 @@ class TestRunShell:
 class TestMisc:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr(
-            "klangk_backend.cli.auth._fetch_config", lambda _: None
-        )
+        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: None)
 
     def test_auth_error_message(self):
         err = AuthError("Session expired — run `klangkc login`")
@@ -1173,18 +1107,16 @@ class TestMisc:
 
     def test_login_success_stores_email(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
-        monkeypatch.setattr(
-            "klangk_backend.cli.config._CONFIG_PATH", config_path
-        )
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt"}
         with patch("httpx.post", return_value=mock_resp):
             with patch(
-                "klangk_backend.cli.auth.Prompt.ask",
+                "klangkc.auth.Prompt.ask",
                 side_effect=["admin@example.com", "pw"],
             ):
-                from klangk_backend.cli import auth
+                from klangkc import auth
 
                 auth.login("http://localhost:8995")
         cfg = CLIConfig.load()
