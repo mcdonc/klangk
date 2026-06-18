@@ -239,7 +239,7 @@ class TestWorkspaceCRUD:
 
     def test_list_workspaces(self, cli_config):
         result = _run(
-            ["klangk", "list", "--plain"],
+            ["klangk", "ls", "--plain"],
             env=cli_config["env"],
         )
         assert result.returncode == 0
@@ -269,7 +269,7 @@ class TestWorkspaceCRUD:
 
     def test_list_after_delete(self, cli_config):
         result = _run(
-            ["klangk", "list", "--plain"],
+            ["klangk", "ls", "--plain"],
             env=cli_config["env"],
         )
         assert "e2e-crud" not in result.stdout
@@ -309,7 +309,7 @@ class TestDuplicate:
 
             # Verify copy appears in list
             result = _run(
-                ["klangk", "list", "--plain"],
+                ["klangk", "ls", "--plain"],
                 env=env,
             )
             assert "e2e-dup-src" in result.stdout
@@ -940,7 +940,7 @@ class TestAuthError:
         klangk_config.mkdir(parents=True)
         env = {**os.environ, "HOME": str(config_dir)}
         result = _run(
-            ["klangk", "list"],
+            ["klangk", "ls"],
             env=env,
         )
         assert result.returncode != 0
@@ -1138,7 +1138,7 @@ class TestExportImport:
         assert result.returncode == 0, result.stderr or result.stdout
 
         # Verify the imported workspace exists
-        result = _run(["klangk", "list", "--plain"], env=env)
+        result = _run(["klangk", "ls", "--plain"], env=env)
         assert "export-restored" in result.stdout
 
     def test_export_import_round_trip_with_symlinks(

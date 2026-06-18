@@ -122,7 +122,7 @@ def status(
     console.print(table)
 
 
-@app.command("list")
+@app.command("ls")
 def list_workspaces(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
     shared: bool = typer.Option(

@@ -4,7 +4,7 @@ Klangk provides a CLI for terminal-based access to the same containers:
 
 ```bash
 klangk login admin@example.com        # authenticate (prompts for password)
-klangk list                             # list workspaces
+klangk ls                               # list workspaces
 klangk create my-project                # create a workspace
 klangk create my-project --mount ~/src:/home/klangk/work/src          # with bind mount
 klangk create my-project --mount nix-store:/nix           # with named volume
