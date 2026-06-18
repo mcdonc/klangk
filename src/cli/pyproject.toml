@@ -1,6 +1,6 @@
 [project]
 name = "klangkc"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Klangk CLI client"
 requires-python = ">=3.12"
 dependencies = [
@@ -25,9 +25,14 @@ line-length = 79
 [project.scripts]
 klangkc = "klangkc.main:main"
 
+[tool.hatch.version]
+source = "vcs"
+raw-options.root = "../.."
+raw-options.tag-pattern = "cli-v(?P<version>.*)"
+
 [tool.hatch.build.targets.wheel]
 packages = ["klangkc"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
