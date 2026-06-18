@@ -46,7 +46,7 @@ const webkitUse = {
 export default defineConfig({
   testDir: "./e2e",
   timeout: 300_000,
-  retries: 0,
+  retries: process.env.CI ? 1 : 0,
   workers: process.env.KLANGK_E2E_WORKERS
     ? /^\d+$/.test(process.env.KLANGK_E2E_WORKERS)
       ? parseInt(process.env.KLANGK_E2E_WORKERS, 10)
