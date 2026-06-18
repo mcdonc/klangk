@@ -31,6 +31,7 @@ class WsClient extends ChangeNotifier {
   // coverage:ignore-end
 
   WebSocketChannel? _channel;
+  void Function()? _removeBeforeUnload;
   AuthService? _auth;
   String? _currentWorkspaceId;
   String? _currentUserId;
@@ -169,6 +170,12 @@ class WsClient extends ChangeNotifier {
     }
 
     _connected = true;
+    // Close cleanly on page unload so Firefox's FailDelayManager doesn't
+    // treat it as a failure and throttle the next connection by up to 60s.
+    _removeBeforeUnload?.call();
+    _removeBeforeUnload = onBeforeUnload(() {
+      _channel?.sink.close(1000, 'page unload');
+    });
     notifyListeners();
     _listenToChannel();
   }
@@ -295,7 +302,11 @@ class WsClient extends ChangeNotifier {
   void disconnect() {
     _cancelReconnect();
     _stopHeartbeat();
-    _channel?.sink.close();
+    _removeBeforeUnload?.call();
+    _removeBeforeUnload = null;
+    // Close with 1000 (normal closure) so Firefox's FailDelayManager
+    // doesn't treat it as a failure and throttle the next connection.
+    _channel?.sink.close(1000, 'client disconnect');
     _channel = null;
     _connected = false;
     _currentWorkspaceId = null;
