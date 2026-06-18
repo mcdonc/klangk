@@ -31,25 +31,6 @@ See [OIDC Configuration](../reference/oidc.md) for detailed setup instructions.
 - Session persists across page reloads (async token loading before routing)
 - Deep link preservation: unauthenticated visits to protected URLs redirect to login, then return to the original URL after successful login
 
-## Authorization
-
-- **ACL authorization**: Pyramid-style ACL system with resource tree, principals (user/group/system), and ordered allow/deny ACEs. See [ACL System](../reference/acl.md) for details.
-- Default user auto-seeded on startup in the `admin` group (configurable via `KLANGK_DEFAULT_USER/PASSWORD` in `.env`)
-
-## Admin Management
-
-- List/add/edit/delete users, create/manage groups and membership, edit ACLs on any resource
-- User data archived to tar.xz on deletion, self-deletion prevented
-- Admin create-user endpoint (`POST /admin/users`) creates verified users directly without email verification
-
-## Invitation System
-
-- Admins can invite users by email (`POST /admin/invitations` or `klangkc invite <email>`)
-- Generates a 72-hour JWT token (configurable via `KLANGK_INVITE_EXPIRE_HOURS`), sends an email with a registration link (`/#/accept-invite?token=...`)
-- Invited users set a password to create a verified account — bypasses `KLANGK_DISABLE_REGISTRATION`
-- Invitations tracked in `invitations` table (pending/accepted/revoked), listable via `GET /admin/invitations` or `klangkc invitations`, revocable via `DELETE /admin/invitations/{id}`
-- Disabled via `KLANGK_DISABLE_INVITES=true`
-
 ## Brute-Force Protection
 
 - Failed login attempts tracked per email in SQLite

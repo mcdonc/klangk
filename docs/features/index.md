@@ -2,17 +2,19 @@
 
 Klangk provides a rich set of features for multi-user AI collaboration:
 
-- [**Authentication**](authentication.md) — Email/password, OIDC/SSO, invitations, brute-force protection, ACL authorization
+- [**Authentication**](authentication.md) — Email/password, OIDC/SSO, brute-force protection
+- [**Authorization**](authorization.md) — Pyramid-style ACL system with resource tree and principals
+- [**Admin Management**](admin-management.md) — User/group management, ACL editing, user archival
+- [**Invitations**](invitations.md) — Admin invitation workflow for onboarding new users
 - [**Workspaces**](workspaces.md) — Isolated coding environments with sharing, port allocation, export/import
 - [**Terminal**](terminal.md) — Full terminal emulator with Pi agent integration, idle timeout, session persistence
 - [**Chat**](chat.md) — Real-time workspace chat with markdown, @mentions, message types, container-to-chat API
 - [**File Viewer**](file-viewer.md) — Directory tree, drag-and-drop upload, preview, download
-- [**Invitations**](invitations.md) — Admin invitation workflow for onboarding new users
 - [**AI Coding Harnesses**](ai-coding-harnesses.md) — Pi and Claude Code agents pre-installed in every workspace
-- [**GitHub Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog
 - [**Pi Extensions**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
 - [**Container Packages**](container-packages.md) — Pre-installed languages, tools, and CLI utilities in workspace containers
 - [**SSH Agent Forwarding**](ssh-agent-forwarding.md) — Forward local SSH keys into containers via `klangkc shell`
+- [**GitHub HTTPS Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog
 
 ## UI/Theme
 
