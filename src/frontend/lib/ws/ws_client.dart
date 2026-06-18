@@ -235,7 +235,11 @@ class WsClient extends ChangeNotifier {
             if (uid != null && !presenceUsers.any((u) => u['user_id'] == uid)) {
               presenceUsers = [
                 ...presenceUsers,
-                {'user_id': uid, 'user_email': json['user_email']},
+                {
+                  'user_id': uid,
+                  'user_email': json['user_email'],
+                  'user_handle': json['user_handle'] ?? '',
+                },
               ];
               notifyListeners();
             }

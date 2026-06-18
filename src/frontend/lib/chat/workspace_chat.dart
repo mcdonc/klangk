@@ -674,13 +674,16 @@ class WorkspaceChatState extends State<WorkspaceChat> {
           ),
           ...users.map((u) {
             final email = u['user_email'] as String? ?? '';
+            final handle = u['user_handle'] as String? ?? '';
             final uid = u['user_id'] as String?;
             final isSelf = uid == currentUserId;
-            final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
+            final displayName = handle.isNotEmpty ? handle : email;
+            final initial =
+                displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
             return Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Tooltip(
-                message: email,
+                message: displayName,
                 child: CircleAvatar(
                   radius: 10,
                   backgroundColor:

@@ -769,6 +769,7 @@ class Connection:
                 "type": "presence_join",
                 "user_id": self.user["id"],
                 "user_email": self.user["email"],
+                "user_handle": self.user["handle"],
             }
             for sock in list(session.subscribers):
                 if sock is not self.sock:
