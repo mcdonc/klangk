@@ -9,8 +9,8 @@ test-backend
 # Frontend unit tests (Dart, flutter test, 100% coverage required)
 test-frontend
 
-# CLI E2E tests (starts real server + podman containers)
-test-cli-e2e
+# Backend E2E tests (starts real server + podman containers)
+test-backend-e2e
 
 # Flutter E2E tests (Playwright, needs flutter build + podman build)
 test-frontend-e2e
@@ -27,7 +27,7 @@ Backend tests for Python changes, frontend tests for Dart changes. Run E2E tests
 src/
   backend/             # FastAPI app
     tests/             # Backend unit tests
-    e2e-tests/         # CLI E2E tests
+    e2e-tests/         # Backend E2E tests
   frontend/            # Flutter web app
     test/              # Frontend unit tests
     e2e-tests/         # Playwright E2E tests
@@ -48,7 +48,7 @@ Inside `devenv shell`, these commands are available:
 | ----------------------- | ------------------------------------- |
 | `test-backend`          | Run backend unit tests                |
 | `test-frontend`         | Run frontend unit tests with coverage |
-| `test-cli-e2e`          | Run CLI E2E tests                     |
+| `test-backend-e2e`      | Run backend E2E tests                 |
 | `test-frontend-e2e`     | Run Flutter E2E tests (all browsers)  |
 | `flutterbuildweb`       | Rebuild Flutter web only              |
 | `build-workspace-image` | Rebuild workspace image (podman)      |
