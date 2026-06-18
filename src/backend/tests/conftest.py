@@ -63,17 +63,13 @@ async def agent_user(db):
     """Seed the chat agent user into the DB."""
     import klangk_backend.model as us
 
-    agent_db = await us.get_db()
-    try:
+    async with us.transaction() as agent_db:
         await agent_db.execute(
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
             (us.AGENT_USER_ID, "MrBoops@example.com", "MrBoops"),
         )
-        await agent_db.commit()
-    finally:
-        await agent_db.close()
     us.clear_agent_cache()
 
 

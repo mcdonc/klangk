@@ -148,8 +148,7 @@ async def seed_agent_user() -> None:
         "KLANGK_CHAT_AGENT_EMAIL", "MrBoops@example.com"
     )
     handle = resolve_env_secret("KLANGK_CHAT_AGENT_HANDLE", "MrBoops")
-    db = await model.get_db()
-    try:
+    async with model.transaction() as db:
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified,"
             " provider, handle)"
@@ -157,9 +156,6 @@ async def seed_agent_user() -> None:
             " ON CONFLICT(id) DO UPDATE SET email = ?, handle = ?",
             (AGENT_USER_ID, email, handle, email, handle),
         )
-        await db.commit()
-    finally:
-        await db.close()
     model.clear_agent_cache()
     logger.info("Seeded agent user '%s' (%s)", handle, email)
 
