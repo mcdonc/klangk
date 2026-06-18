@@ -17,7 +17,12 @@ import zipfile
 import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from pydantic import BaseModel
 
 from . import (
@@ -63,12 +68,26 @@ async def verify_workspace_token(request: Request):
     container→host endpoints (/llm-proxy, /api/browser-delegate, etc.)."""
     authorization = request.headers.get("authorization", "")
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing token")
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing token"},
+            headers={"X-Token-Error": "missing"},
+        )
     token = authorization[7:]
-    workspace_id = auth.decode_workspace_token(token)
-    if workspace_id is None:
-        raise HTTPException(status_code=401, detail="Invalid workspace token")
-    return {"status": "ok", "workspace_id": workspace_id}
+    result = auth.decode_workspace_token(token)
+    if result is auth.WORKSPACE_TOKEN_EXPIRED:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Workspace token expired"},
+            headers={"X-Token-Error": "expired"},
+        )
+    if result is None:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid workspace token"},
+            headers={"X-Token-Error": "invalid"},
+        )
+    return {"status": "ok", "workspace_id": result}
 
 
 @router.get("/version")

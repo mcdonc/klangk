@@ -89,6 +89,29 @@ class TestVerifyWorkspaceToken:
         )
         assert resp.status_code == 401
 
+    async def test_expired_workspace_token(self, client):
+        from datetime import datetime, timedelta, timezone
+
+        from jose import jwt
+
+        expired = datetime.now(timezone.utc) - timedelta(hours=1)
+        payload = {"sub": "ws-123", "purpose": "workspace", "exp": expired}
+        token = jwt.encode(payload, auth.SECRET_KEY, algorithm=auth.ALGORITHM)
+        resp = await client.get(
+            "/auth/verify-workspace-token",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Workspace token expired"
+
+    async def test_invalid_workspace_token_detail(self, client):
+        resp = await client.get(
+            "/auth/verify-workspace-token",
+            headers={"Authorization": "Bearer garbage"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid workspace token"
+
 
 class TestWorkspaceChat:
     async def test_post_agent_message(self, client, user):

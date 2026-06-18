@@ -659,6 +659,19 @@ def shell(
                 window=terminal,
             )
         )
+    except websockets.exceptions.InvalidStatusCode as e:
+        from .client import _drain_stdin, reset_terminal
+
+        reset_terminal()
+        _drain_stdin()
+        if e.status_code in (4001, 4002):
+            _err.print(
+                "[red]Session expired. Run `klangk login`"
+                " to re-authenticate.[/red]"
+            )
+        else:
+            _err.print(f"[red]Connection rejected: {e}[/red]")
+        raise typer.Exit(code=1) from None
     except ConnectionError as e:
         from .client import _drain_stdin, reset_terminal
 

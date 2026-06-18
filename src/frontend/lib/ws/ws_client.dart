@@ -165,7 +165,13 @@ class WsClient extends ChangeNotifier {
     try {
       await _channel!.ready;
     } catch (e) {
-      _errorController.add('Connection failed: $e');
+      final code = _channel?.closeCode;
+      if (code == 4001 || code == 4002) {
+        _errorController.add('Session expired, please log in again');
+        _auth?.logout();
+      } else {
+        _errorController.add('Connection failed: $e');
+      }
       return;
     }
 
@@ -285,7 +291,13 @@ class WsClient extends ChangeNotifier {
         _currentWorkspaceId = null;
         _defaultCommand = null;
         notifyListeners();
-        _scheduleReconnect();
+        final code = _channel?.closeCode;
+        if (code == 4001 || code == 4002) {
+          _errorController.add('Session expired, please log in again');
+          _auth?.logout();
+        } else {
+          _scheduleReconnect();
+        }
       },
       onError: (e) {
         _errorController.add('WebSocket error: $e');
@@ -294,7 +306,12 @@ class WsClient extends ChangeNotifier {
         _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
         notifyListeners();
-        _scheduleReconnect();
+        final code = _channel?.closeCode;
+        if (code == 4001 || code == 4002) {
+          _auth?.logout();
+        } else {
+          _scheduleReconnect();
+        }
       },
     );
   }
