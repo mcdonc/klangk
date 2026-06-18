@@ -5612,3 +5612,72 @@ class TestUiReadySharedTerminals:
             )
         finally:
             wshandler.state.sessions.pop(ws["id"], None)
+
+
+class TestTokenExpiryWarnings:
+    async def test_warning_fires_when_threshold_reached(
+        self, user, agent_user
+    ):
+        """Token expiry warning is broadcast when the threshold is reached."""
+        from datetime import datetime, timedelta, timezone
+
+        workspace = await _create_workspace_with_acl(user["id"], "expiry-ws")
+        session = wshandler.state.get_or_create_session(workspace["id"])
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        wshandler.state.connections[sock] = conn
+        session.subscribers.add(sock)
+
+        try:
+            # Set expiry 0.3s from now — only the 15-min warning threshold
+            # will have delay <= 0 (skipped), so we need expiry close enough
+            # that the 1-hour threshold is also skipped, but a custom short
+            # threshold fires.  Instead, set expiry in the past + 0.3s so
+            # both thresholds are skipped except a very short sleep.
+            #
+            # Simpler: set expiry to 15min + 0.2s from now, so the 1-hour
+            # warning is skipped (delay < 0) and the 15-min warning fires
+            # after 0.2s.
+            expiry = datetime.now(timezone.utc) + timedelta(
+                minutes=15, milliseconds=200
+            )
+            session.start_token_expiry_warnings(expiry)
+
+            await asyncio.sleep(0.5)
+
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            chat_msgs = [c for c in calls if c.get("type") == "chat_message"]
+            assert len(chat_msgs) == 1
+            assert "15 minutes" in chat_msgs[0]["message"]
+            assert chat_msgs[0]["message_type"] == 2  # MSG_SYSTEM
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock, None)
+
+    async def test_skips_past_thresholds(self, user, agent_user):
+        """Thresholds that are already past are skipped."""
+        from datetime import datetime, timedelta, timezone
+
+        workspace = await _create_workspace_with_acl(
+            user["id"], "past-expiry-ws"
+        )
+        session = wshandler.state.get_or_create_session(workspace["id"])
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        wshandler.state.connections[sock] = conn
+        session.subscribers.add(sock)
+
+        try:
+            # Expiry in 5 minutes — both 1-hour and 15-min thresholds
+            # are in the past, so no warnings should fire.
+            expiry = datetime.now(timezone.utc) + timedelta(minutes=5)
+            session.start_token_expiry_warnings(expiry)
+
+            await asyncio.sleep(0.3)
+
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            chat_msgs = [c for c in calls if c.get("type") == "chat_message"]
+            assert len(chat_msgs) == 0
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock, None)
