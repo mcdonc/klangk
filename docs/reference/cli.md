@@ -1,6 +1,16 @@
 # CLI
 
-Klangk provides a CLI for terminal-based access to the same containers:
+## Installation
+
+Install `klangkc` from PyPI:
+
+```bash
+pip install klangkc
+```
+
+Requires Python 3.12+.
+
+## Usage
 
 ```bash
 klangkc login admin@example.com        # authenticate (prompts for password)
