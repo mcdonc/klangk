@@ -10,6 +10,9 @@ export PATH="/opt/klangk/bin:$PATH"
 _herdr_dir=$(mktemp -d "/tmp/herdr-${KLANGK_USER_ID:-default}-XXXXXXXX")
 export HERDR_SOCKET_PATH="$_herdr_dir/herdr.sock"
 
+# Default editor for git commit, crontab -e, etc.
+export EDITOR=nano
+
 # Ignore Ctrl+C until setup is complete and any default command has started.
 trap '' INT
 
