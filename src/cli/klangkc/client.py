@@ -504,26 +504,59 @@ async def _ws_shell(
         # 2a. Start SSH agent forwarding if requested and available.
         ssh_agent_active = False
         local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
+        _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
+        if _debug_agent:
+            # Log to file to avoid corrupting the terminal display.
+            _agent_log = os.path.expanduser("~/.klangkc-ssh-agent.log")
+            _fh = logging.FileHandler(_agent_log, mode="w")
+            _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+            logger.addHandler(_fh)
+            logger.setLevel(logging.DEBUG)
+            logger.info(
+                "[ssh-agent] forward_agent=%s, SSH_AUTH_SOCK=%s",
+                forward_agent,
+                local_agent_sock,
+            )
         if (
             forward_agent
             and local_agent_sock
             and os.path.exists(local_agent_sock)
         ):
+            if _debug_agent:
+                logger.info("[ssh-agent] sending ssh_agent_start")
             await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
             # Wait for confirmation before starting the terminal so
             # SSH_AUTH_SOCK is included in the shell environment.
-            deadline = asyncio.get_event_loop().time() + 10
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    break
-                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if msg.get("type") == "ssh_agent_started":
-                    ssh_agent_active = True
-                    break
-                if msg.get("type") == "error":  # pragma: no cover
-                    break
+            try:
+                deadline = asyncio.get_event_loop().time() + 10
+                while True:
+                    remaining = deadline - asyncio.get_event_loop().time()
+                    if remaining <= 0:  # pragma: no cover
+                        break
+                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                    msg = json.loads(raw)
+                    if _debug_agent:
+                        logger.info(
+                            "[ssh-agent] during wait: %s", msg.get("type")
+                        )
+                    if msg.get("type") == "ssh_agent_started":
+                        ssh_agent_active = True
+                        if _debug_agent:
+                            logger.info(
+                                "[ssh-agent] started, socket=%s",
+                                msg.get("socket"),
+                            )
+                        break
+                    if msg.get("type") == "error":
+                        if _debug_agent:
+                            logger.info(
+                                "[ssh-agent] error: %s", msg.get("message")
+                            )
+                        break
+            except asyncio.TimeoutError:
+                if _debug_agent:
+                    logger.info("[ssh-agent] timed out waiting for start")
+                pass  # proceed without agent forwarding
 
         # 2b. Start terminal
         cols, rows = _get_terminal_size()
@@ -653,13 +686,11 @@ async def _ws_shell(
             # Drain any terminal query responses still buffered in stdin
             # so they don't leak to the host shell after exit.
             _drain_stdin()
-        if ssh_agent_active:  # pragma: no cover
-            await _send_ignore_closed(
-                ws, json.dumps({"cmd": "ssh_agent_stop"})
-            )
-        await _send_ignore_closed(  # pragma: no cover
-            ws, json.dumps({"cmd": "terminal_stop"})
-        )
+            if ssh_agent_active:
+                await _send_ignore_closed(
+                    ws, json.dumps({"cmd": "ssh_agent_stop"})
+                )
+            await _send_ignore_closed(ws, json.dumps({"cmd": "terminal_stop"}))
 
 
 async def _run_shell(
@@ -678,6 +709,7 @@ async def _run_shell(
     stdin/stdout default to sys.stdin.buffer / sys.stdout when None.
     Pass explicit streams in tests to avoid mutating globals.
     """
+    _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
     if stdin is None:
         stdin = sys.stdin.buffer
     if stdout is None:
@@ -802,11 +834,14 @@ async def _run_shell(
                             "\r\nPress Enter, then ~. to disconnect.\r\n"
                         )
                         stdout.flush()
-                elif (
-                    data.get("type") == "ssh_agent_response"
-                ):  # pragma: no cover
+                elif data.get("type") == "ssh_agent_response":
                     raw = base64.b64decode(data.get("data", ""))
                     if raw:
+                        if _debug_agent:
+                            logger.info(
+                                "[ssh-agent] got %d bytes from backend",
+                                len(raw),
+                            )
                         await agent_queue.put(raw)
                 elif data.get("type") == "event":
                     event = data.get("event", {})
@@ -855,7 +890,7 @@ async def _run_shell(
                 elapsed = 0
                 await ws.send(json.dumps({"cmd": "heartbeat"}))
 
-    async def ssh_agent_relay_loop() -> None:  # pragma: no cover
+    async def ssh_agent_relay_loop() -> None:
         """Relay SSH agent protocol between container and local agent.
 
         Reads ssh_agent_response messages from the queue (put there by
@@ -864,17 +899,35 @@ async def _run_shell(
         """
         if not ssh_agent_sock:
             return
+        if _debug_agent:
+            logger.info(
+                "[ssh-agent] relay loop started, local sock=%s",
+                ssh_agent_sock,
+            )
         while not stop_event.is_set():
             try:
                 data = await asyncio.wait_for(agent_queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
+            if _debug_agent:
+                logger.info(
+                    "[ssh-agent] relay: got %d bytes from queue", len(data)
+                )
             try:
                 # Connect to local agent, forward data, read response.
                 agent = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 try:
                     agent.connect(ssh_agent_sock)
+                    if _debug_agent:
+                        logger.info(
+                            "[ssh-agent] relay: connected to local agent"
+                        )
                     agent.sendall(data)
+                    if _debug_agent:
+                        logger.info(
+                            "[ssh-agent] relay: sent %d bytes to local agent",
+                            len(data),
+                        )
                     # SSH agent protocol: 4-byte big-endian length prefix
                     # followed by the message body.
                     header = b""
@@ -885,6 +938,12 @@ async def _run_shell(
                         header += chunk
                     if len(header) == 4:
                         msg_len = struct.unpack(">I", header)[0]
+                        if _debug_agent:
+                            logger.info(
+                                "[ssh-agent] relay: agent response header, "
+                                "body_len=%d",
+                                msg_len,
+                            )
                         body = b""
                         while len(body) < msg_len:
                             chunk = agent.recv(msg_len - len(body))
@@ -892,6 +951,12 @@ async def _run_shell(
                                 break
                             body += chunk
                         response = header + body
+                        if _debug_agent:
+                            logger.info(
+                                "[ssh-agent] relay: sending %d bytes back "
+                                "to backend",
+                                len(response),
+                            )
                         await ws.send(
                             json.dumps(
                                 {
@@ -901,6 +966,11 @@ async def _run_shell(
                                     ),
                                 }
                             )
+                        )
+                    elif _debug_agent:
+                        logger.info(
+                            "[ssh-agent] relay: incomplete header (%d bytes)",
+                            len(header),
                         )
                 finally:
                     agent.close()

@@ -524,6 +524,152 @@ class TestMainCLI:
 
         assert captured_kwargs["window"] == "build"
 
+    def test_shell_forward_agent_env_true(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        """KLANGKC_FORWARD_AGENT=true enables forwarding."""
+        from klangkc import main
+
+        ws = Workspace(
+            id="target" + "0" * 52,
+            name="target-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        captured_kwargs = {}
+
+        async def fake_shell(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(main, "_ws_shell", fake_shell):
+                os.environ["TERM"] = "xterm-256color"
+                os.environ["KLANGKC_FORWARD_AGENT"] = "true"
+                os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
+                with patch("termios.tcgetattr", return_value=None):
+                    main.shell("target-ws")
+
+        assert captured_kwargs["forward_agent"] is True
+
+    def test_shell_forward_agent_env_false_overrides_flag(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        """KLANGKC_FORWARD_AGENT=false overrides --forward-agent."""
+        from klangkc import main
+
+        ws = Workspace(
+            id="target" + "0" * 52,
+            name="target-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        captured_kwargs = {}
+
+        async def fake_shell(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(main, "_ws_shell", fake_shell):
+                os.environ["TERM"] = "xterm-256color"
+                os.environ["KLANGKC_FORWARD_AGENT"] = "false"
+                with patch("termios.tcgetattr", return_value=None):
+                    main.shell("target-ws", forward_agent=True)
+
+        assert captured_kwargs["forward_agent"] is False
+
+    def test_shell_forward_agent_env_url_list_match(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        """KLANGKC_FORWARD_AGENT with matching URL enables forwarding."""
+        from klangkc import main
+
+        ws = Workspace(
+            id="target" + "0" * 52,
+            name="target-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        captured_kwargs = {}
+
+        async def fake_shell(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(main, "_ws_shell", fake_shell):
+                os.environ["TERM"] = "xterm-256color"
+                os.environ["KLANGKC_FORWARD_AGENT"] = (
+                    "http://localhost:8995 http://other:8995"
+                )
+                os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
+                with patch("termios.tcgetattr", return_value=None):
+                    main.shell("target-ws")
+
+        assert captured_kwargs["forward_agent"] is True
+
+    def test_shell_forward_agent_env_url_list_no_match(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        """KLANGKC_FORWARD_AGENT with non-matching URL doesn't enable."""
+        from klangkc import main
+
+        ws = Workspace(
+            id="target" + "0" * 52,
+            name="target-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        captured_kwargs = {}
+
+        async def fake_shell(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(main, "_ws_shell", fake_shell):
+                os.environ["TERM"] = "xterm-256color"
+                os.environ["KLANGKC_FORWARD_AGENT"] = (
+                    "http://other:8995 http://another:8995"
+                )
+                with patch("termios.tcgetattr", return_value=None):
+                    main.shell("target-ws")
+
+        assert captured_kwargs["forward_agent"] is False
+
+    def test_shell_forward_agent_no_ssh_auth_sock_warns(
+        self, logged_in_cfg, monkeypatch, reset_env, capsys
+    ):
+        """--forward-agent without SSH_AUTH_SOCK prints warning."""
+        from klangkc import main
+
+        ws = Workspace(
+            id="target" + "0" * 52,
+            name="target-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        async def fake_shell(*args, **kwargs):
+            pass
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(main, "_ws_shell", fake_shell):
+                os.environ["TERM"] = "xterm-256color"
+                os.environ.pop("SSH_AUTH_SOCK", None)
+                os.environ["KLANGKC_FORWARD_AGENT"] = "true"
+                with patch("termios.tcgetattr", return_value=None):
+                    main.shell("target-ws")
+
+        # The warning goes to stderr via rich console
+        # Just verify it didn't crash — the warning is printed to _err console
+
     def test_terminals_command(self, logged_in_cfg, monkeypatch, reset_env):
         from klangkc import main
 

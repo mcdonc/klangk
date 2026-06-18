@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -1740,6 +1741,7 @@ class Connection:
 
     async def handle_ssh_agent_start(self) -> None:
         """Start SSH agent forwarding via socat inside the container."""
+        _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
         if not self.container_id:
             send_error(self.sock, "No container for SSH agent forwarding")
             return
@@ -1749,6 +1751,8 @@ class Connection:
         sock_path = f"/tmp/klangk-ssh-agent-{user_id}.sock"
         # Remove stale socket if it exists from a previous session.
         await podman.exec_container(self.container_id, ["rm", "-f", sock_path])
+        if _debug_agent:
+            logger.info("[ssh-agent] starting socat at %s", sock_path)
         # Start socat: listen on the Unix socket, relay to stdin/stdout.
         proc = await asyncio.create_subprocess_exec(
             podman.PODMAN_BIN,
@@ -1756,17 +1760,21 @@ class Connection:
             "-i",
             self.container_id,
             "socat",
-            f"UNIX-LISTEN:{sock_path},mode=600,unlink-early",
+            f"UNIX-LISTEN:{sock_path},mode=600,unlink-early,fork",
             "STDIO",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE
+            if _debug_agent
+            else asyncio.subprocess.DEVNULL,
         )
         self._ssh_agent_proc = proc
         self._ssh_agent_socket = sock_path
         self._ssh_agent_task = asyncio.create_task(
             self._forward_ssh_agent_output()
         )
+        if _debug_agent and proc.stderr is not None:
+            asyncio.create_task(self._log_ssh_agent_stderr())
         self.sock.send_json(
             {
                 "type": "ssh_agent_started",
@@ -1779,8 +1787,25 @@ class Connection:
             sock_path,
         )
 
+    async def _log_ssh_agent_stderr(self) -> None:
+        """Log socat stderr when KLANGK_DEBUG_SSH_AGENT is set."""
+        proc = self._ssh_agent_proc
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                logger.info(
+                    "[ssh-agent] socat stderr: %s", line.decode().rstrip()
+                )
+        except (asyncio.CancelledError, OSError):
+            pass
+
     async def _forward_ssh_agent_output(self) -> None:
         """Read from socat stdout and send to the CLI as ssh_agent_response."""
+        _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
         proc = self._ssh_agent_proc
         if proc is None or proc.stdout is None:  # pragma: no cover
             return
@@ -1788,7 +1813,13 @@ class Connection:
             while True:
                 data = await proc.stdout.read(65536)
                 if not data:
+                    if _debug_agent:
+                        logger.info("[ssh-agent] socat stdout EOF")
                     break
+                if _debug_agent:
+                    logger.info(
+                        "[ssh-agent] socat stdout: %d bytes", len(data)
+                    )
                 self.sock.send_json(
                     {
                         "type": "ssh_agent_response",
@@ -1802,12 +1833,24 @@ class Connection:
 
     async def handle_ssh_agent_data(self, msg: dict) -> None:
         """Write data from the CLI's local agent into socat stdin."""
+        _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
         proc = self._ssh_agent_proc
         if proc is None or proc.stdin is None:
+            if _debug_agent:
+                logger.info(
+                    "[ssh-agent] data received but no proc (proc=%s)",
+                    proc,
+                )
             return
         raw = msg.get("data", "")
         if raw:
-            proc.stdin.write(base64.b64decode(raw))
+            decoded = base64.b64decode(raw)
+            if _debug_agent:
+                logger.info(
+                    "[ssh-agent] writing %d bytes to socat stdin",
+                    len(decoded),
+                )
+            proc.stdin.write(decoded)
             await proc.stdin.drain()
 
     async def handle_ssh_agent_stop(self) -> None:

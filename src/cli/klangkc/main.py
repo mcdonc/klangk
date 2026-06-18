@@ -661,15 +661,15 @@ def shell(
     #   "true"/"1"/"yes" — forward to any server
     #   "false"/"0"/"no" — never forward (overrides --forward-agent)
     #   space-separated URLs — forward only to listed servers
-    env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")  # pragma: no cover
-    if env_val.lower() in ("0", "false", "no"):  # pragma: no cover
+    env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")
+    if env_val.lower() in ("0", "false", "no"):
         forward_agent = False
-    elif not forward_agent:  # pragma: no cover
+    elif not forward_agent:
         if env_val.lower() in ("1", "true", "yes"):
             forward_agent = True
         elif env_val:
             forward_agent = server_url in env_val.split()
-    if forward_agent:  # pragma: no cover
+    if forward_agent:
         if not os.environ.get("SSH_AUTH_SOCK"):
             _err.print(
                 "[yellow]Warning: --forward-agent set but SSH_AUTH_SOCK"

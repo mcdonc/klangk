@@ -72,3 +72,22 @@ shell`, not from the browser-based terminal.
 - If you opened new terminal tabs while disconnected, they may have
   inherited a stale `SSH_AUTH_SOCK`. Open a new tab after
   reconnecting.
+
+### Debugging
+
+Set `KLANGK_DEBUG_SSH_AGENT=1` in your `.env` (or export it in the
+shell running the backend) to enable verbose logging of the SSH agent
+relay on both the backend and CLI side. The CLI also respects this
+variable — export it in the terminal where you run `klangkc shell`.
+
+```bash
+# Backend side (in .env or environment)
+KLANGK_DEBUG_SSH_AGENT=1
+
+# CLI side
+export KLANGK_DEBUG_SSH_AGENT=1
+klangkc shell -A my-workspace
+```
+
+Log messages are prefixed with `[ssh-agent]` and show data flow
+through each stage of the relay.
