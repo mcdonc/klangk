@@ -3,7 +3,7 @@
 ## Auth Methods
 
 - **Two auth methods**: email/password (local) and OIDC (external Identity Providers). Configurable via `KLANGK_AUTH_MODES`: `password`, `oidc`, or `both` (default: `both` if OIDC configured, `password` otherwise).
-- **OIDC authentication**: Supports multiple OIDC providers (e.g., two Keycloak realms for CAC + internal SSO). Configured via a JSON file (`KLANGK_OIDC_CONFIG`). Each provider has its own login/callback endpoints (`GET /auth/oidc/{provider_id}/login`, `GET /auth/oidc/{provider_id}/callback`). Uses Authorization Code flow with PKCE. ID token signature validated against the IdP's JWKS. Login page shows one button per configured provider. JIT user provisioning on first OIDC login — users are created as verified with no password. Existing email/password users are linked to their OIDC identity on first SSO login. Per-provider group mapping syncs IdP group claims to Klangk admin group membership on every login. CLI login (`klangk login`) opens a browser for the OIDC flow and receives the token via a temporary localhost callback server.
+- **OIDC authentication**: Supports multiple OIDC providers (e.g., two Keycloak realms for CAC + internal SSO). Configured via a JSON file (`KLANGK_OIDC_CONFIG`). Each provider has its own login/callback endpoints (`GET /auth/oidc/{provider_id}/login`, `GET /auth/oidc/{provider_id}/callback`). Uses Authorization Code flow with PKCE. ID token signature validated against the IdP's JWKS. Login page shows one button per configured provider. JIT user provisioning on first OIDC login — users are created as verified with no password. Existing email/password users are linked to their OIDC identity on first SSO login. Per-provider group mapping syncs IdP group claims to Klangk admin group membership on every login. CLI login (`klangkc login`) opens a browser for the OIDC flow and receives the token via a temporary localhost callback server.
 - **Email/password authentication**: bcrypt hashing, email validated at registration
 
 See [OIDC Configuration](../reference/oidc.md) for detailed setup instructions.
@@ -44,10 +44,10 @@ See [OIDC Configuration](../reference/oidc.md) for detailed setup instructions.
 
 ## Invitation System
 
-- Admins can invite users by email (`POST /admin/invitations` or `klangk invite <email>`)
+- Admins can invite users by email (`POST /admin/invitations` or `klangkc invite <email>`)
 - Generates a 72-hour JWT token (configurable via `KLANGK_INVITE_EXPIRE_HOURS`), sends an email with a registration link (`/#/accept-invite?token=...`)
 - Invited users set a password to create a verified account — bypasses `KLANGK_DISABLE_REGISTRATION`
-- Invitations tracked in `invitations` table (pending/accepted/revoked), listable via `GET /admin/invitations` or `klangk invitations`, revocable via `DELETE /admin/invitations/{id}`
+- Invitations tracked in `invitations` table (pending/accepted/revoked), listable via `GET /admin/invitations` or `klangkc invitations`, revocable via `DELETE /admin/invitations/{id}`
 - Disabled via `KLANGK_DISABLE_INVITES=true`
 
 ## Brute-Force Protection

@@ -9,21 +9,21 @@ Nothing off-the-shelf fits: existing tools (GCM, git-credential-oauth, git-crede
 **Two access paths need support:**
 
 1. **Browser** — user has a WebSocket connection; bridge is available for HTTPS credential delegation
-2. **`klangk shell`** (CLI) — no browser; SSH agent forwarding over WebSocket for SSH-based git ops, plus credential helper fallback for HTTPS
+2. **`klangkc shell`** (CLI) — no browser; SSH agent forwarding over WebSocket for SSH-based git ops, plus credential helper fallback for HTTPS
 
 ## Issues
 
-| Issue | Title | Dependencies |
-|-------|-------|-------------|
-| #385 | Plugin configuration system | — |
-| #396 | Container-side credential helper script | #397 |
-| #397 | Browser-side git-credential plugin (PAT + cache) | #385, #396 |
-| #398 | GitHub OAuth device flow | #397, #385 |
-| #399 | SSH agent forwarding for `klangk shell` | Independent (phase 2) |
+| Issue | Title                                            | Dependencies          |
+| ----- | ------------------------------------------------ | --------------------- |
+| #385  | Plugin configuration system                      | —                     |
+| #396  | Container-side credential helper script          | #397                  |
+| #397  | Browser-side git-credential plugin (PAT + cache) | #385, #396            |
+| #398  | GitHub OAuth device flow                         | #397, #385            |
+| #399  | SSH agent forwarding for `klangkc shell`         | Independent (phase 2) |
 
 ## Architecture
 
-```
+```text
 Container terminal:
   git push → git-credential-klangk (helper) → curl POST /api/browser-delegate
     → backend wshandler → WebSocket → browser
@@ -31,11 +31,11 @@ Container terminal:
     → frontend shows cached token or triggers OAuth popup
     → response flows back through bridge → helper prints to stdout → git uses it
 
-klangk shell (no browser):
+klangkc shell (no browser):
   HTTPS: git push https://... → git-credential-klangk → bridge fails → exit 1
     → git falls through to interactive prompt (user types PAT)
   SSH:   git push git@github.com:... → ssh → SSH_AUTH_SOCK (forwarded)
-    → WebSocket relay → klangk shell CLI → local ssh-agent → key used
+    → WebSocket relay → klangkc shell CLI → local ssh-agent → key used
 ```
 
 ## Components
@@ -55,7 +55,7 @@ A shell script installed in the container image at `/usr/local/bin/git-credentia
 
 **`store` / `erase`:** Forward to bridge so frontend can update/clear its cache. Non-critical — exit 0 on failure.
 
-**Fallback for `klangk shell`:** When `KLANGK_BRIDGE_TOKEN` is unset or bridge POST fails, the helper simply exits non-zero. Git falls through to whatever other credential helpers are configured (or prompts interactively). This means `klangk shell` users can:
+**Fallback for `klangkc shell`:** When `KLANGK_BRIDGE_TOKEN` is unset or bridge POST fails, the helper simply exits non-zero. Git falls through to whatever other credential helpers are configured (or prompts interactively). This means `klangkc shell` users can:
 
 - Set `GIT_ASKPASS` or use `git credential-store` manually
 - Use SSH keys (ssh-agent forwarding — separate issue #185)
@@ -72,7 +72,7 @@ RUN chmod +x /usr/local/bin/git-credential-klangk
 
 **File**: Container gitconfig (global or system-level)
 
-```
+```ini
 [credential]
     helper = klangk
 ```
@@ -88,7 +88,7 @@ In-repo plugin under `plugins/git-credential/`, following the same pattern as `p
 
 **Plugin structure:**
 
-```
+```text
 plugins/git-credential/
   package.json                    # Plugin metadata (no extension.ts needed)
   klangk/
@@ -180,25 +180,25 @@ The `repo` scope is needed for private repo access. For public repos, no scope i
 
 Device flow is also supported by GitLab and other OAuth providers. The pattern is the same — just different URLs and client IDs. Can be added later without architectural changes.
 
-## `klangk shell`: SSH agent forwarding over WebSocket
+## `klangkc shell`: SSH agent forwarding over WebSocket
 
 The CLI connects to the container via WebSocket (not SSH), so we can't just mount `SSH_AUTH_SOCK`. Instead, we forward the SSH agent protocol over the existing WebSocket tunnel:
 
 ### How it works
 
-```
+```text
 User's machine                    Klangk backend              Container
 ┌─────────────┐                  ┌──────────────┐           ┌───────────┐
 │ ssh-agent    │                  │              │           │           │
 │   ↕          │                  │              │           │  socat    │
-│ klangk shell │◄── WebSocket ──►│  wshandler   │◄─ pipe ──►│  ↕        │
+│ klangkc shell │◄── WebSocket ──►│  wshandler   │◄─ pipe ──►│  ↕        │
 │ (reads local │   ssh_agent_*   │  (relay)     │           │ SSH_AUTH_ │
 │  SSH_AUTH_   │   messages      │              │           │ SOCK      │
 │  SOCK)       │                  │              │           │           │
 └─────────────┘                  └──────────────┘           └───────────┘
 ```
 
-1. **`klangk shell` startup**: CLI detects local `SSH_AUTH_SOCK`, sends `{"cmd": "ssh_agent_start"}` over WebSocket
+1. **`klangkc shell` startup**: CLI detects local `SSH_AUTH_SOCK`, sends `{"cmd": "ssh_agent_start"}` over WebSocket
 2. **Backend**: Creates a Unix socket inside the container (e.g., `/tmp/.klangk-ssh-agent.sock`) and a relay process. Sets `SSH_AUTH_SOCK` in the terminal environment to point at it.
 3. **Relay**: When something in the container reads from the socket, backend forwards the SSH agent protocol bytes over WebSocket as `ssh_agent_data` messages. CLI reads them, forwards to local `ssh-agent`, sends response back.
 4. **Result**: `git push git@github.com:...` inside the container uses the user's local SSH keys without any keys being copied.
@@ -222,14 +222,14 @@ This is moderate complexity:
 
 ### Fallback
 
-If local `SSH_AUTH_SOCK` is not set, `klangk shell` skips agent forwarding. Users can still:
+If local `SSH_AUTH_SOCK` is not set, `klangkc shell` skips agent forwarding. Users can still:
 
 - Use the HTTPS credential helper (which falls through to interactive prompt since there's no browser)
 - Configure their own git credentials inside the container
 
-## `klangk shell`: HTTPS credential helper fallback
+## `klangkc shell`: HTTPS credential helper fallback
 
-For HTTPS git operations in `klangk shell`, the credential helper (`git-credential-klangk`) detects no `KLANGK_BRIDGE_TOKEN` (or bridge POST fails) and exits non-zero. Git falls through to its default behavior (interactive terminal prompt). This works fine — user just types their PAT at the prompt.
+For HTTPS git operations in `klangkc shell`, the credential helper (`git-credential-klangk`) detects no `KLANGK_BRIDGE_TOKEN` (or bridge POST fails) and exits non-zero. Git falls through to its default behavior (interactive terminal prompt). This works fine — user just types their PAT at the prompt.
 
 ## Phasing
 
@@ -244,7 +244,7 @@ For HTTPS git operations in `klangk shell`, the credential helper (`git-credenti
 - `/api/config` endpoint to expose OAuth client_id to frontend
 - Tests
 
-### Phase 2 (future): SSH agent forwarding for `klangk shell`
+### Phase 2 (future): SSH agent forwarding for `klangkc shell`
 
 - CLI-side agent relay (read/write local `SSH_AUTH_SOCK`)
 - Backend WS message types (`ssh_agent_start/data/response`)
@@ -258,49 +258,49 @@ For HTTPS git operations in `klangk shell`, the credential helper (`git-credenti
 
 ## Files to create/modify
 
-### Phase 1
+### Files: Phase 1
 
-| File | Action | Description |
-|------|--------|-------------|
-| `src/containers/workspace/bin/git-credential-klangk` | **Create** | Shell script credential helper |
-| `src/containers/workspace/Dockerfile` | **Modify** | COPY helper, set system gitconfig |
-| `plugins/git-credential/package.json` | **Create** | Plugin metadata |
-| `plugins/git-credential/klangk/pubspec.yaml` | **Create** | Dart package manifest |
-| `plugins/git-credential/klangk/lib/plugin.dart` | **Create** | ToolPlugin: dispatches get/store/erase |
-| `plugins/git-credential/klangk/lib/credential_cache.dart` | **Create** | In-memory cache keyed by protocol://host |
-| `plugins/git-credential/klangk/lib/credential_dialog.dart` | **Create** | Flutter dialog: PAT field + GitHub OAuth button |
-| `plugins/git-credential/klangk/lib/github_device_flow.dart` | **Create** | GitHub OAuth device flow client |
-| `src/backend/klangk_backend/api.py` | **Modify** | `/api/config` endpoint (public, returns github_oauth_client_id) |
-| `src/backend/tests/test_api.py` | **Modify** | Test `/api/config` |
-| `plugins/git-credential/klangk/test/plugin_test.dart` | **Create** | Unit tests for handler |
-| `plugins/git-credential/klangk/test/device_flow_test.dart` | **Create** | Unit tests for GitHub device flow |
+| File                                                        | Action     | Description                                                     |
+| ----------------------------------------------------------- | ---------- | --------------------------------------------------------------- |
+| `src/containers/workspace/bin/git-credential-klangk`        | **Create** | Shell script credential helper                                  |
+| `src/containers/workspace/Dockerfile`                       | **Modify** | COPY helper, set system gitconfig                               |
+| `plugins/git-credential/package.json`                       | **Create** | Plugin metadata                                                 |
+| `plugins/git-credential/klangk/pubspec.yaml`                | **Create** | Dart package manifest                                           |
+| `plugins/git-credential/klangk/lib/plugin.dart`             | **Create** | ToolPlugin: dispatches get/store/erase                          |
+| `plugins/git-credential/klangk/lib/credential_cache.dart`   | **Create** | In-memory cache keyed by protocol://host                        |
+| `plugins/git-credential/klangk/lib/credential_dialog.dart`  | **Create** | Flutter dialog: PAT field + GitHub OAuth button                 |
+| `plugins/git-credential/klangk/lib/github_device_flow.dart` | **Create** | GitHub OAuth device flow client                                 |
+| `src/backend/klangk_backend/api.py`                         | **Modify** | `/api/config` endpoint (public, returns github_oauth_client_id) |
+| `src/backend/tests/test_api.py`                             | **Modify** | Test `/api/config`                                              |
+| `plugins/git-credential/klangk/test/plugin_test.dart`       | **Create** | Unit tests for handler                                          |
+| `plugins/git-credential/klangk/test/device_flow_test.dart`  | **Create** | Unit tests for GitHub device flow                               |
 
-### Phase 2
+### Files: Phase 2
 
-| File | Action | Description |
-|------|--------|-------------|
-| `src/backend/klangk_backend/cli/client.py` | **Modify** | SSH agent relay in `_ws_shell` |
-| `src/backend/klangk_backend/wshandler.py` | **Modify** | `ssh_agent_start/data/response` handlers |
-| `src/backend/klangk_backend/terminal.py` | **Modify** | Create agent socket, set `SSH_AUTH_SOCK` |
-| `src/containers/workspace/Dockerfile.base` | **Modify** | Ensure `socat` is installed |
-| `src/backend/tests/test_wshandler.py` | **Modify** | Tests for agent relay |
-| `src/backend/tests/test_cli.py` | **Modify** | Tests for CLI agent forwarding |
+| File                                       | Action     | Description                              |
+| ------------------------------------------ | ---------- | ---------------------------------------- |
+| `src/backend/klangk_backend/cli/client.py` | **Modify** | SSH agent relay in `_ws_shell`           |
+| `src/backend/klangk_backend/wshandler.py`  | **Modify** | `ssh_agent_start/data/response` handlers |
+| `src/backend/klangk_backend/terminal.py`   | **Modify** | Create agent socket, set `SSH_AUTH_SOCK` |
+| `src/containers/workspace/Dockerfile.base` | **Modify** | Ensure `socat` is installed              |
+| `src/backend/tests/test_wshandler.py`      | **Modify** | Tests for agent relay                    |
+| `src/backend/tests/test_cli.py`            | **Modify** | Tests for CLI agent forwarding           |
 
 ## Verification
 
-### Phase 1
+### Verify: Phase 1
 
 1. Open a workspace in the browser, open a terminal
 2. `git clone https://github.com/some/private-repo.git` → dialog appears asking for credentials
 3. Enter a PAT → clone succeeds → subsequent operations reuse cached token
 4. `git push` to a repo where the cached token is invalid → credential erased, re-prompted
-5. Open `klangk shell` (no browser) → `git clone https://...` falls through to interactive prompt
+5. Open `klangkc shell` (no browser) → `git clone https://...` falls through to interactive prompt
 6. Backend tests pass, frontend tests pass
 
-### Phase 2
+### Verify: Phase 2
 
 1. Ensure local `ssh-agent` is running with a key added (`ssh-add -l`)
-2. `klangk shell myworkspace`
+2. `klangkc shell myworkspace`
 3. Inside container: `ssh -T git@github.com` → "Hi username!" (uses forwarded key)
 4. `git clone git@github.com:user/private-repo.git` → succeeds using forwarded SSH key
 5. No private keys exist in the container at any point

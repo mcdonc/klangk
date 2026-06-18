@@ -46,4 +46,4 @@ Hosted app proxy: user apps are accessible at `{base_path}/hosted/{workspace_id}
 
 ## Export/Import
 
-Admins can export a workspace as a `.tar.gz` archive (home directory + metadata) via `GET /workspaces/{id}/export`. Any user can import an archive via `POST /workspaces/import` to create a new workspace. CLI commands: `klangk export` / `klangk import`. See [Export & Import](../reference/export-import.md) for details.
+Admins can export a workspace as a `.tar.gz` archive (home directory + metadata) via `GET /workspaces/{id}/export`. Any user can import an archive via `POST /workspaces/import` to create a new workspace. CLI commands: `klangkc export` / `klangkc import`. See [Export & Import](../reference/export-import.md) for details.

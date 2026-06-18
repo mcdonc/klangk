@@ -8,7 +8,7 @@ Two strategies, tried in order:
 
 1. **Bridge** (web frontend): POST clipboard_write to the browser-delegate
    bridge endpoint, which tells the Flutter app to call Clipboard.setData.
-2. **OSC 52** (klangk shell / any terminal): emit the OSC 52 escape
+2. **OSC 52** (klangkc shell / any terminal): emit the OSC 52 escape
    sequence so the outer terminal emulator copies to the system clipboard.
    Supported by iTerm2, Windows Terminal, kitty, alacritty, foot, etc.
 """
@@ -96,7 +96,7 @@ def main():
 
     browser_id = _get_browser_id()
 
-    # "klangkshell" sentinel means we're in klangk shell (CLI), not a
+    # "klangkshell" sentinel means we're in klangkc shell (CLI), not a
     # browser — skip the bridge and go straight to OSC 52.
     if browser_id == "klangkshell":
         _osc52(text)

@@ -1659,13 +1659,13 @@ class TestMainCLI:
         assert "-avz" in cmd
         assert "/tmp/foo" in cmd
         assert "ws:/work/foo" in cmd
-        assert "klangk exec" in " ".join(cmd)
+        assert "klangkc exec" in " ".join(cmd)
 
     def test_sync_no_rsync(self, logged_in_cfg):
         from klangk_backend.cli import main
 
         def which_no_rsync(name):
-            return "/usr/bin/klangk" if name == "klangk" else None
+            return "/usr/bin/klangkc" if name == "klangkc" else None
 
         ctx = MagicMock()
         ctx.args = []

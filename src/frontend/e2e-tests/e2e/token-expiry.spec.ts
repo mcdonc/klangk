@@ -45,7 +45,7 @@ test.describe("Token expiry", () => {
     expect(tokenError).toBe("invalid");
   });
 
-  test("klangk shell with expired token shows session expired", async ({
+  test("klangkc shell with expired token shows session expired", async ({
     request,
   }) => {
     // Register a user and create a workspace so the shell has a target
@@ -75,9 +75,9 @@ test.describe("Token expiry", () => {
       `[server]\nurl = "${API_BASE}"\n\n[auth]\ntoken = "${expiredToken}"\nemail = "${email}"\n`,
     );
 
-    // Run klangk shell — it should fail with a clear error
+    // Run klangkc shell — it should fail with a clear error
     try {
-      execSync(`klangk shell "${workspace.name}"`, {
+      execSync(`klangkc shell "${workspace.name}"`, {
         env: { ...process.env, HOME: tmpHome },
         encoding: "utf-8",
         timeout: 15_000,
@@ -87,7 +87,7 @@ test.describe("Token expiry", () => {
     } catch (e: any) {
       const output = (e.stderr || "") + (e.stdout || "");
       expect(output).toContain("Session expired");
-      expect(output).toContain("klangk login");
+      expect(output).toContain("klangkc login");
     }
 
     // Cleanup
