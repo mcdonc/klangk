@@ -1751,7 +1751,7 @@ class Connection:
         sock_path = f"/tmp/klangk-ssh-agent-{user_id}.sock"
         # Remove stale socket if it exists from a previous session.
         await podman.exec_container(self.container_id, ["rm", "-f", sock_path])
-        if _debug_agent:
+        if _debug_agent:  # pragma: no cover
             logger.info("[ssh-agent] starting socat at %s", sock_path)
         # Start socat: listen on the Unix socket, relay to stdin/stdout.
         proc = await asyncio.create_subprocess_exec(
@@ -1773,7 +1773,7 @@ class Connection:
         self._ssh_agent_task = asyncio.create_task(
             self._forward_ssh_agent_output()
         )
-        if _debug_agent and proc.stderr is not None:
+        if _debug_agent and proc.stderr is not None:  # pragma: no cover
             asyncio.create_task(self._log_ssh_agent_stderr())
         self.sock.send_json(
             {
@@ -1787,7 +1787,7 @@ class Connection:
             sock_path,
         )
 
-    async def _log_ssh_agent_stderr(self) -> None:
+    async def _log_ssh_agent_stderr(self) -> None:  # pragma: no cover
         """Log socat stderr when KLANGK_DEBUG_SSH_AGENT is set."""
         proc = self._ssh_agent_proc
         if proc is None or proc.stderr is None:
@@ -1813,10 +1813,10 @@ class Connection:
             while True:
                 data = await proc.stdout.read(65536)
                 if not data:
-                    if _debug_agent:
+                    if _debug_agent:  # pragma: no cover
                         logger.info("[ssh-agent] socat stdout EOF")
                     break
-                if _debug_agent:
+                if _debug_agent:  # pragma: no cover
                     logger.info(
                         "[ssh-agent] socat stdout: %d bytes", len(data)
                     )
@@ -1836,7 +1836,7 @@ class Connection:
         _debug_agent = os.environ.get("KLANGK_DEBUG_SSH_AGENT", "")
         proc = self._ssh_agent_proc
         if proc is None or proc.stdin is None:
-            if _debug_agent:
+            if _debug_agent:  # pragma: no cover
                 logger.info(
                     "[ssh-agent] data received but no proc (proc=%s)",
                     proc,
@@ -1845,7 +1845,7 @@ class Connection:
         raw = msg.get("data", "")
         if raw:
             decoded = base64.b64decode(raw)
-            if _debug_agent:
+            if _debug_agent:  # pragma: no cover
                 logger.info(
                     "[ssh-agent] writing %d bytes to socat stdin",
                     len(decoded),

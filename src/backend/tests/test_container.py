@@ -1694,6 +1694,26 @@ class TestAdoptOrphanedContainers:
             await container.registry.adopt_orphaned_containers()
         # Should not raise
 
+    async def test_remove_podman_error_handled(self):
+        """When remove_container raises PodmanError, it is logged but not raised."""
+        with patch_podman(
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "orphan-bad",
+                        "Labels": {"klangk.workspace-id": "ws-bad"},
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "remove failed")
+            ),
+        ) as mocks:
+            await container.registry.adopt_orphaned_containers()
+        mocks.remove_container.assert_awaited_once_with("orphan-bad")
+        # Container was not adopted — just skipped after failed removal.
+        assert "ws-bad" not in container.registry.states
+
 
 class TestBrowserRegistry:
     def setup_method(self):

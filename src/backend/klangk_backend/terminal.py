@@ -684,7 +684,7 @@ class TerminalSession:
                         self.ssh_agent_socket,
                     ],
                 )
-            except OSError as e:
+            except OSError as e:  # pragma: no cover
                 logger.warning("Failed to set SSH_AUTH_SOCK in tmux: %s", e)
 
     async def _read_loop(self) -> None:

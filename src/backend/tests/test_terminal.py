@@ -242,6 +242,36 @@ class TestStart:
         assert s._shell is None
         assert s.is_alive is False
 
+    async def test_start_sets_tmux_environment_for_ssh_agent(self):
+        """When ssh_agent_socket is set, start() calls tmux set-environment."""
+        fake = FakeShell(block_after_chunks=True)
+        with (
+            _patch(fake),
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new_callable=AsyncMock,
+            ) as mock_exec,
+        ):
+            s = TerminalSession(
+                "cid",
+                session_name="uid-123",
+                ssh_agent_socket="/tmp/agent.sock",
+            )
+            await s.start(120, 40)
+
+        mock_exec.assert_awaited_once_with(
+            "cid",
+            [
+                "tmux",
+                "set-environment",
+                "-t",
+                "uid-123",
+                "SSH_AUTH_SOCK",
+                "/tmp/agent.sock",
+            ],
+        )
+        await s.stop()
+
 
 class TestAttachBrowser:
     async def test_runs_klangk_attach_browser(self):
@@ -745,6 +775,18 @@ class TestBuildEnvironment:
     def test_ssh_agent_socket_omitted_when_none(self):
         env = _build_environment(None)
         assert not any(e.startswith("SSH_AUTH_SOCK=") for e in env)
+
+
+class TestBuildShellCommandSshAgent:
+    def test_ssh_agent_socket_adds_tmux_env(self):
+        cmd, _ = _build_shell_command(
+            session_name="uid",
+            ssh_agent_socket="/tmp/agent.sock",
+        )
+        tmux_idx = cmd.index("tmux")
+        tmux_tail = cmd[tmux_idx:]
+        assert "-e" in tmux_tail
+        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in tmux_tail
 
 
 class TestBuildShellCommandSocketPath:
