@@ -33,7 +33,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.filter.outputs.cli == 'true'
-        run: pip install -e src/cli/
+        run: pip install -e "src/cli/[dev]"
 
       - name: Run tests
         if: steps.filter.outputs.cli == 'true'
