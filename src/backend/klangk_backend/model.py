@@ -1,14 +1,19 @@
 import json
+import logging
 import re
 import socket
 from contextlib import asynccontextmanager
 
-import aiosqlite
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import create_async_engine
+
 from .util import resolve_env_secret
+
+logger = logging.getLogger(__name__)
 
 _data_dir = Path(
     resolve_env_secret(
@@ -16,6 +21,145 @@ _data_dir = Path(
     )
 )
 DB_PATH = _data_dir / "klangk.db"
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy async engine + compatibility wrappers
+# ---------------------------------------------------------------------------
+
+_engine = None
+
+
+class _Row:
+    """Row wrapper supporting both row["col"] and row[int] access."""
+
+    __slots__ = ("_row",)
+
+    def __init__(self, row):
+        self._row = row
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._row[key]
+        return self._row._mapping[key]
+
+    def keys(self):
+        return self._row._mapping.keys()
+
+
+class _CursorResult:
+    """Wrap SQLAlchemy CursorResult to match the aiosqlite cursor API."""
+
+    __slots__ = ("_result",)
+
+    def __init__(self, result):
+        self._result = result
+
+    async def fetchone(self):
+        row = self._result.fetchone()
+        return None if row is None else _Row(row)
+
+    async def fetchall(self):
+        return [_Row(row) for row in self._result.fetchall()]
+
+    @property
+    def rowcount(self):
+        return self._result.rowcount
+
+    @property
+    def lastrowid(self):
+        return self._result.lastrowid
+
+
+class _Connection:
+    """Wrap SQLAlchemy AsyncConnection to match the aiosqlite API.
+
+    Callers keep using ``db.execute(sql, params)``, ``db.commit()``,
+    ``db.rollback()``, and ``db.close()`` exactly as before.
+    """
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def execute(self, sql, params=None):
+        if params is not None:
+            if isinstance(params, list):
+                params = tuple(params)
+            result = await self._conn.exec_driver_sql(sql, params)
+        else:
+            result = await self._conn.exec_driver_sql(sql)
+        return _CursorResult(result)
+
+    async def commit(self):
+        await self._conn.commit()
+
+    async def rollback(self):
+        await self._conn.rollback()
+
+    async def close(self):
+        await self._conn.close()
+
+
+def _make_engine(db_path: Path | str, **kwargs):
+    """Create a new async engine with PRAGMA listeners."""
+    url = f"sqlite+aiosqlite:///{db_path}"
+    engine = create_async_engine(
+        url,
+        pool_size=5,
+        max_overflow=5,
+        **kwargs,
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_pragmas(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode = WAL")
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("PRAGMA busy_timeout = 15000")
+        cursor.close()
+
+    return engine
+
+
+def _ensure_engine():
+    global _engine
+    if _engine is None:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _engine = _make_engine(DB_PATH)
+    return _engine
+
+
+async def dispose_engine() -> None:
+    """Dispose the current engine (shutdown / test teardown)."""
+    global _engine
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
+
+
+async def get_db() -> _Connection:
+    """Acquire a raw database connection from the pool.
+
+    Caller is responsible for commit/rollback/close.
+    """
+    engine = _ensure_engine()
+    return _Connection(await engine.connect())
+
+
+@asynccontextmanager
+async def transaction():
+    """Context manager: auto-commits on clean exit, rolls back on error."""
+    db = await get_db()
+    try:
+        yield db
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
 
 # Chat message types
 MSG_USER = 0
@@ -60,16 +204,6 @@ async def agent_email() -> str:
 async def agent_handle() -> str:
     """Return the agent's handle from the DB."""
     return (await get_agent_user())["handle"]
-
-
-async def get_db() -> aiosqlite.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    db = await aiosqlite.connect(str(DB_PATH))
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA journal_mode = WAL")
-    await db.execute("PRAGMA foreign_keys = ON")
-    await db.execute("PRAGMA busy_timeout = 15000")
-    return db
 
 
 async def init_db() -> None:
@@ -337,23 +471,6 @@ SYSTEM_EVERYONE = 0
 SYSTEM_AUTHENTICATED = 1
 
 
-@asynccontextmanager
-async def transaction():
-    """Async context manager with transaction semantics.
-
-    Commits on clean exit, rolls back on exception.
-    """
-    db = await get_db()
-    try:
-        yield db
-        await db.commit()
-    except BaseException:
-        await db.rollback()
-        raise
-    finally:
-        await db.close()
-
-
 async def create_user(
     email: str,
     password_hash: str | None,
@@ -361,8 +478,7 @@ async def create_user(
     provider: str = "local",
     external_id: str | None = None,
 ) -> dict:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         user_id = str(uuid.uuid4())
         base = derive_handle(email)
         handle = await _unique_handle(db, base)
@@ -379,28 +495,22 @@ async def create_user(
                 handle,
             ),
         )
-        await db.commit()
         return {
             "id": user_id,
             "email": email,
             "handle": handle,
             "verified": verified,
         }
-    finally:
-        await db.close()
 
 
 async def get_user_handle(user_id: str) -> str | None:
     """Return the handle for a user, or None if not found."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT handle FROM users WHERE id = ?", (user_id,)
         )
         row = await cursor.fetchone()
         return row["handle"] if row else None
-    finally:
-        await db.close()
 
 
 async def set_user_handle(user_id: str, handle: str) -> None:
@@ -408,8 +518,7 @@ async def set_user_handle(user_id: str, handle: str) -> None:
     error = validate_handle(handle)
     if error:
         raise ValueError(error)
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id FROM users WHERE handle = ? AND id != ?",
             (handle, user_id),
@@ -420,15 +529,11 @@ async def set_user_handle(user_id: str, handle: str) -> None:
             "UPDATE users SET handle = ? WHERE id = ?",
             (handle, user_id),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def get_user_by_handle(handle: str) -> dict | None:
     """Find a user by handle."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, email, handle FROM users WHERE handle = ?",
             (handle,),
@@ -441,16 +546,13 @@ async def get_user_by_handle(handle: str) -> dict | None:
             "email": row["email"],
             "handle": row["handle"],
         }
-    finally:
-        await db.close()
 
 
 async def get_user_by_external_id(
     provider: str, external_id: str
 ) -> dict | None:
     """Find a user by OIDC provider + external ID."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, email, password_hash, verified, provider,"
             " external_id, handle"
@@ -469,36 +571,26 @@ async def get_user_by_external_id(
             "external_id": row["external_id"],
             "handle": row["handle"],
         }
-    finally:
-        await db.close()
 
 
 async def link_oidc_identity(
     user_id: str, provider: str, external_id: str
 ) -> None:
     """Link an OIDC identity to an existing user."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "UPDATE users SET provider = ?, external_id = ? WHERE id = ?",
             (provider, external_id, user_id),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def verify_user(user_id: str) -> bool:
     """Mark a user as verified. Returns True if updated, False if not found."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "UPDATE users SET verified = 1 WHERE id = ?", (user_id,)
         )
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()
 
 
 # --- Group operations ---
@@ -508,23 +600,18 @@ async def create_group(
     name: str, description: str | None = None, group_id: str | None = None
 ) -> dict:
     """Create a group. Returns the group dict."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         gid = group_id or str(uuid.uuid4())
         await db.execute(
             "INSERT INTO groups (id, name, description) VALUES (?, ?, ?)",
             (gid, name, description),
         )
-        await db.commit()
         return {"id": gid, "name": name, "description": description}
-    finally:
-        await db.close()
 
 
 async def get_group_by_name(name: str) -> dict | None:
     """Find a group by name."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, description, created_at"
             " FROM groups WHERE name = ?",
@@ -539,14 +626,11 @@ async def get_group_by_name(name: str) -> dict | None:
             "description": row["description"],
             "created_at": row["created_at"],
         }
-    finally:
-        await db.close()
 
 
 async def get_group_by_id(group_id: str) -> dict | None:
     """Find a group by ID."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, description, created_at"
             " FROM groups WHERE id = ?",
@@ -561,14 +645,11 @@ async def get_group_by_id(group_id: str) -> dict | None:
             "description": row["description"],
             "created_at": row["created_at"],
         }
-    finally:
-        await db.close()
 
 
 async def list_groups() -> list[dict]:
     """List all groups."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, description, created_at"
             " FROM groups ORDER BY name"
@@ -582,21 +663,15 @@ async def list_groups() -> list[dict]:
             }
             for row in await cursor.fetchall()
         ]
-    finally:
-        await db.close()
 
 
 async def delete_group(group_id: str) -> bool:
     """Delete a group. Returns True if deleted."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "DELETE FROM groups WHERE id = ?", (group_id,)
         )
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()
 
 
 async def update_group(
@@ -614,52 +689,39 @@ async def update_group(
         return False
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     values = list(updates.values()) + [group_id]
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             f"UPDATE groups SET {set_clause} WHERE id = ?",  # noqa: S608
             values,
         )
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()
 
 
 async def add_user_to_group(
     user_id: str, group_id: str, source: str = "manual"
 ) -> None:
     """Add a user to a group (idempotent)."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "INSERT OR IGNORE INTO user_groups (user_id, group_id, source)"
             " VALUES (?, ?, ?)",
             (user_id, group_id, source),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def remove_user_from_group(user_id: str, group_id: str) -> bool:
     """Remove a user from a group. Returns True if removed."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?",
             (user_id, group_id),
         )
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()
 
 
 async def get_group_members(group_id: str) -> list[dict]:
     """List users in a group."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT u.id, u.email, ug.source FROM users u"
             " JOIN user_groups ug ON u.id = ug.user_id"
@@ -671,41 +733,32 @@ async def get_group_members(group_id: str) -> list[dict]:
             {"id": row["id"], "email": row["email"], "source": row["source"]}
             for row in await cursor.fetchall()
         ]
-    finally:
-        await db.close()
 
 
 async def get_user_group_ids(user_id: str) -> list[str]:
     """Get all group IDs for a user."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT group_id FROM user_groups WHERE user_id = ?",
             (user_id,),
         )
         return [row["group_id"] for row in await cursor.fetchall()]
-    finally:
-        await db.close()
 
 
 async def get_user_oidc_sync_group_ids(user_id: str) -> list[str]:
     """Get group IDs where membership source is 'oidc_sync'."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT group_id FROM user_groups"
             " WHERE user_id = ? AND source = 'oidc_sync'",
             (user_id,),
         )
         return [row["group_id"] for row in await cursor.fetchall()]
-    finally:
-        await db.close()
 
 
 async def get_user_groups(user_id: str) -> list[dict]:
     """Get all groups a user belongs to."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT g.id, g.name, g.description FROM groups g"
             " JOIN user_groups ug ON g.id = ug.group_id"
@@ -721,8 +774,6 @@ async def get_user_groups(user_id: str) -> list[dict]:
             }
             for row in await cursor.fetchall()
         ]
-    finally:
-        await db.close()
 
 
 # --- ACL entry operations ---
@@ -739,8 +790,7 @@ async def add_acl_entry(
     system_principal: int | None = None,
 ) -> int:
     """Add an ACL entry. Returns the entry ID."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "INSERT INTO acl_entries"
             " (resource, position, action, principal_type,"
@@ -757,16 +807,12 @@ async def add_acl_entry(
                 permission,
             ),
         )
-        await db.commit()
         return cursor.lastrowid
-    finally:
-        await db.close()
 
 
 async def get_acl_entries(resource: str) -> list[dict]:
     """Get ACL entries for a resource, ordered by position."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, resource, position, action, principal_type,"
             " user_id, group_id, system_principal, permission"
@@ -788,14 +834,11 @@ async def get_acl_entries(resource: str) -> list[dict]:
             }
             for row in await cursor.fetchall()
         ]
-    finally:
-        await db.close()
 
 
 async def get_acl_entries_resolved(resource: str) -> list[dict]:
     """Get ACL entries with resolved principal names."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT ae.id, ae.resource, ae.position, ae.action,"
             " ae.principal_type, ae.user_id, ae.group_id,"
@@ -833,14 +876,11 @@ async def get_acl_entries_resolved(resource: str) -> list[dict]:
                 entry["group_id"] = row["group_id"]
             results.append(entry)
         return results
-    finally:
-        await db.close()
 
 
 async def replace_acl_entries(resource: str, entries: list[dict]) -> None:
     """Replace all ACL entries for a resource."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "DELETE FROM acl_entries WHERE resource = ?", (resource,)
         )
@@ -861,28 +901,20 @@ async def replace_acl_entries(resource: str, entries: list[dict]) -> None:
                     entry["permission"],
                 ),
             )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def delete_acl_entries_for_resource(resource: str) -> int:
     """Delete all ACL entries for a resource. Returns count deleted."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "DELETE FROM acl_entries WHERE resource = ?", (resource,)
         )
-        await db.commit()
         return cursor.rowcount
-    finally:
-        await db.close()
 
 
 async def get_acl_entries_by_principal_user(user_id: str) -> list[dict]:
     """Get all ACL entries referencing a specific user."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, resource, position, action, principal_type,"
             " user_id, group_id, system_principal, permission"
@@ -891,14 +923,11 @@ async def get_acl_entries_by_principal_user(user_id: str) -> list[dict]:
             (PRINCIPAL_USER, user_id),
         )
         return [dict(row) for row in await cursor.fetchall()]
-    finally:
-        await db.close()
 
 
 async def get_acl_entries_by_principal_group(group_id: str) -> list[dict]:
     """Get all ACL entries referencing a specific group."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, resource, position, action, principal_type,"
             " user_id, group_id, system_principal, permission"
@@ -907,14 +936,11 @@ async def get_acl_entries_by_principal_group(group_id: str) -> list[dict]:
             (PRINCIPAL_GROUP, group_id),
         )
         return [dict(row) for row in await cursor.fetchall()]
-    finally:
-        await db.close()
 
 
 async def get_acl_tree_summary() -> list[dict]:
     """Get all distinct resources with their ACE counts."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT resource, COUNT(*) as ace_count"
             " FROM acl_entries GROUP BY resource"
@@ -924,13 +950,10 @@ async def get_acl_tree_summary() -> list[dict]:
             {"resource": row["resource"], "ace_count": row["ace_count"]}
             for row in await cursor.fetchall()
         ]
-    finally:
-        await db.close()
 
 
 async def get_user_by_email(email: str) -> dict | None:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, email, password_hash, verified, provider,"
             " external_id, handle"
@@ -949,14 +972,11 @@ async def get_user_by_email(email: str) -> dict | None:
             "external_id": row["external_id"],
             "handle": row["handle"],
         }
-    finally:
-        await db.close()
 
 
 async def list_users() -> list[dict]:
     """List all users with their groups."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, email, verified, provider, created_at"
             " FROM users ORDER BY created_at"
@@ -984,8 +1004,6 @@ async def list_users() -> list[dict]:
                 }
             )
         return users
-    finally:
-        await db.close()
 
 
 async def delete_user(user_id: str) -> bool:
@@ -995,25 +1013,17 @@ async def delete_user(user_id: str) -> bool:
     """
     if user_id == AGENT_USER_ID:
         raise ValueError("Cannot delete the system agent user")
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()
 
 
 async def update_email(user_id: str, email: str) -> None:
     """Update a user's email."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "UPDATE users SET email = ? WHERE id = ?", (email, user_id)
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def update_password(user_id: str, password_hash: str) -> None:
@@ -1024,20 +1034,15 @@ async def update_password(user_id: str, password_hash: str) -> None:
     """
     if user_id == AGENT_USER_ID:
         raise ValueError("Cannot set a password on the system agent user")
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
             (password_hash, user_id),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def get_user_by_id(user_id: str) -> dict | None:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, email, handle FROM users WHERE id = ?",
             (user_id,),
@@ -1050,14 +1055,11 @@ async def get_user_by_id(user_id: str) -> dict | None:
             "email": row["email"],
             "handle": row["handle"],
         }
-    finally:
-        await db.close()
 
 
 async def search_users(query: str, limit: int = 10) -> list[dict]:
     """Search users by email prefix."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, email, handle FROM users"
             " WHERE email LIKE ? ORDER BY email LIMIT ?",
@@ -1067,8 +1069,6 @@ async def search_users(query: str, limit: int = 10) -> list[dict]:
             {"id": row["id"], "email": row["email"], "handle": row["handle"]}
             for row in await cursor.fetchall()
         ]
-    finally:
-        await db.close()
 
 
 # Workspace operations
@@ -1082,8 +1082,7 @@ async def create_workspace(
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
 ) -> dict:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         workspace_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         mounts_json = json.dumps(mounts) if mounts else None
@@ -1104,7 +1103,6 @@ async def create_workspace(
                 created_at,
             ),
         )
-        await db.commit()
         from . import container
 
         return {
@@ -1118,13 +1116,10 @@ async def create_workspace(
             "num_ports": container.DEFAULT_PORTS_PER_WORKSPACE,
             "created_at": created_at,
         }
-    finally:
-        await db.close()
 
 
 async def list_workspaces(user_id: str) -> list[dict]:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, container_id, image, default_command,"
             " mounts, env, created_at FROM workspaces"
@@ -1145,8 +1140,6 @@ async def list_workspaces(user_id: str) -> list[dict]:
             }
             for row in rows
         ]
-    finally:
-        await db.close()
 
 
 async def list_shared_workspaces(user_id: str) -> list[dict]:
@@ -1155,8 +1148,7 @@ async def list_shared_workspaces(user_id: str) -> list[dict]:
     Finds workspaces where the user has access through either a direct
     user-level ACE or a group-level ACE on ``/workspaces/{id}``.
     """
-    db = await get_db()
-    try:
+    async with transaction() as db:
         group_ids = await get_user_group_ids(user_id)
         group_placeholders = ",".join("?" for _ in group_ids)
         group_clause = (
@@ -1195,8 +1187,6 @@ async def list_shared_workspaces(user_id: str) -> list[dict]:
             }
             for row in rows
         ]
-    finally:
-        await db.close()
 
 
 async def get_workspace(
@@ -1207,8 +1197,7 @@ async def get_workspace(
     If user_id is provided, restricts to workspaces owned by that user.
     Access control for shared workspaces is handled by the ACL layer.
     """
-    db = await get_db()
-    try:
+    async with transaction() as db:
         if user_id is not None:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
@@ -1237,14 +1226,11 @@ async def get_workspace(
             "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
             "env": json.loads(row["env"]) if row["env"] else None,
         }
-    finally:
-        await db.close()
 
 
 async def get_workspace_by_id(workspace_id: str) -> dict | None:
     """Get a workspace by ID without access control (for admin use)."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, user_id, name, container_id, num_ports, image,"
             " default_command, mounts, env"
@@ -1265,8 +1251,6 @@ async def get_workspace_by_id(workspace_id: str) -> dict | None:
             "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
             "env": json.loads(row["env"]) if row["env"] else None,
         }
-    finally:
-        await db.close()
 
 
 async def get_workspace_members(workspace_id: str) -> list[dict]:
@@ -1275,8 +1259,7 @@ async def get_workspace_members(workspace_id: str) -> list[dict]:
     Returns users with direct user-level ACEs on /workspaces/{id},
     excluding the workspace owner.
     """
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT DISTINCT u.id, u.email, u.handle FROM users u"
             " JOIN acl_entries ae ON ae.user_id = u.id"
@@ -1295,22 +1278,16 @@ async def get_workspace_members(workspace_id: str) -> list[dict]:
             {"id": row["id"], "email": row["email"], "handle": row["handle"]}
             for row in await cursor.fetchall()
         ]
-    finally:
-        await db.close()
 
 
 async def add_port_allocations(workspace_id: str, ports: list[int]) -> None:
     """Allocate ports to a workspace. Raises IntegrityError on conflict."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         for port in ports:
             await db.execute(
                 "INSERT INTO port_allocations (port, workspace_id) VALUES (?, ?)",
                 (port, workspace_id),
             )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 def _port_in_use(port: int) -> bool:
@@ -1327,8 +1304,7 @@ async def find_and_allocate_ports(
     workspace_id: str, count: int, start: int
 ) -> list[int]:
     """Atomically find free ports and allocate them in a single transaction."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute("SELECT port FROM port_allocations")
         rows = await cursor.fetchall()
         used = {row["port"] for row in rows}
@@ -1345,60 +1321,45 @@ async def find_and_allocate_ports(
                 "INSERT INTO port_allocations (port, workspace_id) VALUES (?, ?)",
                 (p, workspace_id),
             )
-        await db.commit()
         return ports
-    finally:
-        await db.close()
 
 
 async def remove_port_allocations(workspace_id: str, ports: list[int]) -> None:
     """Remove specific port allocations from a workspace."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         for port in ports:
             await db.execute(
                 "DELETE FROM port_allocations WHERE port = ? AND workspace_id = ?",
                 (port, workspace_id),
             )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def get_workspace_ports(workspace_id: str) -> list[int]:
     """Return all allocated ports for a workspace, sorted."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT port FROM port_allocations WHERE workspace_id = ? ORDER BY port",
             (workspace_id,),
         )
         rows = await cursor.fetchall()
         return [row["port"] for row in rows]
-    finally:
-        await db.close()
 
 
 async def get_all_allocated_ports() -> set[int]:
     """Return all allocated port numbers across all workspaces."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute("SELECT port FROM port_allocations")
         rows = await cursor.fetchall()
         return {row["port"] for row in rows}
-    finally:
-        await db.close()
 
 
 async def delete_workspace(workspace_id: str, user_id: str) -> bool:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "DELETE FROM workspaces WHERE id = ? AND user_id = ?",
             (workspace_id, user_id),
         )
         if cursor.rowcount == 0:
-            await db.commit()
             return False
         # Clean up ACL entries for this workspace
         resource = f"/workspaces/{workspace_id}"
@@ -1436,24 +1397,17 @@ async def delete_workspace(workspace_id: str, user_id: str) -> bool:
             "DELETE FROM chat_messages WHERE workspace_id = ?",
             (workspace_id,),
         )
-        await db.commit()
         return True
-    finally:
-        await db.close()
 
 
 async def update_workspace_container(
     workspace_id: str, container_id: str | None
 ) -> None:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "UPDATE workspaces SET container_id = ? WHERE id = ?",
             (container_id, workspace_id),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def update_workspace(
@@ -1475,22 +1429,17 @@ async def update_workspace(
         return False
     set_clause = ", ".join(f"{k} = ?" for k in to_set)
     values = list(to_set.values()) + [workspace_id, user_id]
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             f"UPDATE workspaces SET {set_clause}"  # noqa: S608
             " WHERE id = ? AND user_id = ?",
             values,
         )
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()
 
 
 async def get_user_workspaces_with_containers(user_id: str) -> list[dict]:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, container_id FROM workspaces WHERE user_id = ? AND container_id IS NOT NULL",
             (user_id,),
@@ -1500,36 +1449,27 @@ async def get_user_workspaces_with_containers(user_id: str) -> list[dict]:
             {"id": row["id"], "container_id": row["container_id"]}
             for row in rows
         ]
-    finally:
-        await db.close()
 
 
 # Token blocklist
 
 
 async def blocklist_token(jti: str, expires_at: str) -> None:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "INSERT OR IGNORE INTO token_blocklist (jti, expires_at) VALUES (?, ?)",
             (jti, expires_at),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def is_token_blocklisted(jti: str) -> bool:
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT 1 FROM token_blocklist WHERE jti = ?",
             (jti,),
         )
         row = await cursor.fetchone()
         return row is not None
-    finally:
-        await db.close()
 
 
 # Message history
@@ -1540,8 +1480,7 @@ async def is_token_blocklisted(jti: str) -> bool:
 
 async def record_failed_login(email: str) -> None:
     """Record a failed login attempt for an email. Resets after the window."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         now = datetime.now(timezone.utc).isoformat()
         # Try to update existing row
         await db.execute(
@@ -1550,17 +1489,13 @@ async def record_failed_login(email: str) -> None:
                attempt_count = attempt_count + 1""",
             (email, now),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def get_login_attempt_info(
     email: str,
 ) -> dict[str, int | str | None] | None:
     """Return login attempt info for an email, or None if no attempts tracked."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             """SELECT attempt_count, first_attempt_at, locked_until
                FROM login_attempts WHERE email = ?""",
@@ -1574,33 +1509,23 @@ async def get_login_attempt_info(
             "first_attempt_at": row["first_attempt_at"],
             "locked_until": row["locked_until"],
         }
-    finally:
-        await db.close()
 
 
 async def set_login_lockout(email: str, locked_until: str) -> None:
     """Set the lockout time for an email after too many failed attempts."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "UPDATE login_attempts SET locked_until = ? WHERE email = ?",
             (locked_until, email),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def clear_login_attempts(email: str) -> None:
     """Clear all login attempts for an email (on successful login)."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         await db.execute(
             "DELETE FROM login_attempts WHERE email = ?", (email,)
         )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 # Chat messages
@@ -1609,7 +1534,7 @@ _MENTION_RE = re.compile(r"@(\S+)")
 
 
 async def parse_mentions(
-    db: aiosqlite.Connection, message: str, workspace_id: str
+    db: _Connection, message: str, workspace_id: str
 ) -> list[str]:
     """Extract @email mentions from message text and resolve to user IDs.
 
@@ -1660,8 +1585,7 @@ async def add_chat_message(
     message_type: int = MSG_USER,
 ) -> dict:
     """Store a chat message and return it."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         msg_id = str(uuid.uuid4())
         await db.execute(
             "INSERT INTO chat_messages"
@@ -1676,7 +1600,6 @@ async def add_chat_message(
                 " VALUES (?, ?, ?, ?)",
                 (str(uuid.uuid4()), msg_id, uid, workspace_id),
             )
-        await db.commit()
         cursor = await db.execute(
             "SELECT created_at FROM chat_messages WHERE id = ?", (msg_id,)
         )
@@ -1697,8 +1620,6 @@ async def add_chat_message(
             "created_at": row["created_at"],
             "mentions": mentioned_user_ids,
         }
-    finally:
-        await db.close()
 
 
 async def delete_chat_message(message_id: str, user_id: str) -> bool:
@@ -1707,25 +1628,20 @@ async def delete_chat_message(message_id: str, user_id: str) -> bool:
     Only the author can delete their own messages.  The row is
     preserved so the history shows a placeholder.
     """
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "UPDATE chat_messages SET message = '<message deleted by author>'"
             " WHERE id = ? AND user_id = ?",
             (message_id, user_id),
         )
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()
 
 
 async def get_chat_messages_before(
     workspace_id: str, before_id: str, limit: int = 50
 ) -> list[dict]:
     """Get older chat messages before a given message ID."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         # Get the created_at and rowid of the anchor message
         cursor = await db.execute(
             "SELECT created_at, rowid FROM chat_messages WHERE id = ?",
@@ -1782,14 +1698,11 @@ async def get_chat_messages_before(
             for m in messages:
                 m["mentions"] = mentions_by_msg.get(m["id"], [])
         return messages
-    finally:
-        await db.close()
 
 
 async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
     """Get the most recent chat messages for a workspace."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT c.id, c.workspace_id, c.user_id, c.user_email,"
             " c.message, c.message_type, c.created_at, u.handle AS user_handle"
@@ -1833,8 +1746,6 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
             for m in messages:
                 m["mentions"] = mentions_by_msg.get(m["id"], [])
         return messages
-    finally:
-        await db.close()
 
 
 # Invitations
@@ -1842,14 +1753,12 @@ async def get_chat_messages(workspace_id: str, limit: int = 50) -> list[dict]:
 
 async def create_invitation(email: str, invited_by: str) -> dict:
     """Create a new invitation. Returns the invitation dict."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         invitation_id = str(uuid.uuid4())
         await db.execute(
             "INSERT INTO invitations (id, email, invited_by) VALUES (?, ?, ?)",
             (invitation_id, email, invited_by),
         )
-        await db.commit()
         cursor = await db.execute(
             "SELECT created_at FROM invitations WHERE id = ?",
             (invitation_id,),
@@ -1862,14 +1771,11 @@ async def create_invitation(email: str, invited_by: str) -> dict:
             "status": "pending",
             "created_at": row["created_at"],
         }
-    finally:
-        await db.close()
 
 
 async def get_invitation(invitation_id: str) -> dict | None:
     """Get an invitation by ID."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, email, invited_by, status, created_at, accepted_at"
             " FROM invitations WHERE id = ?",
@@ -1886,14 +1792,11 @@ async def get_invitation(invitation_id: str) -> dict | None:
             "created_at": row["created_at"],
             "accepted_at": row["accepted_at"],
         }
-    finally:
-        await db.close()
 
 
 async def get_pending_invitation_by_email(email: str) -> dict | None:
     """Get a pending invitation for the given email."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, email, invited_by, status, created_at, accepted_at"
             " FROM invitations WHERE email = ? AND status = 'pending'",
@@ -1910,14 +1813,11 @@ async def get_pending_invitation_by_email(email: str) -> dict | None:
             "created_at": row["created_at"],
             "accepted_at": row["accepted_at"],
         }
-    finally:
-        await db.close()
 
 
 async def list_invitations() -> list[dict]:
     """List all invitations, most recent first."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "SELECT i.id, i.email, i.invited_by, i.status,"
             " i.created_at, i.accepted_at, u.email AS invited_by_email"
@@ -1937,36 +1837,26 @@ async def list_invitations() -> list[dict]:
             }
             for row in await cursor.fetchall()
         ]
-    finally:
-        await db.close()
 
 
 async def mark_invitation_accepted(invitation_id: str) -> bool:
     """Mark an invitation as accepted. Returns True if updated."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         cursor = await db.execute(
             "UPDATE invitations SET status = 'accepted', accepted_at = ?"
             " WHERE id = ? AND status = 'pending'",
             (now, invitation_id),
         )
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()
 
 
 async def revoke_invitation(invitation_id: str) -> bool:
     """Revoke a pending invitation. Returns True if updated."""
-    db = await get_db()
-    try:
+    async with transaction() as db:
         cursor = await db.execute(
             "UPDATE invitations SET status = 'revoked'"
             " WHERE id = ? AND status = 'pending'",
             (invitation_id,),
         )
-        await db.commit()
         return cursor.rowcount > 0
-    finally:
-        await db.close()

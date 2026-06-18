@@ -2688,14 +2688,10 @@ class TestGroups:
         group = await model.create_group("devs")
         await model.add_user_to_group(user["id"], group["id"])
         assert group["id"] in await model.get_user_group_ids(user["id"])
-        db_conn = await model.get_db()
-        try:
+        async with model.transaction() as db_conn:
             await db_conn.execute(
                 "DELETE FROM users WHERE id = ?", (user["id"],)
             )
-            await db_conn.commit()
-        finally:
-            await db_conn.close()
         assert await model.get_user_group_ids(user["id"]) == []
 
     async def test_cascade_delete_group(self, user):

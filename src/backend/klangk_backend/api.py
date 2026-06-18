@@ -7,7 +7,7 @@ import logging
 import os
 import posixpath
 import secrets
-import sqlite3
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 import subprocess
 import tempfile
 import time
@@ -947,7 +947,7 @@ async def create_workspace(
             mounts=body.mounts,
             env=body.env,
         )
-    except sqlite3.IntegrityError:
+    except SAIntegrityError:
         raise HTTPException(
             status_code=409,
             detail=f"A workspace named {body.name!r} already exists",
@@ -1072,7 +1072,7 @@ async def duplicate_workspace(
             mounts=source.get("mounts"),
             env=source.get("env"),
         )
-    except sqlite3.IntegrityError:
+    except SAIntegrityError:
         raise HTTPException(
             status_code=409,
             detail=f"A workspace named {body.name!r} already exists",
@@ -1290,7 +1290,7 @@ async def import_workspace(
                 mounts=mounts,
                 env=env,
             )
-        except sqlite3.IntegrityError:
+        except SAIntegrityError:
             raise HTTPException(
                 status_code=409,
                 detail=f"A workspace named {ws_name!r} already exists",
