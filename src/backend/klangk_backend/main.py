@@ -137,6 +137,46 @@ async def seed_default_user() -> None:
         await model.add_user_to_group(existing["id"], admin_group_id)
 
 
+async def seed_agent_user() -> None:
+    """Ensure the chat agent has a row in the users table.
+
+    The agent user cannot log in (password_hash is NULL).  If the row
+    already exists we update email/handle so env-var changes take effect.
+    """
+    db = await model.get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE id = ?", (model.AGENT_USER_ID,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            await db.execute(
+                """INSERT INTO users (id, email, password_hash, verified,
+                   provider, handle)
+                   VALUES (?, ?, NULL, 1, 'system', ?)""",
+                (model.AGENT_USER_ID, model.AGENT_EMAIL, model.AGENT_HANDLE),
+            )
+            await db.commit()
+            logger.info(
+                "Created agent user '%s' (%s)",
+                model.AGENT_HANDLE,
+                model.AGENT_USER_ID,
+            )
+        else:
+            await db.execute(
+                "UPDATE users SET email = ?, handle = ? WHERE id = ?",
+                (model.AGENT_EMAIL, model.AGENT_HANDLE, model.AGENT_USER_ID),
+            )
+            await db.commit()
+            logger.info(
+                "Updated agent user '%s' (%s)",
+                model.AGENT_HANDLE,
+                model.AGENT_USER_ID,
+            )
+    finally:
+        await db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from . import auth
@@ -147,6 +187,7 @@ async def lifespan(app: FastAPI):
     oidc.init_providers()
     oidc.load_login_hook()
     await seed_default_user()
+    await seed_agent_user()
     from . import wshandler
 
     container.registry.set_on_workspace_killed(wshandler.reset_workspace_state)

@@ -51,6 +51,52 @@ class TestSeedDefaultUser:
         assert "log-test" in caplog.text
 
 
+# --- Seed agent user ---
+
+
+class TestSeedAgentUser:
+    async def test_creates_agent_user_when_missing(self, db):
+        await main.seed_agent_user()
+        user = await model.get_user_by_email(model.AGENT_EMAIL)
+        assert user is not None
+        assert user["id"] == model.AGENT_USER_ID
+        assert user["handle"] == model.AGENT_HANDLE
+        assert user["provider"] == "system"
+        assert user["verified"] == 1
+
+    async def test_agent_user_has_no_password(self, db):
+        await main.seed_agent_user()
+        user = await model.get_user_by_email(model.AGENT_EMAIL)
+        assert user is not None
+        assert user["password_hash"] is None
+
+    async def test_updates_existing_agent_user(self, db, monkeypatch):
+        await main.seed_agent_user()
+        # Change env vars and re-seed
+        monkeypatch.setattr(model, "AGENT_EMAIL", "new-agent@example.com")
+        monkeypatch.setattr(model, "AGENT_HANDLE", "NewBoops")
+        await main.seed_agent_user()
+        user_db = await model.get_db()
+        try:
+            cursor = await user_db.execute(
+                "SELECT email, handle FROM users WHERE id = ?",
+                (model.AGENT_USER_ID,),
+            )
+            row = await cursor.fetchone()
+        finally:
+            await user_db.close()
+        assert row is not None
+        assert row["email"] == "new-agent@example.com"
+        assert row["handle"] == "NewBoops"
+
+    async def test_idempotent(self, db):
+        await main.seed_agent_user()
+        await main.seed_agent_user()
+        user = await model.get_user_by_email(model.AGENT_EMAIL)
+        assert user is not None
+        assert user["id"] == model.AGENT_USER_ID
+
+
 # --- Lifespan ---
 
 
