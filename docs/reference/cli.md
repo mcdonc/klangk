@@ -33,6 +33,28 @@ klangkc volumes rm nix-store         # delete a volume (must be yours)
 
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
 
+## Exiting the shell
+
+To disconnect from `klangkc shell`, use the SSH-style escape sequence:
+**Enter**, **~**, **.** (three keystrokes in sequence).
+
+1. Press **Enter** to make sure you're at the beginning of a new line.
+   The escape sequence is only recognized immediately after a newline.
+2. Press **~** (tilde). Nothing visible happens yet — the CLI is
+   waiting to see if the next character completes the escape.
+3. Press **.** (period). The connection closes immediately and you're
+   returned to your local shell.
+
+If you type **~** and then any key other than **.**, the tilde and
+that key are both sent to the remote shell as normal input. This
+means **~** only has special meaning right after Enter — you can use
+tildes freely in commands and text without triggering the escape.
+
+> **Note:** Closing your terminal window or pressing **Ctrl+C** will
+> also end the session, but the escape sequence is the clean way to
+> disconnect without interrupting a running process inside the
+> container.
+
 ## Terminal behavior differences
 
 `klangkc shell` provides the same tmux-based terminal as the web frontend, but clipboard behavior differs:
