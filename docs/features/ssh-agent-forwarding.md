@@ -75,10 +75,10 @@ shell`, not from the browser-based terminal.
 
 ### Debugging
 
-Set `KLANGK_DEBUG_SSH_AGENT=1` in your `.env` (or export it in the
-shell running the backend) to enable verbose logging of the SSH agent
-relay on both the backend and CLI side. The CLI also respects this
-variable — export it in the terminal where you run `klangkc shell`.
+Set `KLANGK_DEBUG_SSH_AGENT=1` to enable verbose logging of the SSH
+agent relay. On the backend, messages go to the server log. On the
+CLI, messages are written to `~/.klangkc-ssh-agent.log` (to avoid
+corrupting the terminal display).
 
 ```bash
 # Backend side (in .env or environment)
@@ -87,6 +87,8 @@ KLANGK_DEBUG_SSH_AGENT=1
 # CLI side
 export KLANGK_DEBUG_SSH_AGENT=1
 klangkc shell -A my-workspace
+# In another terminal:
+tail -f ~/.klangkc-ssh-agent.log
 ```
 
 Log messages are prefixed with `[ssh-agent]` and show data flow
