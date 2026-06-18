@@ -1,4 +1,4 @@
-# GitHub Authentication
+# GitHub HTTPS Authentication
 
 Klangk workspaces can authenticate with GitHub for HTTPS git operations
 (push, pull, clone of private repos). Two methods are available:

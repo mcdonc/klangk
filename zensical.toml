@@ -9,31 +9,21 @@ extra_css = ["stylesheets/extra.css"]
 nav = [
   { "Home" = "index.md" },
   { "Getting Started" = "getting-started.md" },
-  { "Architecture" = [
-    { "Overview" = "architecture/index.md" },
-    { "LLM Proxy" = "architecture/llm-proxy.md" },
-    { "Browser Bridge" = "architecture/browser-bridge.md" },
-    { "Workspace JWT" = "architecture/workspace-jwt.md" },
-  ]},
   { "Features" = [
     { "Overview" = "features/index.md" },
     { "Authentication" = "features/authentication.md" },
+    { "Authorization" = "features/authorization.md" },
+    { "Admin Management" = "features/admin-management.md" },
+    { "Invitations" = "features/invitations.md" },
     { "Workspaces" = "features/workspaces.md" },
     { "Terminal" = "features/terminal.md" },
     { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },
-    { "GitHub Authentication" = "features/github-authentication.md" },
     { "AI Coding Harnesses" = "features/ai-coding-harnesses.md" },
     { "Plugins & Extensions" = "features/plugins.md" },
     { "Export & Import" = "features/export-import.md" },
     { "SSH Agent Forwarding" = "features/ssh-agent-forwarding.md" },
-  ]},
-  { "Development" = [
-    { "Overview" = "development/index.md" },
-    { "CI" = "development/ci.md" },
-    { "Pre-commit Hooks" = "development/pre-commit.md" },
-    { "Releasing" = "development/releasing.md" },
-    { "Stable Branches" = "development/stable-branches.md" },
+    { "GitHub HTTPS Authentication" = "features/github-authentication.md" },
   ]},
   { "Deployment" = [
     { "Host Container" = "deployment/index.md" },
@@ -47,6 +37,19 @@ nav = [
     { "OIDC" = "reference/oidc.md" },
     { "Podman" = "reference/podman.md" },
     { "Plugin System" = "reference/plugin-system.md" },
+  ]},
+  { "Development" = [
+    { "Overview" = "development/index.md" },
+    { "CI" = "development/ci.md" },
+    { "Pre-commit Hooks" = "development/pre-commit.md" },
+    { "Releasing" = "development/releasing.md" },
+    { "Stable Branches" = "development/stable-branches.md" },
+  ]},
+  { "Architecture" = [
+    { "Overview" = "architecture/index.md" },
+    { "LLM Proxy" = "architecture/llm-proxy.md" },
+    { "Browser Bridge" = "architecture/browser-bridge.md" },
+    { "Workspace JWT" = "architecture/workspace-jwt.md" },
   ]},
 ]
 
