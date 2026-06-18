@@ -506,7 +506,11 @@ async def _get_presence_list(workspace_id: str) -> list[dict]:
         if conn and conn.user["id"] not in seen:
             seen.add(conn.user["id"])
             users.append(
-                {"user_id": conn.user["id"], "user_email": conn.user["email"]}
+                {
+                    "user_id": conn.user["id"],
+                    "user_email": conn.user["email"],
+                    "user_handle": conn.user.get("handle", ""),
+                }
             )
     # Include agent only if its RPC process is alive.
     from . import agent  # pragma: no cover
@@ -514,7 +518,11 @@ async def _get_presence_list(workspace_id: str) -> list[dict]:
     if agent.any_running():  # pragma: no cover
         agent_user = await model.get_agent_user()
         users.append(
-            {"user_id": model.AGENT_USER_ID, "user_email": agent_user["email"]}
+            {
+                "user_id": model.AGENT_USER_ID,
+                "user_email": agent_user["email"],
+                "user_handle": agent_user.get("handle", ""),
+            }
         )
     return users
 
@@ -730,11 +738,21 @@ class Connection:
         members = await model.get_workspace_members(workspace_id)
         owner = await model.get_user_by_id(workspace.get("user_id", ""))
         if owner and not any(m["id"] == owner["id"] for m in members):
-            members.append({"id": owner["id"], "email": owner["email"]})
+            members.append(
+                {
+                    "id": owner["id"],
+                    "email": owner["email"],
+                    "handle": owner.get("handle", ""),
+                }
+            )
         # Include the agent so it autocompletes
         agent_user = await model.get_agent_user()
         members.append(
-            {"id": model.AGENT_USER_ID, "email": agent_user["email"]}
+            {
+                "id": model.AGENT_USER_ID,
+                "email": agent_user["email"],
+                "handle": agent_user.get("handle", ""),
+            }
         )
         self.sock.send_json({"type": "workspace_members", "members": members})
 

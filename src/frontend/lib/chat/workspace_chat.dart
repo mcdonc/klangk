@@ -242,7 +242,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     final members = widget.wsClient.workspaceMembers;
     _filteredMembers = members.where((m) {
       final email = (m['email'] as String? ?? '').toLowerCase();
-      return email.contains(_mentionQuery);
+      final handle = (m['handle'] as String? ?? '').toLowerCase();
+      return handle.contains(_mentionQuery) || email.contains(_mentionQuery);
     }).toList();
     if (_filteredMembers.isEmpty) {
       _hideAutocomplete();
@@ -277,10 +278,12 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                 shrinkWrap: true,
                 itemCount: visibleCount,
                 itemBuilder: (ctx, i) {
+                  final handle = _filteredMembers[i]['handle'] as String? ?? '';
                   final email = _filteredMembers[i]['email'] as String? ?? '';
+                  final displayName = handle.isNotEmpty ? handle : email;
                   final isHighlighted = i == _highlightedIndex;
                   return InkWell(
-                    onTap: () => _insertMention(email),
+                    onTap: () => _insertMention(displayName),
                     child: Container(
                       color: isHighlighted
                           ? KColors.bgOverlay
@@ -290,7 +293,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                         vertical: 8,
                       ),
                       child: Text(
-                        email,
+                        displayName,
                         style: const TextStyle(
                           color: KColors.textPrimary,
                           fontSize: 13,
@@ -312,8 +315,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   void _acceptHighlightedSuggestion() {
     if (_filteredMembers.isEmpty) return;
     final idx = _highlightedIndex.clamp(0, _filteredMembers.length - 1);
+    final handle = _filteredMembers[idx]['handle'] as String? ?? '';
     final email = _filteredMembers[idx]['email'] as String? ?? '';
-    _insertMention(email);
+    _insertMention(handle.isNotEmpty ? handle : email);
   }
 
   /// Handle keyboard events for autocomplete navigation and message sending.
