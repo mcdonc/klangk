@@ -1643,52 +1643,47 @@ class TestAdoptOrphanedContainers:
     def teardown_method(self):
         container.registry.states.clear()
 
-    async def test_adopts_running_containers(self):
-        with (
-            patch_podman(
-                list_containers=AsyncMock(
-                    return_value=[
-                        {
-                            "Id": "orphan-123",
-                            "Labels": {"klangk.workspace-id": "ws-orphan"},
-                        }
-                    ]
-                )
+    async def test_removes_orphaned_containers(self):
+        with patch_podman(
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "orphan-123",
+                        "Labels": {"klangk.workspace-id": "ws-orphan"},
+                    }
+                ]
             ),
-            patch(
-                "klangk_backend.container.model.update_workspace_container",
-                new_callable=AsyncMock,
-            ) as mock_update,
-        ):
+            remove_container=AsyncMock(),
+        ) as mocks:
             await container.registry.adopt_orphaned_containers()
-        assert "ws-orphan" in container.registry.states
-        assert (
-            container.registry.states["ws-orphan"].container_id == "orphan-123"
-        )
-        mock_update.assert_awaited_once_with("ws-orphan", "orphan-123")
+        # Orphaned containers are removed, not adopted.
+        assert "ws-orphan" not in container.registry.states
+        mocks.remove_container.assert_awaited_once_with("orphan-123")
 
-    async def test_adopts_orphan_without_labels(self):
-        # A container with no labels gets the "unknown" workspace id.
+    async def test_removes_orphan_without_labels(self):
         with patch_podman(
             list_containers=AsyncMock(
                 return_value=[{"Id": "orphan-x", "Labels": None}]
-            )
-        ):
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
             await container.registry.adopt_orphaned_containers()
-        assert container.registry.states["unknown"].container_id == "orphan-x"
+        assert "unknown" not in container.registry.states
+        mocks.remove_container.assert_awaited_once_with("orphan-x")
 
     async def test_skips_already_tracked(self):
         container.registry.track_activity("tracked-456", "ws-tracked")
         with patch_podman(
-            list_containers=AsyncMock(return_value=[{"Id": "tracked-456"}])
-        ):
+            list_containers=AsyncMock(return_value=[{"Id": "tracked-456"}]),
+            remove_container=AsyncMock(),
+        ) as mocks:
             await container.registry.adopt_orphaned_containers()
-        # Already tracked → not re-adopted, no "unknown" entry created.
+        # Already tracked → not removed.
         assert (
             container.registry.states["ws-tracked"].container_id
             == "tracked-456"
         )
-        assert "unknown" not in container.registry.states
+        mocks.remove_container.assert_not_awaited()
 
     async def test_podman_error_handled(self):
         with patch_podman(

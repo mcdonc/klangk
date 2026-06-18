@@ -553,10 +553,10 @@ class TestMainCLI:
 
         assert captured_kwargs["forward_agent"] is True
 
-    def test_shell_forward_agent_env_false_overrides_flag(
+    def test_shell_forward_agent_flag_overrides_env_false(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        """KLANGKC_FORWARD_AGENT=false overrides --forward-agent."""
+        """--forward-agent flag takes precedence over KLANGKC_FORWARD_AGENT=false."""
         from klangkc import main
 
         ws = Workspace(
@@ -576,10 +576,11 @@ class TestMainCLI:
             with patch.object(main, "_ws_shell", fake_shell):
                 os.environ["TERM"] = "xterm-256color"
                 os.environ["KLANGKC_FORWARD_AGENT"] = "false"
+                os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
                 with patch("termios.tcgetattr", return_value=None):
                     main.shell("target-ws", forward_agent=True)
 
-        assert captured_kwargs["forward_agent"] is False
+        assert captured_kwargs["forward_agent"] is True
 
     def test_shell_forward_agent_env_url_list_match(
         self, logged_in_cfg, monkeypatch, reset_env

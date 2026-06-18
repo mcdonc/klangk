@@ -608,6 +608,10 @@ def shell(
     ),
 ) -> None:
     """Connect to a workspace and execute the default shell command."""
+    # When called directly (not via typer CLI), forward_agent may be a
+    # typer.models.OptionInfo instead of a bool.  Treat that as False.
+    if not isinstance(forward_agent, bool):
+        forward_agent = False
     cfg = _cfg()
     if not cfg.auth.token:  # pragma: no cover
         _err.print(
@@ -656,18 +660,18 @@ def shell(
     token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
-    # Resolve agent forwarding: --forward-agent flag or KLANGKC_FORWARD_AGENT
-    # env var. The env var can be:
+    # Resolve agent forwarding: --forward-agent (-A) flag takes highest
+    # precedence.  KLANGKC_FORWARD_AGENT env var is only consulted when
+    # -A is not passed:
     #   "true"/"1"/"yes" — forward to any server
-    #   "false"/"0"/"no" — never forward (overrides --forward-agent)
+    #   "false"/"0"/"no" — don't forward (no-op since default is False,
+    #       but useful to override a broader env setting)
     #   space-separated URLs — forward only to listed servers
-    env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")
-    if env_val.lower() in ("0", "false", "no"):
-        forward_agent = False
-    elif not forward_agent:
+    if not forward_agent:
+        env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")
         if env_val.lower() in ("1", "true", "yes"):
             forward_agent = True
-        elif env_val:
+        elif env_val and env_val.lower() not in ("0", "false", "no"):
             forward_agent = server_url in env_val.split()
     if forward_agent:
         if not os.environ.get("SSH_AUTH_SOCK"):
