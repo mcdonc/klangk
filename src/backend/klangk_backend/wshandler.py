@@ -494,7 +494,7 @@ class WebSocketState:
 state = WebSocketState()
 
 
-def _get_presence_list(workspace_id: str) -> list[dict]:
+async def _get_presence_list(workspace_id: str) -> list[dict]:
     """Return deduplicated list of users connected to a workspace."""
     session = state.get_session(workspace_id)
     if not session:
@@ -512,8 +512,9 @@ def _get_presence_list(workspace_id: str) -> list[dict]:
     from . import agent  # pragma: no cover
 
     if agent.any_running():  # pragma: no cover
+        agent_user = await model.get_agent_user()
         users.append(
-            {"user_id": model.AGENT_USER_ID, "user_email": model.AGENT_EMAIL}
+            {"user_id": model.AGENT_USER_ID, "user_email": agent_user["email"]}
         )
     return users
 
@@ -730,8 +731,11 @@ class Connection:
         owner = await model.get_user_by_id(workspace.get("user_id", ""))
         if owner and not any(m["id"] == owner["id"] for m in members):
             members.append({"id": owner["id"], "email": owner["email"]})
-        # Include the agent so @misterboops autocompletes
-        members.append({"id": model.AGENT_USER_ID, "email": model.AGENT_EMAIL})
+        # Include the agent so it autocompletes
+        agent_user = await model.get_agent_user()
+        members.append(
+            {"id": model.AGENT_USER_ID, "email": agent_user["email"]}
+        )
         self.sock.send_json({"type": "workspace_members", "members": members})
 
         # Start the agent eagerly so it shows as present immediately.
@@ -739,7 +743,7 @@ class Connection:
             asyncio.create_task(self._start_agent_if_needed(self.container_id))
 
         # Send presence list to joining user and broadcast join to others
-        presence = _get_presence_list(workspace_id)
+        presence = await _get_presence_list(workspace_id)
         self.sock.send_json({"type": "presence_list", "users": presence})
         session = state.get_session(workspace_id)
         if session:
@@ -1668,14 +1672,14 @@ class Connection:
         user_id = self.user["id"]
         conv = _agent_conversations.get(workspace_id)
 
-        if _mentions_agent(text):
+        if await _mentions_agent(text):
             should_route = True
             _agent_conversations[workspace_id] = {
                 "user_id": user_id,
                 "time": time.monotonic(),
                 "interjected": False,
             }
-        elif conv and not _addresses_other_user(text):
+        elif conv and not await _addresses_other_user(text):
             if user_id == conv["user_id"]:
                 if not conv["interjected"]:
                     # No interjection — route indefinitely
@@ -1751,7 +1755,7 @@ class Connection:
             if self.workspace_id:
                 ws_session = state.get_session(self.workspace_id)
                 if ws_session:
-                    presence = _get_presence_list(self.workspace_id)
+                    presence = await _get_presence_list(self.workspace_id)
                     ws_session.broadcast(
                         {"type": "presence_list", "users": presence}
                     )
@@ -2002,20 +2006,30 @@ class Connection:
 # interjected: True after a different human spoke
 _agent_conversations: dict[str, dict] = {}
 
-_AGENT_MENTION_RE = re.compile(
-    r"(?:^|(?<=\s))@" + re.escape(model.AGENT_MENTION) + r"(?:@\S+)?(?:\s|$)",
-    re.IGNORECASE,
-)
+# Lazily compiled after agent user is seeded.
+_agent_mention_re: re.Pattern | None = None
 
 _ANY_MENTION_RE = re.compile(r"(?:^|(?<=\s))@\S+")
 
 
-def _mentions_agent(text: str) -> bool:
+def _get_agent_mention_re(handle: str) -> re.Pattern:
+    """Return the compiled agent mention regex, caching it."""
+    global _agent_mention_re
+    if _agent_mention_re is None:
+        _agent_mention_re = re.compile(
+            r"(?:^|(?<=\s))@" + re.escape(handle) + r"(?:@\S+)?(?:\s|$)",
+            re.IGNORECASE,
+        )
+    return _agent_mention_re
+
+
+async def _mentions_agent(text: str) -> bool:
     """Return True if the message text mentions the agent."""
-    return bool(_AGENT_MENTION_RE.search(text))
+    handle = await model.agent_handle()
+    return bool(_get_agent_mention_re(handle).search(text))
 
 
-def _addresses_other_user(text: str) -> bool:
+async def _addresses_other_user(text: str) -> bool:
     """Return True if the message is directed at someone else.
 
     A message that *starts* with ``@someone`` (not the agent) is
@@ -2026,7 +2040,8 @@ def _addresses_other_user(text: str) -> bool:
     if not m:
         return False
     mention = m.group().lstrip("@").split("@")[0].lower()
-    return mention != model.AGENT_MENTION.lower()
+    handle = await model.agent_handle()
+    return mention != handle.lower()
 
 
 # Active agent tasks per workspace, for abort support.
@@ -2036,10 +2051,12 @@ _agent_tasks: dict[str, asyncio.Task] = {}
 async def _handle_agent_mention(
     workspace_id: str, container_id: str, user_text: str
 ) -> None:
-    """Handle an @misterboops mention by sending the prompt to Pi RPC."""
+    """Handle an @agent mention by sending the prompt to Pi RPC."""
     from . import agent
 
-    prompt = _AGENT_MENTION_RE.sub("", user_text).strip()
+    agent_handle = await model.agent_handle()
+    agent_re = _get_agent_mention_re(agent_handle)
+    prompt = agent_re.sub("", user_text).strip()
     if not prompt:
         prompt = "Hello!"
 
@@ -2069,6 +2086,8 @@ async def _handle_agent_mention(
         context = "\n".join(context_lines)
         prompt = f"[Other participants said:\n{context}]\n\n{prompt}"
 
+    agent_email = await model.agent_email()
+
     # Notify clients the agent is thinking
     session = state.get_session(workspace_id)
     if session:
@@ -2076,7 +2095,7 @@ async def _handle_agent_mention(
             {
                 "type": "agent_thinking",
                 "thinking": True,
-                "name": model.AGENT_HANDLE,
+                "name": agent_handle,
             }
         )
 
@@ -2091,8 +2110,8 @@ async def _handle_agent_mention(
         sys_msg = await model.add_chat_message(
             workspace_id,
             model.AGENT_USER_ID,
-            model.AGENT_EMAIL,
-            f"{model.AGENT_HANDLE} has disconnected",
+            agent_email,
+            f"{agent_handle} has disconnected",
             message_type=model.MSG_SYSTEM,
         )
         session = state.get_session(workspace_id)
@@ -2110,7 +2129,7 @@ async def _handle_agent_mention(
     agent_msg = await model.add_chat_message(
         workspace_id,
         model.AGENT_USER_ID,
-        model.AGENT_EMAIL,
+        agent_email,
         response_text,
         message_type=model.MSG_AGENT,
     )

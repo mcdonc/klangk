@@ -61,6 +61,21 @@ The agent requires an LLM backend. Set these environment variables:
 
 Without these, the agent is unavailable and @MrBoops mentions are ignored.
 
+### Agent Identity
+
+The agent's handle and email are configured via environment variables and
+seeded into the database on first startup:
+
+| Variable                   | Default               |
+| -------------------------- | --------------------- |
+| `KLANGK_CHAT_AGENT_HANDLE` | `MrBoops`             |
+| `KLANGK_CHAT_AGENT_EMAIL`  | `MrBoops@example.com` |
+
+After seeding, the agent identity is read from the database. Changing
+these env vars and restarting will update the agent's record in the
+database. The agent user cannot have a password and cannot log in via
+credentials.
+
 ## Message Types
 
 - **User messages** — sent by workspace members, shown with email and timestamp
