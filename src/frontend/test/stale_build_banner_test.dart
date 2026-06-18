@@ -123,7 +123,7 @@ void main() {
     expect(find.text('A new version is available.'), findsNothing);
   });
 
-  testWidgets('reload button calls navigateTo', (tester) async {
+  testWidgets('reload button calls hardReload', (tester) async {
     final client = MockClient((request) async {
       return http.Response(_indexWithHash, 200);
     });

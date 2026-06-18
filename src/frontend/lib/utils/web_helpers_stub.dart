@@ -7,6 +7,8 @@ void openUrl(String url) {}
 
 void navigateTo(String url) {}
 
+void hardReload() {}
+
 void downloadBytes(List<int> bytes, String filename) {}
 
 void suppressContextMenuBriefly() {}

@@ -82,7 +82,7 @@ class StaleBuildBannerState extends State<StaleBuildBanner> {
   }
 
   void _reload() {
-    navigateTo(Uri.base.toString());
+    hardReload();
   }
 
   @override
@@ -90,41 +90,56 @@ class StaleBuildBannerState extends State<StaleBuildBanner> {
     if (!_stale || _dismissed) return const SizedBox.shrink();
 
     return Positioned(
-      top: 0,
+      top: 8,
       left: 0,
       right: 0,
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          color: const Color(0xFF1A3A2A),
-          child: Row(
-            children: [
-              const Icon(Icons.update, color: Colors.greenAccent, size: 18),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'A new version is available.',
-                  style: TextStyle(color: Colors.white, fontSize: 13),
+      child: FractionallySizedBox(
+        widthFactor: 1 / 3,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A3A2A),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.update,
+                  color: Colors.greenAccent,
+                  size: 18,
                 ),
-              ),
-              TextButton(
-                onPressed: _reload,
-                child: const Text(
-                  'Reload',
-                  style: TextStyle(
-                    color: Colors.greenAccent,
-                    fontWeight: FontWeight.bold,
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'A new version is available.',
+                    style: TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ),
-              ),
-              IconButton(
-                onPressed: () => setState(() => _dismissed = true),
-                icon: const Icon(Icons.close, color: Colors.white54, size: 16),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-              ),
-            ],
+                TextButton(
+                  onPressed: _reload,
+                  child: const Text(
+                    'Reload',
+                    style: TextStyle(
+                      color: Colors.greenAccent,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => setState(() => _dismissed = true),
+                  icon: const Icon(
+                    Icons.close,
+                    color: Colors.white54,
+                    size: 16,
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 24, minHeight: 24),
+                ),
+              ],
+            ),
           ),
         ),
       ),

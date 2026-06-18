@@ -14,6 +14,11 @@ void navigateTo(String url) {
   web.window.location.href = url;
 }
 
+/// Force a full page reload.
+void hardReload() {
+  web.window.location.reload();
+}
+
 /// Download bytes as a file via a temporary blob URL.
 void downloadBytes(List<int> bytes, String filename) {
   final parts = [Uint8List.fromList(bytes).toJS].toJS;
