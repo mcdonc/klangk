@@ -107,6 +107,14 @@ class TestExpandContainerPath:
     def test_no_tilde(self):
         assert expand_container_path("relative", "admin") == "relative"
 
+    def test_relative_with_mount_at(self):
+        assert (
+            expand_container_path(
+                "subdir", "admin", mount_at="/home/admin/project"
+            )
+            == "/home/admin/project/subdir"
+        )
+
 
 class TestBuildAllMounts:
     def test_implicit_sandbox_root(self, sandbox_root):
@@ -137,6 +145,15 @@ class TestBuildAllMounts:
         config = SandboxConfig(name="test", mount_at="~/myproject")
         mounts = build_all_mounts(config, sandbox_root, "admin")
         assert mounts[0] == f"{sandbox_root.resolve()}:/home/admin/myproject"
+
+    def test_relative_dest_resolved_to_mount_at(self, sandbox_root):
+        config = SandboxConfig(
+            name="test",
+            mount_at="~/project",
+            mounts=["/data:subdir"],
+        )
+        mounts = build_all_mounts(config, sandbox_root, "admin")
+        assert "/data:/home/admin/project/subdir" in mounts
 
 
 class TestBuildCopyPairs:

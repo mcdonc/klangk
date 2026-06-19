@@ -101,7 +101,8 @@ Bind mounts from the host into the container. Format:
 - **Source**: host path. Absolute, or relative to the sandbox root.
   Tilde expands to the host user's home.
 - **Destination**: container path. Tilde expands to
-  `/home/{handle}`.
+  `/home/{handle}`. Relative paths (no `~` or `/` prefix) are
+  resolved relative to `mount_at`.
 - **Options**: optional, comma-separated. Common options: `ro`
   (read-only), `rw` (read-write, default).
 

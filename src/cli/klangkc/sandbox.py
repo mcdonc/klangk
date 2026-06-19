@@ -67,12 +67,22 @@ def expand_host_path(path: str, sandbox_root: Path) -> str:
     return str(p)
 
 
-def expand_container_path(path: str, handle: str) -> str:
-    """Expand leading ``~`` to ``/home/{handle}``."""
+def expand_container_path(
+    path: str, handle: str, mount_at: str | None = None
+) -> str:
+    """Expand container path.
+
+    - ``~`` or ``~/...`` → ``/home/{handle}/...``
+    - Absolute paths pass through unchanged
+    - Relative paths are resolved against *mount_at* (which must
+      already be expanded)
+    """
     if path.startswith("~/"):
         return f"/home/{handle}/{path[2:]}"
     if path == "~":
         return f"/home/{handle}"
+    if not path.startswith("/") and mount_at is not None:
+        return f"{mount_at}/{path}"
     return path
 
 
@@ -81,11 +91,14 @@ def _expand_spec(
     sandbox_root: Path,
     handle: str,
     expand_source: bool = True,
+    mount_at: str | None = None,
 ) -> str:
     """Expand a ``source:dest[:options]`` spec.
 
     *expand_source* controls whether the source side gets host-path
     expansion (True for bind mounts, False for named volumes).
+    *mount_at* is the resolved container mount point — relative
+    destination paths are resolved against it.
     """
     parts = spec.split(":")
     if len(parts) < 2:
@@ -95,7 +108,7 @@ def _expand_spec(
     opts = parts[2:]
     if expand_source:
         src = expand_host_path(src, sandbox_root)
-    dest = expand_container_path(dest, handle)
+    dest = expand_container_path(dest, handle, mount_at=mount_at)
     result = f"{src}:{dest}"
     if opts:
         result += ":" + ":".join(opts)
@@ -117,10 +130,20 @@ def build_all_mounts(
     resolved_mount_at = expand_container_path(config.mount_at, handle)
     mounts = [f"{sandbox_root.resolve()}:{resolved_mount_at}"]
     for spec in config.mounts:
-        mounts.append(_expand_spec(spec, sandbox_root, handle))
+        mounts.append(
+            _expand_spec(
+                spec, sandbox_root, handle, mount_at=resolved_mount_at
+            )
+        )
     for spec in config.volumes:
         mounts.append(
-            _expand_spec(spec, sandbox_root, handle, expand_source=False)
+            _expand_spec(
+                spec,
+                sandbox_root,
+                handle,
+                expand_source=False,
+                mount_at=resolved_mount_at,
+            )
         )
     return mounts
 
