@@ -2,11 +2,7 @@ sandbox:
   mount_at: ~/devenv-sandbox
   setup: .klangk/setup.sh
 
-copy:
-  - ~/.gitconfig:~/.gitconfig
-
 mounts:
-  - ~/.ssh:~/.ssh:ro
   - /home/chrism/projects/enfold/reportlab-poc:reportlab-poc
 
 volumes:
