@@ -21,7 +21,7 @@ one command.
 
 1. **Sandbox a project** — [`klangkc sandbox`](features/sandbox.md) creates an isolated workspace from a `.klangk/sandbox.yaml` config, mounts your source code, and runs a setup script
 2. **Run AI agents safely** — Pi and Claude Code run inside containers, isolated from your host
-3. **Use the terminal** for direct shell access to the container (bash with tab completion and colors)
+3. **Use the terminal** — access your container shell from the web browser or from your local terminal via [`klangkc shell`](reference/cli.md)
 4. **View files** in the file viewer panel, drag-and-drop files or folders to upload, right-click to download, rename, or delete. Preview markdown, images, code (with syntax highlighting and editing), PDFs, video, and spreadsheets
 5. **Chat with other workspace users** in shared workspaces
 6. **Share workspaces** with other users or groups, controlling access per-permission (terminal, files, chat, etc.)
