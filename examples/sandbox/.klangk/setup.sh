@@ -1,15 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "sandbox setup: running in $(pwd)"
-echo "sandbox setup: HOME=$HOME"
-echo "sandbox setup: whoami=$(whoami)"
+echo "=== sandbox setup ==="
+echo "  cwd: $(pwd)"
+echo "  HOME: $HOME"
+echo "  user: $(whoami)"
 
-# Source secrets if available
-[ -f ~/.env ] && echo "sandbox setup: .env found" || echo "sandbox setup: no .env"
+# Source env if available
+if [ -f ~/.env ]; then
+  echo "  .env: found, sourcing"
+  # shellcheck source=/dev/null
+  . ~/.env
+else
+  echo "  .env: not found"
+fi
 
 # Verify mounts
-[ -d ~/.ssh ] && echo "sandbox setup: ~/.ssh mounted" || echo "sandbox setup: no ~/.ssh"
-[ -f ~/.gitconfig ] && echo "sandbox setup: ~/.gitconfig copied" || echo "sandbox setup: no ~/.gitconfig"
+[ -d ~/.ssh ] && echo "  ~/.ssh: mounted" || echo "  ~/.ssh: not found"
+[ -f ~/.gitconfig ] && echo "  ~/.gitconfig: copied" || echo "  ~/.gitconfig: not found"
 
-echo "sandbox setup: done"
+# Test the todo app
+echo ""
+echo "Testing todo app..."
+python3 todo.py add "Set up the sandbox"
+python3 todo.py add "Run some tests"
+python3 todo.py ls
+python3 todo.py "done" 1
+python3 todo.py ls
+echo ""
+echo "=== setup complete ==="
