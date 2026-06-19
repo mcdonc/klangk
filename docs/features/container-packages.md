@@ -66,29 +66,6 @@ so common development tasks work out of the box.
 - **Herdr** — terminal agent runtime for persistent sessions and pane
   management
 
-## The Shell
-
-Bash is the default shell for all workspace terminals. The system-wide
-`/etc/bash.bashrc` handles terminal setup (waiting for container readiness,
-running plugin hooks, and launching default commands), then sources your
-personal `~/.bashrc`.
-
-### Using zsh instead
-
-Zsh is installed but not the default shell. To switch, add the following
-to your `~/.bashrc` inside the workspace:
-
-```bash
-if [ -x /usr/bin/zsh ] && [ -z "$ZSH_STARTED" ]; then
-    export ZSH_STARTED=1
-    exec zsh
-fi
-```
-
-This lets the bash startup complete normally (plugin hooks, default
-command handling), then replaces bash with zsh. The `ZSH_STARTED` guard
-prevents infinite loops. Your `~/.zshrc` will be sourced as usual.
-
 ## Installing Additional Packages
 
 By default the `klangk` user does **not** have root access.

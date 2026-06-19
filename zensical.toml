@@ -17,6 +17,7 @@ nav = [
     { "Invitations" = "features/invitations.md" },
     { "Workspaces" = "features/workspaces.md" },
     { "Terminal" = "features/terminal.md" },
+    { "The Shell" = "features/the-shell.md" },
     { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },
     { "AI Coding Harnesses" = "features/ai-coding-harnesses.md" },
