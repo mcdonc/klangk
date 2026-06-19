@@ -49,10 +49,10 @@ workspace:
 | `name`  | no       | directory name       | Workspace name. Overrideable via `--name`.                    |
 | `image` | no       | server default image | Container image. Must be in the server's allowed images list. |
 
-### `project`
+### `sandbox`
 
 ```yaml
-project:
+sandbox:
   mount_at: ~/klangk
   setup: .klangk/setup.sh
 ```
@@ -228,7 +228,7 @@ workspace:
   name: klangk
   image: klangk-workspace
 
-project:
+sandbox:
   mount_at: ~/klangk
   setup: .klangk/setup.sh
 
