@@ -38,7 +38,7 @@ klangkc sandbox myws --force-setup       # re-run copy and setup on existing wor
 klangkc exec my-project ls /home/klangk/work         # run a command in the container
 klangkc sync ~/src my-project:/home/klangk/work      # sync files to/from the container
 klangkc rm my-project                # delete a workspace
-klangkc restart my-project           # restart the container (owner only)
+klangkc restart my-project           # restart the container for a workspace (owner only)
 klangkc export my-project            # export workspace to my-project.tar.gz (admin only)
 klangkc export my-project -o bak.tar.gz  # export to specific file
 klangkc import bak.tar.gz            # import workspace from archive

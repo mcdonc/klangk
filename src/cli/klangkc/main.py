@@ -259,7 +259,7 @@ def rm(
 def restart(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
-    """Restart a workspace container."""
+    """Restart the container for a workspace."""
     _require_auth()
     try:
         _client().restart_workspace(name)
