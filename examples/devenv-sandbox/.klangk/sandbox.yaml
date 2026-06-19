@@ -1,0 +1,15 @@
+workspace:
+  name: devenv-sandbox
+
+sandbox:
+  mount_at: ~/devenv-sandbox
+  setup: .klangk/setup.sh
+
+copy:
+  - ~/.gitconfig:~/.gitconfig
+
+mounts:
+  - ~/.ssh:~/.ssh:ro
+
+volumes:
+  - devenv-nix:/nix
