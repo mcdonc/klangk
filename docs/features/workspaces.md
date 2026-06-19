@@ -39,7 +39,7 @@ Hosted app proxy: user apps are accessible at `{base_path}/hosted/{workspace_id}
 ## Container Details
 
 - `/home/klangk` — bind mount to host (`$KLANGK_DATA_DIR/workspaces/<user>/home/<workspace>/`). Contains `work/` subdirectory for user files, plus dotfiles (`.bashrc`, `.vimrc`, `.gitconfig`), bash history, and Pi sessions. All persist across container restarts. Pi agent config (`.pi/agent/`) is cleaned and regenerated each start.
-- `klangk` user baked into the image at build time; `--userns=keep-id:uid=0,gid=0` maps the host user to root inside the container so bind-mounted files have correct ownership
+- `klangk` user baked into the image at build time; `--userns=keep-id:uid=1000,gid=1000` maps the host user to uid/gid 1000 inside the container so bind-mounted files have correct ownership
 - Root escalation prevented: root password locked, suid removed from `su`/`chsh`/`chfn`/`newgrp`
 - Containers labeled with `klangk.managed=true`, `klangk.instance=<KLANGK_INSTANCE_ID>`, and `klangk.workspace-id=<id>` for identification, cleanup, and orphan detection
 - `--init` runs an init process as PID 1 to reap zombie processes from terminal sessions and tool executions
