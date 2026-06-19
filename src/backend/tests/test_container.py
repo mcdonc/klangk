@@ -3,6 +3,7 @@
 import asyncio
 import time
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -997,6 +998,59 @@ class TestProtectedPaths:
         )
         assert err is not None
         assert "protected" in err.lower()
+
+    def test_symlink_to_protected_path_blocked(self, tmp_path):
+        """Symlinks to protected paths are resolved and blocked."""
+        link = tmp_path / "sneaky-sock"
+        link.symlink_to("/var/run/docker.sock")
+        err = container.validate_mount_spec(f"{link}:/mnt/sock")
+        assert err is not None
+        assert "protected" in err.lower()
+
+    def test_symlink_to_allowed_root_passes(self, monkeypatch):
+        """Symlinks resolved to an allowed root pass validation."""
+        import tempfile
+
+        # Use a separate temp dir so it doesn't overlap with the
+        # KLANGK_DATA_DIR that conftest sets to tmp_path.
+        with tempfile.TemporaryDirectory(prefix="mount-test-") as d:
+            d = Path(d)
+            allowed = d / "allowed"
+            allowed.mkdir()
+            target = allowed / "data"
+            target.mkdir()
+            link = d / "link-to-data"
+            link.symlink_to(str(target))
+
+            monkeypatch.setattr(
+                container,
+                "ALLOWED_MOUNT_ROOTS",
+                [str(allowed)],
+            )
+            err = container.validate_mount_spec(f"{link}:/mnt/data")
+            assert err is None
+
+    def test_symlink_outside_allowed_root_blocked(self, monkeypatch):
+        """Symlinks resolving outside allowed roots are blocked."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="mount-test-") as d:
+            d = Path(d)
+            allowed = d / "allowed"
+            allowed.mkdir()
+            outside = d / "outside"
+            outside.mkdir()
+            link = d / "link-to-outside"
+            link.symlink_to(str(outside))
+
+            monkeypatch.setattr(
+                container,
+                "ALLOWED_MOUNT_ROOTS",
+                [str(allowed)],
+            )
+            err = container.validate_mount_spec(f"{link}:/mnt/data")
+            assert err is not None
+            assert "allowed root" in err.lower()
 
 
 class TestExtraMountsVolumeCreation:

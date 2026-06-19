@@ -67,7 +67,7 @@ _allowed_mount_roots_env = util.resolve_env_secret(
     "KLANGK_ALLOWED_MOUNT_ROOTS", ""
 )
 ALLOWED_MOUNT_ROOTS: list[str] = [
-    os.path.normpath(p)
+    os.path.realpath(p.strip())
     for p in _allowed_mount_roots_env.split(",")
     if p.strip()
 ]
@@ -85,17 +85,21 @@ def _is_named_volume(source: str) -> bool:
 
 
 def _is_protected(source: str) -> bool:
-    """True if source is a protected host path that must never be mounted."""
-    norm = os.path.normpath(source)
-    data_dir = os.path.normpath(
+    """True if source is a protected host path that must never be mounted.
+
+    Uses ``os.path.realpath`` to resolve symlinks — a symlink pointing
+    to a protected path (e.g. Docker socket) is still blocked.
+    """
+    resolved = os.path.realpath(source)
+    data_dir = os.path.realpath(
         util.resolve_env_secret(
             "KLANGK_DATA_DIR", os.path.expanduser("~/.klangk/data")
         )
         or os.path.expanduser("~/.klangk/data")
     )
     for blocked in [*_PROTECTED_PATHS, data_dir]:
-        blocked = os.path.normpath(blocked)
-        if norm == blocked or norm.startswith(blocked + "/"):
+        blocked = os.path.realpath(blocked)
+        if resolved == blocked or resolved.startswith(blocked + "/"):
             return True
     return False
 
@@ -124,9 +128,9 @@ def validate_mount_spec(spec: str) -> str | None:
         if _is_protected(source):
             return f"Invalid mount {spec!r}: source is a protected host path"
         if ALLOWED_MOUNT_ROOTS:
-            norm = os.path.normpath(source)
+            resolved = os.path.realpath(source)
             if not any(
-                norm == root or norm.startswith(root + "/")
+                resolved == root or resolved.startswith(root + "/")
                 for root in ALLOWED_MOUNT_ROOTS
             ):
                 allowed = ", ".join(ALLOWED_MOUNT_ROOTS)
