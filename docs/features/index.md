@@ -17,7 +17,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**Container Packages**](container-packages.md) — Pre-installed languages, tools, and CLI utilities in workspace containers
 - [**Export & Import**](export-import.md) — Export workspaces as archives and import them to create new workspaces
 - [**Hosted Apps**](hosted-apps.md) — Run development servers on mapped ports, accessible via reverse-proxy URLs
-- [**Workon**](workon.md) — One-command workspace setup from a project config file
+- [**Sandbox**](sandbox.md) — One-command workspace setup from a project config file
 - [**CLI**](../reference/cli.md) — Command-line client for managing workspaces, shells, and file sync
 - [**SSH Agent Forwarding**](ssh-agent-forwarding.md) — Forward local SSH keys into containers via `klangkc shell`
 - [**GitHub HTTPS Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog

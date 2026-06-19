@@ -1,19 +1,19 @@
-# Workon
+# Sandbox
 
-`klangkc workon` creates and connects to a workspace using a
+`klangkc sandbox` creates and connects to a workspace using a
 project-level config file. It's the single command for "get me into
 this project" — create the workspace on the first run, reconnect on
 subsequent runs.
 
 Klangk's containerization system exists to let you safely work on
-projects that use AI harnesses with wide permissions. The `workon`
-command makes this easy: check a `.klangk/workon.yaml` into your
+projects that use AI harnesses with wide permissions. The `sandbox`
+command makes this easy: check a `.klangk/sandbox.yaml` into your
 repo that describes what the workspace needs, and anyone on the team
 can spin up an identical sandboxed environment with one command.
 
 ## Quick start
 
-Create a `.klangk/workon.yaml` in your project root:
+Create a `.klangk/sandbox.yaml` in your project root:
 
 ```yaml
 workspace:
@@ -23,7 +23,7 @@ workspace:
 Then run:
 
 ```bash
-klangkc workon
+klangkc sandbox
 ```
 
 This creates a workspace named `my-project`, mounts the project
@@ -32,7 +32,7 @@ Run the same command again to reconnect to the existing workspace.
 
 ## Config file reference
 
-The config file lives at `.klangk/workon.yaml` inside your project.
+The config file lives at `.klangk/sandbox.yaml` inside your project.
 The directory containing `.klangk/` is called the **project root** —
 it's automatically mounted into the container.
 
@@ -152,7 +152,7 @@ team.
 ## Command reference
 
 ```text
-klangkc workon [PATH] [--name NAME] [--forward-agent/-A]
+klangkc sandbox [PATH] [--name NAME] [--forward-agent/-A]
 ```
 
 | Argument/Flag        | Default  | Description                                                 |
@@ -165,7 +165,7 @@ klangkc workon [PATH] [--name NAME] [--forward-agent/-A]
 
 **First run** (workspace doesn't exist):
 
-1. Read `.klangk/workon.yaml` from the project root
+1. Read `.klangk/sandbox.yaml` from the project root
 2. Create the workspace with the configured image, mounts, volumes,
    and environment variables
 3. Mount the project root at `mount_at`
@@ -178,7 +178,7 @@ klangkc workon [PATH] [--name NAME] [--forward-agent/-A]
 1. Connect to the existing workspace shell
 
 If you need to recreate the workspace (e.g., after changing the
-config), delete it first with `klangkc rm` and run `workon` again.
+config), delete it first with `klangkc rm` and run `sandbox` again.
 
 ## Setup scripts
 
@@ -223,7 +223,7 @@ A project that needs nix/devenv, custom dotfiles, a data directory,
 and SSH access to GitHub:
 
 ```yaml
-# .klangk/workon.yaml
+# .klangk/sandbox.yaml
 workspace:
   name: klangk
   image: klangk-workspace
@@ -283,7 +283,7 @@ Usage:
 
 ```bash
 cd ~/projects/klangk
-klangkc workon -A
+klangkc sandbox -A
 # First run: creates workspace, mounts everything, installs nix, drops into shell
 # Subsequent runs: reconnects to existing workspace
 ```
