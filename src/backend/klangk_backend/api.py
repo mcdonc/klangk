@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from . import (
     acl,
+    agent,
     auth,
     container,
     emailsvc,
@@ -1191,8 +1192,6 @@ async def restart_workspace(
         if live_state
         else workspace.get("container_id")
     )
-    from . import agent
-
     await agent.stop_session(workspace_id)
     if cid:
         await container.registry.stop_and_remove_container(cid)
