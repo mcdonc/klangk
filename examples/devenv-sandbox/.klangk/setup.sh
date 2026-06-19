@@ -19,6 +19,12 @@ fi
 # Add nix to PATH for the rest of this script.
 export PATH="$HOME/.nix-profile/bin:$PATH"
 
+# Enable flakes and the nix command permanently.
+mkdir -p ~/.config/nix
+if ! grep -q experimental-features ~/.config/nix/nix.conf 2>/dev/null; then
+  echo "experimental-features = nix-command flakes" >>~/.config/nix/nix.conf
+fi
+
 # Ensure non-login shells (plain `bash`) also get nix on PATH.
 # The nix installer only modifies ~/.profile (login shells).
 # shellcheck disable=SC2016
@@ -28,7 +34,10 @@ fi
 
 if ! command -v devenv &>/dev/null; then
   echo "Installing devenv..."
-  nix profile install --accept-flake-config "github:cachix/devenv/v2.1.2"
+  nix profile install \
+    --extra-experimental-features "nix-command flakes" \
+    --accept-flake-config \
+    "github:cachix/devenv/v2.1.2"
 else
   echo "devenv already installed, skipping."
 fi
