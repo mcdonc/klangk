@@ -5,11 +5,15 @@ project-level config file. It's the single command for "get me into
 this project" — create the workspace on the first run, reconnect on
 subsequent runs.
 
-Klangk's containerization system exists to let you safely work on
-projects that use AI harnesses with wide permissions. The `sandbox`
-command makes this easy: check a `.klangk/sandbox.yaml` into your
-repo that describes what the workspace needs, and anyone on the team
-can spin up an identical sandboxed environment with the same command.
+`klangkc sandbox` is a quality-of-life feature of the
+[`klangkc` CLI](../reference/cli.md) that combines several of
+Klangk's individual features — workspace creation, bind mounts,
+file copying, command execution, and shell access — into a single
+step driven by a config file. Everything it does can be done manually
+with `klangkc create`, `klangkc exec`, and `klangkc shell`, but the
+sandbox command makes it easy to check a `.klangk/sandbox.yaml` into
+your repo so anyone on the team can spin up an identical sandboxed
+environment with one command.
 
 ## Quick start
 
@@ -287,14 +291,29 @@ And a setup script:
 # .klangk/setup.sh
 set -euo pipefail
 
-if ! command -v nix &>/dev/null; then
+# Install nix (single-user, no daemon needed in containers).
+if ! nix --version &>/dev/null; then
+  rm -rf "$HOME/.local/state/nix" "$HOME/.nix-profile" \
+         "$HOME/.nix-defexpr" "$HOME/.nix-channels"
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
 fi
 
-. ~/.nix-profile/etc/profile.d/nix.sh
+# Add nix to PATH and enable flakes.
+export PATH="$HOME/.nix-profile/bin:$PATH"
+mkdir -p ~/.config/nix
+grep -q experimental-features ~/.config/nix/nix.conf 2>/dev/null \
+  || echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
+# Source nix in non-login shells too.
+# shellcheck disable=SC2016
+grep -q nix-profile ~/.bashrc 2>/dev/null \
+  || echo '. "$HOME/.nix-profile/etc/profile.d/nix.sh"' >> ~/.bashrc
+
+# Install devenv.
 if ! command -v devenv &>/dev/null; then
-  nix profile install nixpkgs#devenv
+  nix profile install \
+    --extra-experimental-features "nix-command flakes" \
+    --accept-flake-config "github:cachix/devenv/v2.1.2"
 fi
 ```
 
