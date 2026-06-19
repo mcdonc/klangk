@@ -39,9 +39,9 @@ async def _seed_agent_db(db):
     model.clear_agent_cache()
 
 
-def _make_session(container_id="cid"):
+def _make_session(container_id="cid", workspace_id="ws-id"):
     """Create an AgentSession with home setup already done."""
-    s = AgentSession(container_id)
+    s = AgentSession(workspace_id, container_id)
     s._home_ready = True
     return s
 
@@ -521,25 +521,32 @@ class TestAgentSession:
 
 class TestGetSession:
     async def test_creates_new_session(self):
-        session = await get_session("cid-1")
+        session = await get_session("ws-1", "cid-1")
         assert session.container_id == "cid-1"
-        assert "cid-1" in _agents
+        assert session.workspace_id == "ws-1"
+        assert "ws-1" in _agents
 
     async def test_reuses_existing_session(self):
-        s1 = await get_session("cid-1")
-        s2 = await get_session("cid-1")
+        s1 = await get_session("ws-1", "cid-1")
+        s2 = await get_session("ws-1", "cid-1")
         assert s1 is s2
+
+    async def test_updates_container_id_on_restart(self):
+        s1 = await get_session("ws-1", "old-cid")
+        s1._home_ready = True
+        s2 = await get_session("ws-1", "new-cid")
+        assert s1 is s2
+        assert s2.container_id == "new-cid"
+        assert not s2._home_ready  # reset for new container
 
 
 class TestEnsureHome:
     async def test_ensure_home_creates_dir_and_runs_login_shell(
         self, tmp_path
     ):
-        from klangk_backend import container, model, workspaces
+        from klangk_backend import model, workspaces
 
-        session = AgentSession("cid")
-        # Simulate registry mapping so workspace_id_for("cid") returns "ws1"
-        container.registry.track_activity("cid", "ws1")
+        session = AgentSession("ws1", "cid")
 
         fake_ws = {"user_id": "owner1"}
         fake_home = tmp_path / "home"
@@ -582,71 +589,60 @@ class TestEnsureHome:
         mock_skel.assert_awaited_once_with(
             "cid", "00000000-0000-0000-0000-000000000001"
         )
-        container.registry.states.pop("ws1", None)
 
     async def test_ensure_home_cached(self):
-        session = AgentSession("cid")
+        session = AgentSession("ws-id", "cid")
         session._home_ready = True
         result = await session._ensure_home()
         assert result == "/home/MrBoops"
 
-    async def test_ensure_home_no_workspace_for_container(self):
-        from klangk_backend.agent import AgentSetupError
-
-        session = AgentSession("unknown-cid")
-        with pytest.raises(AgentSetupError, match="No workspace found"):
-            await session._ensure_home()
-
     async def test_ensure_home_workspace_not_in_db(self):
-        from klangk_backend import container, model
+        from klangk_backend import model
         from klangk_backend.agent import AgentSetupError
 
-        session = AgentSession("cid")
-        container.registry.track_activity("cid", "ws-gone")
+        session = AgentSession("ws-gone", "cid")
 
         with patch.object(model, "get_workspace_by_id", return_value=None):
             with pytest.raises(AgentSetupError, match="not found in database"):
                 await session._ensure_home()
 
-        container.registry.states.pop("ws-gone", None)
-
 
 class TestStopSession:
     async def test_stop_existing(self):
-        session = await get_session("cid-1")
+        session = await get_session("ws-1", "cid-1")
         session._proc = AsyncMock()
         session._proc.returncode = None
         session._proc.kill = MagicMock()
         session._proc.wait = AsyncMock()
 
-        await stop_session("cid-1")
-        assert "cid-1" not in _agents
+        await stop_session("ws-1")
+        assert "ws-1" not in _agents
 
     async def test_stop_nonexistent(self):
-        await stop_session("no-such-container")  # should not raise
+        await stop_session("no-such-ws")  # should not raise
 
 
 class TestIsRunning:
     def test_no_session(self):
-        assert not is_running("cid")
+        assert not is_running("ws-id")
 
     def test_no_proc(self):
-        _agents["cid"] = _make_session()
-        assert not is_running("cid")
+        _agents["ws-id"] = _make_session()
+        assert not is_running("ws-id")
 
     def test_proc_alive(self):
         s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = None
-        _agents["cid"] = s
-        assert is_running("cid")
+        _agents["ws-id"] = s
+        assert is_running("ws-id")
 
     def test_proc_dead(self):
         s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = 1
-        _agents["cid"] = s
-        assert not is_running("cid")
+        _agents["ws-id"] = s
+        assert not is_running("ws-id")
 
 
 class TestAnyRunning:
@@ -657,23 +653,21 @@ class TestAnyRunning:
         s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = None
-        _agents["cid"] = s
+        _agents["ws-id"] = s
         assert any_running()
 
     def test_all_dead(self):
         s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = 0
-        _agents["cid"] = s
+        _agents["ws-id"] = s
         assert not any_running()
 
 
 class TestMonitorProcess:
     async def test_monitor_broadcasts_on_death(self):
-        from klangk_backend import container, model
+        from klangk_backend import model
         from klangk_backend.agent import _broadcast_agent_disconnect
-
-        container.registry.track_activity("cid-mon", "ws-mon")
 
         with (
             patch.object(
@@ -692,19 +686,17 @@ class TestMonitorProcess:
             mock_session = MagicMock()
             mock_get_session.return_value = mock_session
 
-            await _broadcast_agent_disconnect("cid-mon")
+            await _broadcast_agent_disconnect("ws-mon")
 
             mock_chat.assert_awaited_once()
             assert "disconnected" in mock_chat.call_args[0][3]
             assert mock_session.broadcast.call_count == 3
 
-        container.registry.states.pop("ws-mon", None)
-
-    async def test_monitor_no_workspace(self):
+    async def test_broadcast_no_workspace(self):
         from klangk_backend.agent import _broadcast_agent_disconnect
 
-        # Should not raise when container has no workspace
-        await _broadcast_agent_disconnect("no-such-container")
+        # Should not raise when workspace_id is empty
+        await _broadcast_agent_disconnect("")
 
     async def test_stop_cancels_monitor(self):
         session = _make_session()
@@ -722,12 +714,10 @@ class TestMonitorProcess:
         assert session._proc is None
 
     async def test_monitor_auto_restarts(self):
-        from klangk_backend import container, model
+        from klangk_backend import model
 
-        container.registry.track_activity("cid-restart", "ws-restart")
-
-        session = _make_session("cid-restart")
-        _agents["cid-restart"] = session
+        session = _make_session("cid-restart", "ws-restart")
+        _agents["ws-restart"] = session
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
@@ -759,15 +749,11 @@ class TestMonitorProcess:
             mock_start.assert_awaited_once()
             assert session._restart_attempts == 0
 
-        container.registry.states.pop("ws-restart", None)
-
     async def test_monitor_gives_up_after_max_retries(self):
-        from klangk_backend import container, model
+        from klangk_backend import model
 
-        container.registry.track_activity("cid-giveup", "ws-giveup")
-
-        session = _make_session("cid-giveup")
-        _agents["cid-giveup"] = session
+        session = _make_session("cid-giveup", "ws-giveup")
+        _agents["ws-giveup"] = session
         session._restart_attempts = 2  # already at limit
 
         mock_proc = AsyncMock()
@@ -797,15 +783,11 @@ class TestMonitorProcess:
             mock_start.assert_not_awaited()
             assert session._restart_attempts == 3
 
-        container.registry.states.pop("ws-giveup", None)
-
     async def test_monitor_restart_failure_logged(self):
-        from klangk_backend import container, model
+        from klangk_backend import model
 
-        container.registry.track_activity("cid-fail", "ws-fail")
-
-        session = _make_session("cid-fail")
-        _agents["cid-fail"] = session
+        session = _make_session("cid-fail", "ws-fail")
+        _agents["ws-fail"] = session
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
@@ -836,13 +818,9 @@ class TestMonitorProcess:
             await session._monitor_process(mock_proc)
             # Should not raise, just log
 
-        container.registry.states.pop("ws-fail", None)
-
     async def test_broadcast_reconnect(self):
-        from klangk_backend import container, model
+        from klangk_backend import model
         from klangk_backend.agent import _broadcast_agent_reconnect
-
-        container.registry.track_activity("cid-rc", "ws-rc")
 
         with (
             patch.object(
@@ -858,26 +836,22 @@ class TestMonitorProcess:
             mock_session = MagicMock()
             mock_get_session.return_value = mock_session
 
-            await _broadcast_agent_reconnect("cid-rc")
+            await _broadcast_agent_reconnect("ws-rc")
 
             mock_chat.assert_awaited_once()
             assert "reconnected" in mock_chat.call_args[0][3]
             assert mock_session.broadcast.call_count == 2
 
-        container.registry.states.pop("ws-rc", None)
-
     async def test_broadcast_reconnect_no_workspace(self):
         from klangk_backend.agent import _broadcast_agent_reconnect
 
-        await _broadcast_agent_reconnect("no-such-container")
+        await _broadcast_agent_reconnect("")
 
     async def test_monitor_skips_restart_if_already_restarted(self):
-        from klangk_backend import container, model
+        from klangk_backend import model
 
-        container.registry.track_activity("cid-skip", "ws-skip")
-
-        session = _make_session("cid-skip")
-        _agents["cid-skip"] = session
+        session = _make_session("cid-skip", "ws-skip")
+        _agents["ws-skip"] = session
 
         dead_proc = AsyncMock()
         dead_proc.returncode = 1
@@ -911,5 +885,3 @@ class TestMonitorProcess:
         ):
             await session._monitor_process(dead_proc)
             mock_start.assert_not_awaited()
-
-        container.registry.states.pop("ws-skip", None)

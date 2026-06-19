@@ -1995,7 +1995,7 @@ class Connection:
         from . import agent
 
         try:
-            session = await agent.get_session(container_id)
+            session = await agent.get_session(self.workspace_id, container_id)
             await session._ensure_started()
             # Broadcast updated presence now that agent is alive
             if self.workspace_id:
@@ -2347,7 +2347,7 @@ async def _handle_agent_mention(
         )
 
     try:
-        pi = await agent.get_session(container_id)
+        pi = await agent.get_session(workspace_id, container_id)
         response_text = await pi.send_prompt(prompt)
     except asyncio.CancelledError:  # pragma: no cover
         response_text = "Stopped."
