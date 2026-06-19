@@ -15,6 +15,7 @@ so common development tasks work out of the box.
 | **Node.js 26** | Base image (`node:26-slim`) | Includes `npm`                 |
 | **Python 3**   | `python3` system package    | `pip` and `venv` included      |
 | **Bash**       | Default shell               | `/bin/sh` is symlinked to bash |
+| **Zsh**        | `zsh` system package        | Available but not the default  |
 
 ## Build Tools
 
