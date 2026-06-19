@@ -34,10 +34,36 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _emailMessage;
   bool _emailSuccess = false;
 
+  // Handle change
+  final _newHandleController = TextEditingController();
+  final _handleFormKey = GlobalKey<FormState>();
+  bool _changingHandle = false;
+  String? _handleMessage;
+  bool _handleSuccess = false;
+
+  String? _currentHandle;
+
   @override
   void initState() {
     super.initState();
     setPageTitle('Settings');
+    _fetchCurrentHandle();
+  }
+
+  Future<void> _fetchCurrentHandle() async {
+    final auth = context.read<AuthService>();
+    try {
+      final resp = await auth.authGet('/auth/me');
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        setState(() {
+          _currentHandle = data['handle'] as String?;
+        });
+      }
+    } catch (_) {
+      // best-effort
+    }
   }
 
   @override
@@ -47,6 +73,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _confirmPasswordController.dispose();
     _newEmailController.dispose();
     _emailPasswordController.dispose();
+    _newHandleController.dispose();
     super.dispose();
   }
 
@@ -90,6 +117,49 @@ class _SettingsPageState extends State<SettingsPage> {
         _passwordSuccess = false;
         _passwordMessage = 'Network error.';
         _changingPassword = false;
+      });
+    }
+  }
+
+  Future<void> _changeHandle() async {
+    if (!_handleFormKey.currentState!.validate()) return;
+    setState(() {
+      _changingHandle = true;
+      _handleMessage = null;
+    });
+
+    final auth = context.read<AuthService>();
+    try {
+      final resp = await auth.authPost(
+        '/auth/change-handle',
+        body: jsonEncode({
+          'handle': _newHandleController.text.trim(),
+        }),
+      );
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        setState(() {
+          _handleSuccess = true;
+          _handleMessage = 'Handle updated.';
+          _changingHandle = false;
+          _currentHandle = data['handle'] as String?;
+        });
+        _newHandleController.clear();
+      } else {
+        final data = jsonDecode(resp.body);
+        setState(() {
+          _handleSuccess = false;
+          _handleMessage = data['detail'] ?? 'Failed to change handle.';
+          _changingHandle = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _handleSuccess = false;
+        _handleMessage = 'Network error.';
+        _changingHandle = false;
       });
     }
   }
@@ -167,6 +237,15 @@ class _SettingsPageState extends State<SettingsPage> {
                             fontSize: 20,
                             fontWeight: FontWeight.w700,
                             color: KColors.textSecondary)),
+                    if (_currentHandle != null &&
+                        _currentHandle!.isNotEmpty) ...[
+                      const SizedBox(width: 12),
+                      Text('@$_currentHandle',
+                          style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                              color: KColors.textSecondary)),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 32),
@@ -174,6 +253,13 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: _buildPasswordSection(),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: _buildHandleSection(),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -280,6 +366,72 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Text('Update Password'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHandleSection() {
+    return Form(
+      key: _handleFormKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.alternate_email,
+                  size: 18, color: KColors.textSecondary),
+              const SizedBox(width: 8),
+              Text('Change Handle',
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: KColors.textSecondary,
+                      letterSpacing: 0.3)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _newHandleController,
+            decoration: InputDecoration(
+              labelText: 'New Handle',
+              labelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
+            ),
+            validator: (v) {
+              if (v == null || v.trim().isEmpty) return 'Required';
+              if (v != v.toLowerCase()) return 'Must be lowercase';
+              if (!RegExp(r'^[a-z0-9._-]+$').hasMatch(v)) {
+                return 'Only lowercase letters, numbers, dots, hyphens, underscores';
+              }
+              return null;
+            },
+            onFieldSubmitted: (_) => _changeHandle(),
+          ),
+          if (_handleMessage != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _handleMessage!,
+              style: TextStyle(
+                color: _handleSuccess
+                    ? Colors.green
+                    : Theme.of(context).colorScheme.error,
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _changingHandle ? null : _changeHandle,
+            child: _changingHandle
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Update Handle'),
           ),
         ],
       ),

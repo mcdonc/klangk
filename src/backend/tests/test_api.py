@@ -5535,3 +5535,104 @@ class TestOIDCLogout:
             resp = await client.post("/auth/logout", headers=headers)
         assert resp.status_code == 200
         assert "oidc_logout_url" not in resp.json()
+
+
+class TestHandleEndpoints:
+    async def test_change_own_handle(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-handle",
+            json={"handle": "newhandle"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "updated"
+        assert data["handle"] == "newhandle"
+        # Verify it actually changed in the DB
+        updated = await model.get_user_by_id(user["id"])
+        assert updated["handle"] == "newhandle"
+
+    async def test_change_handle_invalid_empty(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-handle",
+            json={"handle": ""},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+
+    async def test_change_handle_invalid_chars(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-handle",
+            json={"handle": "BAD HANDLE!"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+
+    async def test_change_handle_reserved(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-handle",
+            json={"handle": "work"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "reserved" in resp.json()["detail"]
+
+    async def test_change_handle_conflict(self, client, admin_user, user):
+        # Set admin_user's handle to something known
+        await model.set_user_handle(admin_user["id"], "taken-handle")
+        # Try to set user's handle to the same
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-handle",
+            json={"handle": "taken-handle"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "already taken" in resp.json()["detail"]
+
+    async def test_admin_change_user_handle(self, client, admin_user, user):
+        admin_resp = await client.post(
+            "/auth/login",
+            json={"email": "testadmin@example.com", "password": "testpass"},
+        )
+        admin_headers = {
+            "Authorization": f"Bearer {admin_resp.json()['access_token']}"
+        }
+        resp = await client.patch(
+            f"/admin/users/{user['id']}",
+            json={"handle": "admin-set-handle"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        updated = await model.get_user_by_id(user["id"])
+        assert updated["handle"] == "admin-set-handle"
+
+    async def test_admin_change_user_handle_invalid(
+        self, client, admin_user, user
+    ):
+        admin_resp = await client.post(
+            "/auth/login",
+            json={"email": "testadmin@example.com", "password": "testpass"},
+        )
+        admin_headers = {
+            "Authorization": f"Bearer {admin_resp.json()['access_token']}"
+        }
+        resp = await client.patch(
+            f"/admin/users/{user['id']}",
+            json={"handle": ""},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 400
+
+    async def test_get_me(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/auth/me", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == user["id"]
+        assert data["email"] == "testuser@example.com"
+        assert "handle" in data
