@@ -13,6 +13,7 @@ nav = [
     { "Overview" = "features/index.md" },
     { "Authentication" = "features/authentication.md" },
     { "Authorization" = "features/authorization.md" },
+    { "Handles" = "features/handles.md" },
     { "Admin Management" = "features/admin-management.md" },
     { "Invitations" = "features/invitations.md" },
     { "Workspaces" = "features/workspaces.md" },

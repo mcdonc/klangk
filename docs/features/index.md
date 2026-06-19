@@ -4,6 +4,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 
 - [**Authentication**](authentication.md) — Email/password, OIDC/SSO, brute-force protection
 - [**Authorization**](authorization.md) — Pyramid-style ACL system with resource tree and principals
+- [**Handles**](handles.md) — Unique per-user identifiers used in chat, terminals, and presence
 - [**Admin Management**](admin-management.md) — User/group management, ACL editing, user archival
 - [**Invitations**](invitations.md) — Admin invitation workflow for onboarding new users
 - [**Workspaces**](workspaces.md) — Isolated coding environments with sharing, port allocation, export/import
