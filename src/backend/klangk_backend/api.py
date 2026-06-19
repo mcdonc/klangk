@@ -1172,6 +1172,31 @@ async def delete_workspace(
     return {"status": "deleted"}
 
 
+@router.post("/workspaces/{workspace_id}/restart")
+async def restart_workspace(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("terminal", _workspace_resource)),
+):
+    """Restart a workspace container.
+
+    Stops and removes the running container.  The next WebSocket
+    connect will start a fresh one with the same workspace config.
+    """
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    live_state = container.registry.get_state(workspace_id)
+    cid = (
+        live_state.container_id
+        if live_state
+        else workspace.get("container_id")
+    )
+    if cid:
+        await container.registry.stop_and_remove_container(cid)
+    await wshandler.reset_workspace_state(workspace_id)
+    return {"status": "restarted"}
+
+
 # --- Workspace export/import endpoints ---
 
 

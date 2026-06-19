@@ -896,6 +896,40 @@ class TestWorkspaceRoutes:
         acl = await model.get_acl_entries(f"/workspaces/{ws_id}")
         assert len(acl) == 0
 
+    async def test_restart_workspace(self, client, user):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "restart-me"}
+        )
+        ws_id = create_resp.json()["id"]
+
+        with patch.object(
+            api.container.registry,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
+        ):
+            resp = await client.post(
+                f"/workspaces/{ws_id}/restart", headers=headers
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "restarted"
+
+    async def test_restart_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        fake_id = "fake-restart-id"
+        await model.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "terminal",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.post(
+            f"/workspaces/{fake_id}/restart", headers=headers
+        )
+        assert resp.status_code == 404
+
     async def test_list_no_auth(self, client):
         resp = await client.get("/workspaces")
         assert resp.status_code == 401
