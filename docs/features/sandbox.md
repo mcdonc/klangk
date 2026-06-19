@@ -234,8 +234,9 @@ the workspace is left in an inconsistent state. To recover:
 
 - **If your script is idempotent:** re-run with `--force-setup`:
   `klangkc sandbox myws --force-setup`
-- **If not:** delete the workspace and start over:
-  `klangkc rm myws && klangkc sandbox myws`
+- **If not:** delete the workspace and start over
+  (`klangkc rm myws && klangkc sandbox myws`), or create a fresh
+  workspace with a different name (`klangkc sandbox myws-2`).
 
 ### Tips
 
