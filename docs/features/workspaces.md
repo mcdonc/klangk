@@ -1,5 +1,7 @@
 # Workspaces
 
+![Workspaces page](../assets/workspaces.png)
+
 - Multiple workspaces per user
 - Each workspace gets its own podman container + bind-mounted directory
 - URL-based workspace routing (survives page reload via hash URL reading)
