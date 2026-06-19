@@ -3,7 +3,8 @@
 `klangkc` is the command-line client for Klangk. It lets you manage
 workspaces, connect to container shells, sync files, and administer
 users — all from your terminal without needing the web UI. It also
-supports [SSH agent forwarding](../features/ssh-agent-forwarding.md)
+supports [sandboxing projects](../features/sandbox.md) from a config
+file and [SSH agent forwarding](../features/ssh-agent-forwarding.md)
 for using your local SSH keys inside containers.
 
 ![klangkc --help](../assets/cli-help.png)
@@ -31,6 +32,9 @@ klangkc edit my-project                  # interactive edit (name, image, comman
 klangkc edit my-project --env FOO=bar    # set env var via flag
 klangkc dup my-project my-copy           # duplicate a workspace
 klangkc shell my-project                 # drop into bash inside the container
+klangkc sandbox myws                     # create/reconnect from .klangk/sandbox.yaml
+klangkc sandbox myws ~/projects/myapp    # specify sandbox root explicitly
+klangkc sandbox myws --force-setup       # re-run copy and setup on existing workspace
 klangkc exec my-project ls /home/klangk/work         # run a command in the container
 klangkc sync ~/src my-project:/home/klangk/work      # sync files to/from the container
 klangkc rm my-project                # delete a workspace
