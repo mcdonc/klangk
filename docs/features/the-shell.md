@@ -13,7 +13,7 @@ bind-mounted home directory), so any customizations you make are permanent.
 Each workspace container runs as a single UNIX user (`klangk`), but
 Klangk supports multiple workspace members by giving each person their
 own `$HOME` directory. When you open a terminal, `$HOME` is set to your
-personal directory (e.g., `/home/klangk/homes/<your-user-id>/`), so
+personal directory (e.g., `/home/<handle>/`), so
 dotfiles like `.bashrc`, `.gitconfig`, `.vimrc`, and `.zshrc` are
 per-user and persist across sessions.
 
