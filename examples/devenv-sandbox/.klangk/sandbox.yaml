@@ -1,0 +1,9 @@
+sandbox:
+  mount_at: ~/devenv-sandbox
+  setup: .klangk/setup.sh
+
+mounts:
+  - /home/chrism/projects/enfold/reportlab-poc:reportlab-poc
+
+volumes:
+  - devenv-nix:/nix

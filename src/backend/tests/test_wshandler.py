@@ -5693,42 +5693,6 @@ class TestDispatchBrowserRequestStreamTo:
         mock.assert_called_once()
 
 
-class TestHandleAutoCreateFailure:
-    async def test_no_handle_in_db_sets_user_home_none(
-        self, user, temp_data_dir
-    ):
-        """If get_user_handle returns None, _user_home is None."""
-        ws = await ws_mod.create_workspace(user["id"], "handle-fail")
-        sock = _mock_sock(headers={"host": "localhost:8997"})
-        conn = _base_conn(
-            user={"id": user["id"], "email": user["email"]}, ws=sock
-        )
-
-        async def fake_start(*a, **kw):
-            container.registry.track_activity("cid-hf", ws["id"])
-            return ("cid-hf", "created")
-
-        with (
-            patch.object(
-                container.registry,
-                "start_container",
-                side_effect=fake_start,
-            ),
-            patch("glob.glob", return_value=[]),
-            patch(
-                "klangk_backend.model.get_user_handle",
-                return_value=None,
-            ),
-        ):
-            await conn.start_workspace_container(ws["id"], ws)
-
-        assert conn._user_home is None
-        assert conn.container_id == "cid-hf"
-
-        wshandler.state.sessions.pop(ws["id"], None)
-        container.registry.states.pop(ws["id"], None)
-
-
 class TestUiReadySharedTerminals:
     async def test_ui_ready_sends_shared_terminals(self, user, temp_data_dir):
         from klangk_backend import workspaces

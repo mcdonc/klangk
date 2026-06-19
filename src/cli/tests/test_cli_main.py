@@ -2225,3 +2225,331 @@ class TestInviteCLI:
         result = runner.invoke(main.app, ["invitations"])
         assert result.exit_code == 0
         assert "No invitations" in result.stdout
+
+
+class TestBuildWsUrl:
+    def test_http(self):
+        from klangkc.main import _build_ws_url
+
+        assert (
+            _build_ws_url("http://localhost:8995") == "ws://localhost:8995/ws"
+        )
+
+    def test_https(self):
+        from klangkc.main import _build_ws_url
+
+        assert _build_ws_url("https://example.com") == "wss://example.com/ws"
+
+    def test_bare(self):
+        from klangkc.main import _build_ws_url
+
+        assert _build_ws_url("example.com") == "ws://example.com/ws"
+
+
+class TestResolveForwardAgent:
+    def test_flag_true(self, monkeypatch):
+        from klangkc.main import _resolve_forward_agent
+
+        monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+        assert _resolve_forward_agent(True, "http://localhost") is True
+
+    def test_env_true(self, monkeypatch):
+        from klangkc.main import _resolve_forward_agent
+
+        monkeypatch.setenv("KLANGKC_FORWARD_AGENT", "true")
+        monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+        assert _resolve_forward_agent(False, "http://localhost") is True
+
+    def test_option_info_treated_as_false(self):
+        from klangkc.main import _resolve_forward_agent
+
+        # Simulate typer OptionInfo (not a bool)
+        assert (
+            _resolve_forward_agent("not-a-bool", "http://localhost") is False
+        )
+
+
+class TestSandboxCommand:
+    def test_missing_config_exits(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app, ["sandbox", "myws", str(tmp_path)]
+            )
+        assert result.exit_code == 1
+        assert "No sandbox config" in result.output
+
+    def test_invalid_config_exits(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        klangk_dir = tmp_path / ".klangk"
+        klangk_dir.mkdir()
+        (klangk_dir / "sandbox.yaml").write_text("not a mapping")
+
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app, ["sandbox", "myws", str(tmp_path)]
+            )
+        assert result.exit_code == 1
+        assert "Invalid sandbox config" in result.output
+
+    def test_creates_workspace(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        klangk_dir = tmp_path / ".klangk"
+        klangk_dir.mkdir()
+        (klangk_dir / "sandbox.yaml").write_text(
+            "sandbox:\n  mount_at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("myws")
+        client.create_workspace.return_value = ws
+
+        async def fake_connect(*args, **kwargs):
+            pass
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(main, "_sandbox_connect", fake_connect),
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app, ["sandbox", "myws", str(tmp_path)]
+            )
+        assert result.exit_code == 0
+        client.create_workspace.assert_called_once()
+        call_kwargs = client.create_workspace.call_args
+        assert call_kwargs[0][0] == "myws"
+        assert "Creating workspace" in result.output
+
+    def test_reconnects_existing(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        klangk_dir = tmp_path / ".klangk"
+        klangk_dir.mkdir()
+        (klangk_dir / "sandbox.yaml").write_text(
+            "sandbox:\n  mount_at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+            mounts=[f"{tmp_path.resolve()}:/home/admin/test"],
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.return_value = ws
+
+        async def fake_connect(*args, **kwargs):
+            pass
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(main, "_sandbox_connect", fake_connect),
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app, ["sandbox", "myws", str(tmp_path)]
+            )
+        assert result.exit_code == 0
+        client.create_workspace.assert_not_called()
+        assert "exists" in result.output
+
+    def test_config_changed_warning(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        klangk_dir = tmp_path / ".klangk"
+        klangk_dir.mkdir()
+        (klangk_dir / "sandbox.yaml").write_text(
+            "sandbox:\n  mount_at: ~/test\nmounts:\n  - /extra:/extra\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+            mounts=[f"{tmp_path.resolve()}:/home/admin/test"],
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.return_value = ws
+
+        async def fake_connect(*args, **kwargs):
+            pass
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(main, "_sandbox_connect", fake_connect),
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app, ["sandbox", "myws", str(tmp_path)]
+            )
+        assert result.exit_code == 0
+        assert "config has changed" in result.output
+
+    def test_force_setup_passes_config(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        klangk_dir = tmp_path / ".klangk"
+        klangk_dir.mkdir()
+        (klangk_dir / "sandbox.yaml").write_text(
+            "sandbox:\n  mount_at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+            mounts=[f"{tmp_path.resolve()}:/home/admin/test"],
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.return_value = ws
+
+        captured_kwargs = {}
+
+        async def fake_connect(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(main, "_sandbox_connect", fake_connect),
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["sandbox", "myws", str(tmp_path), "--force-setup"],
+            )
+        assert result.exit_code == 0
+        assert captured_kwargs.get("config") is not None
+
+
+class TestSandboxSetup:
+    async def test_copies_files(self, tmp_path):
+        from klangkc.main import _sandbox_setup
+        from klangkc.sandbox import SandboxConfig
+
+        src_file = tmp_path / "myconf"
+        src_file.write_text("hello")
+
+        config = SandboxConfig(
+            copy=[f"{src_file}:/home/admin/.myconf"],
+        )
+
+        ws = AsyncMock()
+        exec_calls = []
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None):
+            exec_calls.append(
+                {"cmd": cmd, "stdin": stdin.read() if stdin else None}
+            )
+            return 0
+
+        with patch("klangkc.main._exec_on_ws", fake_exec):
+            await _sandbox_setup(ws, config, tmp_path, "admin")
+
+        assert len(exec_calls) == 1
+        assert b"hello" in exec_calls[0]["stdin"]
+
+    async def test_copy_failure_warns(self, tmp_path):
+        from klangkc.main import _sandbox_setup
+        from klangkc.sandbox import SandboxConfig
+
+        src_file = tmp_path / "myconf"
+        src_file.write_text("hello")
+
+        config = SandboxConfig(
+            copy=[f"{src_file}:/home/admin/.myconf"],
+        )
+
+        ws = AsyncMock()
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None):
+            return 1  # failure
+
+        with patch("klangkc.main._exec_on_ws", fake_exec):
+            await _sandbox_setup(ws, config, tmp_path, "admin")
+
+    async def test_copy_missing_file_warns(self, tmp_path, capsys):
+        from klangkc.main import _sandbox_setup
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            copy=["/nonexistent/file:/home/admin/.conf"],
+        )
+
+        ws = AsyncMock()
+
+        with patch("klangkc.main._exec_on_ws", AsyncMock(return_value=0)):
+            await _sandbox_setup(ws, config, tmp_path, "admin")
+
+        # _exec_on_ws should not have been called (file doesn't exist)
+
+    async def test_runs_setup_script(self, tmp_path):
+        from klangkc.main import _sandbox_setup
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            mount_at="~/project",
+            setup=".klangk/setup.sh",
+        )
+
+        ws = AsyncMock()
+        exec_calls = []
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None):
+            exec_calls.append(cmd)
+            return 0
+
+        with patch("klangkc.main._exec_on_ws", fake_exec):
+            await _sandbox_setup(ws, config, tmp_path, "admin")
+
+        assert len(exec_calls) == 1
+        assert "/home/admin/project/.klangk/setup.sh" in exec_calls[0][2]
+
+    async def test_setup_failure_warns(self, tmp_path):
+        from klangkc.main import _sandbox_setup
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            mount_at="~/project",
+            setup=".klangk/setup.sh",
+        )
+
+        ws = AsyncMock()
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None):
+            return 1
+
+        with patch("klangkc.main._exec_on_ws", fake_exec):
+            await _sandbox_setup(ws, config, tmp_path, "admin")

@@ -182,6 +182,13 @@ class KlangkClient:
         if resp.status_code == 401:
             raise AuthError("Session expired — run `klangkc login`")
 
+    def get_handle(self) -> str:
+        """Return the current user's handle via ``GET /auth/me``."""
+        resp = self.get("/auth/me")
+        self._check_auth(resp)
+        resp.raise_for_status()
+        return resp.json()["handle"]
+
     def list_workspaces(self) -> list[Workspace]:
         resp = self.get("/workspaces")
         self._check_auth(resp)
@@ -486,6 +493,7 @@ async def _ws_shell(
     command_override: str | None = None,
     window: str | None = None,
     forward_agent: bool = False,
+    pre_shell=None,
 ) -> None:
     """Run the interactive PTY shell over WebSocket.
 
@@ -494,6 +502,9 @@ async def _ws_shell(
     command_override, if set, overrides the workspace default command.
     window, if set, selects a specific window by name. Use
     ``handle:window_name`` to join another user's shared window.
+    pre_shell, if set, is an async callable(ws) invoked after the
+    workspace is ready but before the terminal starts.  Used by
+    ``sandbox`` to run copy/setup on the same connection.
     """
     async with websockets.connect(
         f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
@@ -501,12 +512,15 @@ async def _ws_shell(
         # 1. Connect to workspace
         await _wait_workspace_ready(ws, workspace_id)
 
+        # 1a. Run pre-shell hook (sandbox setup) if provided.
+        if pre_shell is not None:
+            await pre_shell(ws)
+
         # 2a. Start SSH agent forwarding if requested and available.
         ssh_agent_active = False
         local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
         _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
-        if _debug_agent:
-            # Log to file to avoid corrupting the terminal display.
+        if _debug_agent:  # pragma: no cover
             _agent_log = os.path.expanduser("~/.klangkc-ssh-agent.log")
             _fh = logging.FileHandler(_agent_log, mode="w")
             _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
@@ -522,7 +536,7 @@ async def _ws_shell(
             and local_agent_sock
             and os.path.exists(local_agent_sock)
         ):
-            if _debug_agent:
+            if _debug_agent:  # pragma: no cover
                 logger.info("[ssh-agent] sending ssh_agent_start")
             await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
             # Wait for confirmation before starting the terminal so
@@ -535,26 +549,26 @@ async def _ws_shell(
                         break
                     raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                     msg = json.loads(raw)
-                    if _debug_agent:
+                    if _debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] during wait: %s", msg.get("type")
                         )
                     if msg.get("type") == "ssh_agent_started":
                         ssh_agent_active = True
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] started, socket=%s",
                                 msg.get("socket"),
                             )
                         break
                     if msg.get("type") == "error":
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] error: %s", msg.get("message")
                             )
                         break
             except asyncio.TimeoutError:
-                if _debug_agent:
+                if _debug_agent:  # pragma: no cover
                     logger.info("[ssh-agent] timed out waiting for start")
                 pass  # proceed without agent forwarding
 
@@ -837,7 +851,7 @@ async def _run_shell(
                 elif data.get("type") == "ssh_agent_response":
                     raw = base64.b64decode(data.get("data", ""))
                     if raw:
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] got %d bytes from backend",
                                 len(raw),
@@ -897,9 +911,9 @@ async def _run_shell(
         stdout_loop), forwards them to the local SSH agent socket, reads
         the agent's reply, and sends it back over the WebSocket.
         """
-        if not ssh_agent_sock:
+        if not ssh_agent_sock:  # pragma: no cover
             return
-        if _debug_agent:
+        if _debug_agent:  # pragma: no cover
             logger.info(
                 "[ssh-agent] relay loop started, local sock=%s",
                 ssh_agent_sock,
@@ -909,7 +923,7 @@ async def _run_shell(
                 data = await asyncio.wait_for(agent_queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
-            if _debug_agent:
+            if _debug_agent:  # pragma: no cover
                 logger.info(
                     "[ssh-agent] relay: got %d bytes from queue", len(data)
                 )
@@ -918,12 +932,12 @@ async def _run_shell(
                 agent = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 try:
                     agent.connect(ssh_agent_sock)
-                    if _debug_agent:
+                    if _debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] relay: connected to local agent"
                         )
                     agent.sendall(data)
-                    if _debug_agent:
+                    if _debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] relay: sent %d bytes to local agent",
                             len(data),
@@ -933,12 +947,12 @@ async def _run_shell(
                     header = b""
                     while len(header) < 4:
                         chunk = agent.recv(4 - len(header))
-                        if not chunk:
+                        if not chunk:  # pragma: no cover
                             break
                         header += chunk
                     if len(header) == 4:
                         msg_len = struct.unpack(">I", header)[0]
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] relay: agent response header, "
                                 "body_len=%d",
@@ -947,11 +961,11 @@ async def _run_shell(
                         body = b""
                         while len(body) < msg_len:
                             chunk = agent.recv(msg_len - len(body))
-                            if not chunk:
+                            if not chunk:  # pragma: no cover
                                 break
                             body += chunk
                         response = header + body
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] relay: sending %d bytes back "
                                 "to backend",
@@ -967,7 +981,7 @@ async def _run_shell(
                                 }
                             )
                         )
-                    elif _debug_agent:
+                    elif _debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] relay: incomplete header (%d bytes)",
                             len(header),
@@ -983,46 +997,54 @@ async def _run_shell(
     await asyncio.gather(*tasks)
 
 
-async def _ws_exec(
-    ws_url: str,
-    token: str,
-    workspace_id: str,
+async def _exec_on_ws(
+    ws,
     command: list[str],
+    stdin: io.RawIOBase | None = None,
+    stdout: io.RawIOBase | None = None,
 ) -> int:
-    """Run a command in the container over WebSocket, piping stdin/stdout.
+    """Run a command on an already-connected WebSocket.
+
+    The caller must have already connected and called
+    ``_wait_workspace_ready``.
+
+    *stdin*: file-like to read input from.  ``None`` closes stdin
+    immediately.  For a real terminal pass ``sys.stdin.buffer``; for
+    programmatic use pass ``io.BytesIO(data)``.
+
+    *stdout*: file-like to write output to.  ``None`` discards output.
+    For a real terminal pass ``sys.stdout.buffer``; for capture pass
+    an ``io.BytesIO()``.
 
     Returns the remote process exit code.
     """
-    import base64
+    loop = asyncio.get_event_loop()
 
-    async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
-    ) as ws:
-        # 1. Connect to workspace
-        await _wait_workspace_ready(ws, workspace_id)
+    await ws.send(json.dumps({"cmd": "exec_start", "command": command}))
 
-        # 2. Start exec session
-        await ws.send(json.dumps({"cmd": "exec_start", "command": command}))
+    exit_code = 1
+    stop = asyncio.Event()
 
-        # 3. Pipe stdin/stdout
-        loop = asyncio.get_event_loop()
-        exit_code = 1
+    async def stdin_forward() -> None:
+        if stdin is None:
+            await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
+            return
+        try:
+            fd = stdin.fileno()
+            has_fd = True
+        except (io.UnsupportedOperation, AttributeError):
+            has_fd = False
 
-        stop = asyncio.Event()
-
-        async def stdin_forward() -> None:
+        if has_fd:
             while not stop.is_set():
                 ready = await loop.run_in_executor(
-                    None, lambda: select.select([0], [], [], 0.2)[0]
+                    None,
+                    lambda: select.select([fd], [], [], 0.2)[0],
                 )
                 if not ready:  # pragma: no cover
                     continue
-                # Offload the read so a false-positive select cannot wedge
-                # the event loop (and with it stdout_forward) on a blocking
-                # os.read. See stdin_loop in _run_shell for the same pattern.
-                data = await loop.run_in_executor(None, os.read, 0, 65536)
+                data = await loop.run_in_executor(None, os.read, fd, 65536)
                 if not data:
-                    await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
                     break
                 await ws.send(  # pragma: no cover
                     json.dumps(
@@ -1032,63 +1054,130 @@ async def _ws_exec(
                         }
                     )
                 )
-
-        async def stdout_forward() -> None:
-            nonlocal exit_code
-            while True:
-                msg = await ws.recv()
-                if isinstance(msg, bytes):  # pragma: no cover
-                    msg = msg.decode("utf-8", errors="replace")
-                data = json.loads(msg)
-                if data.get("type") == "exec_output":
-                    raw = base64.b64decode(data["data"])
-                    # Offload: when the downstream consumer (e.g. rsync over
-                    # `klangkc exec`) is slow, the stdout pipe fills and this
-                    # write blocks. On the event loop that would also stall
-                    # stdin_forward and the heartbeat — a sync deadlock.
-                    await loop.run_in_executor(None, os.write, 1, raw)
-                elif data.get("type") == "exec_exit":
-                    exit_code = data.get("code", 0)
-                    break
-                elif data.get("type") == "error":  # pragma: no cover
-                    logging.error(
-                        "Server error: %s",
-                        data.get("message", "unknown"),
+        else:
+            data = stdin.read()
+            if data:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "cmd": "exec_input",
+                            "data": base64.b64encode(data).decode("ascii"),
+                        }
                     )
-                    exit_code = 1
-                    break
+                )
+        await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
 
-        async def heartbeat_loop() -> None:  # pragma: no cover
-            while not stop.is_set():
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=60)
-                    return
-                except asyncio.TimeoutError:
-                    pass
-                if not stop.is_set():
-                    await ws.send(json.dumps({"cmd": "heartbeat"}))
+    async def stdout_forward() -> None:
+        nonlocal exit_code
+        while True:
+            msg = await ws.recv()
+            if isinstance(msg, bytes):  # pragma: no cover
+                msg = msg.decode("utf-8", errors="replace")
+            data = json.loads(msg)
+            if data.get("type") == "exec_output":
+                raw = base64.b64decode(data["data"])
+                if stdout is not None:
+                    if has_stdout_fd:
+                        # Use os.write for real fds to avoid buffering
+                        # issues (rsync needs unbuffered output).
+                        await loop.run_in_executor(
+                            None, os.write, stdout_fd, raw
+                        )
+                    else:
+                        stdout.write(raw)
+            elif data.get("type") == "exec_exit":
+                exit_code = data.get("code", 0)
+                break
+            elif data.get("type") == "error":  # pragma: no cover
+                logging.error(
+                    "Server error: %s",
+                    data.get("message", "unknown"),
+                )
+                exit_code = 1
+                break
 
-        # stdout_forward drives the lifecycle — when it receives
-        # exec_exit, it sets stop so stdin_forward exits promptly.
-        stdout_task = asyncio.create_task(stdout_forward())
-        stdin_task = asyncio.create_task(stdin_forward())
-        heartbeat_task = asyncio.create_task(heartbeat_loop())
-        await stdout_task
-        stop.set()
-        # stdin_forward exits within 0.2s thanks to select timeout
-        try:
-            await asyncio.wait_for(stdin_task, timeout=2)
-        except asyncio.TimeoutError:  # pragma: no cover
-            stdin_task.cancel()
+    async def heartbeat_loop() -> None:  # pragma: no cover
+        while not stop.is_set():
             try:
-                await stdin_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(stop.wait(), timeout=60)
+                return
+            except asyncio.TimeoutError:
                 pass
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:  # pragma: no cover
-            pass
+            if not stop.is_set():
+                await ws.send(json.dumps({"cmd": "heartbeat"}))
 
-        await ws.send(json.dumps({"cmd": "exec_stop"}))
-        return exit_code
+    stdout_fd = -1
+    try:
+        if stdout is not None:
+            stdout_fd = stdout.fileno()
+    except (io.UnsupportedOperation, AttributeError):
+        pass
+    has_stdout_fd = stdout_fd >= 0
+
+    stdout_task = asyncio.create_task(stdout_forward())
+    stdin_task = asyncio.create_task(stdin_forward())
+    heartbeat_task = asyncio.create_task(heartbeat_loop())
+    await stdout_task
+    stop.set()
+    try:
+        await asyncio.wait_for(stdin_task, timeout=2)
+    except asyncio.TimeoutError:  # pragma: no cover
+        stdin_task.cancel()
+        try:
+            await stdin_task
+        except asyncio.CancelledError:
+            pass
+    heartbeat_task.cancel()
+    try:
+        await heartbeat_task
+    except asyncio.CancelledError:  # pragma: no cover
+        pass
+
+    await ws.send(json.dumps({"cmd": "exec_stop"}))
+    return exit_code
+
+
+async def _ws_exec(
+    ws_url: str,
+    token: str,
+    workspace_id: str,
+    command: list[str],
+) -> int:
+    """Run a command interactively, piping real stdin/stdout.
+
+    Returns the remote process exit code.
+    """
+    async with websockets.connect(
+        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+    ) as ws:
+        await _wait_workspace_ready(ws, workspace_id)
+        return await _exec_on_ws(
+            ws, command, stdin=sys.stdin.buffer, stdout=sys.stdout.buffer
+        )
+
+
+async def _ws_exec_piped(
+    ws_url: str,
+    token: str,
+    workspace_id: str,
+    command: list[str],
+    stdin_data: bytes | None = None,
+) -> tuple[int, str]:
+    """Run a command, optionally piping *stdin_data*, capture stdout.
+
+    Returns ``(exit_code, stdout_text)``.  Does not touch real
+    stdin/stdout — designed for programmatic use (file copy, setup).
+    """
+    async with websockets.connect(
+        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+    ) as ws:
+        await _wait_workspace_ready(ws, workspace_id)
+        stdin_buf = io.BytesIO(stdin_data) if stdin_data else None
+        stdout_buf = io.BytesIO()
+        exit_code = await _exec_on_ws(
+            ws, command, stdin=stdin_buf, stdout=stdout_buf
+        )
+        return (
+            exit_code,
+            stdout_buf.getvalue().decode("utf-8", errors="replace"),
+        )

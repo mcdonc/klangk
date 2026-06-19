@@ -1,0 +1,9 @@
+sandbox:
+  mount_at: ~/sandbox-test
+  setup: .klangk/setup.sh
+
+copy:
+  - .some-conf:~/sandbox-test/.some-conf
+
+mounts:
+  - .env:~/.env:ro

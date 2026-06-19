@@ -50,7 +50,6 @@ src/frontend/pubspec.lock
 Thumbs.db
 
 # Klangk data
-.klangk/
 
 # Claude
 .claude/

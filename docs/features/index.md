@@ -10,6 +10,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**Workspaces**](workspaces.md) — Isolated coding environments with sharing, port allocation, export/import
 - [**Terminal**](terminal.md) — Full terminal emulator with Pi agent integration, idle timeout, session persistence
 - [**The Shell**](the-shell.md) — Bash is default; switch to zsh or customize your shell environment
+- [**Sandbox**](sandbox.md) — One-command workspace setup from a project config file
 - [**Chat**](chat.md) — Real-time workspace chat with markdown, @mentions, message types, container-to-chat API
 - [**File Viewer**](file-viewer.md) — Directory tree, drag-and-drop upload, preview, download
 - [**AI Coding Harnesses**](ai-coding-harnesses.md) — Pi and Claude Code agents pre-installed in every workspace

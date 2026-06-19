@@ -6,19 +6,30 @@ Klangk is a general-purpose container orchestration system with a
 web-based multi-user interface. Each user gets isolated workspace
 containers with a full terminal, file browser, and real-time chat.
 
-While it works well as a general container management platform, Klangk
-has features that make it especially suited as a coding environment and
-AI isolation system:
+AI coding agents like Pi and Claude Code are powerful but
+intentionally given wide permissions — they can read, write, and
+execute code on your behalf. Klangk's containerization keeps these
+agents sandboxed: each workspace is an isolated container where an
+agent can do its work without risking your host system, other
+projects, or other users' environments.
 
-- **AI coding harnesses** — Pi and Claude Code agents come
-  pre-installed in every workspace, with LLM access configurable per
-  deployment
+The [`klangkc sandbox`](features/sandbox.md) command makes this
+easy: check a config file into your repo that describes what the
+workspace needs (mounts, tools, dotfiles), and spin up an isolated
+environment.
+
+- **Sandboxed AI agents** — Pi and Claude Code run inside
+  containers, isolated from your host system
+- **Project-level config** — `.klangk/sandbox.yaml` defines mounts,
+  setup scripts, and dotfiles for reproducible environments
 - **SSH agent forwarding** — use your local SSH keys inside
   containers without copying them
 - **GitHub HTTPS authentication** — browser-based credential flow
   for git operations
 - **Plugin system** — extend the AI agent and browser with
   TypeScript and Dart extensions
+- **Collaborate with other users** — share workspaces, terminals,
+  and chat in real time
 - **ACL authorization** — fine-grained access control for
   multi-tenant deployments
 
