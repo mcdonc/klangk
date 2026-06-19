@@ -132,18 +132,18 @@ container rebuilds but doesn't need to be on the host filesystem.
 
 ### Secrets and environment variables
 
-There is no dedicated `env` section. Instead, mount a secrets file
+There is no dedicated `env` section. Instead, mount your `.env` file
 into the container and source it from your shell or setup script:
 
 ```yaml
 mounts:
-  - ~/.klangk-secrets:~/.klangk-secrets:ro
+  - .env:~/.env:ro
 ```
 
 Then in your `.bashrc` or setup script:
 
 ```bash
-[ -f ~/.klangk-secrets ] && . ~/.klangk-secrets
+[ -f ~/.env ] && . ~/.env
 ```
 
 This way, changes to the secrets file on the host take effect on the
@@ -240,7 +240,7 @@ mounts:
   - ~/.claude:~/.claude
   - ~/.ssh:~/.ssh:ro
   - /home/chrism/data:~/data
-  - ~/.klangk-secrets:~/.klangk-secrets:ro
+  - .env:~/.env:ro
 
 volumes:
   - klangk-nix:/nix
