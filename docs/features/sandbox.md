@@ -13,11 +13,11 @@ can spin up an identical sandboxed environment with the same command.
 
 ## Quick start
 
-Create a `.klangk/sandbox.yaml` in a directory representing your project root
-(can be empty):
+Create a `.klangk/sandbox.yaml` in your project root:
 
 ```yaml
-{}
+sandbox:
+  mount_at: ~/myproj
 ```
 
 Then run:
