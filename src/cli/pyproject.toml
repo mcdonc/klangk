@@ -32,9 +32,10 @@ klangkc = "klangkc.main:main"
 
 [tool.hatch.version]
 source = "vcs"
+fallback-version = "0.0.0.dev0"
 raw-options.root = "../.."
 raw-options.tag_regex = "^cli-v(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^\\+]*)(?:\\+.*)?$"
-raw-options.fallback_version = "0.0.0.dev0"
+raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "cli-v*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["klangkc"]
