@@ -9,11 +9,12 @@ Klangk's containerization system exists to let you safely work on
 projects that use AI harnesses with wide permissions. The `sandbox`
 command makes this easy: check a `.klangk/sandbox.yaml` into your
 repo that describes what the workspace needs, and anyone on the team
-can spin up an identical sandboxed environment with one command.
+can spin up an identical sandboxed environment with the same command.
 
 ## Quick start
 
-Create a `.klangk/sandbox.yaml` in your sandbox root (can be empty):
+Create a `.klangk/sandbox.yaml` in a directory representing your project root
+(can be empty):
 
 ```yaml
 {}
@@ -250,7 +251,10 @@ the workspace is left in an inconsistent state. To recover:
 - **Keep it fast.** The setup script blocks before you get a shell.
   Move slow one-time setup into a volume that persists.
 
-## Worked example
+## Example
+
+See the [examples/](https://github.com/mcdonc/klangk/tree/main/examples)
+directory in the klangk repo for working sandbox configurations.
 
 A project that needs nix/devenv, custom dotfiles, a data directory,
 and SSH access to GitHub:
