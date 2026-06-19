@@ -186,6 +186,13 @@ The setup script runs inside the container as the `klangk` user. It
 has access to everything that's been mounted and copied. The working
 directory is the sandbox root (the `mount_at` path).
 
+**Important:** The `klangk` user does not have sudo access by
+default. Without it, setup scripts are limited to user-space
+operations (installing to `~`, downloading binaries, etc.). To
+install system packages with `apt`, install nix, or modify system
+files, the server administrator must set `KLANGK_ALLOW_SUDO=true`
+in the server's `.env` file.
+
 ### Example: install nix and devenv
 
 ```bash
