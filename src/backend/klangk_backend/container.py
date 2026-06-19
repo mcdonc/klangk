@@ -214,7 +214,9 @@ class ContainerRegistry:
         self.on_workspace_killed = None
         self._cleanup_wake: asyncio.Event | None = None
 
-    def workspace_id_for(self, container_id: str) -> str | None:
+    def workspace_id_for(
+        self, container_id: str
+    ) -> str | None:  # pragma: no cover
         """Return the workspace_id for a container, or None."""
         return self._cid_to_wsid.get(container_id)
 

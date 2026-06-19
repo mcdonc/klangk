@@ -46,14 +46,15 @@ class AgentSetupError(AgentError):
     """Raised when the agent's home directory cannot be set up."""
 
 
-# Registry of active agent sessions keyed by container ID.
+# Registry of active agent sessions keyed by workspace ID.
 _agents: dict[str, "AgentSession"] = {}
 
 
 class AgentSession:
     """Wraps a ``pi --mode rpc`` subprocess inside a container."""
 
-    def __init__(self, container_id: str) -> None:
+    def __init__(self, workspace_id: str, container_id: str) -> None:
+        self.workspace_id = workspace_id
         self.container_id = container_id
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
@@ -77,21 +78,14 @@ class AgentSession:
 
         from . import model
         from . import workspaces
-        from . import container
 
-        # Look up the workspace via the container registry.
-        workspace_id = container.registry.workspace_id_for(self.container_id)
-        if not workspace_id:
-            raise AgentSetupError(
-                f"No workspace found for container {self.container_id}"
-            )
-        ws = await model.get_workspace_by_id(workspace_id)
+        ws = await model.get_workspace_by_id(self.workspace_id)
         if not ws:
             raise AgentSetupError(
-                f"Workspace {workspace_id} not found in database"
+                f"Workspace {self.workspace_id} not found in database"
             )
         owner_id = ws["user_id"]
-        workspace_home = workspaces.home_path(owner_id, workspace_id)
+        workspace_home = workspaces.home_path(owner_id, self.workspace_id)
 
         agent_handle = await model.agent_handle()
         container_home, created = workspaces.ensure_home_symlink(
@@ -182,13 +176,13 @@ class AgentSession:
             proc.returncode,
             self.container_id,
         )
-        await _broadcast_agent_disconnect(self.container_id)
+        await _broadcast_agent_disconnect(self.workspace_id)
         # Auto-restart after a brief delay to avoid tight loops
         self._restart_attempts += 1
         if self._restart_attempts > 2:
             logger.error(
-                "Agent exceeded 3 restart attempts for container %s, giving up",
-                self.container_id,
+                "Agent exceeded 3 restart attempts for workspace %s, giving up",
+                self.workspace_id,
             )
             return
         await asyncio.sleep(2)
@@ -197,7 +191,7 @@ class AgentSession:
         try:
             await self._ensure_started()
             self._restart_attempts = 0
-            await _broadcast_agent_reconnect(self.container_id)
+            await _broadcast_agent_reconnect(self.workspace_id)
         except Exception:
             logger.exception(
                 "Failed to auto-restart agent for container %s",
@@ -398,16 +392,29 @@ class AgentSession:
         self._proc = None
 
 
-async def get_session(container_id: str) -> AgentSession:
-    """Get or create an AgentSession for the given container."""
-    if container_id not in _agents:
-        _agents[container_id] = AgentSession(container_id)
-    return _agents[container_id]
+async def get_session(workspace_id: str, container_id: str) -> AgentSession:
+    """Get or create an AgentSession for the given workspace.
+
+    If the session already exists but the container ID changed (e.g.
+    after a container restart), the old process is stopped and the
+    session is updated to use the new container.
+    """
+    session = _agents.get(workspace_id)
+    if session is None:
+        session = AgentSession(workspace_id, container_id)
+        _agents[workspace_id] = session
+    elif session.container_id != container_id:
+        # Container restarted — stop the old process and update.
+        await session.stop()
+        session.container_id = container_id
+        session._home_ready = False
+        session._restart_attempts = 0
+    return session
 
 
-def is_running(container_id: str) -> bool:
-    """Return True if an agent subprocess is alive for this container."""
-    session = _agents.get(container_id)
+def is_running(workspace_id: str) -> bool:
+    """Return True if an agent subprocess is alive for this workspace."""
+    session = _agents.get(workspace_id)
     if session is None:
         return False
     return session._proc is not None and session._proc.returncode is None
@@ -421,20 +428,18 @@ def any_running() -> bool:
     )
 
 
-async def stop_session(container_id: str) -> None:
-    """Stop and remove the agent session for a container."""
-    session = _agents.pop(container_id, None)
+async def stop_session(workspace_id: str) -> None:
+    """Stop and remove the agent session for a workspace."""
+    session = _agents.pop(workspace_id, None)
     if session:
         await session.stop()
 
 
-async def _broadcast_agent_disconnect(container_id: str) -> None:
+async def _broadcast_agent_disconnect(workspace_id: str) -> None:
     """Broadcast a disconnect system message when the agent process dies."""
-    from . import container as container_mod
     from . import model
     from . import wshandler
 
-    workspace_id = container_mod.registry.workspace_id_for(container_id)
     if not workspace_id:
         return
     agent_handle = await model.agent_handle()
@@ -460,13 +465,11 @@ async def _broadcast_agent_disconnect(container_id: str) -> None:
         )
 
 
-async def _broadcast_agent_reconnect(container_id: str) -> None:
+async def _broadcast_agent_reconnect(workspace_id: str) -> None:
     """Broadcast a reconnect system message after auto-restart."""
-    from . import container as container_mod
     from . import model
     from . import wshandler
 
-    workspace_id = container_mod.registry.workspace_id_for(container_id)
     if not workspace_id:
         return
     agent_handle = await model.agent_handle()
