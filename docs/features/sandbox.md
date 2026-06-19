@@ -178,8 +178,18 @@ klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A]
 
 1. Connect to the existing workspace shell
 
-If you need to recreate the workspace (e.g., after changing the
-config), delete it first with `klangkc rm` and run `sandbox` again.
+The copy and setup steps only run on first creation. On reconnect,
+the command skips straight to the shell — it does not re-copy files
+or re-run the setup script. This means:
+
+- **Mounts** are always current (they're live links to host paths).
+- **Copied files** reflect the state at creation time. To update
+  them, delete the workspace and recreate it.
+- **Setup script changes** are not re-applied. Delete and recreate,
+  or run the script manually inside the container.
+- **Config changes** (new mounts, different image) require deleting
+  and recreating the workspace. A warning is shown if the config
+  has changed since creation.
 
 ## Setup scripts
 
