@@ -25,6 +25,7 @@ from .client import (
     _send_ignore_closed,
     _wait_workspace_ready,
     _ws_exec,
+    _ws_exec_piped,
     _ws_shell,
 )
 from .config import CLIConfig
@@ -585,6 +586,40 @@ def edit(
     typer.echo(f"Updated workspace {ws.name}")
 
 
+def _build_ws_url(server_url: str) -> str:
+    """Convert an HTTP(S) server URL to a WebSocket URL."""
+    if server_url.startswith("http://"):
+        return server_url.replace("http://", "ws://") + "/ws"
+    elif server_url.startswith("https://"):
+        return server_url.replace("https://", "wss://") + "/ws"
+    return f"ws://{server_url}/ws"
+
+
+def _resolve_forward_agent(forward_agent: bool, server_url: str) -> bool:
+    """Resolve forward_agent: -A flag wins, then KLANGKC_FORWARD_AGENT env.
+
+    The env var can be:
+      "true"/"1"/"yes" — forward to any server
+      "false"/"0"/"no" — don't forward
+      space-separated URLs — forward only to listed servers
+    """
+    if not isinstance(forward_agent, bool):
+        forward_agent = False
+    if not forward_agent:
+        env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")
+        if env_val.lower() in ("1", "true", "yes"):
+            forward_agent = True
+        elif env_val and env_val.lower() not in ("0", "false", "no"):
+            forward_agent = server_url in env_val.split()
+    if forward_agent:
+        if not os.environ.get("SSH_AUTH_SOCK"):
+            _err.print(
+                "[yellow]Warning: --forward-agent set but SSH_AUTH_SOCK"
+                " is not set. Agent forwarding will be skipped.[/yellow]"
+            )
+    return forward_agent
+
+
 @app.command()
 def shell(
     workspace: str | None = typer.Argument(
@@ -660,25 +695,7 @@ def shell(
     token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
-    # Resolve agent forwarding: --forward-agent (-A) flag takes highest
-    # precedence.  KLANGKC_FORWARD_AGENT env var is only consulted when
-    # -A is not passed:
-    #   "true"/"1"/"yes" — forward to any server
-    #   "false"/"0"/"no" — don't forward (no-op since default is False,
-    #       but useful to override a broader env setting)
-    #   space-separated URLs — forward only to listed servers
-    if not forward_agent:
-        env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")
-        if env_val.lower() in ("1", "true", "yes"):
-            forward_agent = True
-        elif env_val and env_val.lower() not in ("0", "false", "no"):
-            forward_agent = server_url in env_val.split()
-    if forward_agent:
-        if not os.environ.get("SSH_AUTH_SOCK"):
-            _err.print(
-                "[yellow]Warning: --forward-agent set but SSH_AUTH_SOCK"
-                " is not set. Agent forwarding will be skipped.[/yellow]"
-            )
+    forward_agent = _resolve_forward_agent(forward_agent, server_url)
     try:
         asyncio.run(
             _ws_shell(
@@ -732,6 +749,194 @@ def _resolve_workspace_and_url(
     else:  # pragma: no cover
         ws_url = f"ws://{server_url}/ws"
     return ws, ws_url, cfg.auth.token
+
+
+def _sandbox_copy_files(
+    copy_pairs: list[tuple[str, str]],
+    ws_url: str,
+    token: str,
+    ws_id: str,
+) -> None:
+    """Copy host files into the container home."""
+    from pathlib import Path
+
+    for host_path, container_dest in copy_pairs:
+        src = Path(host_path)
+        if not src.exists():
+            _err.print(
+                f"[yellow]Warning: copy source {host_path} not found,"
+                f" skipping[/yellow]"
+            )
+            continue
+        _err.print(f"  Copying {host_path} → {container_dest}")
+        parent = str(Path(container_dest).parent)
+        exit_code, _ = asyncio.run(
+            _ws_exec_piped(
+                ws_url,
+                token,
+                ws_id,
+                [
+                    "sh",
+                    "-c",
+                    f"mkdir -p {parent} && cat > {container_dest}",
+                ],
+                stdin_data=src.read_bytes(),
+            )
+        )
+        if exit_code != 0:
+            _err.print(
+                f"[yellow]Warning: copy to {container_dest}"
+                f" failed (exit {exit_code})[/yellow]"
+            )
+
+
+def _sandbox_run_setup(
+    config,
+    handle: str,
+    ws_url: str,
+    token: str,
+    ws_id: str,
+) -> None:
+    """Run the sandbox setup script inside the container."""
+    from .sandbox import expand_container_path, resolve_setup_command
+
+    setup_cmd = resolve_setup_command(config, handle)
+    if not setup_cmd:
+        return
+    mount_at = expand_container_path(config.mount_at, handle)
+    _err.print(f"Running setup: {setup_cmd}")
+    exit_code, output = asyncio.run(
+        _ws_exec_piped(
+            ws_url,
+            token,
+            ws_id,
+            ["sh", "-c", f"cd {mount_at} && bash {setup_cmd}"],
+        )
+    )
+    if output:
+        _err.print(output.rstrip())
+    if exit_code != 0:
+        _err.print(f"[yellow]Setup exited with code {exit_code}[/yellow]")
+
+
+def _sandbox_create(
+    config,
+    sandbox_root,
+    handle: str,
+    client,
+    ws_url: str,
+    token: str,
+):
+    """Create a sandbox workspace: create, copy files, run setup.
+
+    Returns the created Workspace.
+    """
+    from .sandbox import build_all_mounts, build_copy_pairs
+
+    ws_name = config.name
+    all_mounts = build_all_mounts(config, sandbox_root, handle)
+    _err.print(f"Creating workspace [bold]{ws_name}[/bold]...")
+    ws = client.create_workspace(
+        ws_name, image=config.image, mounts=all_mounts
+    )
+    _err.print(f"Workspace [bold]{ws_name}[/bold] created.")
+
+    copy_pairs = build_copy_pairs(config, sandbox_root, handle)
+    if copy_pairs:
+        _sandbox_copy_files(copy_pairs, ws_url, token, ws.id)
+
+    _sandbox_run_setup(config, handle, ws_url, token, ws.id)
+    return ws
+
+
+@app.command()
+def sandbox(
+    path: str = typer.Argument(
+        ".",
+        help="Path to sandbox root (directory containing .klangk/)",
+    ),
+    name: str | None = typer.Option(
+        None, "--name", help="Override workspace name from config"
+    ),
+    forward_agent: bool = typer.Option(
+        False,
+        "--forward-agent",
+        "-A",
+        help="Forward local SSH agent into the container",
+    ),
+) -> None:
+    """Create or reconnect to a sandbox workspace."""
+    from pathlib import Path
+
+    from .client import WorkspaceNotFoundError
+    from .sandbox import load_sandbox_config
+
+    cfg = _cfg()
+    if not cfg.auth.token:  # pragma: no cover
+        _err.print(
+            "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
+        )
+        raise typer.Exit(code=1)
+
+    sandbox_root = Path(path).resolve()
+    try:
+        config = load_sandbox_config(sandbox_root)
+    except FileNotFoundError as e:
+        _err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+    except ValueError as e:
+        _err.print(f"[red]Invalid sandbox config:[/red] {e}")
+        raise typer.Exit(code=1) from None
+
+    if name:
+        config.name = name
+
+    client = _client()
+    handle = client.get_handle()
+    server_url = cfg.server.url.rstrip("/")
+    ws_url = _build_ws_url(server_url)
+
+    # Check if workspace already exists.
+    try:
+        ws = client.resolve_workspace(config.name)
+        _err.print(
+            f"Workspace [bold]{config.name}[/bold] exists, connecting..."
+        )
+    except WorkspaceNotFoundError:
+        ws = _sandbox_create(
+            config,
+            sandbox_root,
+            handle,
+            client,
+            ws_url,
+            cfg.auth.token,
+        )
+
+    # Shell into the workspace.
+    forward_agent = _resolve_forward_agent(forward_agent, server_url)
+    _err.print(f"Connecting to [bold]{config.name}[/bold]...")
+    _err.print("[dim]Escape: Enter, then ~.[/dim]")
+    try:
+        asyncio.run(
+            _ws_shell(
+                ws_url,
+                cfg.auth.token,
+                ws.id,
+                forward_agent=forward_agent,
+            )
+        )
+    except websockets.exceptions.InvalidStatusCode as e:
+        from .client import _drain_stdin, reset_terminal
+
+        reset_terminal()
+        _drain_stdin()
+        if e.status_code in (4001, 4002):
+            _err.print(
+                "[red]Session expired.[/red] Run"
+                " [bold]klangkc login[/bold] to re-authenticate."
+            )
+            raise typer.Exit(code=1) from None
+        raise
 
 
 @app.command("terminals")

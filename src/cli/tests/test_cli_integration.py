@@ -1,6 +1,7 @@
 """Additional tests for cli/client.py paths not covered yet."""
 
 import asyncio
+import io
 import json
 import os
 import socket
@@ -1084,8 +1085,6 @@ class TestWsExec:
     async def test_ws_exec_success(self):
         import base64
 
-        from klangkc.client import _ws_exec
-
         ws_mock = MagicMock()
 
         async def fake_enter(self):
@@ -1107,24 +1106,23 @@ class TestWsExec:
             ]
         )
 
-        captured = bytearray()
-
-        def fake_os_read(fd, n):
-            return b""  # EOF immediately
-
-        def fake_os_write(fd, data):
-            captured.extend(data)
-            return len(data)
+        stdin_buf = io.BytesIO(b"")  # EOF immediately
+        stdout_buf = io.BytesIO()
 
         with patch("websockets.connect", return_value=ws_mock):
-            with patch("klangkc.client.os.read", fake_os_read):
-                with patch("klangkc.client.os.write", fake_os_write):
-                    code = await _ws_exec(
-                        "ws://localhost/ws", "token", "ws1", ["ls"]
-                    )
+            from klangkc.client import _ws_exec_core
+
+            code = await _ws_exec_core(
+                "ws://localhost/ws",
+                "token",
+                "ws1",
+                ["ls"],
+                stdin=stdin_buf,
+                stdout=stdout_buf,
+            )
 
         assert code == 0
-        assert b"file-list" in bytes(captured)
+        assert b"file-list" in stdout_buf.getvalue()
 
     @pytest.mark.asyncio
     async def test_ws_exec_connection_failure(self):

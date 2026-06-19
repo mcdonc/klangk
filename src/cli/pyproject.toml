@@ -9,6 +9,7 @@ dependencies = [
     "tomli-w>=1.0.0",
     "httpx>=0.28.0",
     "websockets>=14.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
