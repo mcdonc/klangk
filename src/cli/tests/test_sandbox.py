@@ -29,9 +29,8 @@ def _write_config(sandbox_root, config):
 
 class TestLoadSandboxConfig:
     def test_minimal(self, sandbox_root):
-        _write_config(sandbox_root, {"workspace": {"name": "test-ws"}})
+        _write_config(sandbox_root, {})
         config = load_sandbox_config(sandbox_root)
-        assert config.name == "test-ws"
         assert config.image is None
         assert config.mount_at == "~/work"
         assert config.setup is None
@@ -43,7 +42,7 @@ class TestLoadSandboxConfig:
         _write_config(
             sandbox_root,
             {
-                "workspace": {"name": "full", "image": "my-image"},
+                "workspace": {"image": "my-image"},
                 "sandbox": {
                     "mount_at": "~/project",
                     "setup": ".klangk/setup.sh",
@@ -54,18 +53,12 @@ class TestLoadSandboxConfig:
             },
         )
         config = load_sandbox_config(sandbox_root)
-        assert config.name == "full"
         assert config.image == "my-image"
         assert config.mount_at == "~/project"
         assert config.setup == ".klangk/setup.sh"
         assert config.copy == ["~/.gitconfig:~/.gitconfig"]
         assert config.mounts == ["/data:~/data:ro"]
         assert config.volumes == ["cache:/cache"]
-
-    def test_name_defaults_to_directory_name(self, sandbox_root):
-        _write_config(sandbox_root, {"workspace": {}})
-        config = load_sandbox_config(sandbox_root)
-        assert config.name == sandbox_root.resolve().name
 
     def test_missing_config_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="No sandbox config"):
@@ -118,15 +111,12 @@ class TestExpandContainerPath:
 
 class TestBuildAllMounts:
     def test_implicit_sandbox_root(self, sandbox_root):
-        config = SandboxConfig(name="test")
+        config = SandboxConfig()
         mounts = build_all_mounts(config, sandbox_root, "admin")
         assert mounts[0] == f"{sandbox_root.resolve()}:/home/admin/work"
 
     def test_explicit_mounts_expanded(self, sandbox_root):
-        config = SandboxConfig(
-            name="test",
-            mounts=["~/.ssh:~/.ssh:ro"],
-        )
+        config = SandboxConfig(mounts=["~/.ssh:~/.ssh:ro"])
         mounts = build_all_mounts(config, sandbox_root, "admin")
         import os
 
@@ -134,34 +124,24 @@ class TestBuildAllMounts:
         assert f"{expected_src}:/home/admin/.ssh:ro" in mounts
 
     def test_volumes_source_not_expanded(self, sandbox_root):
-        config = SandboxConfig(
-            name="test",
-            volumes=["nix-store:/nix"],
-        )
+        config = SandboxConfig(volumes=["nix-store:/nix"])
         mounts = build_all_mounts(config, sandbox_root, "admin")
         assert "nix-store:/nix" in mounts
 
     def test_custom_mount_at(self, sandbox_root):
-        config = SandboxConfig(name="test", mount_at="~/myproject")
+        config = SandboxConfig(mount_at="~/myproject")
         mounts = build_all_mounts(config, sandbox_root, "admin")
         assert mounts[0] == f"{sandbox_root.resolve()}:/home/admin/myproject"
 
     def test_relative_dest_resolved_to_mount_at(self, sandbox_root):
-        config = SandboxConfig(
-            name="test",
-            mount_at="~/project",
-            mounts=["/data:subdir"],
-        )
+        config = SandboxConfig(mount_at="~/project", mounts=["/data:subdir"])
         mounts = build_all_mounts(config, sandbox_root, "admin")
         assert "/data:/home/admin/project/subdir" in mounts
 
 
 class TestBuildCopyPairs:
     def test_basic(self, sandbox_root):
-        config = SandboxConfig(
-            name="test",
-            copy=["~/.gitconfig:~/.gitconfig"],
-        )
+        config = SandboxConfig(copy=["~/.gitconfig:~/.gitconfig"])
         pairs = build_copy_pairs(config, sandbox_root, "admin")
         import os
 
@@ -170,38 +150,34 @@ class TestBuildCopyPairs:
         assert pairs[0][1] == "/home/admin/.gitconfig"
 
     def test_invalid_spec_raises(self, sandbox_root):
-        config = SandboxConfig(name="test", copy=["no-colon"])
+        config = SandboxConfig(copy=["no-colon"])
         with pytest.raises(ValueError, match="Invalid copy spec"):
             build_copy_pairs(config, sandbox_root, "admin")
 
 
 class TestExpandSpec:
     def test_invalid_mount_spec_raises(self, sandbox_root):
-        config = SandboxConfig(name="test", mounts=["nocolon"])
+        config = SandboxConfig(mounts=["nocolon"])
         with pytest.raises(ValueError, match="Invalid mount spec"):
             build_all_mounts(config, sandbox_root, "admin")
 
 
 class TestResolveSetupCommand:
     def test_none(self):
-        config = SandboxConfig(name="test")
+        config = SandboxConfig()
         assert resolve_setup_command(config, "admin") is None
 
     def test_relative(self):
-        config = SandboxConfig(name="test", setup=".klangk/setup.sh")
+        config = SandboxConfig(setup=".klangk/setup.sh")
         result = resolve_setup_command(config, "admin")
         assert result == "/home/admin/work/.klangk/setup.sh"
 
     def test_absolute(self):
-        config = SandboxConfig(name="test", setup="/opt/setup.sh")
+        config = SandboxConfig(setup="/opt/setup.sh")
         result = resolve_setup_command(config, "admin")
         assert result == "/opt/setup.sh"
 
     def test_custom_mount_at(self):
-        config = SandboxConfig(
-            name="test",
-            mount_at="~/project",
-            setup=".klangk/setup.sh",
-        )
+        config = SandboxConfig(mount_at="~/project", setup=".klangk/setup.sh")
         result = resolve_setup_command(config, "admin")
         assert result == "/home/admin/project/.klangk/setup.sh"

@@ -14,7 +14,6 @@ class SandboxConfig:
     """Parsed .klangk/sandbox.yaml."""
 
     # workspace
-    name: str
     image: str | None = None
     # sandbox
     mount_at: str = "~/work"
@@ -42,10 +41,7 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
     workspace = raw.get("workspace") or {}
     sandbox = raw.get("sandbox") or {}
 
-    name = workspace.get("name") or sandbox_root.resolve().name
-
     return SandboxConfig(
-        name=name,
         image=workspace.get("image"),
         mount_at=sandbox.get("mount_at", "~/work"),
         setup=sandbox.get("setup"),

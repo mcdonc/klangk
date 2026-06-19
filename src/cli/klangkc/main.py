@@ -809,12 +809,10 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
 
 @app.command()
 def sandbox(
+    workspace: str = typer.Argument(help="Workspace name"),
     path: str = typer.Argument(
         ".",
         help="Path to sandbox root (directory containing .klangk/)",
-    ),
-    name: str | None = typer.Option(
-        None, "--name", help="Override workspace name from config"
     ),
     forward_agent: bool = typer.Option(
         False,
@@ -846,9 +844,6 @@ def sandbox(
         _err.print(f"[red]Invalid sandbox config:[/red] {e}")
         raise typer.Exit(code=1) from None
 
-    if name:
-        config.name = name
-
     client = _client()
     handle = client.get_handle()
     server_url = cfg.server.url.rstrip("/")
@@ -857,10 +852,8 @@ def sandbox(
 
     # Check if workspace already exists.
     try:
-        ws = client.resolve_workspace(config.name)
-        _err.print(
-            f"Workspace [bold]{config.name}[/bold] exists, connecting..."
-        )
+        ws = client.resolve_workspace(workspace)
+        _err.print(f"Workspace [bold]{workspace}[/bold] exists, connecting...")
         # Warn if the config has changed since the workspace was created.
         desired_mounts = sorted(build_all_mounts(config, sandbox_root, handle))
         current_mounts = sorted(ws.mounts or [])
@@ -868,22 +861,22 @@ def sandbox(
             _err.print(
                 "[yellow]Warning: sandbox config has changed since"
                 " this workspace was created. Run"
-                " [bold]klangkc rm " + config.name + "[/bold] and re-run"
+                " [bold]klangkc rm " + workspace + "[/bold] and re-run"
                 " [bold]klangkc sandbox[/bold] to apply"
                 " changes.[/yellow]"
             )
     except WorkspaceNotFoundError:
         all_mounts = build_all_mounts(config, sandbox_root, handle)
-        _err.print(f"Creating workspace [bold]{config.name}[/bold]...")
+        _err.print(f"Creating workspace [bold]{workspace}[/bold]...")
         ws = client.create_workspace(
-            config.name, image=config.image, mounts=all_mounts
+            workspace, image=config.image, mounts=all_mounts
         )
-        _err.print(f"Workspace [bold]{config.name}[/bold] created.")
+        _err.print(f"Workspace [bold]{workspace}[/bold] created.")
         created = True
 
     # Single WebSocket connection: setup (if new) then shell.
     forward_agent = _resolve_forward_agent(forward_agent, server_url)
-    _err.print(f"Connecting to [bold]{config.name}[/bold]...")
+    _err.print(f"Connecting to [bold]{workspace}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
     try:
         asyncio.run(

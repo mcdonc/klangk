@@ -13,21 +13,20 @@ can spin up an identical sandboxed environment with one command.
 
 ## Quick start
 
-Create a `.klangk/sandbox.yaml` in your sandbox root:
+Create a `.klangk/sandbox.yaml` in your sandbox root (can be empty):
 
 ```yaml
-workspace:
-  name: my-project
+{}
 ```
 
 Then run:
 
 ```bash
-klangkc sandbox
+klangkc sandbox myproj
 ```
 
-This creates a workspace named `my-project`, mounts the project
-directory into the container at `~/work`, and drops you into a shell.
+This creates a workspace named `myproj`, mounts the sandbox root
+into the container at `~/work`, and drops you into a shell.
 Run the same command again to reconnect to the existing workspace.
 
 ## Config file reference
@@ -40,14 +39,15 @@ it's automatically mounted into the container.
 
 ```yaml
 workspace:
-  name: klangk
   image: klangk-workspace
 ```
 
 | Field   | Required | Default              | Description                                                   |
 | ------- | -------- | -------------------- | ------------------------------------------------------------- |
-| `name`  | no       | directory name       | Workspace name. Overrideable via `--name`.                    |
 | `image` | no       | server default image | Container image. Must be in the server's allowed images list. |
+
+The workspace name is not in the config file — it's always
+specified as a positional argument on the command line.
 
 ### `sandbox`
 
@@ -153,14 +153,14 @@ next shell session without recreating the workspace.
 ## Command reference
 
 ```text
-klangkc sandbox [PATH] [--name NAME] [--forward-agent/-A]
+klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A]
 ```
 
-| Argument/Flag        | Default  | Description                                                 |
-| -------------------- | -------- | ----------------------------------------------------------- |
-| `PATH`               | `.`      | Path to the sandbox root (directory containing `.klangk/`). |
-| `--name`             | (config) | Override the workspace name from the config file.           |
-| `--forward-agent/-A` | `false`  | Forward local SSH agent into the container.                 |
+| Argument/Flag        | Default | Description                                                 |
+| -------------------- | ------- | ----------------------------------------------------------- |
+| `WORKSPACE`          |         | Workspace name (required).                                  |
+| `PATH`               | `.`     | Path to the sandbox root (directory containing `.klangk/`). |
+| `--forward-agent/-A` | `false` | Forward local SSH agent into the container.                 |
 
 ### Behavior
 
@@ -232,10 +232,6 @@ and SSH access to GitHub:
 
 ```yaml
 # .klangk/sandbox.yaml
-workspace:
-  name: klangk
-  image: klangk-workspace
-
 sandbox:
   mount_at: ~/klangk
   setup: .klangk/setup.sh
@@ -277,7 +273,7 @@ Usage:
 
 ```bash
 cd ~/projects/klangk
-klangkc sandbox -A
+klangkc sandbox myproj -A
 # First run: creates workspace, mounts everything, installs nix, drops into shell
 # Subsequent runs: reconnects to existing workspace
 ```
