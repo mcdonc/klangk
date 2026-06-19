@@ -25,6 +25,7 @@ nav = [
     { "Plugins & Extensions" = "features/plugins.md" },
     { "Export & Import" = "features/export-import.md" },
     { "Hosted Apps" = "features/hosted-apps.md" },
+    { "Workon" = "features/workon.md" },
     { "CLI" = "reference/cli.md" },
     { "SSH Agent Forwarding" = "features/ssh-agent-forwarding.md" },
     { "GitHub HTTPS Authentication" = "features/github-authentication.md" },
