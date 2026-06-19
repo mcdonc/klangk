@@ -11,7 +11,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**Chat**](chat.md) — Real-time workspace chat with markdown, @mentions, message types, container-to-chat API
 - [**File Viewer**](file-viewer.md) — Directory tree, drag-and-drop upload, preview, download
 - [**AI Coding Harnesses**](ai-coding-harnesses.md) — Pi and Claude Code agents pre-installed in every workspace
-- [**Pi Extensions**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
+- [**Klangk Plugins**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
 - [**Container Packages**](container-packages.md) — Pre-installed languages, tools, and CLI utilities in workspace containers
 - [**CLI**](../reference/cli.md) — Command-line client for managing workspaces, shells, and file sync
 - [**SSH Agent Forwarding**](ssh-agent-forwarding.md) — Forward local SSH keys into containers via `klangkc shell`
