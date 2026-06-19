@@ -26,6 +26,7 @@ from .util import BoundedOutputQueue, resolve_env_secret
 logger = logging.getLogger(__name__)
 
 _READ_CHUNK = 65536
+CONTAINER_USER = "klangk"
 
 
 def terminal_tmux_enabled() -> bool:
@@ -59,7 +60,7 @@ def _build_environment(
     user_handle: str | None = None,
     ssh_agent_socket: str | None = None,
 ) -> list[str]:
-    env = ["TERM=xterm-256color", "USER=klangk"]
+    env = ["TERM=xterm-256color", f"USER={CONTAINER_USER}"]
     if user_home is not None:
         env.append(f"HOME={user_home}")
     if user_id is not None:
@@ -155,7 +156,7 @@ def _build_exec_argv(
     shell_cmd: list[str],
     work_dir: str = "/home/work",
 ) -> list[str]:
-    argv = ["exec", "-t", "-i", "-u", "klangk", "-w", work_dir]
+    argv = ["exec", "-t", "-i", "-u", CONTAINER_USER, "-w", work_dir]
     for entry in env:
         argv += ["-e", entry]
     argv.append(container_id)
@@ -173,7 +174,7 @@ async def attach_browser(container_id: str, browser_id: str) -> None:
     argv = [
         "exec",
         "-u",
-        "klangk",
+        CONTAINER_USER,
         container_id,
         "klangk-attach-browser",
         browser_id,
@@ -206,7 +207,7 @@ async def tmux_command(
         argv = [
             "exec",
             "-u",
-            "klangk",
+            CONTAINER_USER,
             container_id,
             "tmux",
             *args,
@@ -292,7 +293,7 @@ async def new_window(
     argv = [
         "exec",
         "-u",
-        "klangk",
+        CONTAINER_USER,
         container_id,
         "bash",
         "-c",
@@ -396,7 +397,7 @@ async def load_workspace_state(container_id: str) -> dict:
     Returns empty dict if the file doesn't exist or is corrupt.
     Used for restoring state after container restart.
     """
-    argv = ["exec", "-u", "klangk", container_id, "cat", _STATE_PATH]
+    argv = ["exec", "-u", CONTAINER_USER, container_id, "cat", _STATE_PATH]
     proc = await asyncio.create_subprocess_exec(
         podman.PODMAN_BIN,
         *argv,
@@ -439,7 +440,7 @@ async def save_workspace_state(container_id: str, state: dict) -> None:
         "exec",
         "-i",
         "-u",
-        "klangk",
+        CONTAINER_USER,
         container_id,
         "bash",
         "-c",
@@ -805,7 +806,7 @@ class TerminalSession:
                 argv = [
                     "exec",
                     "-u",
-                    "klangk",
+                    CONTAINER_USER,
                     self.container_id,
                     "tmux",
                     *socket_args,
