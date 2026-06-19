@@ -19,6 +19,13 @@ fi
 # Add nix to PATH for the rest of this script.
 export PATH="$HOME/.nix-profile/bin:$PATH"
 
+# Ensure non-login shells (plain `bash`) also get nix on PATH.
+# The nix installer only modifies ~/.profile (login shells).
+# shellcheck disable=SC2016
+if ! grep -q nix-profile ~/.bashrc 2>/dev/null; then
+  echo '. "$HOME/.nix-profile/etc/profile.d/nix.sh"' >>~/.bashrc
+fi
+
 if ! command -v devenv &>/dev/null; then
   echo "Installing devenv..."
   nix profile install --accept-flake-config "github:cachix/devenv/v2.1.2"
