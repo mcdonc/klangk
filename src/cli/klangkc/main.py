@@ -861,6 +861,17 @@ def sandbox(
         _err.print(
             f"Workspace [bold]{config.name}[/bold] exists, connecting..."
         )
+        # Warn if the config has changed since the workspace was created.
+        desired_mounts = sorted(build_all_mounts(config, sandbox_root, handle))
+        current_mounts = sorted(ws.mounts or [])
+        if desired_mounts != current_mounts:
+            _err.print(
+                "[yellow]Warning: sandbox config has changed since"
+                " this workspace was created. Run"
+                " [bold]klangkc rm " + config.name + "[/bold] and re-run"
+                " [bold]klangkc sandbox[/bold] to apply"
+                " changes.[/yellow]"
+            )
     except WorkspaceNotFoundError:
         all_mounts = build_all_mounts(config, sandbox_root, handle)
         _err.print(f"Creating workspace [bold]{config.name}[/bold]...")

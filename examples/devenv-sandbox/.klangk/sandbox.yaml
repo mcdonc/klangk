@@ -10,6 +10,7 @@ copy:
 
 mounts:
   - ~/.ssh:~/.ssh:ro
+  - /home/chrism/projects/enfold/reportlab-poc:reportlab-poc
 
 volumes:
   - devenv-nix:/nix
