@@ -11,8 +11,13 @@ set -euo pipefail
 # We use single-user nix (--no-daemon) because workspace containers
 # don't run systemd/init to manage the nix daemon.
 
-if ! command -v nix &>/dev/null; then
+# Check if nix is installed AND working (not just the binary existing).
+# A broken profile from an interrupted install can leave the binary
+# present but nix non-functional.
+if ! nix --version &>/dev/null; then
   echo "Installing nix (single-user)..."
+  # Clean up any broken profile state from a previous attempt.
+  rm -rf "$HOME/.local/state/nix" "$HOME/.nix-profile" "$HOME/.nix-defexpr" "$HOME/.nix-channels"
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
 fi
 
