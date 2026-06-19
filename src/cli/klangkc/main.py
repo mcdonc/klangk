@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import sys
 from pathlib import Path
 
 import httpx
@@ -792,20 +793,16 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
                 f" failed (exit {exit_code})[/yellow]"
             )
 
-    # Run setup script.
+    # Run setup script — stream output to stderr in real time.
     setup_cmd = resolve_setup_command(config, handle)
     if setup_cmd:
         mount_at = expand_container_path(config.mount_at, handle)
         _err.print(f"[dim]setup:[/dim] {setup_cmd}")
-        stdout_buf = io.BytesIO()
         exit_code = await _exec_on_ws(
             ws,
             ["sh", "-c", f"cd {mount_at} && bash {setup_cmd}"],
-            stdout=stdout_buf,
+            stdout=sys.stderr.buffer,
         )
-        output = stdout_buf.getvalue().decode("utf-8", errors="replace")
-        if output:
-            _err.print(output.rstrip())
         if exit_code != 0:
             _err.print(f"[yellow]Setup exited with code {exit_code}[/yellow]")
 

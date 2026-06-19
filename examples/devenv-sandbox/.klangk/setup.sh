@@ -14,14 +14,16 @@ if ! command -v nix &>/dev/null; then
   echo "Installing nix (single-user)..."
   sudo chown -R "$(whoami)" /nix 2>/dev/null || true
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
-  # shellcheck source=/dev/null
-  . ~/.nix-profile/etc/profile.d/nix.sh
+fi
+
+# Add nix to PATH for the rest of this script.
+export PATH="$HOME/.nix-profile/bin:$PATH"
+
+if ! command -v devenv &>/dev/null; then
   echo "Installing devenv..."
   nix profile install --accept-flake-config "github:cachix/devenv/v2.1.2"
 else
-  echo "nix already installed, skipping."
-  # shellcheck source=/dev/null
-  . ~/.nix-profile/etc/profile.d/nix.sh
+  echo "devenv already installed, skipping."
 fi
 
 echo "nix: $(nix --version)"
