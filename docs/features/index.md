@@ -13,6 +13,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**AI Coding Harnesses**](ai-coding-harnesses.md) — Pi and Claude Code agents pre-installed in every workspace
 - [**Pi Extensions**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
 - [**Container Packages**](container-packages.md) — Pre-installed languages, tools, and CLI utilities in workspace containers
+- [**CLI**](../reference/cli.md) — Command-line client for managing workspaces, shells, and file sync
 - [**SSH Agent Forwarding**](ssh-agent-forwarding.md) — Forward local SSH keys into containers via `klangkc shell`
 - [**GitHub HTTPS Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog
 

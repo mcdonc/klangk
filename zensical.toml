@@ -22,9 +22,9 @@ nav = [
     { "AI Coding Harnesses" = "features/ai-coding-harnesses.md" },
     { "Plugins & Extensions" = "features/plugins.md" },
     { "Export & Import" = "features/export-import.md" },
+    { "CLI" = "reference/cli.md" },
     { "SSH Agent Forwarding" = "features/ssh-agent-forwarding.md" },
     { "GitHub HTTPS Authentication" = "features/github-authentication.md" },
-    { "CLI" = "reference/cli.md" },
   ]},
   { "Deployment" = [
     { "Host Container" = "deployment/index.md" },
