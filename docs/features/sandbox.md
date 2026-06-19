@@ -13,7 +13,7 @@ can spin up an identical sandboxed environment with one command.
 
 ## Quick start
 
-Create a `.klangk/sandbox.yaml` in your project root:
+Create a `.klangk/sandbox.yaml` in your sandbox root:
 
 ```yaml
 workspace:
@@ -33,7 +33,7 @@ Run the same command again to reconnect to the existing workspace.
 ## Config file reference
 
 The config file lives at `.klangk/sandbox.yaml` inside your project.
-The directory containing `.klangk/` is called the **project root** —
+The directory containing `.klangk/` is called the **sandbox root** —
 it's automatically mounted into the container.
 
 ### `workspace`
@@ -59,7 +59,7 @@ project:
 
 | Field      | Required | Default  | Description                                                                                                |
 | ---------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `mount_at` | no       | `~/work` | Where the project root is mounted inside the container. `~` expands to `/home/{handle}`.                   |
+| `mount_at` | no       | `~/work` | Where the sandbox root is mounted inside the container. `~` expands to `/home/{handle}`.                   |
 | `setup`    | no       | (none)   | Script to run inside the container after creation. Relative to `mount_at`, or absolute if starts with `/`. |
 
 The setup script runs once — on workspace creation, not on reconnect.
@@ -98,7 +98,7 @@ mounts:
 Bind mounts from the host into the container. Format:
 `source:destination` or `source:destination:options`.
 
-- **Source**: host path. Absolute, or relative to the project root.
+- **Source**: host path. Absolute, or relative to the sandbox root.
   Tilde expands to the host user's home.
 - **Destination**: container path. Tilde expands to
   `/home/{handle}`.
@@ -109,7 +109,7 @@ Relative source paths are resolved to absolute paths before being
 sent to the server. The server validates all mount sources against
 `KLANGK_ALLOWED_MOUNT_ROOTS` if that setting is configured.
 
-The project root mount (at `mount_at`) is implicit — you don't need
+The sandbox root mount (at `mount_at`) is implicit — you don't need
 to list it here.
 
 Use mounts for files that should stay in sync between host and
@@ -142,7 +142,7 @@ env:
 
 | Field  | Required | Default | Description                                                                   |
 | ------ | -------- | ------- | ----------------------------------------------------------------------------- |
-| `file` | no       | (none)  | Path to a dotenv file, relative to the project root. Typically gitignored.    |
+| `file` | no       | (none)  | Path to a dotenv file, relative to the sandbox root. Typically gitignored.    |
 | `vars` | no       | (none)  | Literal key-value pairs. Merged with `file` contents; `vars` take precedence. |
 
 Use `file` for secrets (API keys, tokens) that shouldn't be checked
@@ -157,7 +157,7 @@ klangkc sandbox [PATH] [--name NAME] [--forward-agent/-A]
 
 | Argument/Flag        | Default  | Description                                                 |
 | -------------------- | -------- | ----------------------------------------------------------- |
-| `PATH`               | `.`      | Path to the project root (directory containing `.klangk/`). |
+| `PATH`               | `.`      | Path to the sandbox root (directory containing `.klangk/`). |
 | `--name`             | (config) | Override the workspace name from the config file.           |
 | `--forward-agent/-A` | `false`  | Forward local SSH agent into the container.                 |
 
@@ -165,10 +165,10 @@ klangkc sandbox [PATH] [--name NAME] [--forward-agent/-A]
 
 **First run** (workspace doesn't exist):
 
-1. Read `.klangk/sandbox.yaml` from the project root
+1. Read `.klangk/sandbox.yaml` from the sandbox root
 2. Create the workspace with the configured image, mounts, volumes,
    and environment variables
-3. Mount the project root at `mount_at`
+3. Mount the sandbox root at `mount_at`
 4. Copy files listed in `copy` into the container home
 5. Run the `setup` script inside the container (if configured)
 6. Connect to the workspace shell
@@ -184,7 +184,7 @@ config), delete it first with `klangkc rm` and run `sandbox` again.
 
 The setup script runs inside the container as the `klangk` user. It
 has access to everything that's been mounted and copied. The working
-directory is the project root (the `mount_at` path).
+directory is the sandbox root (the `mount_at` path).
 
 ### Example: install nix and devenv
 
