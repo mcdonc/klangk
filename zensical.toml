@@ -34,15 +34,15 @@ nav = [
     { "Host Container" = "deployment/index.md" },
     { "Hosting & Nginx" = "deployment/hosting.md" },
     { "Customizing" = "deployment/customizing.md" },
+    { "Podman" = "reference/podman.md" },
+    { "OIDC" = "reference/oidc.md" },
   ]},
   { "Reference" = [
     { "ACL System" = "reference/acl.md" },
     { "Environment Variables" = "reference/environment.md" },
-    { "OIDC" = "reference/oidc.md" },
-    { "Podman" = "reference/podman.md" },
     { "Plugin System" = "reference/plugin-system.md" },
   ]},
-  { "Development" = [
+  { "Klangk Development" = [
     { "Overview" = "development/index.md" },
     { "CI" = "development/ci.md" },
     { "Pre-commit Hooks" = "development/pre-commit.md" },

@@ -16,7 +16,7 @@ projects, or other users' environments.
 The [`klangkc sandbox`](features/sandbox.md) command makes this
 easy: check a config file into your repo that describes what the
 workspace needs (mounts, tools, dotfiles), and spin up an isolated
-environment with one command.
+environment.
 
 - **Sandboxed AI agents** — Pi and Claude Code run inside
   containers, isolated from your host system
@@ -28,6 +28,8 @@ environment with one command.
   for git operations
 - **Plugin system** — extend the AI agent and browser with
   TypeScript and Dart extensions
+- **Collaborate with other users** — share workspaces, terminals,
+  and chat in real time
 - **ACL authorization** — fine-grained access control for
   multi-tenant deployments
 

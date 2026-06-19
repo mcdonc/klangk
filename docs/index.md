@@ -37,11 +37,5 @@ one command.
 - **Pi Coding Agent**: Minimal terminal coding harness (pi.dev) running in interactive terminal mode with native session persistence and extension tools
 - **LLM Provider**: Any OpenAI-compatible LLM provider (Ollama Cloud, self-hosted Ollama, etc.), configurable via env vars (`KLANGK_LLM_BASE_URL`, `KLANGK_LLM_MODEL`, `KLANGK_LLM_API_KEY`). The model must support tool/function calling — Pi uses tools (bash, edit, write, read) to interact with the workspace.
 - **Pydantic Logfire**: AI observability — FastAPI auto-instrumentation via Logfire Python SDK (`LOGFIRE_TOKEN`). Pi agent tracing via [pi-otel-telemetry](https://github.com/mprokopov/pi-otel-telemetry) extension (OTLP export to Logfire) — requires `LOGFIRE_TOKEN` as a workspace env var and sourcing `. /opt/klangk/otel.sh` in the container shell (or `.bashrc`) to set the standard `OTEL_*` env vars.
+- **Podman**: Rootless container engine — each workspace runs in its own container with user namespace isolation, bind mounts, and named volumes. See [Podman](reference/podman.md) for details.
 - **devenv**: Nix-based development environment with auto-setup, conditional build tasks (`execIfModified`), auto-reload disabled
-
-## Components
-
-- **Backend** (`src/backend/`): Python/FastAPI — single-port server for API, WebSocket, and frontend static files
-- **CLI** (`src/cli/klangkc/`): `klangkc` command — typer-based thin client that talks to the backend over HTTP + WebSocket for terminal access to containers
-- **Frontend** (`src/frontend/`): Flutter Web — chat (markdown rendering, syntax-highlighted code blocks, @mentions, message types, pagination, history recall), file viewer, debug panel, workspace presence
-- **Containers** (`src/containers/`): Custom Dockerfile for Pi agent containers with Python3, Node.js, build-essential, SQLite, vim, emacs, network tools, Pi extensions (built and run via podman)

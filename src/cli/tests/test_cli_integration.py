@@ -1589,7 +1589,6 @@ class TestSSHAgentRelayLoop:
         from klangkc.client import _run_shell
 
         ws = AsyncMock()
-        stop_event = asyncio.Event()
         stdout = MagicMock()
         stdout.write = MagicMock()
         stdout.flush = MagicMock()
@@ -1609,31 +1608,32 @@ class TestSSHAgentRelayLoop:
                 m = messages[msg_idx]
                 msg_idx += 1
                 return m
-            # After delivering messages, wait then stop
-            stop_event.set()
-            await asyncio.sleep(10)
+            # After delivering messages, close connection
+            await asyncio.sleep(0.5)
+            raise websockets.ConnectionClosed(None, None)
 
         ws.recv = fake_recv
         ws.send = AsyncMock()
 
+        # Use a pipe for stdin; close write end so os.read returns EOF.
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
         stdin = MagicMock()
-        stdin.fileno = MagicMock(return_value=0)
+        stdin.fileno = MagicMock(return_value=read_fd)
 
-        with patch("select.select", return_value=([], [], [])):
-            try:
-                await asyncio.wait_for(
-                    _run_shell(
-                        ws,
-                        80,
-                        24,
-                        stdin=stdin,
-                        stdout=stdout,
-                        ssh_agent_sock="/fake/agent.sock",
-                    ),
-                    timeout=3,
-                )
-            except (asyncio.TimeoutError, Exception):
-                pass
+        try:
+            await _run_shell(
+                ws,
+                80,
+                24,
+                stdin=stdin,
+                stdout=stdout,
+                ssh_agent_sock="/fake/agent.sock",
+            )
+        except (websockets.ConnectionClosed, Exception):
+            pass
+        finally:
+            os.close(read_fd)
 
         # The terminal_output message should have been written
         stdout.write.assert_any_call("prompt$ ")
@@ -1654,21 +1654,28 @@ class TestSSHAgentRelayLoop:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(agent_path)
         server.listen(1)
-        server.setblocking(False)
 
-        async def agent_server():
+        import threading
+
+        agent_done = threading.Event()
+
+        def agent_server_thread():
             """Accept one connection, read request, send response."""
-            loop = asyncio.get_event_loop()
-            conn, _ = await loop.sock_accept(server)
+            conn, _ = server.accept()
             try:
-                data = await loop.sock_recv(conn, 4096)
+                data = conn.recv(4096)
                 assert len(data) > 0
-                await loop.sock_sendall(conn, response_msg)
+                conn.sendall(response_msg)
             finally:
                 conn.close()
+                agent_done.set()
+
+        agent_thread = threading.Thread(
+            target=agent_server_thread, daemon=True
+        )
+        agent_thread.start()
 
         ws = AsyncMock()
-        stop_event = asyncio.Event()
         stdout = MagicMock()
         stdout.write = MagicMock()
         stdout.flush = MagicMock()
@@ -1687,36 +1694,35 @@ class TestSSHAgentRelayLoop:
                 return json.dumps(
                     {"type": "ssh_agent_response", "data": encoded}
                 )
-            # Give the relay time to process, then stop
-            await asyncio.sleep(0.5)
-            stop_event.set()
-            await asyncio.sleep(10)
+            # Give the relay time to complete its blocking socket
+            # operations, then close the connection.
+            await asyncio.sleep(3)
+            raise websockets.ConnectionClosed(None, None)
 
         ws.recv = fake_recv
         ws.send = AsyncMock()
 
+        # Use a pipe for stdin; close write end so os.read returns EOF.
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
         stdin = MagicMock()
-        stdin.fileno = MagicMock(return_value=0)
+        stdin.fileno = MagicMock(return_value=read_fd)
 
-        server_task = asyncio.create_task(agent_server())
+        try:
+            await _run_shell(
+                ws,
+                80,
+                24,
+                stdin=stdin,
+                stdout=stdout,
+                ssh_agent_sock=agent_path,
+            )
+        except (websockets.ConnectionClosed, Exception):
+            pass
+        finally:
+            os.close(read_fd)
 
-        with patch("select.select", return_value=([], [], [])):
-            try:
-                await asyncio.wait_for(
-                    _run_shell(
-                        ws,
-                        80,
-                        24,
-                        stdin=stdin,
-                        stdout=stdout,
-                        ssh_agent_sock=agent_path,
-                    ),
-                    timeout=5,
-                )
-            except (asyncio.TimeoutError, Exception):
-                pass
-
-        await asyncio.wait_for(server_task, timeout=2)
+        agent_done.wait(timeout=2)
         server.close()
 
         # Verify the relay sent ssh_agent_data back over WS
@@ -1746,7 +1752,6 @@ class TestSSHAgentRelayLoop:
         bad_sock = str(tmp_path / "nonexistent.sock")
 
         ws = AsyncMock()
-        stop_event = asyncio.Event()
         stdout = MagicMock()
         stdout.write = MagicMock()
         stdout.flush = MagicMock()
@@ -1765,30 +1770,30 @@ class TestSSHAgentRelayLoop:
                     {"type": "ssh_agent_response", "data": encoded}
                 )
             await asyncio.sleep(0.5)
-            stop_event.set()
-            await asyncio.sleep(10)
+            raise websockets.ConnectionClosed(None, None)
 
         ws.recv = fake_recv
         ws.send = AsyncMock()
 
+        # Use a pipe for stdin; close write end so os.read returns EOF.
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
         stdin = MagicMock()
-        stdin.fileno = MagicMock(return_value=0)
+        stdin.fileno = MagicMock(return_value=read_fd)
 
-        with patch("select.select", return_value=([], [], [])):
-            try:
-                await asyncio.wait_for(
-                    _run_shell(
-                        ws,
-                        80,
-                        24,
-                        stdin=stdin,
-                        stdout=stdout,
-                        ssh_agent_sock=bad_sock,
-                    ),
-                    timeout=3,
-                )
-            except (asyncio.TimeoutError, Exception):
-                pass
+        try:
+            await _run_shell(
+                ws,
+                80,
+                24,
+                stdin=stdin,
+                stdout=stdout,
+                ssh_agent_sock=bad_sock,
+            )
+        except (websockets.ConnectionClosed, Exception):
+            pass
+        finally:
+            os.close(read_fd)
 
         # Should not have crashed — no ssh_agent_data sent since
         # connection to agent failed
