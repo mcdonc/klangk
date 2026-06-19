@@ -25,8 +25,8 @@ plugins:
     ref: main
 ```
 
-Then run `update-plugins` and rebuild the workspace image (`devenv up`
-will do both automatically).
+Then run `update-plugins` to fetch the plugin, then rebuild the workspace
+image (e.g. `devenv up`, which rebuilds automatically).
 
 ## Sign in with GitHub (recommended)
 
