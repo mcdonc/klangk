@@ -153,7 +153,7 @@ next shell session without recreating the workspace.
 ## Command reference
 
 ```text
-klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A]
+klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup]
 ```
 
 | Argument/Flag        | Default | Description                                                 |
@@ -161,6 +161,7 @@ klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A]
 | `WORKSPACE`          |         | Workspace name (required).                                  |
 | `PATH`               | `.`     | Path to the sandbox root (directory containing `.klangk/`). |
 | `--forward-agent/-A` | `false` | Forward local SSH agent into the container.                 |
+| `--force-setup`      | `false` | Re-run copy and setup steps even if the workspace exists.   |
 
 ### Behavior
 
@@ -185,8 +186,9 @@ or re-run the setup script. This means:
 - **Mounts** are always current (they're live links to host paths).
 - **Copied files** reflect the state at creation time. To update
   them, delete the workspace and recreate it.
-- **Setup script changes** are not re-applied. Delete and recreate,
-  or run the script manually inside the container.
+- **Setup script changes** are not re-applied automatically. Use
+  `--force-setup` to re-run the copy and setup steps on an existing
+  workspace.
 - **Config changes** (new mounts, different image) require deleting
   and recreating the workspace. A warning is shown if the config
   has changed since creation.

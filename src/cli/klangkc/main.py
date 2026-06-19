@@ -820,6 +820,11 @@ def sandbox(
         "-A",
         help="Forward local SSH agent into the container",
     ),
+    force_setup: bool = typer.Option(
+        False,
+        "--force-setup",
+        help="Re-run copy and setup even if the workspace already exists",
+    ),
 ) -> None:
     """Create or reconnect to a sandbox workspace."""
     from pathlib import Path
@@ -884,7 +889,7 @@ def sandbox(
                 ws_url,
                 cfg.auth.token,
                 ws.id,
-                config=config if created else None,
+                config=config if (created or force_setup) else None,
                 sandbox_root=sandbox_root,
                 handle=handle,
                 forward_agent=forward_agent,
