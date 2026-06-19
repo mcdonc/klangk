@@ -5542,7 +5542,7 @@ class TestHandleEndpoints:
         headers = await _auth_headers(client)
         resp = await client.post(
             "/auth/change-handle",
-            json={"handle": "newhandle"},
+            json={"handle": "newhandle", "password": "testpass"},
             headers=headers,
         )
         assert resp.status_code == 200
@@ -5557,7 +5557,7 @@ class TestHandleEndpoints:
         headers = await _auth_headers(client)
         resp = await client.post(
             "/auth/change-handle",
-            json={"handle": ""},
+            json={"handle": "", "password": "testpass"},
             headers=headers,
         )
         assert resp.status_code == 400
@@ -5566,7 +5566,7 @@ class TestHandleEndpoints:
         headers = await _auth_headers(client)
         resp = await client.post(
             "/auth/change-handle",
-            json={"handle": "BAD HANDLE!"},
+            json={"handle": "BAD HANDLE!", "password": "testpass"},
             headers=headers,
         )
         assert resp.status_code == 400
@@ -5575,7 +5575,7 @@ class TestHandleEndpoints:
         headers = await _auth_headers(client)
         resp = await client.post(
             "/auth/change-handle",
-            json={"handle": "work"},
+            json={"handle": "work", "password": "testpass"},
             headers=headers,
         )
         assert resp.status_code == 400
@@ -5588,11 +5588,20 @@ class TestHandleEndpoints:
         headers = await _auth_headers(client)
         resp = await client.post(
             "/auth/change-handle",
-            json={"handle": "taken-handle"},
+            json={"handle": "taken-handle", "password": "testpass"},
             headers=headers,
         )
         assert resp.status_code == 400
         assert "already taken" in resp.json()["detail"]
+
+    async def test_change_handle_wrong_password(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/auth/change-handle",
+            json={"handle": "good-handle", "password": "wrongpass"},
+            headers=headers,
+        )
+        assert resp.status_code == 401
 
     async def test_admin_change_user_handle(self, client, admin_user, user):
         admin_resp = await client.post(
@@ -5623,7 +5632,7 @@ class TestHandleEndpoints:
         }
         resp = await client.patch(
             f"/admin/users/{user['id']}",
-            json={"handle": ""},
+            json={"handle": "", "password": "testpass"},
             headers=admin_headers,
         )
         assert resp.status_code == 400

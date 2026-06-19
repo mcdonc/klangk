@@ -36,6 +36,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // Handle change
   final _newHandleController = TextEditingController();
+  final _handlePasswordController = TextEditingController();
   final _handleFormKey = GlobalKey<FormState>();
   bool _changingHandle = false;
   String? _handleMessage;
@@ -74,6 +75,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _newEmailController.dispose();
     _emailPasswordController.dispose();
     _newHandleController.dispose();
+    _handlePasswordController.dispose();
     super.dispose();
   }
 
@@ -123,6 +125,28 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _changeHandle() async {
     if (!_handleFormKey.currentState!.validate()) return;
+    final newHandle = _newHandleController.text.trim();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Change Handle?'),
+        content: Text(
+          'Change your handle from @${_currentHandle ?? ''} to @$newHandle?\n\n'
+          'This will affect your terminal home directory and how others see you in chat.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Change'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     setState(() {
       _changingHandle = true;
       _handleMessage = null;
@@ -134,6 +158,7 @@ class _SettingsPageState extends State<SettingsPage> {
         '/auth/change-handle',
         body: jsonEncode({
           'handle': _newHandleController.text.trim(),
+          'password': _handlePasswordController.text,
         }),
       );
       if (!mounted) return;
@@ -146,6 +171,7 @@ class _SettingsPageState extends State<SettingsPage> {
           _currentHandle = data['handle'] as String?;
         });
         _newHandleController.clear();
+        _handlePasswordController.clear();
       } else {
         final data = jsonDecode(resp.body);
         setState(() {
@@ -391,6 +417,13 @@ class _SettingsPageState extends State<SettingsPage> {
                       letterSpacing: 0.3)),
             ],
           ),
+          if (_currentHandle != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Current handle: @$_currentHandle',
+              style: const TextStyle(color: KColors.textSecondary),
+            ),
+          ],
           const SizedBox(height: 16),
           TextFormField(
             controller: _newHandleController,
@@ -409,6 +442,20 @@ class _SettingsPageState extends State<SettingsPage> {
               }
               return null;
             },
+            onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _handlePasswordController,
+            decoration: InputDecoration(
+              labelText: 'Password (to confirm)',
+              labelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelStyle: TextStyle(color: KColors.textSecondary),
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
+            ),
+            obscureText: true,
+            validator: (v) => v == null || v.isEmpty ? 'Required' : null,
             onFieldSubmitted: (_) => _changeHandle(),
           ),
           if (_handleMessage != null) ...[

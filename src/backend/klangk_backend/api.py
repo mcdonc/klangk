@@ -460,6 +460,7 @@ async def change_email(
 
 class ChangeHandleRequest(auth.BaseModel):
     handle: str
+    password: str
 
 
 @router.post("/auth/change-handle")
@@ -467,7 +468,12 @@ async def change_handle(
     req: ChangeHandleRequest,
     user: dict = Depends(auth.get_current_user),
 ):
-    """Change the current user's handle."""
+    """Change the current user's handle. Requires password confirmation."""
+    stored = await model.get_user_by_email(user["email"])
+    if stored is None or not auth.verify_password(
+        req.password, stored["password_hash"]
+    ):
+        raise HTTPException(status_code=401, detail="Password is incorrect")
     try:
         await model.set_user_handle(user["id"], req.handle)
     except ValueError as e:

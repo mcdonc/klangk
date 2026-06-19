@@ -583,7 +583,21 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               email: email,
               isAdmin: isAdmin,
             ),
-            title: Text(email),
+            title: Row(
+              children: [
+                Text(email),
+                if ((user['handle'] as String?)?.isNotEmpty == true) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    '@${user['handle']}',
+                    style: const TextStyle(
+                      color: KColors.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ],
+            ),
             subtitle: Text(
               groupNames.isEmpty
                   ? 'No groups'
