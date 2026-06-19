@@ -10,6 +10,7 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**Workspaces**](workspaces.md) — Isolated coding environments with sharing, port allocation, export/import
 - [**Terminal**](terminal.md) — Full terminal emulator with Pi agent integration, idle timeout, session persistence
 - [**The Shell**](the-shell.md) — Bash is default; switch to zsh or customize your shell environment
+- [**Sandbox**](sandbox.md) — One-command workspace setup from a project config file
 - [**Chat**](chat.md) — Real-time workspace chat with markdown, @mentions, message types, container-to-chat API
 - [**File Viewer**](file-viewer.md) — Directory tree, drag-and-drop upload, preview, download
 - [**AI Coding Harnesses**](ai-coding-harnesses.md) — Pi and Claude Code agents pre-installed in every workspace
@@ -17,7 +18,6 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 - [**Container Packages**](container-packages.md) — Pre-installed languages, tools, and CLI utilities in workspace containers
 - [**Export & Import**](export-import.md) — Export workspaces as archives and import them to create new workspaces
 - [**Hosted Apps**](hosted-apps.md) — Run development servers on mapped ports, accessible via reverse-proxy URLs
-- [**Sandbox**](sandbox.md) — One-command workspace setup from a project config file
 - [**CLI**](../reference/cli.md) — Command-line client for managing workspaces, shells, and file sync
 - [**SSH Agent Forwarding**](ssh-agent-forwarding.md) — Forward local SSH keys into containers via `klangkc shell`
 - [**GitHub HTTPS Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog
