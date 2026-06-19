@@ -1705,6 +1705,9 @@ class Connection:
     async def handle_exec_start(self, msg: dict) -> None:
         if not self.container_id:
             return
+        if not await self._has_perm("code-in-isolation"):
+            send_error(self.sock, "exec requires code-in-isolation permission")
+            return
         await self.stop_exec()
         command = msg.get("command", [])
         if not command:
