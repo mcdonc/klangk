@@ -1,7 +1,5 @@
 # Authentication
 
-![Login page](../assets/admin/login.png)
-
 ## Auth Methods
 
 - **Two auth methods**: email/password (local) and OIDC (external Identity Providers). Configurable via `KLANGK_AUTH_MODES`: `password`, `oidc`, or `both` (default: `both` if OIDC configured, `password` otherwise).
