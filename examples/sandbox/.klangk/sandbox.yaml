@@ -7,8 +7,7 @@ sandbox:
   setup: .klangk/setup.sh
 
 copy:
-  - ~/.gitconfig:~/.gitconfig
+  - .some-conf:~/sandbox-test/.gitconfig
 
 mounts:
   - .env:~/.env:ro
-  - ~/.ssh:~/.ssh:ro

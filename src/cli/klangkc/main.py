@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import asyncio
+import io
 import os
 from pathlib import Path
 
@@ -23,9 +24,9 @@ from .client import (
     _WS_MAX_SIZE,
     _get_terminal_size,
     _send_ignore_closed,
+    _exec_on_ws,
     _wait_workspace_ready,
     _ws_exec,
-    _ws_exec_piped,
     _ws_shell,
 )
 from .config import CLIConfig
@@ -751,37 +752,39 @@ def _resolve_workspace_and_url(
     return ws, ws_url, cfg.auth.token
 
 
-def _sandbox_copy_files(
-    copy_pairs: list[tuple[str, str]],
-    ws_url: str,
-    token: str,
-    ws_id: str,
-) -> None:
-    """Copy host files into the container home."""
+async def _sandbox_setup(ws, config, sandbox_root, handle):
+    """Copy files and run setup script on an open WebSocket.
+
+    Called once after workspace creation, before the shell starts.
+    The caller has already connected and called _wait_workspace_ready.
+    """
     from pathlib import Path
 
-    for host_path, container_dest in copy_pairs:
+    from .sandbox import (
+        build_copy_pairs,
+        expand_container_path,
+        resolve_setup_command,
+    )
+
+    # Copy files into container home.
+    for host_path, container_dest in build_copy_pairs(
+        config, sandbox_root, handle
+    ):
         src = Path(host_path)
         if not src.exists():
             _err.print(
-                f"[yellow]Warning: copy source {host_path} not found,"
-                f" skipping[/yellow]"
+                f"[yellow]Warning: copy source {host_path} not"
+                f" found, skipping[/yellow]"
             )
             continue
-        _err.print(f"  Copying {host_path} → {container_dest}")
+        _err.print(f"  [dim]copy:[/dim] {host_path} → {container_dest}")
         parent = str(Path(container_dest).parent)
-        exit_code, _ = asyncio.run(
-            _ws_exec_piped(
-                ws_url,
-                token,
-                ws_id,
-                [
-                    "sh",
-                    "-c",
-                    f"mkdir -p {parent} && cat > {container_dest}",
-                ],
-                stdin_data=src.read_bytes(),
-            )
+        stdout_buf = io.BytesIO()
+        exit_code = await _exec_on_ws(
+            ws,
+            ["sh", "-c", f"mkdir -p {parent} && cat > {container_dest}"],
+            stdin=io.BytesIO(src.read_bytes()),
+            stdout=stdout_buf,
         )
         if exit_code != 0:
             _err.print(
@@ -789,64 +792,22 @@ def _sandbox_copy_files(
                 f" failed (exit {exit_code})[/yellow]"
             )
 
-
-def _sandbox_run_setup(
-    config,
-    handle: str,
-    ws_url: str,
-    token: str,
-    ws_id: str,
-) -> None:
-    """Run the sandbox setup script inside the container."""
-    from .sandbox import expand_container_path, resolve_setup_command
-
+    # Run setup script.
     setup_cmd = resolve_setup_command(config, handle)
-    if not setup_cmd:
-        return
-    mount_at = expand_container_path(config.mount_at, handle)
-    _err.print(f"Running setup: {setup_cmd}")
-    exit_code, output = asyncio.run(
-        _ws_exec_piped(
-            ws_url,
-            token,
-            ws_id,
+    if setup_cmd:
+        mount_at = expand_container_path(config.mount_at, handle)
+        _err.print(f"[dim]setup:[/dim] {setup_cmd}")
+        stdout_buf = io.BytesIO()
+        exit_code = await _exec_on_ws(
+            ws,
             ["sh", "-c", f"cd {mount_at} && bash {setup_cmd}"],
+            stdout=stdout_buf,
         )
-    )
-    if output:
-        _err.print(output.rstrip())
-    if exit_code != 0:
-        _err.print(f"[yellow]Setup exited with code {exit_code}[/yellow]")
-
-
-def _sandbox_create(
-    config,
-    sandbox_root,
-    handle: str,
-    client,
-    ws_url: str,
-    token: str,
-):
-    """Create a sandbox workspace: create, copy files, run setup.
-
-    Returns the created Workspace.
-    """
-    from .sandbox import build_all_mounts, build_copy_pairs
-
-    ws_name = config.name
-    all_mounts = build_all_mounts(config, sandbox_root, handle)
-    _err.print(f"Creating workspace [bold]{ws_name}[/bold]...")
-    ws = client.create_workspace(
-        ws_name, image=config.image, mounts=all_mounts
-    )
-    _err.print(f"Workspace [bold]{ws_name}[/bold] created.")
-
-    copy_pairs = build_copy_pairs(config, sandbox_root, handle)
-    if copy_pairs:
-        _sandbox_copy_files(copy_pairs, ws_url, token, ws.id)
-
-    _sandbox_run_setup(config, handle, ws_url, token, ws.id)
-    return ws
+        output = stdout_buf.getvalue().decode("utf-8", errors="replace")
+        if output:
+            _err.print(output.rstrip())
+        if exit_code != 0:
+            _err.print(f"[yellow]Setup exited with code {exit_code}[/yellow]")
 
 
 @app.command()
@@ -869,7 +830,7 @@ def sandbox(
     from pathlib import Path
 
     from .client import WorkspaceNotFoundError
-    from .sandbox import load_sandbox_config
+    from .sandbox import build_all_mounts, load_sandbox_config
 
     cfg = _cfg()
     if not cfg.auth.token:  # pragma: no cover
@@ -895,6 +856,7 @@ def sandbox(
     handle = client.get_handle()
     server_url = cfg.server.url.rstrip("/")
     ws_url = _build_ws_url(server_url)
+    created = False
 
     # Check if workspace already exists.
     try:
@@ -903,25 +865,27 @@ def sandbox(
             f"Workspace [bold]{config.name}[/bold] exists, connecting..."
         )
     except WorkspaceNotFoundError:
-        ws = _sandbox_create(
-            config,
-            sandbox_root,
-            handle,
-            client,
-            ws_url,
-            cfg.auth.token,
+        all_mounts = build_all_mounts(config, sandbox_root, handle)
+        _err.print(f"Creating workspace [bold]{config.name}[/bold]...")
+        ws = client.create_workspace(
+            config.name, image=config.image, mounts=all_mounts
         )
+        _err.print(f"Workspace [bold]{config.name}[/bold] created.")
+        created = True
 
-    # Shell into the workspace.
+    # Single WebSocket connection: setup (if new) then shell.
     forward_agent = _resolve_forward_agent(forward_agent, server_url)
     _err.print(f"Connecting to [bold]{config.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
     try:
         asyncio.run(
-            _ws_shell(
+            _sandbox_connect(
                 ws_url,
                 cfg.auth.token,
                 ws.id,
+                config=config if created else None,
+                sandbox_root=sandbox_root,
+                handle=handle,
                 forward_agent=forward_agent,
             )
         )
@@ -937,6 +901,33 @@ def sandbox(
             )
             raise typer.Exit(code=1) from None
         raise
+
+
+async def _sandbox_connect(
+    ws_url,
+    token,
+    workspace_id,
+    config=None,
+    sandbox_root=None,
+    handle=None,
+    forward_agent=False,
+):
+    """Connect to workspace, run setup if needed, then shell.
+
+    Uses a single WebSocket connection for everything.  If *config*
+    is not None, copy files and run setup before starting the shell.
+    """
+    await _ws_shell(
+        ws_url,
+        token,
+        workspace_id,
+        forward_agent=forward_agent,
+        pre_shell=lambda ws: (
+            _sandbox_setup(ws, config, sandbox_root, handle)
+            if config
+            else None
+        ),
+    )
 
 
 @app.command("terminals")

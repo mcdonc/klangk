@@ -653,6 +653,7 @@ class Connection:
         self.pending_status_msg: str | None = None
         self._browser_id: str | None = None
         self._user_home: str | None = None
+        self._home_created: bool = False
         self._terminal_cols: int = 80
         self._terminal_rows: int = 24
         # Tracks which shared terminal this connection is viewing.
@@ -673,6 +674,15 @@ class Connection:
         )
         home_path = str(workspaces.get_home_host_path(owner_id, workspace_id))
         cfg_path = str(workspaces.get_config_host_path(owner_id, workspace_id))
+
+        # Ensure the per-user home symlink exists BEFORE starting the
+        # container, because mounts under /home/{handle}/ need the
+        # symlink in place so podman doesn't auto-create a real dir.
+        handle = await model.get_user_handle(self.user["id"])
+        workspace_home = workspaces.home_path(owner_id, workspace_id)
+        self._user_home, self._home_created = workspaces.ensure_home_symlink(
+            workspace_home, handle, self.user["id"]
+        )
 
         hosting_hostname, hosting_proto, hosting_base_path = (
             derive_hosting_info(self.sock.headers)
@@ -732,19 +742,10 @@ class Connection:
         # Clear any stale pending_status_msg from a prior connect/restart.
         self.pending_status_msg = None
 
-        # Resolve handle from DB and ensure per-workspace home symlink.
-        handle = await model.get_user_handle(self.user["id"])
-        if handle:
-            workspace_home = workspaces.home_path(owner_id, workspace_id)
-            self._user_home, created = workspaces.ensure_home_symlink(
-                workspace_home, handle, self.user["id"]
-            )
-            if created:
-                await workspaces.populate_home_skel(
-                    container_id, self.user["id"]
-                )
-        else:
-            self._user_home = None
+        # Populate skeleton if this is a new user home (symlink was
+        # created above, before container start).
+        if self._home_created:
+            await workspaces.populate_home_skel(container_id, self.user["id"])
 
         logger.info("Container ready for workspace %s", workspace_id)
 

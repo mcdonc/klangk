@@ -493,6 +493,7 @@ async def _ws_shell(
     command_override: str | None = None,
     window: str | None = None,
     forward_agent: bool = False,
+    pre_shell=None,
 ) -> None:
     """Run the interactive PTY shell over WebSocket.
 
@@ -501,12 +502,19 @@ async def _ws_shell(
     command_override, if set, overrides the workspace default command.
     window, if set, selects a specific window by name. Use
     ``handle:window_name`` to join another user's shared window.
+    pre_shell, if set, is an async callable(ws) invoked after the
+    workspace is ready but before the terminal starts.  Used by
+    ``sandbox`` to run copy/setup on the same connection.
     """
     async with websockets.connect(
         f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
     ) as ws:
         # 1. Connect to workspace
         await _wait_workspace_ready(ws, workspace_id)
+
+        # 1a. Run pre-shell hook (sandbox setup) if provided.
+        if pre_shell is not None:
+            await pre_shell(ws)
 
         # 2a. Start SSH agent forwarding if requested and available.
         ssh_agent_active = False
@@ -990,15 +998,16 @@ async def _run_shell(
     await asyncio.gather(*tasks)
 
 
-async def _ws_exec_core(
-    ws_url: str,
-    token: str,
-    workspace_id: str,
+async def _exec_on_ws(
+    ws,
     command: list[str],
     stdin: io.RawIOBase | None = None,
     stdout: io.RawIOBase | None = None,
 ) -> int:
-    """Run a command in the container over WebSocket.
+    """Run a command on an already-connected WebSocket.
+
+    The caller must have already connected and called
+    ``_wait_workspace_ready``.
 
     *stdin*: file-like to read input from.  ``None`` closes stdin
     immediately.  For a real terminal pass ``sys.stdin.buffer``; for
@@ -1012,123 +1021,114 @@ async def _ws_exec_core(
     """
     loop = asyncio.get_event_loop()
 
-    async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
-    ) as ws:
-        await _wait_workspace_ready(ws, workspace_id)
-        await ws.send(json.dumps({"cmd": "exec_start", "command": command}))
+    await ws.send(json.dumps({"cmd": "exec_start", "command": command}))
 
-        exit_code = 1
-        stop = asyncio.Event()
+    exit_code = 1
+    stop = asyncio.Event()
 
-        async def stdin_forward() -> None:
-            if stdin is None:
-                await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
-                return
-            try:
-                fd = stdin.fileno()
-                has_fd = True
-            except (io.UnsupportedOperation, AttributeError):
-                has_fd = False
-
-            if has_fd:
-                # Real fd — poll with select so we stay responsive to
-                # stop_event.
-                while not stop.is_set():
-                    ready = await loop.run_in_executor(
-                        None,
-                        lambda: select.select([fd], [], [], 0.2)[0],
-                    )
-                    if not ready:  # pragma: no cover
-                        continue
-                    data = await loop.run_in_executor(None, os.read, fd, 65536)
-                    if not data:
-                        break
-                    await ws.send(  # pragma: no cover
-                        json.dumps(
-                            {
-                                "cmd": "exec_input",
-                                "data": base64.b64encode(data).decode("ascii"),
-                            }
-                        )
-                    )
-            else:
-                # In-memory stream (BytesIO etc.) — read all at once.
-                data = stdin.read()
-                if data:
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "cmd": "exec_input",
-                                "data": base64.b64encode(data).decode("ascii"),
-                            }
-                        )
-                    )
+    async def stdin_forward() -> None:
+        if stdin is None:
             await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
-
-        async def stdout_forward() -> None:
-            nonlocal exit_code
-            while True:
-                msg = await ws.recv()
-                if isinstance(msg, bytes):  # pragma: no cover
-                    msg = msg.decode("utf-8", errors="replace")
-                data = json.loads(msg)
-                if data.get("type") == "exec_output":
-                    raw = base64.b64decode(data["data"])
-                    if stdout is not None:
-                        if has_stdout_fd:
-                            await loop.run_in_executor(None, stdout.write, raw)
-                        else:
-                            stdout.write(raw)
-                elif data.get("type") == "exec_exit":
-                    exit_code = data.get("code", 0)
-                    break
-                elif data.get("type") == "error":  # pragma: no cover
-                    logging.error(
-                        "Server error: %s",
-                        data.get("message", "unknown"),
-                    )
-                    exit_code = 1
-                    break
-
-        async def heartbeat_loop() -> None:  # pragma: no cover
-            while not stop.is_set():
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=60)
-                    return
-                except asyncio.TimeoutError:
-                    pass
-                if not stop.is_set():
-                    await ws.send(json.dumps({"cmd": "heartbeat"}))
-
-        # Check if stdout has a real fd (needs run_in_executor to
-        # avoid blocking the event loop).
+            return
         try:
-            has_stdout_fd = stdout is not None and stdout.fileno() >= 0
+            fd = stdin.fileno()
+            has_fd = True
         except (io.UnsupportedOperation, AttributeError):
-            has_stdout_fd = False
+            has_fd = False
 
-        stdout_task = asyncio.create_task(stdout_forward())
-        stdin_task = asyncio.create_task(stdin_forward())
-        heartbeat_task = asyncio.create_task(heartbeat_loop())
-        await stdout_task
-        stop.set()
-        try:
-            await asyncio.wait_for(stdin_task, timeout=2)
-        except asyncio.TimeoutError:  # pragma: no cover
-            stdin_task.cancel()
+        if has_fd:
+            while not stop.is_set():
+                ready = await loop.run_in_executor(
+                    None,
+                    lambda: select.select([fd], [], [], 0.2)[0],
+                )
+                if not ready:  # pragma: no cover
+                    continue
+                data = await loop.run_in_executor(None, os.read, fd, 65536)
+                if not data:
+                    break
+                await ws.send(  # pragma: no cover
+                    json.dumps(
+                        {
+                            "cmd": "exec_input",
+                            "data": base64.b64encode(data).decode("ascii"),
+                        }
+                    )
+                )
+        else:
+            data = stdin.read()
+            if data:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "cmd": "exec_input",
+                            "data": base64.b64encode(data).decode("ascii"),
+                        }
+                    )
+                )
+        await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
+
+    async def stdout_forward() -> None:
+        nonlocal exit_code
+        while True:
+            msg = await ws.recv()
+            if isinstance(msg, bytes):  # pragma: no cover
+                msg = msg.decode("utf-8", errors="replace")
+            data = json.loads(msg)
+            if data.get("type") == "exec_output":
+                raw = base64.b64decode(data["data"])
+                if stdout is not None:
+                    if has_stdout_fd:
+                        await loop.run_in_executor(None, stdout.write, raw)
+                    else:
+                        stdout.write(raw)
+            elif data.get("type") == "exec_exit":
+                exit_code = data.get("code", 0)
+                break
+            elif data.get("type") == "error":  # pragma: no cover
+                logging.error(
+                    "Server error: %s",
+                    data.get("message", "unknown"),
+                )
+                exit_code = 1
+                break
+
+    async def heartbeat_loop() -> None:  # pragma: no cover
+        while not stop.is_set():
             try:
-                await stdin_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(stop.wait(), timeout=60)
+                return
+            except asyncio.TimeoutError:
                 pass
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:  # pragma: no cover
-            pass
+            if not stop.is_set():
+                await ws.send(json.dumps({"cmd": "heartbeat"}))
 
-        await ws.send(json.dumps({"cmd": "exec_stop"}))
-        return exit_code
+    try:
+        has_stdout_fd = stdout is not None and stdout.fileno() >= 0
+    except (io.UnsupportedOperation, AttributeError):
+        has_stdout_fd = False
+
+    stdout_task = asyncio.create_task(stdout_forward())
+    stdin_task = asyncio.create_task(stdin_forward())
+    heartbeat_task = asyncio.create_task(heartbeat_loop())
+    await stdout_task
+    stop.set()
+    try:
+        await asyncio.wait_for(stdin_task, timeout=2)
+    except asyncio.TimeoutError:  # pragma: no cover
+        stdin_task.cancel()
+        try:
+            await stdin_task
+        except asyncio.CancelledError:
+            pass
+    heartbeat_task.cancel()
+    try:
+        await heartbeat_task
+    except asyncio.CancelledError:  # pragma: no cover
+        pass
+
+    await ws.send(json.dumps({"cmd": "exec_stop"}))
+    return exit_code
 
 
 async def _ws_exec(
@@ -1141,14 +1141,13 @@ async def _ws_exec(
 
     Returns the remote process exit code.
     """
-    return await _ws_exec_core(
-        ws_url,
-        token,
-        workspace_id,
-        command,
-        stdin=sys.stdin.buffer,
-        stdout=sys.stdout.buffer,
-    )
+    async with websockets.connect(
+        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+    ) as ws:
+        await _wait_workspace_ready(ws, workspace_id)
+        return await _exec_on_ws(
+            ws, command, stdin=sys.stdin.buffer, stdout=sys.stdout.buffer
+        )
 
 
 async def _ws_exec_piped(
@@ -1163,14 +1162,16 @@ async def _ws_exec_piped(
     Returns ``(exit_code, stdout_text)``.  Does not touch real
     stdin/stdout — designed for programmatic use (file copy, setup).
     """
-    stdin_buf = io.BytesIO(stdin_data) if stdin_data else None
-    stdout_buf = io.BytesIO()
-    exit_code = await _ws_exec_core(
-        ws_url,
-        token,
-        workspace_id,
-        command,
-        stdin=stdin_buf,
-        stdout=stdout_buf,
-    )
-    return exit_code, stdout_buf.getvalue().decode("utf-8", errors="replace")
+    async with websockets.connect(
+        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+    ) as ws:
+        await _wait_workspace_ready(ws, workspace_id)
+        stdin_buf = io.BytesIO(stdin_data) if stdin_data else None
+        stdout_buf = io.BytesIO()
+        exit_code = await _exec_on_ws(
+            ws, command, stdin=stdin_buf, stdout=stdout_buf
+        )
+        return (
+            exit_code,
+            stdout_buf.getvalue().decode("utf-8", errors="replace"),
+        )
