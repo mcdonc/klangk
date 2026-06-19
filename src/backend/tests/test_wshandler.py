@@ -1949,11 +1949,26 @@ class TestExecHandlers:
         await conn.handle_exec_start({"command": ["ls"]})
         assert conn.exec_session is None
 
+    async def test_exec_start_no_perm(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        with patch.object(
+            conn, "_has_perm", new=AsyncMock(return_value=False)
+        ):
+            await conn.handle_exec_start({"command": ["ls"]})
+        sock.send_json.assert_called()
+        assert "code-in-isolation" in sock.send_json.call_args[0][0].get(
+            "message", ""
+        )
+        assert conn.exec_session is None
+
     async def test_exec_start_no_command(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
-        await conn.handle_exec_start({"command": []})
+        with patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)):
+            await conn.handle_exec_start({"command": []})
         sock.send_json.assert_called()
         assert "command" in sock.send_json.call_args[0][0].get("message", "")
 
@@ -1975,7 +1990,10 @@ class TestExecHandlers:
             return_value=mock_session,
         ):
             with patch.object(container.registry, "record_activity"):
-                await conn.handle_exec_start({"command": ["ls"]})
+                with patch.object(
+                    conn, "_has_perm", new=AsyncMock(return_value=True)
+                ):
+                    await conn.handle_exec_start({"command": ["ls"]})
         assert conn.exec_session is mock_session
         assert conn.exec_task is not None
         conn.exec_task.cancel()
