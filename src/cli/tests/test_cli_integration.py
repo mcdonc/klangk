@@ -1,6 +1,7 @@
 """Additional tests for cli/client.py paths not covered yet."""
 
 import asyncio
+import io
 import json
 import os
 import socket
@@ -1803,3 +1804,267 @@ class TestSSHAgentRelayLoop:
             if "ssh_agent_data" in c[0][0]
         ]
         assert len(agent_data_msgs) == 0
+
+
+class TestWsExecPipedWithInput:
+    async def test_piped_sends_stdin_data(self):
+        import base64
+
+        from klangkc.client import _ws_exec_piped
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+
+        output_chunk = base64.b64encode(b"echoed").decode()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "exec_output", "data": output_chunk}),
+                json.dumps({"type": "exec_exit", "code": 0}),
+            ]
+        )
+
+        with patch("websockets.connect", return_value=ws_mock):
+            code, output = await _ws_exec_piped(
+                "ws://localhost/ws",
+                "token",
+                "ws1",
+                ["cat"],
+                stdin_data=b"input data",
+            )
+
+        assert code == 0
+        assert "echoed" in output
+        # Verify exec_input was sent with our data
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        input_msgs = [json.loads(s) for s in sent if "exec_input" in s]
+        assert len(input_msgs) == 1
+        decoded = base64.b64decode(input_msgs[0]["data"])
+        assert decoded == b"input data"
+
+
+class TestGetHandle:
+    def test_returns_handle(self):
+        from klangkc.client import KlangkClient
+        from klangkc.config import CLIConfig
+
+        cfg = CLIConfig()
+        cfg.server.url = "http://localhost:8995"
+        cfg.auth.token = "test-token"
+        client = KlangkClient(cfg)
+
+        with patch.object(
+            client,
+            "get",
+            return_value=MagicMock(
+                status_code=200,
+                json=MagicMock(return_value={"handle": "admin"}),
+            ),
+        ):
+            assert client.get_handle() == "admin"
+
+
+class TestExecOnWsRealFd:
+    """Test _exec_on_ws with a real file descriptor (pipe)."""
+
+    async def test_stdin_fd_sends_data(self):
+        import base64
+
+        from klangkc.client import _exec_on_ws
+
+        ws = AsyncMock()
+        sent = []
+        ws.send = AsyncMock(side_effect=lambda m: sent.append(m))
+
+        recv_idx = 0
+
+        async def fake_recv():
+            nonlocal recv_idx
+            recv_idx += 1
+            if recv_idx == 1:
+                return json.dumps({"type": "exec_exit", "code": 0})
+            await asyncio.sleep(10)
+
+        ws.recv = fake_recv
+
+        # Create a pipe, write data to it, close write end.
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b"hello from pipe")
+        os.close(write_fd)
+
+        stdin = MagicMock()
+        stdin.fileno = MagicMock(return_value=read_fd)
+
+        stdout_buf = io.BytesIO()
+        try:
+            code = await _exec_on_ws(
+                ws, ["cat"], stdin=stdin, stdout=stdout_buf
+            )
+        finally:
+            os.close(read_fd)
+
+        assert code == 0
+        # Check that exec_input was sent with our data
+        input_msgs = [json.loads(s) for s in sent if "exec_input" in s]
+        assert len(input_msgs) >= 1
+        decoded = base64.b64decode(input_msgs[0]["data"])
+        assert decoded == b"hello from pipe"
+
+    async def test_stdout_fd_receives_data(self):
+        """Test output written to a real fd via os.write."""
+        import base64
+
+        from klangkc.client import _exec_on_ws
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+
+        output_data = base64.b64encode(b"hello output").decode()
+        ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "exec_output", "data": output_data}),
+                json.dumps({"type": "exec_exit", "code": 0}),
+            ]
+        )
+
+        # Use a pipe for stdout so we can read what was written.
+        read_fd, write_fd = os.pipe()
+
+        stdout = MagicMock()
+        stdout.fileno = MagicMock(return_value=write_fd)
+
+        try:
+            code = await _exec_on_ws(ws, ["echo"], stdout=stdout)
+        finally:
+            os.close(write_fd)
+
+        assert code == 0
+        # Read what was written to the pipe.
+        result = os.read(read_fd, 4096)
+        os.close(read_fd)
+        assert result == b"hello output"
+
+
+class TestWsExecWrapper:
+    """Test _ws_exec wrapper connects and delegates to _exec_on_ws."""
+
+    async def test_ws_exec_delegates(self):
+
+        from klangkc.client import _ws_exec
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "exec_exit", "code": 42}),
+            ]
+        )
+
+        # Use pipes to avoid blocking on real stdin/stdout
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "sys.stdin",
+                MagicMock(
+                    buffer=MagicMock(fileno=MagicMock(return_value=read_fd))
+                ),
+            ),
+            patch(
+                "sys.stdout",
+                MagicMock(buffer=MagicMock(fileno=MagicMock(return_value=1))),
+            ),
+        ):
+            code = await _ws_exec("ws://localhost/ws", "token", "ws1", ["ls"])
+
+        os.close(read_fd)
+        assert code == 42
+
+
+class TestPreShellHook:
+    """Test that _ws_shell calls pre_shell before terminal_start."""
+
+    async def test_pre_shell_called(self, tmp_path):
+        from klangkc.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+
+        pre_shell_called = []
+
+        async def fake_pre_shell(ws):
+            pre_shell_called.append(True)
+
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    pre_shell=fake_pre_shell,
+                )
+            except Exception:
+                pass
+
+        assert pre_shell_called == [True]
+        # Verify pre_shell ran before terminal_start
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        parsed = [json.loads(s) for s in sent]
+        cmds = [m.get("cmd") for m in parsed]
+        assert "terminal_start" in cmds

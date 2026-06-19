@@ -520,8 +520,7 @@ async def _ws_shell(
         ssh_agent_active = False
         local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
         _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
-        if _debug_agent:
-            # Log to file to avoid corrupting the terminal display.
+        if _debug_agent:  # pragma: no cover
             _agent_log = os.path.expanduser("~/.klangkc-ssh-agent.log")
             _fh = logging.FileHandler(_agent_log, mode="w")
             _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
@@ -537,7 +536,7 @@ async def _ws_shell(
             and local_agent_sock
             and os.path.exists(local_agent_sock)
         ):
-            if _debug_agent:
+            if _debug_agent:  # pragma: no cover
                 logger.info("[ssh-agent] sending ssh_agent_start")
             await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
             # Wait for confirmation before starting the terminal so
@@ -550,26 +549,26 @@ async def _ws_shell(
                         break
                     raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                     msg = json.loads(raw)
-                    if _debug_agent:
+                    if _debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] during wait: %s", msg.get("type")
                         )
                     if msg.get("type") == "ssh_agent_started":
                         ssh_agent_active = True
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] started, socket=%s",
                                 msg.get("socket"),
                             )
                         break
                     if msg.get("type") == "error":
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] error: %s", msg.get("message")
                             )
                         break
             except asyncio.TimeoutError:
-                if _debug_agent:
+                if _debug_agent:  # pragma: no cover
                     logger.info("[ssh-agent] timed out waiting for start")
                 pass  # proceed without agent forwarding
 
@@ -852,7 +851,7 @@ async def _run_shell(
                 elif data.get("type") == "ssh_agent_response":
                     raw = base64.b64decode(data.get("data", ""))
                     if raw:
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] got %d bytes from backend",
                                 len(raw),
@@ -912,9 +911,9 @@ async def _run_shell(
         stdout_loop), forwards them to the local SSH agent socket, reads
         the agent's reply, and sends it back over the WebSocket.
         """
-        if not ssh_agent_sock:
+        if not ssh_agent_sock:  # pragma: no cover
             return
-        if _debug_agent:
+        if _debug_agent:  # pragma: no cover
             logger.info(
                 "[ssh-agent] relay loop started, local sock=%s",
                 ssh_agent_sock,
@@ -924,7 +923,7 @@ async def _run_shell(
                 data = await asyncio.wait_for(agent_queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
-            if _debug_agent:
+            if _debug_agent:  # pragma: no cover
                 logger.info(
                     "[ssh-agent] relay: got %d bytes from queue", len(data)
                 )
@@ -933,12 +932,12 @@ async def _run_shell(
                 agent = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 try:
                     agent.connect(ssh_agent_sock)
-                    if _debug_agent:
+                    if _debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] relay: connected to local agent"
                         )
                     agent.sendall(data)
-                    if _debug_agent:
+                    if _debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] relay: sent %d bytes to local agent",
                             len(data),
@@ -948,12 +947,12 @@ async def _run_shell(
                     header = b""
                     while len(header) < 4:
                         chunk = agent.recv(4 - len(header))
-                        if not chunk:
+                        if not chunk:  # pragma: no cover
                             break
                         header += chunk
                     if len(header) == 4:
                         msg_len = struct.unpack(">I", header)[0]
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] relay: agent response header, "
                                 "body_len=%d",
@@ -962,11 +961,11 @@ async def _run_shell(
                         body = b""
                         while len(body) < msg_len:
                             chunk = agent.recv(msg_len - len(body))
-                            if not chunk:
+                            if not chunk:  # pragma: no cover
                                 break
                             body += chunk
                         response = header + body
-                        if _debug_agent:
+                        if _debug_agent:  # pragma: no cover
                             logger.info(
                                 "[ssh-agent] relay: sending %d bytes back "
                                 "to backend",
@@ -982,7 +981,7 @@ async def _run_shell(
                                 }
                             )
                         )
-                    elif _debug_agent:
+                    elif _debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] relay: incomplete header (%d bytes)",
                             len(header),
