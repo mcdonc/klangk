@@ -4,7 +4,7 @@ Extensions are TypeScript files collected from `$KLANGK_PLUGINS_DIR/*/extension.
 
 - The LLM sees them in its tool list alongside built-in tools (read, write, edit, bash)
 - Extensions can be server-side (run code inside the container) or client-side (delegate to the browser via the [browser bridge](../architecture/browser-bridge.md))
-- AGENTS.md is generated dynamically on each container start, listing all registered extension tools
+- `AGENTS.md` is a system prompt copied to `$HOME` on first login that configures workspace-specific agent behavior and guidelines
 
 ## Built-in Plugins
 
