@@ -3,7 +3,7 @@
 Sandbox that installs nix and devenv via
 [devenv-bootstrap](https://github.com/mcdonc/devenv-bootstrap).
 
-Requires `KLANGK_ALLOW_SUDO=true` on the server.
+No sudo required — uses single-user nix (no daemon).
 
 ## Usage
 

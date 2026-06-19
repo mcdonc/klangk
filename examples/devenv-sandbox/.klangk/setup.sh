@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Install nix (single-user) and devenv.
-# Requires KLANGK_ALLOW_SUDO=true on the server.
+# No sudo needed — single-user nix installs everything under the
+# current user's profile and /nix/store.
 #
 # The /nix volume persists across workspace recreations, so this
 # script is fast on subsequent runs (nix is already installed).
@@ -12,7 +13,6 @@ set -euo pipefail
 
 if ! command -v nix &>/dev/null; then
   echo "Installing nix (single-user)..."
-  sudo chown -R "$(whoami)" /nix 2>/dev/null || true
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
 fi
 
