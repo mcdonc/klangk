@@ -1079,7 +1079,11 @@ async def _exec_on_ws(
                 raw = base64.b64decode(data["data"])
                 if stdout is not None:
                     if has_stdout_fd:
-                        await loop.run_in_executor(None, stdout.write, raw)
+                        # Use os.write for real fds to avoid buffering
+                        # issues (rsync needs unbuffered output).
+                        await loop.run_in_executor(
+                            None, os.write, stdout_fd, raw
+                        )
                     else:
                         stdout.write(raw)
             elif data.get("type") == "exec_exit":
@@ -1103,10 +1107,13 @@ async def _exec_on_ws(
             if not stop.is_set():
                 await ws.send(json.dumps({"cmd": "heartbeat"}))
 
+    stdout_fd = -1
     try:
-        has_stdout_fd = stdout is not None and stdout.fileno() >= 0
+        if stdout is not None:
+            stdout_fd = stdout.fileno()
     except (io.UnsupportedOperation, AttributeError):
-        has_stdout_fd = False
+        pass
+    has_stdout_fd = stdout_fd >= 0
 
     stdout_task = asyncio.create_task(stdout_forward())
     stdin_task = asyncio.create_task(stdin_forward())
