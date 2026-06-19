@@ -51,6 +51,7 @@ Thumbs.db
 
 # Klangk data
 .klangk/
+!examples/**/.klangk/
 
 # Claude
 .claude/

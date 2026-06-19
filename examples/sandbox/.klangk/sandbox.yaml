@@ -1,0 +1,14 @@
+workspace:
+  name: sandbox-test
+  image: klangk-workspace
+
+sandbox:
+  mount_at: ~/sandbox-test
+  setup: .klangk/setup.sh
+
+copy:
+  - ~/.gitconfig:~/.gitconfig
+
+mounts:
+  - .env:~/.env:ro
+  - ~/.ssh:~/.ssh:ro
