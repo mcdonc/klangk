@@ -4,12 +4,23 @@ Multi-User AI Collaboration and Coding Platform
 
 ![Klangk Web Coding Agent](assets/screenshot.png)
 
-Klangk is a container orchestration system powered by Podman, which specializes in sandboxing AI tasks. It gives users isolated coding environments (aka "workspaces") using containers. Within each workspace, any task can be run, but special consideration is given to LLM-focused tasks. Coding harnesses like `pi` and `claude` are made available in each workspace.
+Klangk is a container orchestration system powered by Podman that
+specializes in sandboxing AI coding tasks. AI agents like Pi and
+Claude Code are powerful but intentionally given wide permissions —
+they read, write, and execute code on your behalf. Klangk keeps
+these agents safely isolated: each workspace is its own container
+where an agent can work freely without risking your host system or
+other projects.
+
+Use [`klangkc sandbox`](features/sandbox.md) to spin up a sandboxed
+environment from a project config file — mount your source code,
+copy your dotfiles, install tools, and drop into a shell, all with
+one command.
 
 ## What You Can Do
 
-1. **Create a workspace** — each workspace is an isolated coding environment
-2. **Chat with the AI agent** — execute "pi" or "claude" in the terminal, then ask it to write code, create projects, fix bugs
+1. **Sandbox a project** — [`klangkc sandbox`](features/sandbox.md) creates an isolated workspace from a `.klangk/sandbox.yaml` config, mounts your source code, and runs a setup script
+2. **Run AI agents safely** — Pi and Claude Code run inside containers, isolated from your host
 3. **Use the terminal** for direct shell access to the container (bash with tab completion and colors)
 4. **View files** in the file viewer panel, drag-and-drop files or folders to upload, right-click to download, rename, or delete. Preview markdown, images, code (with syntax highlighting and editing), PDFs, video, and spreadsheets
 5. **Chat with other workspace users** in shared workspaces
