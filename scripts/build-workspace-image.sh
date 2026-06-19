@@ -67,10 +67,20 @@ if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
   "$PODMAN" ps -a --filter "label=klangk.instance=${KLANGK_INSTANCE_ID}" -q | xargs -r "$PODMAN" rm -f
 fi
 
-# Build workspace image on top of the base
+# Build workspace image on top of the base.
+# Tag with both :latest (used by the backend at runtime) and a
+# deterministic version tag (date + commit hash).  Remove stale
+# version tags from previous builds so they don't accumulate.
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
 VERSION="${CALVER}-${COMMIT}"
+# Remove old version tags (but not :latest — podman build will update it).
+for old_tag in $("$PODMAN" images --format '{{.Tag}}' --filter "reference=${KLANGK_IMAGE_NAME}" 2>/dev/null || true); do
+  case "$old_tag" in
+  latest | "$VERSION" | "<none>") ;;
+  *) "$PODMAN" untag "${KLANGK_IMAGE_NAME}:${old_tag}" 2>/dev/null || true ;;
+  esac
+done
 "$PODMAN" build \
   --pull=newer \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
