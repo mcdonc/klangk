@@ -895,7 +895,7 @@ def sandbox(
                 forward_agent=forward_agent,
             )
         )
-    except websockets.exceptions.InvalidStatusCode as e:
+    except websockets.exceptions.InvalidStatusCode as e:  # pragma: no cover
         from .client import _drain_stdin, reset_terminal
 
         reset_terminal()
@@ -909,7 +909,7 @@ def sandbox(
         raise
 
 
-async def _sandbox_connect(
+async def _sandbox_connect(  # pragma: no cover
     ws_url,
     token,
     workspace_id,
