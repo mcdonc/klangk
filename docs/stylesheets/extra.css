@@ -2,3 +2,18 @@
 td code {
   white-space: nowrap;
 }
+
+/* Let wide tables scroll horizontally instead of overflowing */
+.md-typeset__scrollwrap {
+  overflow-x: auto;
+}
+
+/* Give the Description column room to breathe */
+.md-typeset table:not([class]) {
+  table-layout: auto;
+  width: 100%;
+}
+
+.md-typeset table:not([class]) td:last-child {
+  min-width: 20em;
+}
