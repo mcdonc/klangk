@@ -672,6 +672,12 @@ class TestMonitorProcess:
         with (
             patch.object(
                 model,
+                "get_workspace_by_id",
+                new_callable=AsyncMock,
+                return_value={"id": "ws-mon"},
+            ),
+            patch.object(
+                model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={
@@ -697,6 +703,12 @@ class TestMonitorProcess:
 
         # Should not raise when workspace_id is empty
         await _broadcast_agent_disconnect("")
+
+    async def test_broadcast_disconnect_deleted_workspace(self):
+        from klangk_backend.agent import _broadcast_agent_disconnect
+
+        # Should not raise when workspace has been deleted
+        await _broadcast_agent_disconnect("deleted-ws-id")
 
     async def test_stop_cancels_monitor(self):
         session = _make_session()
@@ -825,6 +837,12 @@ class TestMonitorProcess:
         with (
             patch.object(
                 model,
+                "get_workspace_by_id",
+                new_callable=AsyncMock,
+                return_value={"id": "ws-rc"},
+            ),
+            patch.object(
+                model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "reconnected"},
@@ -846,6 +864,12 @@ class TestMonitorProcess:
         from klangk_backend.agent import _broadcast_agent_reconnect
 
         await _broadcast_agent_reconnect("")
+
+    async def test_broadcast_reconnect_deleted_workspace(self):
+        from klangk_backend.agent import _broadcast_agent_reconnect
+
+        # Should not raise when workspace has been deleted
+        await _broadcast_agent_reconnect("deleted-ws-id")
 
     async def test_monitor_skips_restart_if_already_restarted(self):
         from klangk_backend import model

@@ -442,6 +442,9 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
 
     if not workspace_id:
         return
+    # Workspace may have been deleted — skip if gone.
+    if await model.get_workspace_by_id(workspace_id) is None:
+        return
     agent_handle = await model.agent_handle()
     agent_email = await model.agent_email()
     sys_msg = await model.add_chat_message(
@@ -471,6 +474,9 @@ async def _broadcast_agent_reconnect(workspace_id: str) -> None:
     from . import wshandler
 
     if not workspace_id:
+        return
+    # Workspace may have been deleted — skip if gone.
+    if await model.get_workspace_by_id(workspace_id) is None:
         return
     agent_handle = await model.agent_handle()
     agent_email = await model.agent_email()
