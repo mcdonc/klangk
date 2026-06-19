@@ -12,8 +12,12 @@ file copying, command execution, and shell access — into a single
 step driven by a config file. Everything it does can be done manually
 with `klangkc create`, `klangkc exec`, and `klangkc shell`, but the
 sandbox command makes it easy to check a `.klangk/sandbox.yaml` into
-your repo so anyone on the team can spin up an identical sandboxed
+your repo so you or your teammates can spin up an identical sandboxed
 environment with one command.
+
+This feature is most useful when run with the Klangk server on your own
+machine. It requires the `klangkc` client program. It is not a feature of the
+web UI.
 
 ## Quick start
 
@@ -27,18 +31,20 @@ sandbox:
 Then run:
 
 ```bash
-klangkc sandbox myproj
+klangkc sandbox myworkspace
 ```
 
 This creates a workspace named `myproj`, mounts the sandbox root
-into the container at `~/work`, and drops you into a shell.
+into the myworkspace container at `~/myproj`, and drops you into a shell.
 Run the same command again to reconnect to the existing workspace.
 
 ## Config file reference
 
 The config file lives at `.klangk/sandbox.yaml` inside your project.
 The directory containing `.klangk/` is called the **sandbox root** —
-it's automatically mounted into the container.
+it's automatically mounted into the container at the `mount_at`
+location. If you do not specify a `mount_at` location, it will be
+placed in `~/work`.
 
 ### `workspace`
 
