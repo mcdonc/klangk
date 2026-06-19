@@ -1033,7 +1033,9 @@ class TestAuthLines:
 
 
 class TestClientLines:
-    def test_delete_workspace_500_exit(self):
+    def test_delete_workspace_500_raises(self):
+        import httpx
+
         from klangkc.client import KlangkClient
 
         cfg = CLIConfig()
@@ -1047,12 +1049,13 @@ class TestClientLines:
         ]
         del_resp = MagicMock()
         del_resp.status_code = 500
-        del_resp.text = "server error"
-        del_resp.is_success = False
+        del_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock()
+        )
 
         with patch.object(client, "get", return_value=list_resp):
             with patch.object(client, "delete", return_value=del_resp):
-                with pytest.raises(SystemExit):
+                with pytest.raises(httpx.HTTPStatusError):
                     client.delete_workspace("ws1")
 
 
