@@ -59,7 +59,7 @@ def _build_environment(
     user_handle: str | None = None,
     ssh_agent_socket: str | None = None,
 ) -> list[str]:
-    env = ["TERM=xterm-256color"]
+    env = ["TERM=xterm-256color", "USER=klangk"]
     if user_home is not None:
         env.append(f"HOME={user_home}")
     if user_id is not None:
