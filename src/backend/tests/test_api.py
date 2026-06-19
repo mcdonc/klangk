@@ -903,16 +903,23 @@ class TestWorkspaceRoutes:
         )
         ws_id = create_resp.json()["id"]
 
+        # Simulate a running container so the stop path is exercised.
+        api.container.registry.track_activity("cid-restart", ws_id)
+
         with patch.object(
             api.container.registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
-        ):
+        ) as mock_stop:
             resp = await client.post(
                 f"/workspaces/{ws_id}/restart", headers=headers
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "restarted"
+        mock_stop.assert_awaited_once_with("cid-restart")
+
+        # Clean up registry state.
+        api.container.registry.states.pop(ws_id, None)
 
     async def test_restart_not_found(self, client, user):
         headers = await _auth_headers(client)
