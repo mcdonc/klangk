@@ -57,7 +57,7 @@ trivy-host --severity CRITICAL    # critical only
 
 **No `:latest` tags are pushed to the registry.** Every image (host, workspace, workspace base) is pushed only with an explicit version tag. This prevents confusion when stable branches would otherwise overwrite `:latest` with an older version. Consumers always reference a specific version via `KLANGK_REF` or build locally.
 
-Locally, `build-workspace-image` still tags `klangk-workspace:latest` in the local podman store — this is the tag the backend uses at runtime (with pull policy `never`). The local `:latest` tag is never pushed to GHCR.
+Locally, `build-workspace-image` tags `klangk-workspace:latest` (used by the backend at runtime with pull policy `never`) and a deterministic version tag (`YYYY.MM.DD-<commit>`). Stale version tags from previous builds are automatically removed so they don't accumulate. The local `:latest` tag is never pushed to GHCR.
 
 ## Workspace Base Image Pin
 
