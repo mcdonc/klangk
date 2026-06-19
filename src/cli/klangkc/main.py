@@ -922,8 +922,8 @@ async def _sandbox_connect(
         token,
         workspace_id,
         forward_agent=forward_agent,
-        pre_shell=lambda ws: (
-            _sandbox_setup(ws, config, sandbox_root, handle)
+        pre_shell=(
+            (lambda ws: _sandbox_setup(ws, config, sandbox_root, handle))
             if config
             else None
         ),
