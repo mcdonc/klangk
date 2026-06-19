@@ -458,6 +458,38 @@ async def change_email(
     return {"status": "updated", "needs_verification": True}
 
 
+class ChangeHandleRequest(auth.BaseModel):
+    handle: str
+    password: str
+
+
+@router.post("/auth/change-handle")
+async def change_handle(
+    req: ChangeHandleRequest,
+    user: dict = Depends(auth.get_current_user),
+):
+    """Change the current user's handle. Requires password confirmation."""
+    stored = await model.get_user_by_email(user["email"])
+    if stored is None or not auth.verify_password(
+        req.password, stored["password_hash"]
+    ):
+        raise HTTPException(status_code=401, detail="Password is incorrect")
+    try:
+        await model.set_user_handle(user["id"], req.handle)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "updated", "handle": req.handle}
+
+
+@router.get("/auth/me")
+async def get_me(user: dict = Depends(auth.get_current_user)):
+    """Return the current user's profile."""
+    full = await model.get_user_by_id(user["id"])
+    if full is None:  # pragma: no cover — race between auth and lookup
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"id": full["id"], "email": full["email"], "handle": full["handle"]}
+
+
 @router.post("/auth/logout")
 async def logout(
     request: Request,
@@ -2021,6 +2053,7 @@ async def delete_user(
 class UpdateUserRequest(auth.BaseModel):
     email: str | None = None
     password: str | None = None
+    handle: str | None = None
 
 
 @router.patch("/admin/users/{user_id}")
@@ -2042,6 +2075,11 @@ async def update_user(
             )
         password_hash = auth.hash_password(req.password)
         await model.update_password(user_id, password_hash)
+    if req.handle is not None:
+        try:
+            await model.set_user_handle(user_id, req.handle)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     return {"status": "updated"}
 
 

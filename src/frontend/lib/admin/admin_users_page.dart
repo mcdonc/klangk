@@ -37,14 +37,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   void _resolvePermissions() {
     final auth = context.read<AuthService>();
-    _canUsers =
-        auth.hasPermission('/admin', '*') ||
+    _canUsers = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/users', 'view');
-    _canGroups =
-        auth.hasPermission('/admin', '*') ||
+    _canGroups = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/groups', 'view');
-    _canInvitations =
-        auth.hasPermission('/admin', '*') ||
+    _canInvitations = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/invitations', 'view');
   }
 
@@ -221,9 +218,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final memberIds = members.map((m) => m['id']).toSet();
-          final nonMembers = allUsers
-              .where((u) => !memberIds.contains(u['id']))
-              .toList();
+          final nonMembers =
+              allUsers.where((u) => !memberIds.contains(u['id'])).toList();
 
           return AlertDialog(
             title: Text('Members of "$groupName"'),
@@ -537,7 +533,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Future<void> _editUser(Map<String, dynamic> user) async {
     final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (ctx) => _EditUserDialog(currentEmail: user['email'] as String),
+      builder: (ctx) => _EditUserDialog(
+        currentEmail: user['email'] as String,
+        currentHandle: user['handle'] as String? ?? '',
+      ),
     );
     if (result == null) return;
 
@@ -584,7 +583,21 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               email: email,
               isAdmin: isAdmin,
             ),
-            title: Text(email),
+            title: Row(
+              children: [
+                Text(email),
+                if ((user['handle'] as String?)?.isNotEmpty == true) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    '@${user['handle']}',
+                    style: const TextStyle(
+                      color: KColors.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ],
+            ),
             subtitle: Text(
               groupNames.isEmpty
                   ? 'No groups'
@@ -637,8 +650,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               backgroundColor: isPending
                   ? KColors.accentAmber
                   : status == 'accepted'
-                  ? KColors.accentGreen
-                  : KColors.textMuted,
+                      ? KColors.accentGreen
+                      : KColors.textMuted,
               child: Text(
                 initial,
                 style: const TextStyle(
@@ -690,9 +703,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   @override
   Widget build(BuildContext context) {
-    final pendingCount = _invitations
-        .where((i) => i['status'] == 'pending')
-        .length;
+    final pendingCount =
+        _invitations.where((i) => i['status'] == 'pending').length;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
     final tabTypes = _tabTypes;
@@ -886,8 +898,12 @@ class _AddUserDialogState extends State<_AddUserDialog> {
 
 class _EditUserDialog extends StatefulWidget {
   final String currentEmail;
+  final String currentHandle;
 
-  const _EditUserDialog({required this.currentEmail});
+  const _EditUserDialog({
+    required this.currentEmail,
+    required this.currentHandle,
+  });
 
   @override
   State<_EditUserDialog> createState() => _EditUserDialogState();
@@ -895,17 +911,20 @@ class _EditUserDialog extends StatefulWidget {
 
 class _EditUserDialogState extends State<_EditUserDialog> {
   late final TextEditingController _emailController;
+  late final TextEditingController _handleController;
   final _passwordController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _emailController = TextEditingController(text: widget.currentEmail);
+    _handleController = TextEditingController(text: widget.currentHandle);
   }
 
   @override
   void dispose() {
     _emailController.dispose();
+    _handleController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -936,6 +955,17 @@ class _EditUserDialogState extends State<_EditUserDialog> {
             ),
             const SizedBox(height: 16),
             TextField(
+              controller: _handleController,
+              decoration: InputDecoration(
+                labelText: 'Handle',
+                labelStyle: labelStyle,
+                floatingLabelStyle: labelStyle,
+                floatingLabelBehavior: FloatingLabelBehavior.always,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
               controller: _passwordController,
               decoration: InputDecoration(
                 labelText: 'New Password',
@@ -959,9 +989,11 @@ class _EditUserDialogState extends State<_EditUserDialog> {
         FilledButton(
           onPressed: () {
             final email = _emailController.text.trim();
+            final handle = _handleController.text.trim();
             final password = _passwordController.text;
             if (email.isEmpty) return;
             final result = <String, String>{'email': email};
+            if (handle != widget.currentHandle) result['handle'] = handle;
             if (password.isNotEmpty) result['password'] = password;
             Navigator.pop(context, result);
           },
