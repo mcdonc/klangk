@@ -22,6 +22,7 @@ nav = [
     { "AI Coding Harnesses" = "features/ai-coding-harnesses.md" },
     { "Plugins & Extensions" = "features/plugins.md" },
     { "Export & Import" = "features/export-import.md" },
+    { "CLI" = "reference/cli.md" },
     { "SSH Agent Forwarding" = "features/ssh-agent-forwarding.md" },
     { "GitHub HTTPS Authentication" = "features/github-authentication.md" },
   ]},
@@ -32,7 +33,6 @@ nav = [
   ]},
   { "Reference" = [
     { "ACL System" = "reference/acl.md" },
-    { "CLI" = "reference/cli.md" },
     { "Environment Variables" = "reference/environment.md" },
     { "OIDC" = "reference/oidc.md" },
     { "Podman" = "reference/podman.md" },
