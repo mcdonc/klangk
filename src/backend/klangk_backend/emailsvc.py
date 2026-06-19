@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import shutil
 from email.message import EmailMessage
 
 import aiosmtplib
@@ -69,8 +70,6 @@ async def send_via_smtp(msg: EmailMessage) -> None:
 async def send_via_sendmail(msg: EmailMessage) -> None:
     sendmail = resolve_env_secret("KLANGK_SENDMAIL_PATH", "sendmail")
     logger.info("Using sendmail at: %s", sendmail)
-    import shutil
-
     resolved = shutil.which(sendmail)
     logger.info("Resolved sendmail path: %s", resolved)
     proc = await asyncio.create_subprocess_exec(

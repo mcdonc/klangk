@@ -10,6 +10,7 @@ podman with ``SIGWINCH`` so it resizes the container PTY.
 import asyncio
 import codecs
 import fcntl
+import json
 import logging
 import os
 import pty
@@ -409,8 +410,6 @@ async def load_workspace_state(container_id: str) -> dict:
     if proc.returncode != 0:
         return {}
     try:
-        import json
-
         return json.loads(stdout.decode("utf-8", errors="replace"))
     except (json.JSONDecodeError, ValueError):
         return {}
@@ -425,8 +424,6 @@ async def save_workspace_state(container_id: str, state: dict) -> None:
     Uses ``mktemp`` inside the container so the temp file is created with
     ``O_EXCL``, preventing symlink-following attacks.
     """
-    import json
-
     data = json.dumps(state, indent=2)
     # mktemp creates a file safely (O_EXCL); cat writes into it; mv renames
     # atomically; trap ensures cleanup on any failure.

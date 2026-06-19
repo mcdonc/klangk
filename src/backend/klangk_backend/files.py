@@ -1,5 +1,6 @@
 """File operations on workspace home directories (host-side mount)."""
 
+import shutil
 from pathlib import Path
 
 from . import workspaces
@@ -63,8 +64,6 @@ def delete_path(user_id: str, workspace_id: str, relative_path: str) -> str:
     if not path.exists():
         raise FileNotFoundError("Path not found")
     if path.is_dir():
-        import shutil
-
         shutil.rmtree(path)
     else:
         path.unlink()

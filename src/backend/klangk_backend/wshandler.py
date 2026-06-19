@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from . import auth, container, model, podman, workspaces
+from . import acl as _acl
+from . import agent, auth, container, model, podman, terminal, workspaces
 from .util import derive_hosting_info, resolve_env_secret
 from .dockerexec import ExecSession
 from .terminal import TerminalSession, attach_browser
@@ -559,6 +560,11 @@ class WebSocketState:
 
 state = WebSocketState()
 
+# Wire up the agent broadcast callback so agent.py can broadcast
+# to WebSocket sessions without importing wshandler (breaking the
+# agent ↔ wshandler circular dependency).
+agent._get_workspace_session = state.get_session
+
 
 async def _get_presence_list(workspace_id: str) -> list[dict]:
     """Return deduplicated list of users connected to a workspace."""
@@ -579,7 +585,6 @@ async def _get_presence_list(workspace_id: str) -> list[dict]:
                 }
             )
     # Include agent only if its RPC process is alive.
-    from . import agent  # pragma: no cover
 
     if agent.any_running():  # pragma: no cover
         agent_user = await model.get_agent_user()
@@ -755,8 +760,6 @@ class Connection:
         if not workspace_id:
             send_error(self.sock, "Missing workspaceId")
             return
-
-        from . import acl as _acl
 
         principals = await _acl.get_principals(self.user["id"])
         if not await _acl.check_permission(
@@ -955,15 +958,13 @@ class Connection:
         # when the container restarts.
         session = state.get_session(workspace_id)
         if session:
-            from .terminal import save_workspace_state
-
             snapshot = {
                 uid: [dict(w) for w in wins]
                 for uid, wins in session.terminal_windows.items()
             }
             if snapshot:
                 try:
-                    await save_workspace_state(container_id, snapshot)
+                    await terminal.save_workspace_state(container_id, snapshot)
                 except Exception as e:
                     logger.warning("State save before shutdown failed: %s", e)
 
@@ -1010,9 +1011,7 @@ class Connection:
             return
         # Debounce: if the last terminal start was very recent, skip.
         # This prevents rapid retry loops when the PTY exits immediately.
-        import time as _time
-
-        now = _time.monotonic()
+        now = time.monotonic()
         if hasattr(self, "_last_terminal_start"):
             if now - self._last_terminal_start < 2.0:
                 logger.warning(
@@ -1092,12 +1091,6 @@ class Connection:
                     return
                 conn.sock.send_json({"type": "terminal_started"})
                 try:
-                    from .terminal import (
-                        list_windows,
-                        load_workspace_state,
-                        restore_windows,
-                    )
-
                     sname = conn._tmux_session_name()
                     user_id = conn.user["id"]
                     ws_session = state.get_session(conn.workspace_id)
@@ -1108,10 +1101,12 @@ class Connection:
                         ws_session
                         and user_id not in ws_session.terminal_windows
                     ):
-                        saved = await load_workspace_state(conn.container_id)
+                        saved = await terminal.load_workspace_state(
+                            conn.container_id
+                        )
                         if user_id in saved:
                             saved_windows = saved[user_id]
-                            await restore_windows(
+                            await terminal.restore_windows(
                                 conn.container_id, sname, saved_windows
                             )
                             ws_session.terminal_windows[user_id] = (
@@ -1124,7 +1119,9 @@ class Connection:
                                         uid, wins
                                     )
 
-                    windows = await list_windows(conn.container_id, sname)
+                    windows = await terminal.list_windows(
+                        conn.container_id, sname
+                    )
                     conn._sync_terminal_windows(windows)
                     conn.sock.send_json(
                         {
@@ -1186,9 +1183,7 @@ class Connection:
         await attach_browser(self.container_id, browser_id)
 
     async def handle_terminal_input(self, msg: dict) -> None:
-        import time as _time
-
-        t0 = _time.monotonic()
+        t0 = time.monotonic()
         session = self.terminal_session
         if session is None or not session.is_alive:
             logger.warning("terminal_input: no session or not alive")
@@ -1207,7 +1202,7 @@ class Connection:
             return
         container.registry.record_activity(self.container_id)
         await session.write(data)
-        elapsed = _time.monotonic() - t0
+        elapsed = time.monotonic() - t0
         if elapsed > 0.1:  # pragma: no cover
             logger.warning("terminal_input SLOW: %.3fs", elapsed)
 
@@ -1271,22 +1266,19 @@ class Connection:
         self._save_state_snapshot(ws_session)
 
     async def handle_terminal_new_window(self, msg: dict) -> None:
-        import time as _time
-
-        t0 = _time.monotonic()
+        t0 = time.monotonic()
         if not self.container_id or not self._user_home:
             return
-        from .terminal import new_window
 
         session_name = self._tmux_session_name()
         name = msg.get("name")
         try:
-            windows = await new_window(
+            windows = await terminal.new_window(
                 self.container_id, session_name, name=name
             )
             logger.info(
                 "handle_terminal_new_window: %.3fs",
-                _time.monotonic() - t0,
+                time.monotonic() - t0,
             )
             self._sync_terminal_windows(windows)
             self.sock.send_json(
@@ -1296,21 +1288,20 @@ class Connection:
             send_error(self.sock, f"Failed to create window: {e}")
 
     async def handle_terminal_select_window(self, msg: dict) -> None:
-        import time as _time
-
-        t0 = _time.monotonic()
+        t0 = time.monotonic()
         if not self.container_id or not self._user_home:
             return
-        from .terminal import select_window
 
         session_name = self._tmux_session_name()
         index = msg.get("index", 0)
         try:
-            await select_window(self.container_id, session_name, index)
+            await terminal.select_window(
+                self.container_id, session_name, index
+            )
             logger.info(
                 "handle_terminal_select_window: index=%s %.3fs",
                 index,
-                _time.monotonic() - t0,
+                time.monotonic() - t0,
             )
         except Exception as e:
             send_error(self.sock, f"Failed to select window: {e}")
@@ -1318,12 +1309,11 @@ class Connection:
     async def handle_terminal_close_window(self, msg: dict) -> None:
         if not self.container_id or not self._user_home:
             return
-        from .terminal import close_window
 
         session_name = self._tmux_session_name()
         index = msg.get("index", 0)
         try:
-            windows = await close_window(
+            windows = await terminal.close_window(
                 self.container_id, session_name, index
             )
             self._sync_terminal_windows(windows)
@@ -1336,7 +1326,6 @@ class Connection:
     async def handle_terminal_rename_window(self, msg: dict) -> None:
         if not self.container_id or not self._user_home:
             return
-        from .terminal import list_windows, rename_window
 
         session_name = self._tmux_session_name()
         index = msg.get("index", 0)
@@ -1345,8 +1334,12 @@ class Connection:
             send_error(self.sock, "Name required")
             return
         try:
-            await rename_window(self.container_id, session_name, index, name)
-            windows = await list_windows(self.container_id, session_name)
+            await terminal.rename_window(
+                self.container_id, session_name, index, name
+            )
+            windows = await terminal.list_windows(
+                self.container_id, session_name
+            )
             self._sync_terminal_windows(windows)
             self.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
@@ -1357,11 +1350,12 @@ class Connection:
     async def handle_terminal_list_windows(self) -> None:
         if not self.container_id or not self._user_home:
             return
-        from .terminal import list_windows
 
         session_name = self._tmux_session_name()
         try:
-            windows = await list_windows(self.container_id, session_name)
+            windows = await terminal.list_windows(
+                self.container_id, session_name
+            )
             self.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
             )
@@ -1370,8 +1364,6 @@ class Connection:
 
     async def _has_perm(self, perm: str) -> bool:
         """Check if the connected user has a workspace permission."""
-        from . import acl as _acl
-
         if not self.workspace_id:
             return False
         principals = await _acl.get_principals(self.user["id"])
@@ -1410,7 +1402,6 @@ class Connection:
         if not await self._has_perm("share-terminals"):
             send_error(self.sock, "Permission denied")
             return
-        from .terminal import kill_joiner_sessions
 
         window_id = msg.get("window_id", "")
         if not window_id:
@@ -1429,7 +1420,9 @@ class Connection:
         match["shared"] = False
         # Kick spectators/collaborators
         try:
-            await kill_joiner_sessions(self.container_id, session_name)
+            await terminal.kill_joiner_sessions(
+                self.container_id, session_name
+            )
         except Exception:
             logger.debug("Failed to kill joiner sessions", exc_info=True)
         ws_session.broadcast(
@@ -1517,12 +1510,10 @@ class Connection:
                 # specifically so the active window changes for the
                 # joiner, not the group owner.  Fall back to bare @N
                 # if the session isn't ready yet (race on rapid joins).
-                from .terminal import tmux_command
-
                 joiner_session = session._tmux_session_name
                 if joiner_session:
                     try:
-                        await tmux_command(
+                        await terminal.tmux_command(
                             conn.container_id,
                             joiner_session,
                             [
@@ -1533,15 +1524,11 @@ class Connection:
                         )
                     except RuntimeError:
                         # Joiner session not ready — fall back to bare @N
-                        from .terminal import select_window
-
-                        await select_window(
+                        await terminal.select_window(
                             conn.container_id, owner_user_id, window_id
                         )
                 else:
-                    from .terminal import select_window
-
-                    await select_window(
+                    await terminal.select_window(
                         conn.container_id, owner_user_id, window_id
                     )
                 if not await conn._activate_session(session, cols, rows):
@@ -1597,7 +1584,6 @@ class Connection:
         Uses the session's _save_lock so concurrent saves don't overlap.
         """
         return  # temporarily disabled for debugging
-        from .terminal import save_workspace_state
 
         container_id = self.container_id
         # Snapshot the state now — the dict may mutate before the task runs.
@@ -1608,7 +1594,7 @@ class Connection:
 
         async def _do_save() -> None:
             async with ws_session._save_lock:
-                await save_workspace_state(container_id, snapshot)
+                await terminal.save_workspace_state(container_id, snapshot)
 
         asyncio.create_task(_do_save())
 
@@ -1626,10 +1612,8 @@ class Connection:
             send_error(self.sock, "Name required")
             return
         session_name = self._tmux_session_name()
-        from .terminal import new_window
-
         try:
-            windows = await new_window(
+            windows = await terminal.new_window(
                 self.container_id, session_name, name=name
             )
         except Exception as e:
@@ -1657,7 +1641,6 @@ class Connection:
         if not await self._has_perm("share-terminals"):
             send_error(self.sock, "Permission denied")
             return
-        from .terminal import close_window, kill_joiner_sessions
 
         owner_user_id = msg.get("user_id", "").strip()
         window_id = msg.get("window_id", "").strip()
@@ -1677,8 +1660,12 @@ class Connection:
             return
         window_name = match["name"]
         try:
-            await kill_joiner_sessions(self.container_id, owner_user_id)
-            await close_window(self.container_id, owner_user_id, window_id)
+            await terminal.kill_joiner_sessions(
+                self.container_id, owner_user_id
+            )
+            await terminal.close_window(
+                self.container_id, owner_user_id, window_id
+            )
         except Exception as e:
             send_error(self.sock, f"Failed to delete shared terminal: {e}")
             return
@@ -1996,8 +1983,6 @@ class Connection:
         self, container_id: str
     ) -> None:
         """Start the Pi RPC agent so it shows in presence."""
-        from . import agent
-
         try:
             session = await agent.get_session(self.workspace_id, container_id)
             await session._ensure_started()
@@ -2099,8 +2084,6 @@ class Connection:
 
     async def forward_exec_output(self, session: ExecSession) -> None:
         """Forward exec stdout to the client via WebSocket as base64."""
-        import base64
-
         try:
             async for data in session.output():
                 self.sock.send_json(
@@ -2303,7 +2286,6 @@ async def _handle_agent_mention(
     workspace_id: str, container_id: str, user_text: str
 ) -> None:
     """Handle an @agent mention by sending the prompt to Pi RPC."""
-    from . import agent
 
     agent_handle = await model.agent_handle()
     agent_re = _get_agent_mention_re(agent_handle)

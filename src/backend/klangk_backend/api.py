@@ -7,6 +7,7 @@ import logging
 import os
 import posixpath
 import secrets
+import shutil
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 import subprocess
 import tempfile
@@ -34,6 +35,7 @@ from . import (
     files,
     oidc,
     plugins,
+    podman,
     wshandler,
     model,
     workspaces,
@@ -888,8 +890,6 @@ async def list_images(_user: dict = Depends(auth.get_current_user)):
 
 @router.get("/volumes")
 async def list_volumes(user: dict = Depends(auth.get_current_user)):
-    from . import podman
-
     volumes = await podman.list_volumes(
         f"klangk.instance={container.INSTANCE_ID}"
     )
@@ -913,8 +913,6 @@ async def create_volume(
     body: CreateVolumeRequest,
     user: dict = Depends(auth.get_current_user),
 ):
-    from . import podman
-
     if await podman.inspect_volume(body.name) is not None:
         raise HTTPException(
             status_code=409, detail=f"Volume {body.name!r} already exists"
@@ -934,8 +932,6 @@ async def create_volume(
 async def delete_volume(
     name: str, user: dict = Depends(auth.get_current_user)
 ):
-    from . import podman
-
     info = await podman.inspect_volume(name)
     if info is None:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -1266,8 +1262,6 @@ async def export_workspace(
                 yield chunk
             await proc.wait()
         finally:
-            import shutil
-
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     safe_name = ws_name.replace("/", "_").replace("\\", "_")

@@ -686,7 +686,7 @@ class TestMonitorProcess:
                 },
             ) as mock_chat,
             patch(
-                "klangk_backend.wshandler.state.get_session"
+                "klangk_backend.agent._get_workspace_session"
             ) as mock_get_session,
         ):
             mock_session = MagicMock()
@@ -744,7 +744,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.wshandler.state.get_session",
+                "klangk_backend.agent._get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch.object(
@@ -781,7 +781,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.wshandler.state.get_session",
+                "klangk_backend.agent._get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch.object(
@@ -814,7 +814,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.wshandler.state.get_session",
+                "klangk_backend.agent._get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch.object(
@@ -848,7 +848,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "reconnected"},
             ) as mock_chat,
             patch(
-                "klangk_backend.wshandler.state.get_session"
+                "klangk_backend.agent._get_workspace_session"
             ) as mock_get_session,
         ):
             mock_session = MagicMock()
@@ -894,7 +894,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.wshandler.state.get_session",
+                "klangk_backend.agent._get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch(

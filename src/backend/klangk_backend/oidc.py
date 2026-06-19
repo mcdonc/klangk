@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 import httpx
 from jose import jwt as jose_jwt
 
+from . import model
 from .util import resolve_env_secret, resolve_file_secret
 
 logger = logging.getLogger(__name__)
@@ -429,8 +430,6 @@ async def sync_oidc_groups(
     groups: set[str],
 ) -> None:
     """Sync group memberships from the login hook result."""
-    from . import model
-
     # Resolve group names to IDs, auto-creating missing groups
     desired_ids: set[str] = set()
     for name in groups:

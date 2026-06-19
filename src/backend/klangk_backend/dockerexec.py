@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 
+from . import podman
 from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
@@ -25,8 +26,6 @@ class ExecSession:
 
     async def start(self, command: list[str]) -> None:
         """Start a command via podman exec with piped stdin/stdout."""
-        from . import podman
-
         env_flags: list[str] = []
         work_dir = "/home/work"
         if self.user_home is not None:
