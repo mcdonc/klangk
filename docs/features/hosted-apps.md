@@ -5,6 +5,9 @@ Workspace containers can run web applications (Jupyter, Marimo, Vite dev servers
 !!! note
 Hosted apps are for **development and demonstration** — not permanent hosting. Port allocations and containers are ephemeral; use a dedicated hosting platform for production deployments.
 
+!!! warning
+Hosted apps are accessible to anyone who can reach the Klangk server. Do not serve sensitive content or data you don't want to be publicly visible.
+
 ## How it works
 
 1. Each workspace gets **5 ports** allocated from the host range starting at port 9000 (configurable via `KLANGK_PORT_RANGE_START`). These map to container ports 8000-8004.
