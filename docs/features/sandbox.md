@@ -227,11 +227,23 @@ if ! command -v devenv &>/dev/null; then
 fi
 ```
 
+### Interrupted setup
+
+If the setup script is interrupted (Ctrl+C, network failure, etc.),
+the workspace is left in an inconsistent state. To recover:
+
+- **If your script is idempotent:** re-run with `--force-setup`:
+  `klangkc sandbox myws --force-setup`
+- **If not:** delete the workspace and start over:
+  `klangkc rm myws && klangkc sandbox myws`
+
 ### Tips
 
 - **Make scripts idempotent.** Check if tools are already installed
-  before installing them. The script runs once on creation, but if
-  you delete and recreate the workspace, it runs again.
+  before installing them (e.g. `if ! command -v nix`). This makes
+  `--force-setup` safe to use after interruptions. If your script
+  isn't idempotent, an interrupted setup means you'll need to
+  destroy the workspace and recreate it.
 - **Use named volumes for large installs.** Mount `/nix` as a named
   volume so the nix store persists across workspace recreations.
 - **Keep it fast.** The setup script blocks before you get a shell.
