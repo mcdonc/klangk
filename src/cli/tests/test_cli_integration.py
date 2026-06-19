@@ -1058,6 +1058,34 @@ class TestClientLines:
                 with pytest.raises(httpx.HTTPStatusError):
                     client.delete_workspace("ws1")
 
+    def test_restart_workspace_calls_post(self):
+
+        from klangkc.client import KlangkClient
+
+        cfg = CLIConfig()
+        cfg.auth.token = "tok"
+        client = KlangkClient(cfg)
+
+        list_resp = MagicMock()
+        list_resp.status_code = 200
+        list_resp.json.return_value = [
+            {
+                "id": "ws1",
+                "name": "ws1",
+                "created_at": "2025-01-01T00:00:00Z",
+            }
+        ]
+        restart_resp = MagicMock()
+        restart_resp.status_code = 200
+
+        with patch.object(client, "get", return_value=list_resp):
+            with patch.object(
+                client, "post", return_value=restart_resp
+            ) as mock_post:
+                client.restart_workspace("ws1")
+
+        mock_post.assert_called_once_with("/workspaces/ws1/restart")
+
 
 class TestImagesCommand:
     def test_images_lists_allowed(self, monkeypatch):
