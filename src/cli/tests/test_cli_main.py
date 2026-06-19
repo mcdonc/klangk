@@ -301,6 +301,29 @@ class TestMainCLI:
         with pytest.raises(typer.Exit):
             main.rm("nope")
 
+    def test_restart_workspace(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with patch("typer.echo"):
+            main.restart("my-ws")
+        client.restart_workspace.assert_called_once_with("my-ws")
+
+    def test_restart_workspace_not_found(self, logged_in_cfg, monkeypatch):
+        import typer
+
+        from klangkc.client import WorkspaceNotFoundError
+        from klangkc import main
+
+        client = MagicMock()
+        client.restart_workspace.side_effect = WorkspaceNotFoundError("nope")
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.restart("nope")
+
     def test_shell_requires_auth(self, tmp_path, monkeypatch):
         import typer
         from klangkc import main

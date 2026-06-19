@@ -1033,7 +1033,9 @@ class TestAuthLines:
 
 
 class TestClientLines:
-    def test_delete_workspace_500_exit(self):
+    def test_delete_workspace_500_raises(self):
+        import httpx
+
         from klangkc.client import KlangkClient
 
         cfg = CLIConfig()
@@ -1047,13 +1049,42 @@ class TestClientLines:
         ]
         del_resp = MagicMock()
         del_resp.status_code = 500
-        del_resp.text = "server error"
-        del_resp.is_success = False
+        del_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock()
+        )
 
         with patch.object(client, "get", return_value=list_resp):
             with patch.object(client, "delete", return_value=del_resp):
-                with pytest.raises(SystemExit):
+                with pytest.raises(httpx.HTTPStatusError):
                     client.delete_workspace("ws1")
+
+    def test_restart_workspace_calls_post(self):
+
+        from klangkc.client import KlangkClient
+
+        cfg = CLIConfig()
+        cfg.auth.token = "tok"
+        client = KlangkClient(cfg)
+
+        list_resp = MagicMock()
+        list_resp.status_code = 200
+        list_resp.json.return_value = [
+            {
+                "id": "ws1",
+                "name": "ws1",
+                "created_at": "2025-01-01T00:00:00Z",
+            }
+        ]
+        restart_resp = MagicMock()
+        restart_resp.status_code = 200
+
+        with patch.object(client, "get", return_value=list_resp):
+            with patch.object(
+                client, "post", return_value=restart_resp
+            ) as mock_post:
+                client.restart_workspace("ws1")
+
+        mock_post.assert_called_once_with("/workspaces/ws1/restart")
 
 
 class TestImagesCommand:

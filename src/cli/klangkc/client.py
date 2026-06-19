@@ -269,9 +269,13 @@ class KlangkClient:
         ws = self.resolve_workspace(name)
         resp = self.delete(f"/workspaces/{ws.id}")
         self._check_auth(resp)
-        if not resp.is_success:
-            logging.error("Failed to delete workspace: %s", resp.text)
-            sys.exit(1)
+        resp.raise_for_status()
+
+    def restart_workspace(self, name: str) -> None:
+        ws = self.resolve_workspace(name)
+        resp = self.post(f"/workspaces/{ws.id}/restart")
+        self._check_auth(resp)
+        resp.raise_for_status()
 
     def export_workspace(
         self,

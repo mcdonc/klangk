@@ -671,7 +671,7 @@ class TestKlangkClient:
                 with pytest.raises(AuthError):
                     client.delete_workspace("ws1")
 
-    def test_delete_workspace_non_200_exits(self):
+    def test_delete_workspace_non_200_raises(self):
         cfg = CLIConfig()
         cfg.auth.token = "token"
         client = KlangkClient(cfg)
@@ -682,11 +682,12 @@ class TestKlangkClient:
         ]
         del_resp = MagicMock()
         del_resp.status_code = 500
-        del_resp.text = "Server error"
-        del_resp.is_success = False
+        del_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock()
+        )
         with patch.object(client, "get", return_value=list_resp):
             with patch.object(client, "delete", return_value=del_resp):
-                with pytest.raises(SystemExit):
+                with pytest.raises(httpx.HTTPStatusError):
                     client.delete_workspace("ws1")
 
     def test_no_token_uses_empty_string(self):

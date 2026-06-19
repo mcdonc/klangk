@@ -255,6 +255,20 @@ def rm(
     typer.echo(f"Deleted workspace {name}")
 
 
+@app.command("restart")
+def restart(
+    name: str = typer.Argument(..., help="Workspace name"),
+) -> None:
+    """Restart the container for a workspace."""
+    _require_auth()
+    try:
+        _client().restart_workspace(name)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{name}'")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Restarted workspace {name}")
+
+
 @app.command("export")
 def export_workspace(
     name: str = typer.Argument(..., help="Workspace name"),

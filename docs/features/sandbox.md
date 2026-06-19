@@ -200,9 +200,10 @@ or re-run the setup script. This means:
 - **Setup script changes** are not re-applied automatically. Use
   `--force-setup` to re-run the copy and setup steps on an existing
   workspace.
-- **Config changes** (new mounts, different image) require deleting
-  and recreating the workspace. A warning is shown if the config
-  has changed since creation.
+- **Config changes** (new mounts, different image) require
+  restarting (`klangkc restart myws`) or deleting and recreating
+  the workspace. A warning is shown if the config has changed
+  since creation.
 
 ## Setup scripts
 
@@ -245,9 +246,10 @@ the workspace is left in an inconsistent state. To recover:
 
 - **If your script is idempotent:** re-run with `--force-setup`:
   `klangkc sandbox myws --force-setup`
-- **If not:** delete the workspace and start over
-  (`klangkc rm myws && klangkc sandbox myws`), or create a fresh
-  workspace with a different name (`klangkc sandbox myws-2`).
+- **If not:** restart the container and try again:
+  `klangkc restart myws && klangkc sandbox myws --force-setup`.
+  Or delete the workspace entirely and start over:
+  `klangkc rm myws && klangkc sandbox myws`.
 
 ### Tips
 
