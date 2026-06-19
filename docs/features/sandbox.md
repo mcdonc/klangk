@@ -130,24 +130,24 @@ recreations but aren't tied to a specific host directory. Use them
 for caches, package stores, and other data that should survive
 container rebuilds but doesn't need to be on the host filesystem.
 
-### `env`
+### Secrets and environment variables
+
+There is no dedicated `env` section. Instead, mount a secrets file
+into the container and source it from your shell or setup script:
 
 ```yaml
-env:
-  file: .env
-  vars:
-    KLANGKC_FORWARD_AGENT: "true"
-    EDITOR: nano
+mounts:
+  - ~/.klangk-secrets:~/.klangk-secrets:ro
 ```
 
-| Field  | Required | Default | Description                                                                   |
-| ------ | -------- | ------- | ----------------------------------------------------------------------------- |
-| `file` | no       | (none)  | Path to a dotenv file, relative to the sandbox root. Typically gitignored.    |
-| `vars` | no       | (none)  | Literal key-value pairs. Merged with `file` contents; `vars` take precedence. |
+Then in your `.bashrc` or setup script:
 
-Use `file` for secrets (API keys, tokens) that shouldn't be checked
-in. Use `vars` for non-secret settings that should be shared with the
-team.
+```bash
+[ -f ~/.klangk-secrets ] && . ~/.klangk-secrets
+```
+
+This way, changes to the secrets file on the host take effect on the
+next shell session without recreating the workspace.
 
 ## Command reference
 
@@ -166,8 +166,8 @@ klangkc sandbox [PATH] [--name NAME] [--forward-agent/-A]
 **First run** (workspace doesn't exist):
 
 1. Read `.klangk/sandbox.yaml` from the sandbox root
-2. Create the workspace with the configured image, mounts, volumes,
-   and environment variables
+2. Create the workspace with the configured image, mounts, and
+   volumes
 3. Mount the sandbox root at `mount_at`
 4. Copy files listed in `copy` into the container home
 5. Run the `setup` script inside the container (if configured)
@@ -240,25 +240,11 @@ mounts:
   - ~/.claude:~/.claude
   - ~/.ssh:~/.ssh:ro
   - /home/chrism/data:~/data
+  - ~/.klangk-secrets:~/.klangk-secrets:ro
 
 volumes:
   - klangk-nix:/nix
   - klangk-cache:~/.cache
-
-env:
-  file: .env
-  vars:
-    KLANGKC_FORWARD_AGENT: "true"
-    EDITOR: nano
-```
-
-With a `.env` file (gitignored):
-
-```bash
-KLANGK_LLM_API_KEY=sk-...
-KLANGK_LLM_BASE_URL=https://api.openai.com/v1
-KLANGK_LLM_MODEL=gpt-4
-KLANGK_JWT_SECRET=my-secret
 ```
 
 And a setup script:
