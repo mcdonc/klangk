@@ -61,6 +61,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/* \
     && chown -R root:root /var/log/apt
 
+# Pre-populate known_hosts with GitHub's SSH host keys so
+# git clone git@github.com:... works without interactive prompts.
+RUN ssh-keyscan -t ed25519,ecdsa,rsa github.com >> /etc/ssh/ssh_known_hosts 2>/dev/null
+
 # fd-find installs as fdfind on Debian — symlink to fd
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 
