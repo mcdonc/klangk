@@ -1546,7 +1546,7 @@ class TestTerminalSharing:
 
     def test_terminals_lists_windows(self):
         result = _run(
-            ["klangkc", "terminals", "e2e-share"],
+            ["klangkc", "terminal", "ls", "e2e-share"],
             env=self._env,
             timeout=120,
         )
@@ -1556,7 +1556,7 @@ class TestTerminalSharing:
         env = self._env
         # First discover the window name via `klangk terminals`
         list_result = _run(
-            ["klangkc", "terminals", "e2e-share"],
+            ["klangkc", "terminal", "ls", "e2e-share"],
             env=env,
             timeout=120,
         )
@@ -1576,7 +1576,7 @@ class TestTerminalSharing:
         )
 
         result = _run(
-            ["klangkc", "share-terminal", "e2e-share", terminal_name],
+            ["klangkc", "terminal", "share", "e2e-share", terminal_name],
             env=env,
             timeout=120,
         )
@@ -1584,7 +1584,7 @@ class TestTerminalSharing:
         assert "shared" in result.stderr.lower()
 
         result = _run(
-            ["klangkc", "unshare-terminal", "e2e-share", terminal_name],
+            ["klangkc", "terminal", "unshare", "e2e-share", terminal_name],
             env=env,
             timeout=120,
         )
@@ -1593,7 +1593,7 @@ class TestTerminalSharing:
 
     def test_share_nonexistent_terminal(self):
         result = _run(
-            ["klangkc", "share-terminal", "e2e-share", "nonexistent"],
+            ["klangkc", "terminal", "share", "e2e-share", "nonexistent"],
             env=self._env,
             timeout=120,
         )

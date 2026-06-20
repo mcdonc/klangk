@@ -971,7 +971,15 @@ async def _sandbox_connect(  # pragma: no cover
     )
 
 
-@app.command("terminals")
+terminal_app = typer.Typer(
+    name="terminal",
+    help="Manage workspace terminals.",
+    rich_markup_mode="rich",
+)
+app.add_typer(terminal_app, name="terminal")
+
+
+@terminal_app.command("ls")
 def terminals(
     workspace: str = typer.Argument(help="Workspace name"),
 ) -> None:
@@ -1080,7 +1088,7 @@ def unshare_workspace(
     typer.echo(f"Removed {email} from workspace {workspace}")
 
 
-@app.command("share-terminal")
+@terminal_app.command("share")
 def share_terminal(
     workspace: str = typer.Argument(help="Workspace name"),
     terminal: str = typer.Argument(help="Terminal name to share"),
@@ -1160,7 +1168,7 @@ def share_terminal(
     asyncio.run(_share())
 
 
-@app.command("unshare-terminal")
+@terminal_app.command("unshare")
 def unshare_terminal(
     workspace: str = typer.Argument(help="Workspace name"),
     terminal: str = typer.Argument(help="Terminal name to unshare"),

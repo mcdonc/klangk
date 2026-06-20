@@ -46,9 +46,9 @@ klangkc import bak.tar.gz --name new-name  # import with a different name
 klangkc members my-project           # list workspace members
 klangkc share my-project user@x.com  # share workspace with a user
 klangkc unshare my-project user@x.com # remove a user's access
-klangkc terminals my-project         # list all terminals (own + shared)
-klangkc share-terminal my-project bash        # share a terminal with workspace members
-klangkc unshare-terminal my-project bash      # stop sharing a terminal
+klangkc terminal ls my-project       # list all terminals (own + shared)
+klangkc terminal share my-project bash        # share a terminal with workspace members
+klangkc terminal unshare my-project bash      # stop sharing a terminal
 klangkc invite user@example.com      # send an invitation email (admin only)
 klangkc invitations                  # list all invitations (admin only)
 klangkc images                       # list available container images
