@@ -70,22 +70,6 @@ connect from your local terminal with
 - [OIDC single sign-on](reference/oidc.md) (Google, GitHub, etc.)
 - [Email invitations](features/invitations.md)
 
-## Quick Start
-
-```bash
-git clone https://github.com/mcdonc/klangk.git
-cd klangk
-devenv processes up --no-tui
-```
-
-Then open <http://localhost:8995> in your browser.
-
-Install the [CLI](reference/cli.md) (optional):
-
-```bash
-pip install klangkc
-```
-
 ## Architecture
 
 ![Architecture Overview](assets/architecture-overview.svg)
