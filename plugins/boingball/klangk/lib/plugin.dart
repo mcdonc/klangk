@@ -305,13 +305,13 @@ Future<void> _preRenderBallFrames(int radius) async {
   if (_ballFrames != null && _ballFrameRadius == radius) return;
   const cols = 14;
   const rows = 8;
-  const nFrames = 28;
+  const nFrames = 14;
   const tilt = -17 * pi / 180; // tilt right
   final cosTilt = cos(tilt);
   final sinTilt = sin(tilt);
   final diam = radius * 2;
-  // High resolution — only computed once
-  final res = diam;
+  // Capped resolution — good enough quality without hanging
+  final res = min(diam, 120);
 
   final frames = <ui.Image>[];
   for (int frame = 0; frame < nFrames; frame++) {
@@ -482,7 +482,7 @@ class _BoingScenePainter extends CustomPainter {
     if (frames == null || frames.isEmpty) return;
 
     // Quantize phase to frame index
-    const nFrames = 28;
+    const nFrames = 14;
     var frameIdx = (phase / 14 * nFrames).floor() % nFrames;
     if (frameIdx < 0) frameIdx += nFrames;
 
