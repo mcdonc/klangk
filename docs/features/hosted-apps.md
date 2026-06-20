@@ -39,7 +39,7 @@ WebSocket connections are supported — tools like Jupyter and Marimo work out o
 | `KLANGK_HOSTING_PROTO`     | `http`                    | Protocol for hosted app URLs                  |
 | `KLANGK_HOSTING_BASE_PATH` | `/klangk`                 | Base path prefix (empty for root deployments) |
 
-Extensions and scripts inside the container can use these to construct correct URLs for their hosted apps.
+Extensions and scripts inside the container can use these to construct correct URLs for their hosted apps. Pi's built-in `get_hosted_url` tool does this automatically.
 
 ## Behind a reverse proxy
 

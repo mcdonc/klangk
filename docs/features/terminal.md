@@ -9,9 +9,8 @@ helps explain how terminal features work.
 
 Klangk uses tmux for three reasons:
 
-1. **Session persistence** — your terminal survives disconnects, page
-   refreshes, and even container restarts. When you reconnect, you pick
-   up exactly where you left off.
+1. **Session persistence** — your terminal survives disconnects and page
+   refreshes. When you reconnect, you pick up exactly where you left off.
 2. **Window management** — each terminal tab is a tmux window. Switching
    tabs is instant because all windows share the same tmux session.
 3. **Shared terminals** — tmux session groups let multiple users see
@@ -38,10 +37,29 @@ container. It starts on demand when you click the Terminal tab.
 
 - Runs as the `klangk` user with bash (see [The Shell](the-shell.md)
   for zsh and customization)
-- Right-click context menu with Copy (when text selected) and Paste
+- **Select to copy** — selecting text with the mouse automatically
+  copies it to your system clipboard. This is a tmux feature: the
+  selection is a tmux copy-mode selection (not a native browser
+  selection), so it can span the full scrollback buffer, not just the
+  visible viewport. To make a native browser selection instead (e.g.,
+  for copying a URL), hold **Shift** while dragging.
+- Right-click context menu with Paste (and Copy when text is selected)
 - Mouse wheel scrollback via tmux copy mode
 - If the container stops (idle timeout or crash), an overlay appears
   with a restart button. The terminal auto-reconnects after restart.
+
+### Exiting a `klangkc shell` session
+
+Typing `exit` or pressing **Ctrl+D** does **not** disconnect you from
+the container. Klangk's tmux is configured with `remain-on-exit`, which
+keeps the pane alive and immediately respawns a new shell. This is
+intentional — it prevents you from accidentally losing your terminal
+session.
+
+To actually disconnect from a `klangkc shell` session, use the SSH-style
+escape sequence: press **Enter**, then **~**, then **.** (period). This
+cleanly disconnects the CLI client without affecting the tmux session
+inside the container.
 
 ## Terminal tabs
 
