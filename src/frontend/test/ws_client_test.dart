@@ -12,6 +12,7 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
   final _incoming = StreamController<dynamic>.broadcast();
   final _sink = _FakeSink();
   bool failReady = false;
+  bool hangReady = false;
   int? _closeCode;
 
   @override
@@ -24,8 +25,11 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
   int? get closeCode => _closeCode;
 
   @override
-  Future<void> get ready =>
-      failReady ? Future.error('Connection refused') : Future.value();
+  Future<void> get ready {
+    if (failReady) return Future.error('Connection refused');
+    if (hangReady) return Completer<void>().future; // never completes
+    return Future.value();
+  }
 
   void serverSend(Map<String, dynamic> msg) => _incoming.add(jsonEncode(msg));
 
@@ -253,6 +257,31 @@ void main() {
       expect(client.connected, isFalse);
       expect(errors.length, 1);
       expect(errors[0], 'Session expired, please log in again');
+      client.dispose();
+    });
+
+    test('connect timeout emits error and does not hang', () async {
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+      final hangChannel = _FakeWebSocketChannel();
+      hangChannel.hangReady = true;
+      WsClient.testChannelFactory = (_) => hangChannel;
+      WsClient.testReadyTimeout = const Duration(milliseconds: 50);
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+
+      final errors = <String>[];
+      client.errors.listen(errors.add);
+
+      await client.connect();
+      await Future.delayed(Duration.zero);
+      expect(client.connected, isFalse);
+      expect(errors.length, 1);
+      expect(errors[0], 'Connection timed out');
+      WsClient.testReadyTimeout = null;
       client.dispose();
     });
   });
