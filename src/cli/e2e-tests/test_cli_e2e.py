@@ -1730,13 +1730,13 @@ class TestWorkspaceSharing:
         )
         assert result.returncode == 0
 
-        # Members should be empty now
+        # Shared user should be gone (owner may still appear)
         result = _run(
             ["klangkc", "members", "e2e-ws-share"],
             env=env,
         )
         assert result.returncode == 0
-        assert "No shared members" in result.stdout
+        assert "share-user@example.com" not in result.stdout
 
     def test_share_with_role(self):
         env = self.env
