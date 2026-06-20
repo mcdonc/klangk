@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -165,7 +166,13 @@ class _BoingOverlayState extends State<_BoingOverlay>
     }
   }
 
-  void _startAnimation() {
+  void _startAnimation() async {
+    // Pre-render ball frames at the current size (only once per radius)
+    final size = MediaQuery.of(context).size;
+    final overlayH = size.height * 0.75;
+    final radius = (overlayH * _ballFrac).toInt();
+    if (radius > 0) await _preRenderBallFrames(radius);
+    if (!mounted) return;
     setState(() => _visible = true);
     _x = 0.15;
     _y = _ballFrac + 0.02;
@@ -289,14 +296,111 @@ class _BoingOverlayState extends State<_BoingOverlay>
 
 // ---------- scene painter ----------
 
+// Pre-rendered ball frame cache: 28 frames (14 cols * 2 for smooth rotation).
+// Rendered once at the needed radius, then blitted each frame.
+List<ui.Image>? _ballFrames;
+int _ballFrameRadius = 0;
+
+Future<void> _preRenderBallFrames(int radius) async {
+  if (_ballFrames != null && _ballFrameRadius == radius) return;
+  const cols = 14;
+  const rows = 8;
+  const nFrames = 28;
+  const tilt = -17 * pi / 180; // tilt right
+  final cosTilt = cos(tilt);
+  final sinTilt = sin(tilt);
+  final diam = radius * 2;
+  // High resolution — only computed once
+  final res = diam;
+
+  final frames = <ui.Image>[];
+  for (int frame = 0; frame < nFrames; frame++) {
+    final rotAngle = frame / nFrames * 2 * pi;
+    final cosRot = cos(rotAngle);
+    final sinRot = sin(rotAngle);
+
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, diam.toDouble(), diam.toDouble()),
+    );
+
+    final redPaint = Paint()..color = const Color(0xFFFF0000);
+    final whitePaint = Paint()..color = const Color(0xFFFFFFFF);
+    final step = diam / res;
+
+    for (int py = 0; py < res; py++) {
+      final ny = (py + 0.5) / res * 2 - 1;
+      for (int px = 0; px < res; px++) {
+        final nx = (px + 0.5) / res * 2 - 1;
+        final r2 = nx * nx + ny * ny;
+        if (r2 > 1) continue;
+
+        final nz = sqrt(1 - r2);
+        final tx = nx * cosTilt - ny * sinTilt;
+        final ty = nx * sinTilt + ny * cosTilt;
+        final rx = tx * cosRot + nz * sinRot;
+        final rz = -tx * sinRot + nz * cosRot;
+
+        final phi = atan2(rx, rz) + pi;
+        final u = (phi / (2 * pi) * cols).floor();
+        final v = ((ty + 1) / 2 * rows).clamp(0, rows - 1).floor();
+
+        final isRed = (u + v) % 2 == 0;
+        canvas.drawRect(
+          Rect.fromLTWH(px * step, py * step, step + 0.5, step + 0.5),
+          isRed ? redPaint : whitePaint,
+        );
+      }
+    }
+
+    // Specular highlight
+    final c = diam / 2.0;
+    canvas.drawCircle(
+      Offset(c - radius * 0.3, c - radius * 0.3),
+      radius * 0.22,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.45)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16),
+    );
+
+    // Clip to circle
+    final picture = recorder.endRecording();
+    final raw = await picture.toImage(diam, diam);
+
+    // Re-draw clipped to circle
+    final clipRecorder = ui.PictureRecorder();
+    final clipCanvas = Canvas(
+      clipRecorder,
+      Rect.fromLTWH(0, 0, diam.toDouble(), diam.toDouble()),
+    );
+    clipCanvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: Offset(c, c), radius: c)),
+    );
+    clipCanvas.drawImage(raw, Offset.zero, Paint());
+    clipCanvas.drawCircle(
+      Offset(c, c),
+      c,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..color = Colors.black38
+        ..strokeWidth = 2,
+    );
+    final clipPicture = clipRecorder.endRecording();
+    frames.add(await clipPicture.toImage(diam, diam));
+    raw.dispose();
+  }
+
+  _ballFrames = frames;
+  _ballFrameRadius = radius;
+}
+
 class _BoingScenePainter extends CustomPainter {
   final double ballX, ballY, phase, ballFrac;
 
   static const _bgColor = Color(0xFFAAAAAA);
   static const _gridColor = Color(0xFFAA00AA);
   static const _gridDark = Color(0xFF660066);
-  static const _ballRed = Color(0xFFFF0000);
-  static const _ballWhite = Color(0xFFFFFFFF);
   static const _shadowColor = Color(0x44000000);
 
   _BoingScenePainter({
@@ -374,72 +478,21 @@ class _BoingScenePainter extends CustomPainter {
   }
 
   void _drawBall(Canvas canvas, double cx, double cy, double radius) {
-    // Per-pixel sphere rendering. Checker defined in (phi, ny) space:
-    // u = longitude mapped to 0..14, v = screen-Y mapped to 0..8.
-    // Color = (floor(u) + floor(v)) % 2. Diagonal corners touch.
-    final diam = (radius * 2).toInt();
-    if (diam <= 0) return;
+    final frames = _ballFrames;
+    if (frames == null || frames.isEmpty) return;
 
-    final res = max(40, diam ~/ 5);
-    final step = diam / res;
-    const cols = 14;
-    const rows = 8;
-    final rotAngle = phase / cols * 2 * pi;
-    final cosRot = cos(rotAngle);
-    final sinRot = sin(rotAngle);
-    // ~17 degree axis tilt (like the original)
-    const tilt = 17 * pi / 180;
-    final cosTilt = cos(tilt);
-    final sinTilt = sin(tilt);
-    final redPaint = Paint()..color = _ballRed;
-    final whitePaint = Paint()..color = _ballWhite;
+    // Quantize phase to frame index
+    const nFrames = 28;
+    var frameIdx = (phase / 14 * nFrames).floor() % nFrames;
+    if (frameIdx < 0) frameIdx += nFrames;
 
-    for (int py = 0; py < res; py++) {
-      final ny = (py + 0.5) / res * 2 - 1;
-      for (int px = 0; px < res; px++) {
-        final nx = (px + 0.5) / res * 2 - 1;
-        final r2 = nx * nx + ny * ny;
-        if (r2 > 1) continue;
-
-        final nz = sqrt(1 - r2);
-        // Apply Z-axis tilt first (tilts the rotation axis)
-        final tx = nx * cosTilt - ny * sinTilt;
-        final ty = nx * sinTilt + ny * cosTilt;
-        // Then Y-axis rotation
-        final rx = tx * cosRot + nz * sinRot;
-        final rz = -tx * sinRot + nz * cosRot;
-
-        final phi = atan2(rx, rz) + pi;
-        final u = (phi / (2 * pi) * cols).floor();
-        final v = ((ty + 1) / 2 * rows).clamp(0, rows - 1).floor();
-
-        final isRed = (u + v) % 2 == 0;
-        final screenX = cx - radius + px * step;
-        final screenY = cy - radius + py * step;
-        canvas.drawRect(
-          Rect.fromLTWH(screenX, screenY, step + 0.5, step + 0.5),
-          isRed ? redPaint : whitePaint,
-        );
-      }
-    }
-
-    // Specular highlight
-    canvas.drawCircle(
-      Offset(cx - radius * 0.3, cy - radius * 0.3),
-      radius * 0.22,
-      Paint()
-        ..color = Colors.white.withValues(alpha: 0.45)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16),
-    );
-
-    // Outline
-    canvas.drawCircle(
-      Offset(cx, cy),
-      radius,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..color = Colors.black38
-        ..strokeWidth = 2,
+    final img = frames[frameIdx];
+    final diam = radius * 2;
+    canvas.drawImageRect(
+      img,
+      Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+      Rect.fromLTWH(cx - radius, cy - radius, diam, diam),
+      Paint(),
     );
   }
 
