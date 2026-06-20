@@ -45,6 +45,23 @@ you set above.
 | `--security-opt seccomp=unconfined`     | Allow syscalls needed for nested containers       |
 | `--security-opt systempaths=unconfined` | Allow `/proc` access for nested containers        |
 
+## Data persistence
+
+All klangk data (database, workspaces, home directories) is stored
+in `/home/klangk/data` inside the container. The `-v klangk-data:/home/klangk/data`
+flag mounts a Docker volume there so data survives container removal.
+
+**Without the volume, you lose everything when the container is
+removed.** The volume is included in both the `docker run` and
+`docker-compose.yml` examples above.
+
+To use a host directory instead of a Docker volume:
+
+```bash
+mkdir -p ./klangk-data
+docker run -d -v ./klangk-data:/home/klangk/data ...
+```
+
 ## Stopping and restarting
 
 ```bash
