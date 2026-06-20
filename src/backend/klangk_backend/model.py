@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import re
@@ -169,6 +170,9 @@ MSG_SYSTEM = 2
 # Agent identity
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
 
+# Must match the DB default and container.DEFAULT_PORTS_PER_WORKSPACE.
+_DEFAULT_PORTS_PER_WORKSPACE = 5
+
 # Cached agent user dict (populated after seeding).
 _agent_user_cache: dict | None = None
 
@@ -276,7 +280,7 @@ async def init_db() -> None:
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 name TEXT NOT NULL,
                 container_id TEXT,
-                num_ports INTEGER NOT NULL DEFAULT 5,  -- see container.DEFAULT_PORTS_PER_WORKSPACE
+                num_ports INTEGER NOT NULL DEFAULT 5,
                 image TEXT,  -- custom container image; NULL means use default
                 default_command TEXT,  -- auto-run in terminal on connect
                 mounts TEXT,  -- JSON array of host:container mount specs
@@ -436,8 +440,6 @@ async def _unique_handle(db, base: str) -> str:
 
 
 def _hash_fallback_handle(base: str) -> str:  # pragma: no cover
-    import hashlib
-
     suffix = hashlib.sha256(base.encode()).hexdigest()[:8]
     return f"{base[: _MAX_HANDLE_LEN - 9]}-{suffix}"
 
@@ -1103,8 +1105,6 @@ async def create_workspace(
                 created_at,
             ),
         )
-        from . import container
-
         return {
             "id": workspace_id,
             "user_id": user_id,
@@ -1113,7 +1113,7 @@ async def create_workspace(
             "default_command": default_command,
             "mounts": mounts,
             "env": env,
-            "num_ports": container.DEFAULT_PORTS_PER_WORKSPACE,
+            "num_ports": _DEFAULT_PORTS_PER_WORKSPACE,
             "created_at": created_at,
         }
 

@@ -10,7 +10,7 @@ import json
 import logging
 import re
 
-from . import podman
+from . import model, podman, workspaces
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
@@ -49,6 +49,10 @@ class AgentSetupError(AgentError):
 # Registry of active agent sessions keyed by workspace ID.
 _agents: dict[str, "AgentSession"] = {}
 
+# Callback to get a workspace session for broadcasting.
+# Set by wshandler at import time to break the circular dependency.
+_get_workspace_session = None
+
 
 class AgentSession:
     """Wraps a ``pi --mode rpc`` subprocess inside a container."""
@@ -71,13 +75,8 @@ class AgentSession:
         path, e.g. ``/home/MrBoops``.
         """
         if self._home_ready:
-            from . import model
-
             handle = await model.agent_handle()
             return f"/home/{handle}"
-
-        from . import model
-        from . import workspaces
 
         ws = await model.get_workspace_by_id(self.workspace_id)
         if not ws:
@@ -129,7 +128,6 @@ class AgentSession:
     async def _ensure_started(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:
             return self._proc
-        from . import model
 
         container_home = await self._ensure_home()
         agent_handle = await model.agent_handle()
@@ -437,9 +435,6 @@ async def stop_session(workspace_id: str) -> None:
 
 async def _broadcast_agent_disconnect(workspace_id: str) -> None:
     """Broadcast a disconnect system message when the agent process dies."""
-    from . import model
-    from . import wshandler
-
     if not workspace_id:
         return
     # Workspace may have been deleted — skip if gone.
@@ -454,7 +449,11 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
         f"{agent_handle} has disconnected",
         message_type=model.MSG_SYSTEM,
     )
-    session = wshandler.state.get_session(workspace_id)
+    session = (
+        _get_workspace_session(workspace_id)
+        if _get_workspace_session
+        else None
+    )
     if session:
         session.broadcast({"type": "agent_thinking", "thinking": False})
         session.broadcast({"type": "chat_message", **sys_msg})
@@ -470,9 +469,6 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
 
 async def _broadcast_agent_reconnect(workspace_id: str) -> None:
     """Broadcast a reconnect system message after auto-restart."""
-    from . import model
-    from . import wshandler
-
     if not workspace_id:
         return
     # Workspace may have been deleted — skip if gone.
@@ -487,7 +483,11 @@ async def _broadcast_agent_reconnect(workspace_id: str) -> None:
         f"{agent_handle} has reconnected",
         message_type=model.MSG_SYSTEM,
     )
-    session = wshandler.state.get_session(workspace_id)
+    session = (
+        _get_workspace_session(workspace_id)
+        if _get_workspace_session
+        else None
+    )
     if session:
         session.broadcast({"type": "chat_message", **sys_msg})
         session.broadcast(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request
 
-from . import model
+from . import auth, model
 from .model import (
     ACTION_ALLOW,
     PRINCIPAL_GROUP,
@@ -98,7 +98,6 @@ def has_permission(permission: str, resource_fn=None):
     resource_fn: optional async callable(request, user) -> resource_path.
     If not provided, the resource is derived from the request URL path.
     """
-    from . import auth
 
     async def check(
         request: Request, user: dict = Depends(auth.get_current_user)

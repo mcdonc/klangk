@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from . import container, model
+from . import container, model, podman
 from .util import resolve_env_secret
 
 logger = logging.getLogger(__name__)
@@ -357,8 +357,6 @@ async def populate_home_skel(
     Linux distributions (notable exception: NixOS).  The workspace
     container runs Ubuntu, which always has it.
     """
-    from . import podman
-
     home = f"/home/.users/{user_id}"
     argv = [
         "exec",
