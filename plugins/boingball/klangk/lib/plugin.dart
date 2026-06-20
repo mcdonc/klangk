@@ -1,15 +1,21 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
+import 'dart:js_interop';
+
+@JS('AudioContext')
+external JSFunction get _AudioContextConstructor;
+
+@JS('XMLHttpRequest')
+external JSFunction get _XMLHttpRequestConstructor;
+
 class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
-  String? _text;
-  String _defaultText = 'Klangk';
+  bool _active = false;
   double _speed = 1.0;
   bool _configLoaded = false;
 
@@ -18,9 +24,9 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
 
   Future<String> _handle(Map<String, dynamic> request) async {
     if (!_configLoaded) await _loadConfig();
-    _text = (request['text'] as String?) ?? _defaultText;
+    _active = true;
     notifyListeners();
-    return 'Boing ball triggered: $_text';
+    return 'Boing!';
   }
 
   Future<void> _loadConfig() async {
@@ -29,8 +35,6 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
       final resp = await http.get(Uri.parse('$baseUrl/api/config'));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final text = data['klangk_boing_text'] as String?;
-        if (text != null && text.isNotEmpty) _defaultText = text;
         final speed = data['klangk_boing_speed'] as String?;
         if (speed != null && speed.isNotEmpty) {
           _speed = double.tryParse(speed) ?? 1.0;
@@ -43,6 +47,87 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
   Widget? buildOverlay(BuildContext context) {
     return _BoingOverlay(plugin: this);
   }
+}
+
+// ---------- Sound ----------
+
+/// Cached decoded audio buffer (loaded once, reused on each bounce).
+JSObject? _audioCtx;
+JSObject? _boingSample;
+
+/// Load the boing.ogg sample via XHR and decode it.
+void _ensureAudioLoaded() {
+  if (_audioCtx != null) return;
+  try {
+    _audioCtx = _AudioContextConstructor.callAsConstructor<JSObject>();
+  } catch (_) {
+    return;
+  }
+
+  // Load boing.ogg from Flutter asset serving path
+  try {
+    final xhr = _XMLHttpRequestConstructor.callAsConstructor<JSObject>();
+    (xhr).callMethod(
+      'open'.toJS,
+      'GET'.toJS,
+      'assets/assets/boing.ogg'.toJS,
+      true.toJS,
+    );
+    (xhr).setProperty('responseType'.toJS, 'arraybuffer'.toJS);
+    (xhr).setProperty(
+      'onload'.toJS,
+      ((JSObject _) {
+        final response = xhr.getProperty('response'.toJS);
+        (_audioCtx!).callMethod(
+          'decodeAudioData'.toJS,
+          response,
+          ((JSObject buffer) {
+            _boingSample = buffer;
+          }).toJS,
+        );
+      }).toJS,
+    );
+    (xhr).callMethod('send'.toJS);
+  } catch (_) {}
+}
+
+void _playBoingSound({required double panX, bool isFloor = true}) {
+  if (_audioCtx == null || _boingSample == null) return;
+  try {
+    final ctx = _audioCtx!;
+    final now = (ctx.getProperty('currentTime'.toJS) as JSNumber).toDartDouble;
+    final dest = ctx.getProperty('destination'.toJS) as JSObject;
+
+    // Stereo panner
+    final panner = ctx.callMethod('createStereoPanner'.toJS) as JSObject;
+    final panParam = panner.getProperty('pan'.toJS) as JSObject;
+    final panValue = (panX * 2 - 1).clamp(-1.0, 1.0);
+    panParam.callMethod('setValueAtTime'.toJS, panValue.toJS, now.toJS);
+    panner.callMethod('connect'.toJS, dest);
+
+    // Gain (floor louder than walls)
+    final gain = ctx.callMethod('createGain'.toJS) as JSObject;
+    final gainParam = gain.getProperty('gain'.toJS) as JSObject;
+    gainParam.callMethod(
+      'setValueAtTime'.toJS,
+      (isFloor ? 0.6 : 0.35).toJS,
+      now.toJS,
+    );
+    gain.callMethod('connect'.toJS, panner);
+
+    // Buffer source playing the original sample
+    final src = ctx.callMethod('createBufferSource'.toJS) as JSObject;
+    src.setProperty('buffer'.toJS, _boingSample!);
+    // Slightly higher playback rate for wall hits
+    final rateParam = src.getProperty('playbackRate'.toJS) as JSObject;
+    rateParam.callMethod(
+      'setValueAtTime'.toJS,
+      (isFloor ? 1.0 : 1.3).toJS,
+      now.toJS,
+    );
+    src.callMethod('connect'.toJS, gain);
+    src.callMethod('start'.toJS, now.toJS);
+  } catch (_) {}
 }
 
 // ---------- overlay ----------
@@ -58,19 +143,17 @@ class _BoingOverlay extends StatefulWidget {
 class _BoingOverlayState extends State<_BoingOverlay>
     with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
-  String? _text;
+  bool _visible = false;
 
-  // Ball physics (normalised 0..1 coordinate space)
   double _x = 0.5;
   double _y = 0.1;
   double _vx = 0.004;
   double _vy = 0.0;
-  double _phase = 0; // rotation phase 0..14
-  int _spinDir = 1; // +1 or -1
+  double _phase = 0;
+  int _spinDir = 1;
   static const double _gravity = 0.00025;
   static const double _damping = 0.97;
-  static const double _ballFrac = 0.18; // ball radius as fraction of height
-
+  static const double _ballFrac = 0.22;
   static const _durationSec = 12;
 
   @override
@@ -83,6 +166,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
     _ctrl.addListener(_tick);
     widget.plugin.addListener(_onUpdate);
     HardwareKeyboard.instance.addHandler(_onKey);
+    _ensureAudioLoaded();
   }
 
   @override
@@ -96,11 +180,14 @@ class _BoingOverlayState extends State<_BoingOverlay>
 
   void _onUpdate() {
     if (!mounted) return;
-    setState(() => _text = widget.plugin._text);
-    if (_text != null) _startAnimation();
+    if (widget.plugin._active) {
+      widget.plugin._active = false;
+      _startAnimation();
+    }
   }
 
   void _startAnimation() {
+    setState(() => _visible = true);
     _x = 0.15;
     _y = 0.15;
     _vx = 0.005 * widget.plugin._speed;
@@ -114,7 +201,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
   }
 
   bool _onKey(KeyEvent event) {
-    if (_text != null &&
+    if (_visible &&
         event is KeyDownEvent &&
         event.logicalKey == LogicalKeyboardKey.escape) {
       _dismiss();
@@ -125,47 +212,41 @@ class _BoingOverlayState extends State<_BoingOverlay>
 
   void _dismiss() {
     _ctrl.stop();
-    if (mounted) {
-      setState(() {
-        _text = null;
-        widget.plugin._text = null;
-      });
-    }
+    if (mounted) setState(() => _visible = false);
   }
 
   void _tick() {
-    if (!mounted || _text == null) return;
+    if (!mounted || !_visible) return;
     final speed = widget.plugin._speed;
     setState(() {
-      // Gravity
       _vy += _gravity * speed;
       _x += _vx * speed;
       _y += _vy * speed;
 
-      // Floor bounce
-      if (_y >= 1.0 - _ballFrac) {
-        _y = 1.0 - _ballFrac;
+      if (_y >= 0.85) {
+        _y = 0.85;
         _vy = -_vy.abs() * _damping;
+        _playBoingSound(panX: _x, isFloor: true);
       }
-      // Ceiling
-      if (_y <= _ballFrac * 0.3) {
-        _y = _ballFrac * 0.3;
+      if (_y <= 0.05) {
+        _y = 0.05;
         _vy = _vy.abs();
       }
-      // Wall bounces
-      if (_x <= _ballFrac * 0.5) {
-        _x = _ballFrac * 0.5;
+      if (_x <= 0.08) {
+        _x = 0.08;
         _vx = _vx.abs();
         _spinDir = 1;
+        _playBoingSound(panX: _x, isFloor: false);
       }
-      if (_x >= 1.0 - _ballFrac * 0.5) {
-        _x = 1.0 - _ballFrac * 0.5;
+      if (_x >= 0.92) {
+        _x = 0.92;
         _vx = -_vx.abs();
         _spinDir = -1;
+        _playBoingSound(panX: _x, isFloor: false);
       }
 
-      // Rotation phase (14 stripes, wraps)
-      _phase += 0.35 * _spinDir * speed;
+      // Half the original spin speed
+      _phase += 0.175 * _spinDir * speed;
       if (_phase < 0) _phase += 14;
       if (_phase >= 14) _phase -= 14;
     });
@@ -173,19 +254,29 @@ class _BoingOverlayState extends State<_BoingOverlay>
 
   @override
   Widget build(BuildContext context) {
-    if (_text == null) return const SizedBox.shrink();
-    return Positioned.fill(
-      child: GestureDetector(
-        onTap: _dismiss,
-        child: CustomPaint(
-          painter: _BoingScenePainter(
-            ballX: _x,
-            ballY: _y,
-            phase: _phase,
-            ballFrac: _ballFrac,
-            text: _text!,
+    if (!_visible) return const SizedBox.shrink();
+    final size = MediaQuery.of(context).size;
+    // Leave a quarter of the window visible on each side
+    final insetX = size.width * 0.125;
+    final insetY = size.height * 0.125;
+    return Positioned(
+      left: insetX,
+      top: insetY,
+      width: size.width - insetX * 2,
+      height: size.height - insetY * 2,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: GestureDetector(
+          onTap: _dismiss,
+          child: CustomPaint(
+            painter: _BoingScenePainter(
+              ballX: _x,
+              ballY: _y,
+              phase: _phase,
+              ballFrac: _ballFrac,
+            ),
+            child: const SizedBox.expand(),
           ),
-          child: const SizedBox.expand(),
         ),
       ),
     );
@@ -196,9 +287,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
 
 class _BoingScenePainter extends CustomPainter {
   final double ballX, ballY, phase, ballFrac;
-  final String text;
 
-  // Faithful palette
   static const _bgColor = Color(0xFFAAAAAA);
   static const _gridColor = Color(0xFFAA00AA);
   static const _gridDark = Color(0xFF660066);
@@ -211,42 +300,35 @@ class _BoingScenePainter extends CustomPainter {
     required this.ballY,
     required this.phase,
     required this.ballFrac,
-    required this.text,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
-    final radius = h * ballFrac;
+    final radius = min(w, h) * ballFrac;
 
-    // Background
     canvas.drawRect(Offset.zero & size, Paint()..color = _bgColor);
-
-    // Back wall grid
     _drawGrid(canvas, size);
 
-    // Floor (darker region at bottom)
+    // Floor
     final floorTop = h * 0.75;
     canvas.drawRect(
       Rect.fromLTWH(0, floorTop, w, h - floorTop),
       Paint()..color = _gridDark.withValues(alpha: 0.25),
     );
-    // Floor grid lines
     final floorPaint = Paint()
       ..color = _gridColor.withValues(alpha: 0.4)
       ..strokeWidth = 1;
     const floorRows = 5;
     for (int i = 0; i <= floorRows; i++) {
-      final t = i / floorRows;
-      final y = floorTop + (h - floorTop) * t;
+      final y = floorTop + (h - floorTop) * i / floorRows;
       canvas.drawLine(Offset(0, y), Offset(w, y), floorPaint);
     }
     const floorCols = 14;
     final vanishX = w / 2;
     for (int i = 0; i <= floorCols; i++) {
       final fx = w * i / floorCols;
-      // Perspective: lines converge toward vanishing point at the back
       canvas.drawLine(
         Offset(vanishX + (fx - vanishX) * 0.6, floorTop),
         Offset(fx, h),
@@ -254,136 +336,81 @@ class _BoingScenePainter extends CustomPainter {
       );
     }
 
-    // Shadow on back wall
     final cx = ballX * w;
     final cy = ballY * h;
-    final shadowX = cx + radius * 0.4;
-    final shadowY = cy + radius * 0.1;
+
+    // Shadow
     canvas.drawOval(
       Rect.fromCenter(
-        center: Offset(shadowX, shadowY),
+        center: Offset(cx + radius * 0.4, cy + radius * 0.1),
         width: radius * 2.0,
         height: radius * 2.0,
       ),
       Paint()..color = _shadowColor,
     );
 
-    // Ball
     _drawBall(canvas, cx, cy, radius);
-
-    // Text label
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          color: _ballWhite,
-          fontSize: radius * 0.35,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 3,
-          shadows: const [
-            Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(2, 2)),
-          ],
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    textPainter.paint(
-      canvas,
-      Offset(cx - textPainter.width / 2, cy + radius + radius * 0.15),
-    );
   }
 
   void _drawGrid(Canvas canvas, Size size) {
     final w = size.width;
-    final h = size.height * 0.75; // back wall only
+    final h = size.height * 0.75;
     final paint = Paint()
       ..color = _gridColor
       ..strokeWidth = 1.5;
 
-    // Vertical lines
     const cols = 14;
     for (int i = 0; i <= cols; i++) {
-      final x = w * i / cols;
-      canvas.drawLine(Offset(x, 0), Offset(x, h), paint);
+      canvas.drawLine(Offset(w * i / cols, 0), Offset(w * i / cols, h), paint);
     }
-    // Horizontal lines
     const rows = 10;
     for (int i = 0; i <= rows; i++) {
-      final y = h * i / rows;
-      canvas.drawLine(Offset(0, y), Offset(w, y), paint);
+      canvas.drawLine(Offset(0, h * i / rows), Offset(w, h * i / rows), paint);
     }
   }
 
   void _drawBall(Canvas canvas, double cx, double cy, double radius) {
-    // Per-pixel sphere rendering with checker UV mapping
-    final ballRect = Rect.fromCircle(center: Offset(cx, cy), radius: radius);
-
-    // Clip to circle
     canvas.save();
-    canvas.clipPath(Path()..addOval(ballRect));
-
-    // Render checker sphere
-    // For performance, render at reduced resolution and scale up
-    final imgSize = (radius * 2).ceil();
-    if (imgSize <= 0) {
-      canvas.restore();
-      return;
-    }
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: radius)),
+    );
 
     const latBands = 8;
     const lonStripes = 14;
     final rotAngle = phase / lonStripes * 2 * pi;
-    // Axis tilt ~17 degrees
-    const tilt = 17 * pi / 180;
 
-    // Draw checker quads as arcs for each latitude band
     for (int lat = 0; lat < latBands; lat++) {
       final theta0 = pi * (lat + 0.5) / (latBands + 1);
       final theta1 = pi * (lat + 1.5) / (latBands + 1);
-      final y0 = cos(theta0);
-      final y1 = cos(theta1);
-      final screenY0 = cy - y0 * radius;
-      final screenY1 = cy - y1 * radius;
-
-      // Radius of the circle at this latitude
-      final sinT0 = sin(theta0);
-      final sinT1 = sin(theta1);
-      final rSlice0 = sinT0 * radius;
-      final rSlice1 = sinT1 * radius;
+      final screenY0 = cy - cos(theta0) * radius;
+      final screenY1 = cy - cos(theta1) * radius;
+      final rSlice0 = sin(theta0) * radius;
+      final rSlice1 = sin(theta1) * radius;
 
       for (int lon = 0; lon < lonStripes; lon++) {
-        // Half-stripe offset for diagonal pattern
         final offset = (lat % 2 == 0) ? 0.0 : 0.5;
-        final isRed = (lon % 2 == 0);
-        final color = isRed ? _ballRed : _ballWhite;
+        final color = (lon % 2 == 0) ? _ballRed : _ballWhite;
 
         final phi0 = 2 * pi * (lon + offset) / lonStripes + rotAngle;
         final phi1 = 2 * pi * (lon + 1 + offset) / lonStripes + rotAngle;
 
-        // Only draw front-facing segments
-        final midPhi = (phi0 + phi1) / 2;
-        if (cos(midPhi) < -0.1) continue; // back face
+        if (cos((phi0 + phi1) / 2) < -0.1) continue;
 
-        // Project to screen
-        final x0t = cx + sin(phi0) * rSlice0;
-        final x1t = cx + sin(phi1) * rSlice0;
-        final x0b = cx + sin(phi0) * rSlice1;
-        final x1b = cx + sin(phi1) * rSlice1;
-
-        final path = Path()
-          ..moveTo(x0t, screenY0)
-          ..lineTo(x1t, screenY0)
-          ..lineTo(x1b, screenY1)
-          ..lineTo(x0b, screenY1)
-          ..close();
-
-        canvas.drawPath(path, Paint()..color = color);
+        canvas.drawPath(
+          Path()
+            ..moveTo(cx + sin(phi0) * rSlice0, screenY0)
+            ..lineTo(cx + sin(phi1) * rSlice0, screenY0)
+            ..lineTo(cx + sin(phi1) * rSlice1, screenY1)
+            ..lineTo(cx + sin(phi0) * rSlice1, screenY1)
+            ..close(),
+          Paint()..color = color,
+        );
       }
     }
 
     canvas.restore();
 
-    // Highlight (specular)
+    // Specular highlight
     canvas.drawCircle(
       Offset(cx - radius * 0.3, cy - radius * 0.3),
       radius * 0.18,
@@ -405,8 +432,5 @@ class _BoingScenePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BoingScenePainter old) =>
-      ballX != old.ballX ||
-      ballY != old.ballY ||
-      phase != old.phase ||
-      text != old.text;
+      ballX != old.ballX || ballY != old.ballY || phase != old.phase;
 }

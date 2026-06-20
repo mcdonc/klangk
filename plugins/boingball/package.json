@@ -1,7 +1,7 @@
 {
   "name": "@klangk/boingball",
   "version": "1.0.0",
-  "description": "Boing Ball demo — bouncing checkered ball overlay with wrapped text",
+  "description": "Boing Ball demo — bouncing checkered ball overlay with sound",
   "pi": {
     "extensions": [
       "./extension.ts"
@@ -9,11 +9,6 @@
   },
   "klangk": {
     "config": {
-      "KLANGK_BOING_TEXT": {
-        "description": "Text to wrap around the bouncing ball",
-        "default": "Klangk",
-        "scope": "frontend"
-      },
       "KLANGK_BOING_SPEED": {
         "description": "Animation speed multiplier (1.0 = normal, 2.0 = double speed)",
         "default": "1.0",

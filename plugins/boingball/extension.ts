@@ -19,18 +19,12 @@ export default function (pi: any) {
   pi.registerTool({
     name: "boing",
     description:
-      "Display an Amiga-style bouncing ball animation overlay. " +
+      "Display a bouncing ball animation overlay. " +
       "Only use this when the user explicitly asks for it.",
-    parameters: Type.Object({
-      text: Type.Optional(
-        Type.String({
-          description: "Text to display wrapped around the ball",
-        }),
-      ),
-    }),
+    parameters: Type.Object({}),
     async execute(
       _toolCallId: string,
-      params: { text?: string },
+      _params: Record<string, never>,
       _signal: AbortSignal | undefined,
       _onUpdate: any,
       _ctx: any,
@@ -39,9 +33,6 @@ export default function (pi: any) {
         action: "boing",
         browser_id: getBrowserId(),
       };
-      if (params.text) {
-        payload.text = params.text;
-      }
 
       try {
         const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate`, {
@@ -57,12 +48,7 @@ export default function (pi: any) {
 
         if (resp.ok) {
           return {
-            content: [
-              {
-                type: "text",
-                text: `Boing ball displayed with text: "${params.text || "(default)"}"`,
-              },
-            ],
+            content: [{ type: "text", text: "Boing!" }],
             details: {},
           };
         }
@@ -70,11 +56,9 @@ export default function (pi: any) {
         // Bridge unreachable — fall through to terminal
       }
 
-      // Terminal fallback
-      const text = params.text || "Klangk";
-      process.stdout.write(`\n  \x1b[91m●\x1b[0m ${text}\n\n`);
+      process.stdout.write("\n  \x1b[91m●\x1b[0m Boing!\n\n");
       return {
-        content: [{ type: "text", text: `Boing ball: "${text}"` }],
+        content: [{ type: "text", text: "Boing!" }],
         details: {},
       };
     },
