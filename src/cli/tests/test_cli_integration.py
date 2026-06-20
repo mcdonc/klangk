@@ -1015,7 +1015,7 @@ class TestAuthLines:
     def test_logout_network_error_propagates(self, tmp_path, monkeypatch):
         from klangkc import auth
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://localhost:8995"

@@ -16,7 +16,7 @@ from klangkc.client import Workspace
 @pytest.fixture
 def logged_in_cfg(tmp_path, monkeypatch):
     """Config with a valid token and email pre-loaded."""
-    config_path = tmp_path / "cli.toml"
+    config_path = tmp_path / "cli.yaml"
     monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
     cfg = CLIConfig()
     cfg.server.url = "http://localhost:8995"
@@ -55,7 +55,7 @@ class TestMainCLI:
     def test_login_cmd_stores_token(self, tmp_path, monkeypatch):
         from klangkc.main import login_cmd
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -77,7 +77,7 @@ class TestMainCLI:
     def test_login_cmd_with_password_file(self, tmp_path, monkeypatch):
         from klangkc.main import login_cmd
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         pw_file = tmp_path / "pw.txt"
         pw_file.write_text("file-pw\n")
@@ -96,7 +96,7 @@ class TestMainCLI:
     def test_login_cmd_with_password_stdin(self, tmp_path, monkeypatch):
         from klangkc.main import login_cmd
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -118,7 +118,7 @@ class TestMainCLI:
         import typer
         from klangkc import main
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.auth.token = None
@@ -328,7 +328,7 @@ class TestMainCLI:
         import typer
         from klangkc import main
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.auth.token = None
@@ -340,7 +340,7 @@ class TestMainCLI:
     def test_status_not_logged_in(self, tmp_path, monkeypatch, capsys):
         from klangkc import main
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://custom:1234"
@@ -385,7 +385,7 @@ class TestMainCLI:
 
         from klangkc import main
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.auth.token = None
@@ -413,7 +413,7 @@ class TestMainCLI:
     def test_status_plain_not_logged_in(self, tmp_path, monkeypatch, capsys):
         from klangkc import main
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://custom:1234"

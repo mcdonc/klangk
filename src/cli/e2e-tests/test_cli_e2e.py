@@ -145,13 +145,13 @@ def cli_config(server, tmp_path_factory):
     """Create a CLI config pointing at the test server."""
     config_dir = tmp_path_factory.mktemp("klangk-cli-config")
     env = {**os.environ, "HOME": str(config_dir)}
-    # The CLI reads from ~/.config/klangk/cli.toml
+    # The CLI reads from ~/.config/klangk/cli.yaml
     klangk_config_dir = config_dir / ".config" / "klangk"
     klangk_config_dir.mkdir(parents=True)
     return {
         "env": env,
         "config_dir": klangk_config_dir,
-        "config_file": klangk_config_dir / "cli.toml",
+        "config_file": klangk_config_dir / "cli.yaml",
         "server_url": server["url"],
     }
 
