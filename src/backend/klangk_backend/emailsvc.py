@@ -8,6 +8,7 @@ from email.message import EmailMessage
 
 import aiosmtplib
 
+from .exceptions import SendmailError
 from .util import resolve_env_secret
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ async def send_via_sendmail(msg: EmailMessage) -> None:
     )
     stdout, stderr = await proc.communicate(msg.as_bytes())
     if proc.returncode != 0:
-        raise RuntimeError(
+        raise SendmailError(
             f"sendmail ({sendmail}) exited with code {proc.returncode}: {stderr.decode()}"
         )
     logger.info("Email sent via sendmail to %s", msg["To"])

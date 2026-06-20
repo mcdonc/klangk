@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from klangk_backend import emailsvc
+from klangk_backend.exceptions import SendmailError
 
 
 class TestBuildMessage:
@@ -143,7 +144,7 @@ class TestSendViaSendmail:
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             msg = emailsvc.build_message("to@example.com", "Hi", "Body")
-            with pytest.raises(RuntimeError, match="exited with code 1"):
+            with pytest.raises(SendmailError, match="exited with code 1"):
                 await emailsvc.send_via_sendmail(msg)
 
 

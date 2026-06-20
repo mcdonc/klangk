@@ -23,6 +23,7 @@ import tty
 from collections.abc import AsyncGenerator
 
 from . import podman
+from .exceptions import TerminalError
 from .util import BoundedOutputQueue, resolve_env_secret
 
 logger = logging.getLogger(__name__)
@@ -244,7 +245,7 @@ async def tmux_command(
         if "No such file or directory" in err and attempt < 2:
             await asyncio.sleep(0.5)
             continue
-        raise RuntimeError(f"tmux command failed: {err}")
+        raise TerminalError(f"tmux command failed: {err}")
     return ""  # pragma: no cover
 
 
@@ -331,7 +332,7 @@ async def new_window(
         if "DUPLICATE" in output:
             raise ValueError(f"Window name '{name}' already exists")
         err = stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"new_window failed: {err}")
+        raise TerminalError(f"new_window failed: {err}")
     windows = []
     for line in output.strip().splitlines():
         parts = line.split("|||")
@@ -513,9 +514,9 @@ async def kill_joiner_sessions(container_id: str, owner_handle: str) -> None:
                         owner_handle,
                         ["kill-session", "-t", session_name],
                     )
-                except RuntimeError:
+                except TerminalError:
                     pass  # Session may have already exited
-    except RuntimeError:
+    except TerminalError:
         pass  # No sessions
 
 

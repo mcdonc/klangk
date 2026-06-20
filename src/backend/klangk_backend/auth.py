@@ -10,6 +10,7 @@ from jose import ExpiredSignatureError, JWTError, jwt
 from pydantic import BaseModel
 
 from . import model
+from .exceptions import ConfigurationError
 from .util import resolve_env_secret
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ def require_secure_jwt_secret() -> None:
         resolve_env_secret("KLANGK_PREVENT_INSECURE_JWT_SECRET", "") or ""
     ).lower()
     if prevent in ("1", "true", "yes"):
-        raise RuntimeError(
+        raise ConfigurationError(
             "KLANGK_JWT_SECRET is unset or the insecure default. Set a "
             "strong secret or remove KLANGK_PREVENT_INSECURE_JWT_SECRET."
         )

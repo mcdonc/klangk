@@ -14,6 +14,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from . import acl as _acl
 from . import agent, auth, container, model, podman, terminal, workspaces
+from .exceptions import TerminalError
 from .util import derive_hosting_info, resolve_env_secret
 from .dockerexec import ExecSession
 from .terminal import TerminalSession, attach_browser
@@ -1217,7 +1218,7 @@ class Connection:
                             "windows": windows,
                         }
                     )
-                except (RuntimeError, OSError):
+                except (TerminalError, OSError):
                     logger.exception("_start_terminal: window list failed")
                 # Also send the shared terminal list from in-memory state.
                 ws_session = state.get_session(conn.workspace_id)
@@ -1610,7 +1611,7 @@ class Connection:
                                 f"{joiner_session}:{window_id}",
                             ],
                         )
-                    except RuntimeError:
+                    except TerminalError:
                         # Joiner session not ready — fall back to bare @N
                         await terminal.select_window(
                             conn.container_id, owner_user_id, window_id

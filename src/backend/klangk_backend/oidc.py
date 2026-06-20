@@ -18,6 +18,7 @@ import httpx
 from jose import jwt as jose_jwt
 
 from . import model
+from .exceptions import ConfigurationError
 from .util import resolve_env_secret, resolve_file_secret
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ def load_config() -> list[OIDCProvider]:
     if not config_path:
         return []
     if not os.path.isfile(config_path):
-        raise RuntimeError(
+        raise ConfigurationError(
             f"KLANGK_OIDC_CONFIG={config_path!r} not found"
             " (use an absolute path)"
         )
@@ -102,14 +103,14 @@ def load_config() -> list[OIDCProvider]:
 def init_providers() -> None:
     """Load providers into the module-level registry.
 
-    Raises RuntimeError if KLANGK_AUTH_MODES requires OIDC but no
+    Raises ConfigurationError if KLANGK_AUTH_MODES requires OIDC but no
     providers are configured or the config file is missing.
     """
     global _providers
     _providers = load_config()
     mode = auth_modes()
     if mode in ("oidc", "both") and not _providers:
-        raise RuntimeError(
+        raise ConfigurationError(
             f"KLANGK_AUTH_MODES={mode!r} but no OIDC providers configured"
         )
     if _providers:
@@ -387,7 +388,7 @@ def load_login_hook() -> None:
         return
     dot = raw.rfind(".")
     if dot <= 0:
-        raise RuntimeError(
+        raise ConfigurationError(
             f"KLANGK_OIDC_LOGIN_HOOK must be module.path.func_name, "
             f"got: {raw!r}"
         )
@@ -396,7 +397,9 @@ def load_login_hook() -> None:
     mod = importlib.import_module(module_path)
     hook = getattr(mod, func_name)
     if not callable(hook):
-        raise RuntimeError(f"KLANGK_OIDC_LOGIN_HOOK: {raw!r} is not callable")
+        raise ConfigurationError(
+            f"KLANGK_OIDC_LOGIN_HOOK: {raw!r} is not callable"
+        )
     _login_hook = hook
     _login_hook_is_async = asyncio.iscoroutinefunction(hook)
     logger.info("OIDC login hook loaded: %s", raw)

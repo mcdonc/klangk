@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from klangk_backend.exceptions import TerminalError
 from klangk_backend.terminal import (
     TerminalSession,
     _build_environment,
@@ -591,7 +592,7 @@ class TestTmuxCommand:
         proc.communicate = AsyncMock(return_value=(b"", b"error msg"))
         proc.returncode = 1
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            with pytest.raises(RuntimeError, match="error msg"):
+            with pytest.raises(TerminalError, match="error msg"):
                 await tmux_command("cid", "sess", ["bad-cmd"])
 
     async def test_retries_on_socket_not_found(self):
@@ -700,7 +701,7 @@ class TestNewWindow:
         proc.communicate = AsyncMock(return_value=(b"", b"session not found"))
         proc.returncode = 1
         with patch("asyncio.create_subprocess_exec", return_value=proc):
-            with pytest.raises(RuntimeError, match="session not found"):
+            with pytest.raises(TerminalError, match="session not found"):
                 await new_window("cid", "sess")
 
 
@@ -1023,7 +1024,7 @@ class TestKillJoinerSessions:
             "klangk_backend.terminal.tmux_command",
             side_effect=[
                 "admin\nbob-abc\ncarol-def\n",  # list-sessions
-                RuntimeError("already exited"),  # kill bob fails
+                TerminalError("already exited"),  # kill bob fails
                 "",  # kill carol succeeds
             ],
         ) as mock_cmd:
@@ -1033,7 +1034,7 @@ class TestKillJoinerSessions:
     async def test_no_sessions(self):
         with patch(
             "klangk_backend.terminal.tmux_command",
-            side_effect=RuntimeError("no sessions"),
+            side_effect=TerminalError("no sessions"),
         ):
             # Should not raise
             await kill_joiner_sessions("cid", "admin")
