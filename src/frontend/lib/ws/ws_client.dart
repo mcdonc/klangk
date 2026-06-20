@@ -73,10 +73,6 @@ class WsClient extends ChangeNotifier {
   @visibleForTesting
   static Duration Function(int attempt)? testBackoffOverride;
 
-  /// Override for testing to shorten the connection ready timeout.
-  @visibleForTesting
-  static Duration? testReadyTimeout;
-
   /// Override for testing to shorten the reconnect timeout.
   @visibleForTesting
   static Duration? testReconnectTimeout;
@@ -167,16 +163,7 @@ class WsClient extends ChangeNotifier {
     }
 
     try {
-      // Timeout after 5s to avoid Firefox's FailDelayManager throttle
-      // (up to 60s) after an unclean server-side disconnect.
-      final readyTimeout = testReadyTimeout ??
-          const Duration(seconds: 5); // coverage:ignore-line
-      await _channel!.ready.timeout(readyTimeout);
-    } on TimeoutException {
-      _channel?.sink.close(1000, 'connection timeout');
-      _channel = null;
-      _errorController.add('Connection timed out');
-      return;
+      await _channel!.ready;
     } catch (e) {
       final code = _channel?.closeCode;
       if (code == 4001 || code == 4002) {
