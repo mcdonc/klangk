@@ -36,9 +36,11 @@ pi
 ```
 
 Pi starts in interactive TUI mode with access to the workspace
-filesystem (`/home/work`), shell commands, and all mapped ports. It
-reads its config from `~/.pi/agent/` which is populated automatically
-at first login by `setup-clankers`.
+filesystem (`/home/work`), shell commands, and all mapped ports. By
+default it uses the LLM proxy with the provider and model configured
+via `KLANGK_LLM_BASE_URL`, `KLANGK_LLM_MODEL`, and
+`KLANGK_LLM_API_KEY`. Its config is stored in `~/.pi/agent/` and
+populated automatically at first login by `setup-clankers`.
 
 ### Using Pi from chat
 
