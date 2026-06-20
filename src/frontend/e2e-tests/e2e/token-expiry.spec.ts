@@ -71,8 +71,8 @@ test.describe("Token expiry", () => {
     const configDir = join(tmpHome, ".config", "klangk");
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
-      join(configDir, "cli.toml"),
-      `[server]\nurl = "${API_BASE}"\n\n[auth]\ntoken = "${expiredToken}"\nemail = "${email}"\n`,
+      join(configDir, "cli.yaml"),
+      `server:\n  url: ${API_BASE}\nauth:\n  token: ${expiredToken}\n  email: ${email}\n`,
     );
 
     // Run klangkc shell — it should fail with a clear error
