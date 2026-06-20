@@ -107,7 +107,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
   static const double _gravity = 0.00025;
   static const double _damping = 0.97;
   static const double _ballFrac = 0.33;
-  static const _durationSec = 12;
+  static const _durationSec = 24;
 
   @override
   void initState() {
@@ -175,23 +175,33 @@ class _BoingOverlayState extends State<_BoingOverlay>
       _x += _vx * speed;
       _y += _vy * speed;
 
-      if (_y >= 0.85) {
-        _y = 0.85;
+      // Bounce boundaries: ball radius is h * _ballFrac, so Y bounds
+      // are _ballFrac..1-_ballFrac. X bounds depend on aspect ratio;
+      // approximate using the overlay's typical ~3:2 ratio.
+      const yMin = _ballFrac;
+      const yMax = 1.0 - _ballFrac;
+      // Assume overlay is roughly 1.5x wider than tall
+      const xPad = _ballFrac / 1.5;
+      const xMin = xPad;
+      const xMax = 1.0 - xPad;
+
+      if (_y >= yMax) {
+        _y = yMax;
         _vy = -_vy.abs() * _damping;
         _playBoingSound(panX: _x, isFloor: true);
       }
-      if (_y <= 0.05) {
-        _y = 0.05;
+      if (_y <= yMin) {
+        _y = yMin;
         _vy = _vy.abs();
       }
-      if (_x <= 0.08) {
-        _x = 0.08;
+      if (_x <= xMin) {
+        _x = xMin;
         _vx = _vx.abs();
         _spinDir = 1;
         _playBoingSound(panX: _x, isFloor: false);
       }
-      if (_x >= 0.92) {
-        _x = 0.92;
+      if (_x >= xMax) {
+        _x = xMax;
         _vx = -_vx.abs();
         _spinDir = -1;
         _playBoingSound(panX: _x, isFloor: false);
@@ -209,24 +219,31 @@ class _BoingOverlayState extends State<_BoingOverlay>
     final size = MediaQuery.of(context).size;
     final insetX = size.width * 0.125;
     final insetY = size.height * 0.125;
-    return Positioned(
-      left: insetX,
-      top: insetY,
-      width: size.width - insetX * 2,
-      height: size.height - insetY * 2,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: GestureDetector(
-          onTap: _dismiss,
-          child: CustomPaint(
-            painter: _BoingScenePainter(
-              ballX: _x,
-              ballY: _y,
-              phase: _phase,
-              ballFrac: _ballFrac,
+    return Positioned.fill(
+      child: GestureDetector(
+        onTap: _dismiss,
+        behavior: HitTestBehavior.opaque,
+        child: Stack(
+          children: [
+            Positioned(
+              left: insetX,
+              top: insetY,
+              width: size.width - insetX * 2,
+              height: size.height - insetY * 2,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: CustomPaint(
+                  painter: _BoingScenePainter(
+                    ballX: _x,
+                    ballY: _y,
+                    phase: _phase,
+                    ballFrac: _ballFrac,
+                  ),
+                  child: const SizedBox.expand(),
+                ),
+              ),
             ),
-            child: const SizedBox.expand(),
-          ),
+          ],
         ),
       ),
     );
