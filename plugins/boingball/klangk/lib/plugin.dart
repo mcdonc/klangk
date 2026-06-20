@@ -374,71 +374,53 @@ class _BoingScenePainter extends CustomPainter {
   }
 
   void _drawBall(Canvas canvas, double cx, double cy, double radius) {
-    // Boing Ball checkerboard: 8 latitude rows x 14 longitude stripes.
-    // Odd rows are offset by half a stripe width so red corners touch
-    // red corners diagonally (and same for white).
+    // Per-pixel sphere rendering with screen-space latitude bands.
+    // 9 lat bands x 14 lon stripes, half-offset on odd rows.
+    // Rendered at 1/3 resolution for performance.
+    final diam = (radius * 2).toInt();
+    if (diam <= 0) return;
 
-    canvas.save();
-    canvas.clipPath(
-      Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: radius)),
-    );
-
-    // White base
-    canvas.drawCircle(Offset(cx, cy), radius, Paint()..color = _ballWhite);
-
-    const latRows = 7;
+    final res = max(60, diam ~/ 3);
+    final step = diam / res;
+    const latBands = 9;
     const lonStripes = 14;
-    const subDiv = 6; // subdivisions per edge for smooth curvature
     final rotAngle = phase / lonStripes * 2 * pi;
+    final cosRot = cos(rotAngle);
+    final sinRot = sin(rotAngle);
     final redPaint = Paint()..color = _ballRed;
+    final whitePaint = Paint()..color = _ballWhite;
 
-    for (int row = 0; row < latRows; row++) {
-      final theta0 = pi * row / latRows;
-      final theta1 = pi * (row + 1) / latRows;
-      final y0 = cy - cos(theta0) * radius;
-      final y1 = cy - cos(theta1) * radius;
-      final rSlice0 = sin(theta0) * radius;
-      final rSlice1 = sin(theta1) * radius;
+    for (int py = 0; py < res; py++) {
+      final ny = (py + 0.5) / res * 2 - 1;
+      for (int px = 0; px < res; px++) {
+        final nx = (px + 0.5) / res * 2 - 1;
+        final r2 = nx * nx + ny * ny;
+        if (r2 > 1) continue;
 
-      // Half-stripe offset on odd rows creates the diagonal pattern
-      final offset = (row % 2 == 0) ? 0.0 : 0.5;
+        final nz = sqrt(1 - r2);
+        // Y-axis rotation
+        final rx = nx * cosRot + nz * sinRot;
+        final ry = ny;
+        final rz = -nx * sinRot + nz * cosRot;
 
-      for (int col = 0; col < lonStripes; col++) {
-        // Only draw red squares (checkerboard)
-        if (col % 2 != 0) continue;
+        // Screen-space latitude (linear in Y for equal-height bands)
+        var band = ((ry + 1) / 2 * latBands).floor();
+        if (band >= latBands) band = latBands - 1;
 
-        final phi0 = 2 * pi * (col + offset) / lonStripes + rotAngle;
-        final phi1 = 2 * pi * (col + 1 + offset) / lonStripes + rotAngle;
+        // Longitude
+        final phi = atan2(rx, rz) + pi;
+        final offset = (band % 2 == 1) ? 0.5 : 0.0;
+        var lon = ((phi / (2 * pi) * lonStripes + offset) % lonStripes).floor();
 
-        // Skip back-facing
-        if (cos((phi0 + phi1) / 2) < -0.2) continue;
-
-        // Build curved quad: top edge L→R, bottom edge R→L
-        final path = Path();
-
-        // Top edge with subdivisions
-        for (int s = 0; s <= subDiv; s++) {
-          final t = s / subDiv;
-          final phi = phi0 + (phi1 - phi0) * t;
-          final x = cx + sin(phi) * rSlice0;
-          if (s == 0) {
-            path.moveTo(x, y0);
-          } else {
-            path.lineTo(x, y0);
-          }
-        }
-        // Bottom edge with subdivisions (reverse)
-        for (int s = subDiv; s >= 0; s--) {
-          final t = s / subDiv;
-          final phi = phi0 + (phi1 - phi0) * t;
-          path.lineTo(cx + sin(phi) * rSlice1, y1);
-        }
-        path.close();
-        canvas.drawPath(path, redPaint);
+        final isRed = lon % 2 == 0;
+        final screenX = cx - radius + px * step;
+        final screenY = cy - radius + py * step;
+        canvas.drawRect(
+          Rect.fromLTWH(screenX, screenY, step + 0.5, step + 0.5),
+          isRed ? redPaint : whitePaint,
+        );
       }
     }
-
-    canvas.restore();
 
     // Specular highlight
     canvas.drawCircle(
