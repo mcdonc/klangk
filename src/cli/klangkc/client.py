@@ -165,6 +165,14 @@ class KlangkClient:
             **kwargs,
         )
 
+    def patch(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
+        return _request_with_retry(
+            "PATCH",
+            f"{self.cfg.server.url}{path}",
+            headers=self._headers(),
+            **kwargs,
+        )
+
     def delete(
         self, path: str, **kwargs
     ) -> httpx.Response:  # pragma: no cover
@@ -282,61 +290,26 @@ class KlangkClient:
         self, name: str, email: str, role: str = "coders"
     ) -> dict:
         ws = self.resolve_workspace(name)
-        # Remove from any existing roles first
-        roles_resp = self.get(f"/workspaces/{ws.id}/roles")
-        self._check_auth(roles_resp)
-        roles_resp.raise_for_status()
-        for r in roles_resp.json():
-            for m in r["members"]:
-                if m["email"] == email and r["role"] != role:
-                    del_resp = self.delete(
-                        f"/workspaces/{ws.id}/roles/{r['role']}/{m['id']}"
-                    )
-                    self._check_auth(del_resp)
-                    del_resp.raise_for_status()
-        resp = self.post(
-            f"/workspaces/{ws.id}/roles/{role}",
-            json={"email": email},
+        resp = self.patch(
+            f"/workspaces/{ws.id}/roles",
+            json={"email": email, "role": role},
         )
         self._check_auth(resp)
         resp.raise_for_status()
-        return {"email": email, "role": role}
+        return resp.json()
 
-    def remove_workspace_member(
-        self, name: str, email: str, role: str | None = None
-    ) -> None:
+    def remove_workspace_member(self, name: str, email: str) -> None:
         ws = self.resolve_workspace(name)
-        if role:
-            # Remove from a specific role
-            roles_to_check = [role]
-        else:
-            # Remove from all roles
-            roles_to_check = [
-                "owners",
-                "coders",
-                "collaborators",
-                "spectators",
-            ]
-        resp = self.get(f"/workspaces/{ws.id}/roles")
+        resp = self.patch(
+            f"/workspaces/{ws.id}/roles",
+            json={"email": email, "role": None},
+        )
         self._check_auth(resp)
-        resp.raise_for_status()
-        roles_data = resp.json()
-        found = False
-        for r in roles_data:
-            if r["role"] not in roles_to_check:
-                continue
-            for m in r["members"]:
-                if m["email"] == email:
-                    del_resp = self.delete(
-                        f"/workspaces/{ws.id}/roles/{r['role']}/{m['id']}"
-                    )
-                    self._check_auth(del_resp)
-                    del_resp.raise_for_status()
-                    found = True
-        if not found:
+        if resp.status_code == 404:
             raise WorkspaceNotFoundError(
                 f"User '{email}' is not a member of '{name}'"
             )
+        resp.raise_for_status()
 
     def restart_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)

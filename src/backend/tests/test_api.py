@@ -1629,6 +1629,157 @@ class TestWorkspaceRoles:
         assert "owners" in role_names
 
 
+class TestChangeWorkspaceRole:
+    async def test_change_role(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "chg-role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        target = await model.create_user("chg-role@test.com", "pass")
+        # Add as coder
+        resp = await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "chg-role@test.com", "role": "coders"},
+        )
+        assert resp.status_code == 200
+        # Verify in coders
+        roles = (
+            await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        ).json()
+        coders = [
+            m["id"]
+            for r in roles
+            if r["role"] == "coders"
+            for m in r["members"]
+        ]
+        assert target["id"] in coders
+        # Change to spectator
+        resp = await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "chg-role@test.com", "role": "spectators"},
+        )
+        assert resp.status_code == 200
+        # Verify moved
+        roles = (
+            await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        ).json()
+        coders = [
+            m["id"]
+            for r in roles
+            if r["role"] == "coders"
+            for m in r["members"]
+        ]
+        specs = [
+            m["id"]
+            for r in roles
+            if r["role"] == "spectators"
+            for m in r["members"]
+        ]
+        assert target["id"] not in coders
+        assert target["id"] in specs
+
+    async def test_remove_all_roles(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "rm-all-ws"}
+        )
+        ws_id = resp.json()["id"]
+        await model.create_user("rm-all@test.com", "pass")
+        await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "rm-all@test.com", "role": "coders"},
+        )
+        # Remove from all
+        resp = await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "rm-all@test.com", "role": None},
+        )
+        assert resp.status_code == 200
+        roles = (
+            await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        ).json()
+        all_members = [m["email"] for r in roles for m in r["members"]]
+        assert "rm-all@test.com" not in all_members
+
+    async def test_invalid_role(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "bad-chg-ws"}
+        )
+        ws_id = resp.json()["id"]
+        await model.create_user("bad-chg@test.com", "pass")
+        resp = await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "bad-chg@test.com", "role": "invalid"},
+        )
+        assert resp.status_code == 400
+
+    async def test_nonexistent_user(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "nouser-chg-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "nobody@nowhere.com", "role": "coders"},
+        )
+        assert resp.status_code == 404
+
+    async def test_change_role_missing_group(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces", headers=headers, json={"name": "miss-grp-chg-ws"}
+        )
+        ws_id = resp.json()["id"]
+        await model.create_user("miss-grp@test.com", "pass")
+        # Delete the target role group
+        group = await model.get_group_by_name(f"spectators-{ws_id}")
+        await model.delete_group(group["id"])
+        resp = await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "miss-grp@test.com", "role": "spectators"},
+        )
+        assert resp.status_code == 404
+        assert "Role group" in resp.json()["detail"]
+
+    async def test_change_role_skips_missing_groups_on_remove(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/workspaces",
+            headers=headers,
+            json={"name": "skip-miss-ws"},
+        )
+        ws_id = resp.json()["id"]
+        await model.create_user("skip-miss@test.com", "pass")
+        # Add user to coders
+        await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "skip-miss@test.com", "role": "coders"},
+        )
+        # Delete spectators group — should not break removal
+        group = await model.get_group_by_name(f"spectators-{ws_id}")
+        await model.delete_group(group["id"])
+        # Change role — removal phase should skip missing group
+        resp = await client.patch(
+            f"/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": "skip-miss@test.com", "role": None},
+        )
+        assert resp.status_code == 200
+
+
 class TestWorkspaceGroupSharing:
     async def test_share_with_group(self, client, admin_user, user):
         headers = await _auth_headers(client)
