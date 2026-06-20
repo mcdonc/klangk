@@ -68,6 +68,7 @@ void _ensureAudioContext() {
 void _playBoingSound({required double panX, bool isFloor = true}) {
   final rate = isFloor ? 1.0 : 1.4;
   final vol = isFloor ? 0.6 : 0.35;
+  final pan = (panX * 2 - 1).clamp(-1.0, 1.0);
   // Play embedded MP3 of the original boing sample via Web Audio API.
   // Base64 MP3 decoded once and cached on window._boingBuf.
   final code =
@@ -84,8 +85,11 @@ void _playBoingSound({required double panX, bool isFloor = true}) {
         src.playbackRate.value = $rate;
         var g = ctx.createGain();
         g.gain.value = $vol;
+        var p = ctx.createStereoPanner();
+        p.pan.value = $pan;
         src.connect(g);
-        g.connect(ctx.destination);
+        g.connect(p);
+        p.connect(ctx.destination);
         src.start();
       }
       if (window._boingBuf) { play(window._boingBuf); return; }
@@ -117,11 +121,12 @@ class _BoingOverlayState extends State<_BoingOverlay>
   late AnimationController _ctrl;
   bool _visible = false;
 
-  double _x = 0.5;
-  double _y = 0.1;
+  // Ball state driven by ValueNotifier to avoid setState during animation.
+  // Only the CustomPainter repaints — no widget tree rebuild per frame.
+  final _ballState = ValueNotifier<_BallState>(_BallState.initial);
+
   double _vx = 0.004;
   double _vy = 0.0;
-  double _phase = 0;
   int _spinDir = 1;
   double _aspectRatio = 1.5;
   int _lastBounceFrame = -100;
@@ -164,6 +169,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
     HardwareKeyboard.instance.removeHandler(_onKey);
     _ctrl.removeListener(_tick);
     _ctrl.dispose();
+    _ballState.dispose();
     super.dispose();
   }
 
@@ -183,11 +189,9 @@ class _BoingOverlayState extends State<_BoingOverlay>
     if (radius > 0) await _preRenderBallFrames(radius);
     if (!mounted) return;
     setState(() => _visible = true);
-    _x = 0.15;
-    _y = _ballFrac + 0.02;
+    _ballState.value = _BallState(0.15, _ballFrac + 0.02, 0);
     _vx = 0.004 * widget.plugin._speed;
     _vy = 0.0;
-    _phase = 0;
     _spinDir = 1;
     _frame = 0;
     _lastBounceFrame = -100;
@@ -218,55 +222,60 @@ class _BoingOverlayState extends State<_BoingOverlay>
     // Skip every other frame for ~30fps rendering
     if (_frame % 2 != 0) return;
     final speed = widget.plugin._speed;
-    setState(() {
-      _vy += _gravity * speed;
-      _vy = _vy.clamp(-_maxVy, _maxVy);
-      _x += _vx * speed;
-      _y += _vy * speed;
+    final s = _ballState.value;
+    var x = s.x;
+    var y = s.y;
+    var phase = s.phase;
 
-      const yMin = _ballFrac;
-      const yMax = 1.0 - _ballFrac;
-      final xPad = _ballFrac / _aspectRatio;
-      final xMin = xPad;
-      final xMax = 1.0 - xPad;
+    _vy += _gravity * speed;
+    _vy = _vy.clamp(-_maxVy, _maxVy);
+    x += _vx * speed;
+    y += _vy * speed;
 
-      final canBounce = (_frame - _lastBounceFrame) >= _minBounceInterval;
+    const yMin = _ballFrac;
+    const yMax = 1.0 - _ballFrac;
+    final xPad = _ballFrac / _aspectRatio;
+    final xMin = xPad;
+    final xMax = 1.0 - xPad;
 
-      if (_y >= yMax) {
-        _y = yMax;
-        _vy = -_vy.abs() * _damping;
-        if (canBounce) {
-          _playBoingSound(panX: _x, isFloor: true);
-          _lastBounceFrame = _frame;
-        }
-      }
-      if (_y <= yMin) {
-        _y = yMin;
-        _vy = _vy.abs() * _damping;
-      }
-      if (_x <= xMin) {
-        _x = xMin;
-        _vx = _vx.abs();
-        _spinDir = 1;
-        if (canBounce) {
-          _playBoingSound(panX: _x, isFloor: false);
-          _lastBounceFrame = _frame;
-        }
-      }
-      if (_x >= xMax) {
-        _x = xMax;
-        _vx = -_vx.abs();
-        _spinDir = -1;
-        if (canBounce) {
-          _playBoingSound(panX: _x, isFloor: false);
-          _lastBounceFrame = _frame;
-        }
-      }
+    final canBounce = (_frame - _lastBounceFrame) >= _minBounceInterval;
 
-      _phase += 0.0675 * _spinDir * speed;
-      if (_phase < 0) _phase += 14;
-      if (_phase >= 14) _phase -= 14;
-    });
+    if (y >= yMax) {
+      y = yMax;
+      _vy = -_vy.abs() * _damping;
+      if (canBounce) {
+        _playBoingSound(panX: x, isFloor: true);
+        _lastBounceFrame = _frame;
+      }
+    }
+    if (y <= yMin) {
+      y = yMin;
+      _vy = _vy.abs() * _damping;
+    }
+    if (x <= xMin) {
+      x = xMin;
+      _vx = _vx.abs();
+      _spinDir = 1;
+      if (canBounce) {
+        _playBoingSound(panX: x, isFloor: false);
+        _lastBounceFrame = _frame;
+      }
+    }
+    if (x >= xMax) {
+      x = xMax;
+      _vx = -_vx.abs();
+      _spinDir = -1;
+      if (canBounce) {
+        _playBoingSound(panX: x, isFloor: false);
+        _lastBounceFrame = _frame;
+      }
+    }
+
+    phase += 0.0675 * _spinDir * speed;
+    if (phase < 0) phase += 14;
+    if (phase >= 14) phase -= 14;
+
+    _ballState.value = _BallState(x, y, phase);
   }
 
   @override
@@ -288,14 +297,24 @@ class _BoingOverlayState extends State<_BoingOverlay>
             height: overlayH,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: CustomPaint(
-                painter: _BoingScenePainter(
-                  ballX: _x,
-                  ballY: _y,
-                  phase: _phase,
-                  ballFrac: _ballFrac,
-                ),
-                child: const SizedBox.expand(),
+              child: Stack(
+                children: [
+                  RepaintBoundary(
+                    child: CustomPaint(
+                      painter: _BoingBackgroundPainter(),
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                  RepaintBoundary(
+                    child: CustomPaint(
+                      painter: _BoingBallPainter(
+                        state: _ballState,
+                        ballFrac: _ballFrac,
+                      ),
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -303,6 +322,12 @@ class _BoingOverlayState extends State<_BoingOverlay>
       ),
     );
   }
+}
+
+class _BallState {
+  final double x, y, phase;
+  const _BallState(this.x, this.y, this.phase);
+  static const initial = _BallState(0.5, 0.1, 0);
 }
 
 // ---------- scene painter ----------
@@ -321,8 +346,7 @@ Future<void> _preRenderBallFrames(int radius) async {
   final cosTilt = cos(tilt);
   final sinTilt = sin(tilt);
   final diam = radius * 2;
-  // Capped resolution — good enough quality without hanging
-  final res = min(diam, 120);
+  final res = min(diam, 80);
 
   final frames = <ui.Image>[];
   for (int frame = 0; frame < nFrames; frame++) {
@@ -400,38 +424,51 @@ Future<void> _preRenderBallFrames(int radius) async {
     final clipPicture = clipRecorder.endRecording();
     frames.add(await clipPicture.toImage(diam, diam));
     raw.dispose();
+
+    // Yield to UI thread every 4 frames to avoid blocking
+    if (frame % 4 == 3) await Future.delayed(Duration.zero);
   }
 
   _ballFrames = frames;
   _ballFrameRadius = radius;
 }
 
-class _BoingScenePainter extends CustomPainter {
-  final double ballX, ballY, phase, ballFrac;
-
+class _BoingBackgroundPainter extends CustomPainter {
   static const _bgColor = Color(0xFFAAAAAA);
   static const _gridColor = Color(0xFFAA00AA);
   static const _gridDark = Color(0xFF660066);
-  static const _shadowColor = Color(0x44000000);
-
-  _BoingScenePainter({
-    required this.ballX,
-    required this.ballY,
-    required this.phase,
-    required this.ballFrac,
-  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
-    final radius = h * ballFrac;
 
     canvas.drawRect(Offset.zero & size, Paint()..color = _bgColor);
-    _drawGrid(canvas, size);
+
+    // Grid
+    final gridH = h * 0.75;
+    final gridPaint = Paint()
+      ..color = _gridColor
+      ..strokeWidth = 1.5;
+    const cols = 14;
+    for (int i = 0; i <= cols; i++) {
+      canvas.drawLine(
+        Offset(w * i / cols, 0),
+        Offset(w * i / cols, gridH),
+        gridPaint,
+      );
+    }
+    const rows = 10;
+    for (int i = 0; i <= rows; i++) {
+      canvas.drawLine(
+        Offset(0, gridH * i / rows),
+        Offset(w, gridH * i / rows),
+        gridPaint,
+      );
+    }
 
     // Floor
-    final floorTop = h * 0.75;
+    final floorTop = gridH;
     canvas.drawRect(
       Rect.fromLTWH(0, floorTop, w, h - floorTop),
       Paint()..color = _gridDark.withValues(alpha: 0.25),
@@ -454,9 +491,28 @@ class _BoingScenePainter extends CustomPainter {
         floorPaint,
       );
     }
+  }
 
-    final cx = ballX * w;
-    final cy = ballY * h;
+  @override
+  bool shouldRepaint(covariant _BoingBackgroundPainter old) => false;
+}
+
+class _BoingBallPainter extends CustomPainter {
+  final ValueNotifier<_BallState> state;
+  final double ballFrac;
+
+  static const _shadowColor = Color(0x44000000);
+
+  _BoingBallPainter({required this.state, required this.ballFrac})
+    : super(repaint: state);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = state.value;
+    final h = size.height;
+    final radius = h * ballFrac;
+    final cx = s.x * size.width;
+    final cy = s.y * h;
 
     // Shadow
     canvas.drawOval(
@@ -468,35 +524,12 @@ class _BoingScenePainter extends CustomPainter {
       Paint()..color = _shadowColor,
     );
 
-    _drawBall(canvas, cx, cy, radius);
-  }
-
-  void _drawGrid(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height * 0.75;
-    final paint = Paint()
-      ..color = _gridColor
-      ..strokeWidth = 1.5;
-
-    const cols = 14;
-    for (int i = 0; i <= cols; i++) {
-      canvas.drawLine(Offset(w * i / cols, 0), Offset(w * i / cols, h), paint);
-    }
-    const rows = 10;
-    for (int i = 0; i <= rows; i++) {
-      canvas.drawLine(Offset(0, h * i / rows), Offset(w, h * i / rows), paint);
-    }
-  }
-
-  void _drawBall(Canvas canvas, double cx, double cy, double radius) {
+    // Ball
     final frames = _ballFrames;
     if (frames == null || frames.isEmpty) return;
-
-    // Quantize phase to frame index
     const nFrames = 56;
-    var frameIdx = (phase / 14 * nFrames).floor() % nFrames;
+    var frameIdx = (s.phase / 14 * nFrames).floor() % nFrames;
     if (frameIdx < 0) frameIdx += nFrames;
-
     final img = frames[frameIdx];
     final diam = radius * 2;
     canvas.drawImageRect(
@@ -508,6 +541,5 @@ class _BoingScenePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _BoingScenePainter old) =>
-      ballX != old.ballX || ballY != old.ballY || phase != old.phase;
+  bool shouldRepaint(covariant _BoingBallPainter old) => false;
 }
