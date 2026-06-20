@@ -4,15 +4,17 @@
 
 ## Why Klangk?
 
-AI coding agents like Pi and Claude Code are powerful — they read,
-write, and execute code on your behalf. But running them directly on
-your machine means trusting them with everything: your files, your
-credentials, your system.
+**For solo developers:** AI agents like Pi and Claude Code are powerful
+but intentionally given wide permissions — they read, write, and
+execute code on your behalf. Klangk keeps them safely isolated: each
+workspace is its own container where an agent can work freely without
+risking your host system or other projects.
 
-Klangk isolates each project in its own container. Agents work freely
-inside; your host stays safe. Add multi-user collaboration on top and
-you get a platform where teams and AI work together in sandboxed
-workspaces.
+**For teams:** Klangk adds multi-user collaboration on top of
+sandboxing. Share workspaces with teammates, pair-program through
+shared terminals, chat alongside your AI agent, and control access
+with per-user roles and permissions — all within the same isolated
+containers.
 
 ## Core Features
 
