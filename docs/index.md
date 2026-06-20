@@ -33,8 +33,8 @@ run agents, and tear it down when you're done.
 
 ### AI Agent Integration
 
-Pi and Claude Code run inside workspace containers with full terminal
-access. The built-in chat agent ([MrBoops](features/chat.md)) can
+Harnesses like Pi and Claude Code can run inside workspace containers
+with full terminal access. The built-in chat agent ([MrBoops](features/chat.md)) can
 answer questions, run commands, and edit files — all confined to the
 workspace.
 
