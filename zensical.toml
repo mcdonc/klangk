@@ -1,6 +1,6 @@
 [project]
 site_name = "Klangk"
-site_description = "Multi-User AI Collaboration and Coding Platform"
+site_description = "Multi-User AI Sandboxing, Collaboration and Coding Platform"
 site_author = "Chris McDonough"
 site_url = "https://mcdonc.github.io/klangk/"
 copyright = "Copyright &copy; 2026 Chris McDonough"

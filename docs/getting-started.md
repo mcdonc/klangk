@@ -1,41 +1,12 @@
 # Getting Started
 
-## What is Klangk?
-
-Klangk is a general-purpose container orchestration system with a
-web-based multi-user interface. Each user gets isolated workspace
-containers with a full terminal, file browser, and real-time chat.
-
-AI coding agents like Pi and Claude Code are powerful but
-intentionally given wide permissions — they can read, write, and
-execute code on your behalf. Klangk's containerization keeps these
-agents sandboxed: each workspace is an isolated container where an
-agent can do its work without risking your host system, other
-projects, or other users' environments.
-
-The [`klangkc sandbox`](features/sandbox.md) command makes this
-easy: check a config file into your repo that describes what the
-workspace needs (mounts, tools, dotfiles), and spin up an isolated
-environment.
-
-- **Sandboxed AI agents** — Pi and Claude Code run inside
-  containers, isolated from your host system
-- **Project-level config** — `.klangk/sandbox.yaml` defines mounts,
-  setup scripts, and dotfiles for reproducible environments
-- **SSH agent forwarding** — use your local SSH keys inside
-  containers without copying them
-- **GitHub HTTPS authentication** — browser-based credential flow
-  for git operations
-- **Plugin system** — extend the AI agent and browser with
-  TypeScript and Dart extensions
-- **Collaborate with other users** — share workspaces, terminals,
-  and chat in real time
-- **ACL authorization** — fine-grained access control for
-  multi-tenant deployments
+This guide covers setting up Klangk for local, single-user development
+on your own machine. For multi-user or team deployments, see
+[Deployment](deployment/index.md).
 
 ## Prerequisites
 
-- macOS or Linux
+- Linux or macOS
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (or run `./bootstrap`)
 - An OpenAI-compatible LLM provider (e.g., [Ollama Cloud](https://ollama.com) or self-hosted Ollama or LiteLLM instance)
 
@@ -65,22 +36,27 @@ EOF
 ./bootstrap
 ```
 
-## Entering the Dev Shell
-
-All commands below assume you're inside the devenv shell:
-
-```bash
-devenv shell
-```
-
-This puts all project tools (Python, Flutter, Dart, Node, podman, etc.) on your PATH.
-
 ## Starting the Dev Environment
 
 ```bash
 devenv processes up --no-tui
 ```
 
-This builds the workspace image and Flutter web app on first run (via `execIfModified`), starts nginx, the FastAPI backend, and watches for file changes. Open [http://localhost:8995](http://localhost:8995).
+This sets up the dev shell (Python, Flutter, Dart, Node, podman, etc.),
+builds the workspace image and Flutter web app on first run, starts
+nginx and the FastAPI backend, and watches for file changes. Open
+[http://localhost:8995](http://localhost:8995).
 
-Log in with `admin@example.com` (or whatever you set `KLANGK_DEFAULT_USER` to). If you set `KLANGK_DEFAULT_PASSWORD` in `.env`, use that password. Otherwise, check the server log output for the generated password. The default user is in the `admin` group and can manage other users and groups via the Admin page.
+To run project commands like `test-backend` or `build-workspace-image`
+in a separate terminal, use `devenv shell` to enter the same
+environment.
+
+## Logging In
+
+Log in with `admin@example.com` (or whatever you set
+`KLANGK_DEFAULT_USER` to). If you set `KLANGK_DEFAULT_PASSWORD` in
+`.env`, use that password. Otherwise, check the server log output for
+the generated password.
+
+The default user is in the `admin` group and can manage other users
+and groups via the Admin page.

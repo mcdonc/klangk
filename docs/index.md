@@ -1,21 +1,23 @@
 # Klangk
 
-Multi-User AI Collaboration and Coding Platform
+Multi-User AI Sandboxing, Collaboration and Coding Platform
 
 ![Klangk Web Coding Agent](assets/screenshot.png)
 
-Klangk is a container orchestration system powered by Podman that
-specializes in sandboxing AI coding tasks. AI agents like Pi and
-Claude Code are powerful but intentionally given wide permissions —
-they read, write, and execute code on your behalf. Klangk keeps
-these agents safely isolated: each workspace is its own container
-where an agent can work freely without risking your host system or
-other projects.
+Klangk is a container orchestration system that specializes in
+sandboxing AI coding tasks.
 
-Use [`klangkc sandbox`](features/sandbox.md) to spin up a sandboxed
-environment from a project config file — mount your source code,
-copy your dotfiles, install tools, and drop into a shell, all with
-one command.
+**For solo developers:** AI agents like Pi and Claude Code are powerful
+but intentionally given wide permissions — they read, write, and
+execute code on your behalf. Klangk keeps them safely isolated: each
+workspace is its own container where an agent can work freely without
+risking your host system or other projects.
+
+**For teams:** Klangk adds multi-user collaboration on top of
+sandboxing. Share workspaces with teammates, pair-program through
+shared terminals, chat alongside your AI agent, and control access
+with per-user roles and permissions — all within the same isolated
+containers.
 
 ## What You Can Do
 
