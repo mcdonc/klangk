@@ -115,7 +115,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
   int _spinDir = 1;
   double _aspectRatio = 1.5;
   int _lastBounceFrame = -100;
-  static const double _gravity = 0.00015;
+  static const double _gravity = 0.000075;
   static const double _damping = 0.92;
   static const double _maxVy = 0.012;
   static const double _ballFrac = 0.33;
