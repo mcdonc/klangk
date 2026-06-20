@@ -8,11 +8,8 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import 'dart:js_interop';
 
-@JS('AudioContext')
-external JSFunction get _AudioContextConstructor;
-
-@JS('XMLHttpRequest')
-external JSFunction get _XMLHttpRequestConstructor;
+@JS('eval')
+external JSAny? _eval(JSString code);
 
 class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
   bool _active = false;
@@ -51,83 +48,39 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
 
 // ---------- Sound ----------
 
-/// Cached decoded audio buffer (loaded once, reused on each bounce).
-JSObject? _audioCtx;
-JSObject? _boingSample;
-
-/// Load the boing.ogg sample via XHR and decode it.
-void _ensureAudioLoaded() {
-  if (_audioCtx != null) return;
-  try {
-    _audioCtx = _AudioContextConstructor.callAsConstructor<JSObject>();
-  } catch (_) {
-    return;
-  }
-
-  // Load boing.ogg from Flutter asset serving path
-  try {
-    final xhr = _XMLHttpRequestConstructor.callAsConstructor<JSObject>();
-    (xhr).callMethod(
-      'open'.toJS,
-      'GET'.toJS,
-      'assets/assets/boing.ogg'.toJS,
-      true.toJS,
-    );
-    (xhr).setProperty('responseType'.toJS, 'arraybuffer'.toJS);
-    (xhr).setProperty(
-      'onload'.toJS,
-      ((JSObject _) {
-        final response = xhr.getProperty('response'.toJS);
-        (_audioCtx!).callMethod(
-          'decodeAudioData'.toJS,
-          response,
-          ((JSObject buffer) {
-            _boingSample = buffer;
-          }).toJS,
-        );
-      }).toJS,
-    );
-    (xhr).callMethod('send'.toJS);
-  } catch (_) {}
-}
-
+/// Synthesize a metallic boing via Web Audio API eval (same pattern as beep plugin).
 void _playBoingSound({required double panX, bool isFloor = true}) {
-  if (_audioCtx == null || _boingSample == null) return;
-  try {
-    final ctx = _audioCtx!;
-    final now = (ctx.getProperty('currentTime'.toJS) as JSNumber).toDartDouble;
-    final dest = ctx.getProperty('destination'.toJS) as JSObject;
-
-    // Stereo panner
-    final panner = ctx.callMethod('createStereoPanner'.toJS) as JSObject;
-    final panParam = panner.getProperty('pan'.toJS) as JSObject;
-    final panValue = (panX * 2 - 1).clamp(-1.0, 1.0);
-    panParam.callMethod('setValueAtTime'.toJS, panValue.toJS, now.toJS);
-    panner.callMethod('connect'.toJS, dest);
-
-    // Gain (floor louder than walls)
-    final gain = ctx.callMethod('createGain'.toJS) as JSObject;
-    final gainParam = gain.getProperty('gain'.toJS) as JSObject;
-    gainParam.callMethod(
-      'setValueAtTime'.toJS,
-      (isFloor ? 0.6 : 0.35).toJS,
-      now.toJS,
-    );
-    gain.callMethod('connect'.toJS, panner);
-
-    // Buffer source playing the original sample
-    final src = ctx.callMethod('createBufferSource'.toJS) as JSObject;
-    src.setProperty('buffer'.toJS, _boingSample!);
-    // Slightly higher playback rate for wall hits
-    final rateParam = src.getProperty('playbackRate'.toJS) as JSObject;
-    rateParam.callMethod(
-      'setValueAtTime'.toJS,
-      (isFloor ? 1.0 : 1.3).toJS,
-      now.toJS,
-    );
-    src.callMethod('connect'.toJS, gain);
-    src.callMethod('start'.toJS, now.toJS);
-  } catch (_) {}
+  final pan = (panX * 2 - 1).clamp(-1.0, 1.0);
+  final vol = isFloor ? 0.5 : 0.3;
+  final rate = isFloor ? 1.0 : 1.3;
+  // Three detuned oscillators for metallic character + stereo pan
+  final code =
+      '''
+    (function() {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var now = ctx.currentTime;
+      var pan = ctx.createStereoPanner();
+      pan.pan.value = $pan;
+      pan.connect(ctx.destination);
+      var master = ctx.createGain();
+      master.gain.setValueAtTime($vol, now);
+      master.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      master.connect(pan);
+      [${180 * rate}, ${340 * rate}, ${720 * rate}].forEach(function(f) {
+        var osc = ctx.createOscillator();
+        var g = ctx.createGain();
+        osc.frequency.setValueAtTime(f, now);
+        osc.frequency.exponentialRampToValueAtTime(f * 0.35, now + 0.15);
+        g.gain.setValueAtTime(0.3, now);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.connect(g);
+        g.connect(master);
+        osc.start(now);
+        osc.stop(now + 0.25);
+      });
+    })()
+  ''';
+  _eval(code.toJS);
 }
 
 // ---------- overlay ----------
@@ -153,7 +106,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
   int _spinDir = 1;
   static const double _gravity = 0.00025;
   static const double _damping = 0.97;
-  static const double _ballFrac = 0.22;
+  static const double _ballFrac = 0.33;
   static const _durationSec = 12;
 
   @override
@@ -166,7 +119,6 @@ class _BoingOverlayState extends State<_BoingOverlay>
     _ctrl.addListener(_tick);
     widget.plugin.addListener(_onUpdate);
     HardwareKeyboard.instance.addHandler(_onKey);
-    _ensureAudioLoaded();
   }
 
   @override
@@ -245,8 +197,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
         _playBoingSound(panX: _x, isFloor: false);
       }
 
-      // Half the original spin speed
-      _phase += 0.175 * _spinDir * speed;
+      _phase += 0.09 * _spinDir * speed;
       if (_phase < 0) _phase += 14;
       if (_phase >= 14) _phase -= 14;
     });
@@ -256,7 +207,6 @@ class _BoingOverlayState extends State<_BoingOverlay>
   Widget build(BuildContext context) {
     if (!_visible) return const SizedBox.shrink();
     final size = MediaQuery.of(context).size;
-    // Leave a quarter of the window visible on each side
     final insetX = size.width * 0.125;
     final insetY = size.height * 0.125;
     return Positioned(
@@ -306,7 +256,8 @@ class _BoingScenePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
-    final radius = min(w, h) * ballFrac;
+    // Use height so the ball is always proportional to the scene
+    final radius = h * ballFrac;
 
     canvas.drawRect(Offset.zero & size, Paint()..color = _bgColor);
     _drawGrid(canvas, size);
