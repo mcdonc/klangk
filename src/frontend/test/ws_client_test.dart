@@ -256,11 +256,10 @@ void main() {
       client.dispose();
     });
 
-    test('unclean close sets flag and pre-checks HTTP on reconnect', () async {
+    test('connect always pre-checks HTTP before opening WebSocket', () async {
       SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
       final channel = _FakeWebSocketChannel();
       WsClient.testChannelFactory = (_) => channel;
-      WsClient.testBackoffOverride = (_) => Duration.zero;
       var httpCheckCalled = false;
       WsClient.testHttpPreCheck = () async {
         httpCheckCalled = true;
@@ -274,100 +273,28 @@ void main() {
       client.updateAuth(auth);
 
       await client.connect();
+      expect(httpCheckCalled, isTrue);
       expect(client.connected, isTrue);
 
-      // Connect to workspace so auto-reconnect is armed
-      client.connectWorkspace('ws1');
-      channel.serverSend({'type': 'workspace_ready', 'workspaceId': 'ws1'});
+      WsClient.testHttpPreCheck = null;
+      client.dispose();
+    });
+
+    test('connect aborts when HTTP pre-check fails', () async {
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+      final channel = _FakeWebSocketChannel();
+      WsClient.testChannelFactory = (_) => channel;
+      WsClient.testHttpPreCheck = () async => false;
+
+      final auth = AuthService();
       await Future.delayed(Duration.zero);
 
-      // Simulate unclean server close (no code 1000)
-      channel.serverClose(1006);
-      await Future.delayed(Duration.zero);
+      final client = WsClient();
+      client.updateAuth(auth);
+
+      await client.connect();
       expect(client.connected, isFalse);
 
-      // Wait for reconnect attempt
-      await Future.delayed(const Duration(milliseconds: 50));
-      expect(httpCheckCalled, isTrue);
-
-      WsClient.testBackoffOverride = null;
-      WsClient.testHttpPreCheck = null;
-      client.dispose();
-    });
-
-    test('clean close does not trigger HTTP pre-check', () async {
-      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
-      final channel = _FakeWebSocketChannel();
-      WsClient.testChannelFactory = (_) => channel;
-      WsClient.testBackoffOverride = (_) => Duration.zero;
-      var httpCheckCalled = false;
-      WsClient.testHttpPreCheck = () async {
-        httpCheckCalled = true;
-        return true;
-      };
-
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      final client = WsClient();
-      client.updateAuth(auth);
-
-      await client.connect();
-      expect(client.connected, isTrue);
-
-      // Connect to workspace so auto-reconnect is armed
-      client.connectWorkspace('ws1');
-      channel.serverSend({'type': 'workspace_ready', 'workspaceId': 'ws1'});
-      await Future.delayed(Duration.zero);
-
-      // Simulate clean server close (code 1000)
-      channel.serverClose(1000);
-      await Future.delayed(Duration.zero);
-
-      // Wait for reconnect attempt
-      await Future.delayed(const Duration(milliseconds: 50));
-      expect(httpCheckCalled, isFalse);
-
-      WsClient.testBackoffOverride = null;
-      WsClient.testHttpPreCheck = null;
-      client.dispose();
-    });
-
-    test('HTTP pre-check failure schedules another reconnect', () async {
-      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
-      final channel = _FakeWebSocketChannel();
-      WsClient.testChannelFactory = (_) => channel;
-      WsClient.testBackoffOverride = (_) => Duration.zero;
-      var httpCheckCount = 0;
-      WsClient.testHttpPreCheck = () async {
-        httpCheckCount++;
-        return false; // server not reachable
-      };
-
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      final client = WsClient();
-      client.updateAuth(auth);
-
-      await client.connect();
-      expect(client.connected, isTrue);
-
-      // Connect to workspace so auto-reconnect is armed
-      client.connectWorkspace('ws1');
-      channel.serverSend({'type': 'workspace_ready', 'workspaceId': 'ws1'});
-      await Future.delayed(Duration.zero);
-
-      // Simulate unclean close
-      channel.serverClose(1006);
-      await Future.delayed(Duration.zero);
-
-      // First reconnect attempt: HTTP check fails, schedules another
-      await Future.delayed(const Duration(milliseconds: 50));
-      expect(httpCheckCount, greaterThanOrEqualTo(1));
-      expect(client.reconnecting, isTrue);
-
-      WsClient.testBackoffOverride = null;
       WsClient.testHttpPreCheck = null;
       client.dispose();
     });
