@@ -9,7 +9,7 @@ RUN mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-otel-telemetry \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-mcp-extension \
     && cd /opt/klangk/pi-agent/npm \
-    && npm update undici ws protobufjs 2>/dev/null; true
+    && npm update undici ws protobufjs @opentelemetry/exporter-prometheus @opentelemetry/sdk-node 2>/dev/null; true
 
 # Plugin tools: flat directory, all on PATH via /opt/klangk/bin/
 ENV PATH="/opt/klangk/bin:${PATH}"
