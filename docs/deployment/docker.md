@@ -100,9 +100,9 @@ docker rm klangk
 
 ## Adding plugins
 
-The published host image includes the default plugins only. To add
-custom plugins, you need to build a custom image — see
-[Customizing a Deployment](customizing.md) for instructions.
+To add plugins beyond what ships with the image, you need to build a
+custom image — see [Customizing a Deployment](customizing.md) for
+instructions.
 
 ## Next steps
 
