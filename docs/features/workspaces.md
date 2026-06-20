@@ -14,7 +14,8 @@ optionally configure:
 - **Image** — the container image to use (defaults to
   `klangk-workspace`)
 - **Default command** — a command to run when you open the terminal
-  (e.g., `pi` to start the AI agent automatically)
+  (e.g., `pi` to start the AI agent automatically). If unset, the
+  terminal starts a tmux session with a login shell.
 - **Bind mounts** — mount host directories into the container.
   If `KLANGK_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
   paths), only directories under those roots can be bind-mounted.
