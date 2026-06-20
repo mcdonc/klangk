@@ -35,7 +35,7 @@ from .mount import validate_mount_spec
 
 app = typer.Typer(
     name="klangkc",
-    help="Klangk — containerized development shell.",
+    help="Klangk Client",
     rich_markup_mode="rich",
 )
 
@@ -259,21 +259,29 @@ def rm(
 def members(
     workspace: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
-    """List members of a workspace."""
+    """List members of a workspace by role."""
     _require_auth()
+    client = _client()
     try:
-        result = _client().list_workspace_members(workspace)
+        ws = client.resolve_workspace(workspace)
     except WorkspaceNotFoundError:
         _err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
-    if not result:
+    resp = client.get(f"/workspaces/{ws.id}/roles")
+    client._check_auth(resp)
+    resp.raise_for_status()
+    roles = resp.json()
+    any_members = False
+    for r in roles:
+        if not r["members"]:
+            continue
+        any_members = True
+        role_name = r["role"].rstrip("s")  # "coders" -> "coder"
+        for m in r["members"]:
+            email = m.get("email", "")
+            typer.echo(f"  {email} ({role_name})")
+    if not any_members:
         typer.echo("No shared members")
-        return
-    for m in result:
-        handle = m.get("handle", "")
-        email = m.get("email", "")
-        display = f"{handle} ({email})" if handle else email
-        typer.echo(f"  {display}")
 
 
 @app.command("restart")
@@ -1058,19 +1066,42 @@ def terminals(
     asyncio.run(_list())
 
 
+_VALID_ROLES = ["owner", "coder", "collaborator", "spectator"]
+_ROLE_TO_GROUP = {
+    "owner": "owners",
+    "coder": "coders",
+    "collaborator": "collaborators",
+    "spectator": "spectators",
+}
+
+
 @app.command("share")
 def share_workspace(
     workspace: str = typer.Argument(help="Workspace name"),
     email: str = typer.Argument(help="Email of user to add"),
+    role: str = typer.Option(
+        "coder", help="Role: owner, coder, collaborator, or spectator"
+    ),
 ) -> None:
     """Share a workspace with a user."""
     _require_auth()
+    if role not in _VALID_ROLES:
+        _err.print(
+            f"[red]Invalid role '{role}'[/red]."
+            f" Choose from: {', '.join(_VALID_ROLES)}"
+        )
+        raise typer.Exit(code=1)
+    group_suffix = _ROLE_TO_GROUP[role]
     try:
-        result = _client().add_workspace_member(workspace, email)
+        result = _client().add_workspace_member(
+            workspace, email, role=group_suffix
+        )
     except WorkspaceNotFoundError:
         _err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
-    typer.echo(f"Shared workspace {workspace} with {result['email']}")
+    typer.echo(
+        f"Shared workspace {workspace} with {result['email']} as {role}"
+    )
 
 
 @app.command("unshare")

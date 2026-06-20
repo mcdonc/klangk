@@ -717,32 +717,68 @@ class TestKlangkClient:
         cfg.auth.token = "token"
         client = KlangkClient(cfg)
         owned, shared = self._ws_and_shared_resp()
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {"role": "coders", "members": []},
+        ]
         add_resp = MagicMock()
         add_resp.status_code = 200
-        add_resp.json.return_value = {
-            "status": "shared",
-            "user_id": "u1",
-            "email": "new@b.com",
-        }
-        with patch.object(client, "get", side_effect=[owned, shared]):
+        add_resp.json.return_value = {"ok": True}
+        with patch.object(
+            client, "get", side_effect=[owned, shared, roles_resp]
+        ):
             with patch.object(client, "post", return_value=add_resp):
                 result = client.add_workspace_member("my-ws", "new@b.com")
         assert result["email"] == "new@b.com"
+        assert result["role"] == "coders"
+
+    def test_add_workspace_member_changes_role(self):
+        cfg = CLIConfig()
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+        owned, shared = self._ws_and_shared_resp()
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {
+                "role": "coders",
+                "members": [{"id": "u1", "email": "alice@b.com"}],
+            },
+            {"role": "spectators", "members": []},
+        ]
+        del_resp = MagicMock()
+        del_resp.status_code = 200
+        add_resp = MagicMock()
+        add_resp.status_code = 200
+        add_resp.json.return_value = {"ok": True}
+        with patch.object(
+            client, "get", side_effect=[owned, shared, roles_resp]
+        ):
+            with patch.object(client, "delete", return_value=del_resp):
+                with patch.object(client, "post", return_value=add_resp):
+                    result = client.add_workspace_member(
+                        "my-ws", "alice@b.com", role="spectators"
+                    )
+        assert result["role"] == "spectators"
 
     def test_remove_workspace_member(self):
         cfg = CLIConfig()
         cfg.auth.token = "token"
         client = KlangkClient(cfg)
         owned, shared = self._ws_and_shared_resp()
-        members_resp = MagicMock()
-        members_resp.status_code = 200
-        members_resp.json.return_value = [
-            {"id": "u1", "email": "alice@b.com"},
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {
+                "role": "coders",
+                "members": [{"id": "u1", "email": "alice@b.com"}],
+            },
         ]
         del_resp = MagicMock()
         del_resp.status_code = 200
         with patch.object(
-            client, "get", side_effect=[owned, shared, members_resp]
+            client, "get", side_effect=[owned, shared, roles_resp]
         ):
             with patch.object(client, "delete", return_value=del_resp):
                 client.remove_workspace_member("my-ws", "alice@b.com")
@@ -752,14 +788,48 @@ class TestKlangkClient:
         cfg.auth.token = "token"
         client = KlangkClient(cfg)
         owned, shared = self._ws_and_shared_resp()
-        members_resp = MagicMock()
-        members_resp.status_code = 200
-        members_resp.json.return_value = []
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {"role": "coders", "members": []},
+        ]
         with patch.object(
-            client, "get", side_effect=[owned, shared, members_resp]
+            client, "get", side_effect=[owned, shared, roles_resp]
         ):
             with pytest.raises(WorkspaceNotFoundError):
                 client.remove_workspace_member("my-ws", "nobody@b.com")
+
+    def test_remove_workspace_member_specific_role(self):
+        cfg = CLIConfig()
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+        owned, shared = self._ws_and_shared_resp()
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {
+                "role": "coders",
+                "members": [{"id": "u1", "email": "alice@b.com"}],
+            },
+            {
+                "role": "spectators",
+                "members": [{"id": "u1", "email": "alice@b.com"}],
+            },
+        ]
+        del_resp = MagicMock()
+        del_resp.status_code = 200
+        with patch.object(
+            client, "get", side_effect=[owned, shared, roles_resp]
+        ):
+            with patch.object(
+                client, "delete", return_value=del_resp
+            ) as mock_del:
+                client.remove_workspace_member(
+                    "my-ws", "alice@b.com", role="coders"
+                )
+        # Should only delete from coders, not spectators
+        assert mock_del.call_count == 1
+        assert "coders" in mock_del.call_args[0][0]
 
     def test_resolve_workspace_by_name(self):
         cfg = CLIConfig()

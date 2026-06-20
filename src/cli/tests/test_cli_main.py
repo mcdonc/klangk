@@ -303,25 +303,44 @@ class TestMainCLI:
 
     def test_members_command(self, logged_in_cfg, monkeypatch):
         from klangkc import main
+        from klangkc.client import Workspace
 
         client = MagicMock()
-        client.list_workspace_members.return_value = [
-            {"email": "alice@test.com", "handle": "alice"},
-            {"email": "bob@test.com", "handle": ""},
+        client.resolve_workspace.return_value = Workspace(
+            id="ws-1", name="my-ws", created_at="2025-01-01"
+        )
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {
+                "role": "coders",
+                "members": [{"id": "u1", "email": "alice@test.com"}],
+            },
+            {"role": "spectators", "members": []},
         ]
+        client.get.return_value = roles_resp
         monkeypatch.setattr(main, "_client", lambda: client)
 
         calls = []
         monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
         main.members("my-ws")
-        assert any("alice" in c for c in calls)
-        assert any("bob@test.com" in c for c in calls)
+        assert any("alice@test.com" in c for c in calls)
+        assert any("coder" in c for c in calls)
 
     def test_members_empty(self, logged_in_cfg, monkeypatch):
         from klangkc import main
+        from klangkc.client import Workspace
 
         client = MagicMock()
-        client.list_workspace_members.return_value = []
+        client.resolve_workspace.return_value = Workspace(
+            id="ws-1", name="my-ws", created_at="2025-01-01"
+        )
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {"role": "coders", "members": []},
+        ]
+        client.get.return_value = roles_resp
         monkeypatch.setattr(main, "_client", lambda: client)
 
         calls = []
@@ -333,9 +352,7 @@ class TestMainCLI:
         from klangkc import main
 
         client = MagicMock()
-        client.list_workspace_members.side_effect = WorkspaceNotFoundError(
-            "nope"
-        )
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
         monkeypatch.setattr(main, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
@@ -346,15 +363,44 @@ class TestMainCLI:
 
         client = MagicMock()
         client.add_workspace_member.return_value = {
-            "status": "shared",
             "email": "alice@test.com",
+            "role": "coders",
         }
         monkeypatch.setattr(main, "_client", lambda: client)
 
         calls = []
         monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
-        main.share_workspace("my-ws", "alice@test.com")
+        main.share_workspace("my-ws", "alice@test.com", role="coder")
         assert any("alice@test.com" in c for c in calls)
+        assert any("coder" in c for c in calls)
+        client.add_workspace_member.assert_called_once_with(
+            "my-ws", "alice@test.com", role="coders"
+        )
+
+    def test_share_workspace_with_role(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        client.add_workspace_member.return_value = {
+            "email": "alice@test.com",
+            "role": "spectators",
+        }
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        calls = []
+        monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
+        main.share_workspace("my-ws", "alice@test.com", role="spectator")
+        client.add_workspace_member.assert_called_once_with(
+            "my-ws", "alice@test.com", role="spectators"
+        )
+
+    def test_share_workspace_invalid_role(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        monkeypatch.setattr(main, "_client", lambda: MagicMock())
+
+        with pytest.raises(typer.Exit):
+            main.share_workspace("my-ws", "a@b.com", role="admin")
 
     def test_share_workspace_not_found(self, logged_in_cfg, monkeypatch):
         from klangkc import main
@@ -366,7 +412,7 @@ class TestMainCLI:
         monkeypatch.setattr(main, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
-            main.share_workspace("nope", "alice@test.com")
+            main.share_workspace("nope", "alice@test.com", role="coder")
 
     def test_unshare_workspace_command(self, logged_in_cfg, monkeypatch):
         from klangkc import main

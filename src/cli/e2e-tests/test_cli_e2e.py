@@ -1737,3 +1737,62 @@ class TestWorkspaceSharing:
         )
         assert result.returncode == 0
         assert "No shared members" in result.stdout
+
+    def test_share_with_role(self):
+        env = self.env
+
+        # Share as spectator
+        result = _run(
+            [
+                "klangkc",
+                "share",
+                "e2e-ws-share",
+                "share-user@example.com",
+                "--role=spectator",
+            ],
+            env=env,
+        )
+        assert result.returncode == 0
+        assert "spectator" in result.stdout
+
+        # Members should show spectator role
+        result = _run(
+            ["klangkc", "members", "e2e-ws-share"],
+            env=env,
+        )
+        assert result.returncode == 0
+        assert "spectator" in result.stdout
+
+        # Change role to collaborator
+        result = _run(
+            [
+                "klangkc",
+                "share",
+                "e2e-ws-share",
+                "share-user@example.com",
+                "--role=collaborator",
+            ],
+            env=env,
+        )
+        assert result.returncode == 0
+        assert "collaborator" in result.stdout
+
+        # Members should now show collaborator
+        result = _run(
+            ["klangkc", "members", "e2e-ws-share"],
+            env=env,
+        )
+        assert result.returncode == 0
+        assert "collaborator" in result.stdout
+        assert "spectator" not in result.stdout
+
+        # Cleanup
+        _run(
+            [
+                "klangkc",
+                "unshare",
+                "e2e-ws-share",
+                "share-user@example.com",
+            ],
+            env=env,
+        )

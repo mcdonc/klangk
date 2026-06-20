@@ -278,29 +278,65 @@ class KlangkClient:
         resp.raise_for_status()
         return resp.json()
 
-    def add_workspace_member(self, name: str, email: str) -> dict:
+    def add_workspace_member(
+        self, name: str, email: str, role: str = "coders"
+    ) -> dict:
         ws = self.resolve_workspace(name)
+        # Remove from any existing roles first
+        roles_resp = self.get(f"/workspaces/{ws.id}/roles")
+        self._check_auth(roles_resp)
+        roles_resp.raise_for_status()
+        for r in roles_resp.json():
+            for m in r["members"]:
+                if m["email"] == email and r["role"] != role:
+                    del_resp = self.delete(
+                        f"/workspaces/{ws.id}/roles/{r['role']}/{m['id']}"
+                    )
+                    self._check_auth(del_resp)
+                    del_resp.raise_for_status()
         resp = self.post(
-            f"/workspaces/{ws.id}/members",
+            f"/workspaces/{ws.id}/roles/{role}",
             json={"email": email},
         )
         self._check_auth(resp)
         resp.raise_for_status()
-        return resp.json()
+        return {"email": email, "role": role}
 
-    def remove_workspace_member(self, name: str, email: str) -> None:
+    def remove_workspace_member(
+        self, name: str, email: str, role: str | None = None
+    ) -> None:
         ws = self.resolve_workspace(name)
-        members = self.get(f"/workspaces/{ws.id}/members")
-        self._check_auth(members)
-        members.raise_for_status()
-        target = next((m for m in members.json() if m["email"] == email), None)
-        if target is None:
+        if role:
+            # Remove from a specific role
+            roles_to_check = [role]
+        else:
+            # Remove from all roles
+            roles_to_check = [
+                "owners",
+                "coders",
+                "collaborators",
+                "spectators",
+            ]
+        resp = self.get(f"/workspaces/{ws.id}/roles")
+        self._check_auth(resp)
+        resp.raise_for_status()
+        roles_data = resp.json()
+        found = False
+        for r in roles_data:
+            if r["role"] not in roles_to_check:
+                continue
+            for m in r["members"]:
+                if m["email"] == email:
+                    del_resp = self.delete(
+                        f"/workspaces/{ws.id}/roles/{r['role']}/{m['id']}"
+                    )
+                    self._check_auth(del_resp)
+                    del_resp.raise_for_status()
+                    found = True
+        if not found:
             raise WorkspaceNotFoundError(
                 f"User '{email}' is not a member of '{name}'"
             )
-        resp = self.delete(f"/workspaces/{ws.id}/members/{target['id']}")
-        self._check_auth(resp)
-        resp.raise_for_status()
 
     def restart_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)

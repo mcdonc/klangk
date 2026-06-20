@@ -44,9 +44,10 @@ Workspace owners can share access with other users or groups from the
 **Sharing** tab, or from the CLI:
 
 ```bash
-klangkc share my-project user@example.com    # share with a user
-klangkc unshare my-project user@example.com  # remove access
-klangkc members my-project                   # list members
+klangkc share my-project user@example.com                # share (coder role)
+klangkc share my-project user@example.com --role=owner   # share with role
+klangkc unshare my-project user@example.com              # remove access
+klangkc members my-project                               # list members
 ```
 
 Shared users connect to the same container and see the workspace in
