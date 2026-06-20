@@ -72,9 +72,5 @@ connect from your local terminal with
 
 ## Architecture
 
-![Architecture Overview](assets/architecture-overview.svg)
-
-Klangk is a FastAPI backend serving a Flutter Web frontend, with
-rootless Podman managing workspace containers. An nginx reverse proxy
-ties it together. See the [architecture docs](architecture/index.md)
-for details.
+See the [architecture overview](architecture/index.md) for how the
+backend, frontend, containers, and nginx fit together.
