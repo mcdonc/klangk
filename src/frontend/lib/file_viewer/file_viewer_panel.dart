@@ -17,9 +17,10 @@ http.Client? testHttpClientOverride;
 /// Format a Unix timestamp (seconds since epoch) as a relative time string.
 String formatMtime(dynamic mtime) {
   if (mtime == null) return '';
-  final dt =
-      DateTime.fromMillisecondsSinceEpoch((mtime * 1000).toInt(), isUtc: true)
-          .toLocal();
+  final dt = DateTime.fromMillisecondsSinceEpoch(
+    (mtime * 1000).toInt(),
+    isUtc: true,
+  ).toLocal();
   final now = DateTime.now();
   final diff = now.difference(dt);
   if (diff.inMinutes < 1) return 'just now';
@@ -68,8 +69,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// bar's up/breadcrumbs work — and shows its content via the existing viewer.
   /// Used by deep-links and terminal path-clicks.
   void openFile(String path) {
-    final dir =
-        path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
+    final dir = path.contains('/')
+        ? path.substring(0, path.lastIndexOf('/'))
+        : '.';
     setState(() {
       _currentPath = dir;
       _selectedFile = path;
@@ -90,15 +92,15 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   @override
   void initState() {
     super.initState();
-    _registry = widget.registry ??
+    _registry =
+        widget.registry ??
         (FileRendererRegistry()..registerAll(builtinFileRenderers()));
     _loadFiles();
   }
 
   Map<String, String> get _headers => {
-        if (widget.authToken != null)
-          'Authorization': 'Bearer ${widget.authToken}',
-      };
+    if (widget.authToken != null) 'Authorization': 'Bearer ${widget.authToken}',
+  };
 
   Future<void> _loadFiles() async {
     if (!mounted) return;
@@ -106,7 +108,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     try {
       final response = await _client.get(
         Uri.parse(
-            '$_baseUrl/workspaces/${widget.workspaceId}/files?path=$_currentPath'),
+          '$_baseUrl/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(_currentPath)}',
+        ),
         headers: _headers,
       );
       if (response.statusCode == 200) {
@@ -128,7 +131,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Future<String> _readFileText(String path) async {
     final response = await _client.get(
       Uri.parse(
-          '$_baseUrl/workspaces/${widget.workspaceId}/files/content?path=$path'),
+        '$_baseUrl/workspaces/${widget.workspaceId}/files/content?path=${Uri.encodeComponent(path)}',
+      ),
       headers: _headers,
     );
     if (response.statusCode != 200) {
@@ -143,7 +147,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Future<Uint8List> _readFileBytes(String path) async {
     final response = await _client.get(
       Uri.parse(
-          '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}'),
+        '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
+      ),
       headers: _headers,
     );
     if (response.statusCode != 200) {
@@ -156,14 +161,17 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// overwrites). Injected into [RenderableFile.saveText] so editor renderers
   /// can save edits.
   Future<void> _saveFileText(String path, String content) async {
-    final name =
-        path.contains('/') ? path.substring(path.lastIndexOf('/') + 1) : path;
+    final name = path.contains('/')
+        ? path.substring(path.lastIndexOf('/') + 1)
+        : path;
     final uri = Uri.parse(
-        '$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(path)}');
+      '$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(path)}',
+    );
     final request = http.MultipartRequest('POST', uri)
       ..headers.addAll(_headers)
-      ..files
-          .add(http.MultipartFile.fromString('file', content, filename: name));
+      ..files.add(
+        http.MultipartFile.fromString('file', content, filename: name),
+      );
     final response = await _client.send(request);
     if (response.statusCode != 200) {
       throw Exception('Save failed: ${response.statusCode}');
@@ -173,8 +181,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// Builds the registry's view of [path] with loaders bound to this panel's
   /// http client.
   RenderableFile _renderableFor(String path) {
-    final name =
-        path.contains('/') ? path.substring(path.lastIndexOf('/') + 1) : path;
+    final name = path.contains('/')
+        ? path.substring(path.lastIndexOf('/') + 1)
+        : path;
     final dot = name.lastIndexOf('.');
     final extension = dot > 0 ? name.substring(dot + 1).toLowerCase() : '';
     return RenderableFile(
@@ -205,14 +214,16 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         content: Text('Delete "$name"? This cannot be undone.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(
-                backgroundColor: KColors.accentRed,
-                foregroundColor: Colors.white),
+              backgroundColor: KColors.accentRed,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Delete'),
           ),
         ],
@@ -222,7 +233,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     try {
       final response = await _client.delete(
         Uri.parse(
-            '$_baseUrl/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(path)}'),
+          '$_baseUrl/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(path)}',
+        ),
         headers: _headers,
       );
       if (response.statusCode == 200) {
@@ -236,9 +248,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Delete error: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Delete error: $e')));
       }
     }
   }
@@ -257,12 +269,14 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, controller.text),
-              child: const Text('Rename')),
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Rename'),
+          ),
         ],
       ),
     );
@@ -287,16 +301,18 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           final body = jsonDecode(response.body);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-                content: Text(
-                    'Rename failed: ${body["detail"] ?? response.statusCode}')),
+              content: Text(
+                'Rename failed: ${body["detail"] ?? response.statusCode}',
+              ),
+            ),
           );
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Rename error: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Rename error: $e')));
       }
     }
   }
@@ -318,9 +334,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       downloadBytes(response.bodyBytes, filename);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Download error: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Download error: $e')));
       }
     }
   }
@@ -329,26 +345,36 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
-          position.dx, position.dy, position.dx, position.dy),
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
       items: [
         const PopupMenuItem(
-            value: 'download',
-            child: ListTile(
-                dense: true,
-                leading: Icon(Icons.download, size: 18),
-                title: Text('Download'))),
+          value: 'download',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.download, size: 18),
+            title: Text('Download'),
+          ),
+        ),
         const PopupMenuItem(
-            value: 'rename',
-            child: ListTile(
-                dense: true,
-                leading: Icon(Icons.edit, size: 18),
-                title: Text('Rename'))),
+          value: 'rename',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.edit, size: 18),
+            title: Text('Rename'),
+          ),
+        ),
         const PopupMenuItem(
-            value: 'delete',
-            child: ListTile(
-                dense: true,
-                leading: Icon(Icons.delete, size: 18, color: Colors.red),
-                title: Text('Delete', style: TextStyle(color: Colors.red)))),
+          value: 'delete',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.delete, size: 18, color: Colors.red),
+            title: Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ),
       ],
     ).then((action) {
       if (action == 'download') {
@@ -368,44 +394,64 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   Widget _buildBreadcrumbs() {
     if (_currentPath == '.') {
-      return const Text('~',
-          style: TextStyle(
-              fontWeight: FontWeight.bold, color: KColors.textSecondary));
+      return const Text(
+        '~',
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          color: KColors.textSecondary,
+        ),
+      );
     }
     final parts = _currentPath.split('/');
     final children = <InlineSpan>[];
     // Leading "~/" goes to home root
-    children.add(WidgetSpan(
-      alignment: PlaceholderAlignment.middle,
-      child: InkWell(
-        onTap: () => _navigateTo('.'),
-        child: const Text('~/',
+    children.add(
+      WidgetSpan(
+        alignment: PlaceholderAlignment.middle,
+        child: InkWell(
+          onTap: () => _navigateTo('.'),
+          child: const Text(
+            '~/',
             style: TextStyle(
-                fontWeight: FontWeight.bold, color: KColors.textSecondary)),
+              fontWeight: FontWeight.bold,
+              color: KColors.textSecondary,
+            ),
+          ),
+        ),
       ),
-    ));
+    );
     for (var i = 0; i < parts.length; i++) {
       final path = parts.sublist(0, i + 1).join('/');
       // Segment name — clickable to navigate into that folder
-      children.add(WidgetSpan(
-        alignment: PlaceholderAlignment.middle,
-        child: InkWell(
-          onTap: () => _navigateTo(path),
-          child: Text(parts[i],
-              style: const TextStyle(
-                  fontWeight: FontWeight.bold, color: KColors.textSecondary)),
-        ),
-      ));
-      // Trailing slash — navigates to the parent of the next segment
-      if (i < parts.length - 1) {
-        children.add(WidgetSpan(
+      children.add(
+        WidgetSpan(
           alignment: PlaceholderAlignment.middle,
           child: InkWell(
-            onTap: () => _navigateTo(path), // coverage:ignore-line
-            child:
-                const Text('/', style: TextStyle(color: KColors.textSecondary)),
+            onTap: () => _navigateTo(path),
+            child: Text(
+              parts[i],
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: KColors.textSecondary,
+              ),
+            ),
           ),
-        ));
+        ),
+      );
+      // Trailing slash — navigates to the parent of the next segment
+      if (i < parts.length - 1) {
+        children.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: InkWell(
+              onTap: () => _navigateTo(path), // coverage:ignore-line
+              child: const Text(
+                '/',
+                style: TextStyle(color: KColors.textSecondary),
+              ),
+            ),
+          ),
+        );
       }
     }
     return RichText(
@@ -418,73 +464,74 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   @override
   Widget build(BuildContext context) {
     return SuppressBrowserContextMenu(
-        child: FileDropZone(
-      workspaceId: widget.workspaceId,
-      authToken: widget.authToken,
-      currentPath: _currentPath,
-      currentEntries: _entries,
-      onUploadComplete: _loadFiles,
-      child: Column(
-        children: [
-          // Path bar
-          Container(
-            padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
-            decoration: BoxDecoration(
-              color: KColors.bgCanvas,
-            ),
-            child: Row(
-              children: [
-                InkWell(
-                  onTap: () => _navigateTo('.'),
-                  child: const Icon(Icons.folder, size: 16),
-                ),
-                const SizedBox(width: 4),
-                Expanded(child: _buildBreadcrumbs()),
-                if (_currentPath != '.')
-                  IconButton(
-                    icon: const Icon(Icons.arrow_upward, size: 28),
-                    onPressed: () {
-                      final parent = _currentPath.contains('/')
-                          ? _currentPath.substring(
-                              0, _currentPath.lastIndexOf('/'))
-                          : '.';
-                      _navigateTo(parent);
-                    },
-                    iconSize: 28,
-                    tooltip: 'Up',
+      child: FileDropZone(
+        workspaceId: widget.workspaceId,
+        authToken: widget.authToken,
+        currentPath: _currentPath,
+        currentEntries: _entries,
+        onUploadComplete: _loadFiles,
+        child: Column(
+          children: [
+            // Path bar
+            Container(
+              padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
+              decoration: BoxDecoration(color: KColors.bgCanvas),
+              child: Row(
+                children: [
+                  InkWell(
+                    onTap: () => _navigateTo('.'),
+                    child: const Icon(Icons.folder, size: 16),
                   ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, size: 28),
-                  onPressed: _loadFiles,
-                  iconSize: 28,
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  Expanded(child: _buildBreadcrumbs()),
+                  if (_currentPath != '.')
+                    IconButton(
+                      icon: const Icon(Icons.arrow_upward, size: 28),
+                      onPressed: () {
+                        final parent = _currentPath.contains('/')
+                            ? _currentPath.substring(
+                                0,
+                                _currentPath.lastIndexOf('/'),
+                              )
+                            : '.';
+                        _navigateTo(parent);
+                      },
+                      iconSize: 28,
+                      tooltip: 'Up',
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh, size: 28),
+                    onPressed: _loadFiles,
+                    iconSize: 28,
+                  ),
+                ],
+              ),
             ),
-          ),
-          // File list or content
-          Expanded(
-            child: _selectedFile != null
-                ? _FileViewer(
-                    // Key by path so switching files (e.g. PDF → .md) directly —
-                    // without going through the list — recreates the viewer with
-                    // the new file's renderers instead of reusing stale ones.
-                    key: ValueKey(_selectedFile),
-                    registry: _registry,
-                    file: _renderableFor(_selectedFile!),
-                    onClose: () => setState(() => _selectedFile = null),
-                    onDownload: () {
-                      final path = _selectedFile!;
-                      final name = path.contains('/')
-                          ? path.substring(path.lastIndexOf('/') + 1)
-                          : path;
-                      _downloadPath(path, name, false);
-                    },
-                  )
-                : _buildFileList(),
-          ),
-        ],
+            // File list or content
+            Expanded(
+              child: _selectedFile != null
+                  ? _FileViewer(
+                      // Key by path so switching files (e.g. PDF → .md) directly —
+                      // without going through the list — recreates the viewer with
+                      // the new file's renderers instead of reusing stale ones.
+                      key: ValueKey(_selectedFile),
+                      registry: _registry,
+                      file: _renderableFor(_selectedFile!),
+                      onClose: () => setState(() => _selectedFile = null),
+                      onDownload: () {
+                        final path = _selectedFile!;
+                        final name = path.contains('/')
+                            ? path.substring(path.lastIndexOf('/') + 1)
+                            : path;
+                        _downloadPath(path, name, false);
+                      },
+                    )
+                  : _buildFileList(),
+            ),
+          ],
+        ),
       ),
-    ));
+    );
   }
 
   Widget _buildFileList() {
@@ -493,12 +540,15 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     }
     if (_entries.isEmpty) {
       return const Align(
-          alignment: Alignment.bottomCenter,
-          child: Padding(
-            padding: EdgeInsets.only(bottom: 32),
-            child: Text('Empty directory\nDrag files or folders here to upload',
-                textAlign: TextAlign.center),
-          ));
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: 32),
+          child: Text(
+            'Empty directory\nDrag files or folders here to upload',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
     }
     return Column(
       children: [
@@ -517,14 +567,17 @@ class FileViewerPanelState extends State<FileViewerPanel> {
                 },
                 child: ListTile(
                   dense: true,
-                  leading: Icon(isDir ? Icons.folder : Icons.insert_drive_file,
-                      size: 18),
+                  leading: Icon(
+                    isDir ? Icons.folder : Icons.insert_drive_file,
+                    size: 18,
+                  ),
                   title: Text(name, style: const TextStyle(fontSize: 13)),
                   subtitle: isDir
                       ? null
                       : Text(
                           '${entry['size'] ?? 0} bytes  ${formatMtime(entry['mtime'])}',
-                          style: const TextStyle(fontSize: 11)),
+                          style: const TextStyle(fontSize: 11),
+                        ),
                   onTap: () {
                     if (isDir) {
                       _navigateTo(path);
@@ -542,7 +595,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           child: Text(
             'Drag files or folders here to upload',
             style: TextStyle(
-                fontSize: 11, color: Theme.of(context).colorScheme.outline),
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.outline,
+            ),
           ),
         ),
       ],
@@ -573,8 +628,9 @@ class _FileViewer extends StatefulWidget {
 }
 
 class _FileViewerState extends State<_FileViewer> {
-  late final List<FileRenderer> _renderers =
-      widget.registry.renderersFor(widget.file);
+  late final List<FileRenderer> _renderers = widget.registry.renderersFor(
+    widget.file,
+  );
   late FileRenderer _selected = _renderers.first;
 
   /// The Raw renderer, if the registry offers one for this file.
@@ -601,8 +657,10 @@ class _FileViewerState extends State<_FileViewer> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(widget.file.name,
-                    style: const TextStyle(fontSize: 12)),
+                child: Text(
+                  widget.file.name,
+                  style: const TextStyle(fontSize: 12),
+                ),
               ),
               if (_renderers.length > 1)
                 for (final renderer in _renderers)
@@ -610,8 +668,10 @@ class _FileViewerState extends State<_FileViewer> {
                     padding: const EdgeInsets.symmetric(horizontal: 2),
                     child: ChoiceChip(
                       visualDensity: VisualDensity.compact,
-                      label: Text(renderer.modeLabel,
-                          style: const TextStyle(fontSize: 11)),
+                      label: Text(
+                        renderer.modeLabel,
+                        style: const TextStyle(fontSize: 11),
+                      ),
                       selected: identical(renderer, _selected),
                       onSelected: (_) => setState(() => _selected = renderer),
                     ),
