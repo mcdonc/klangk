@@ -390,64 +390,63 @@ class _BoingScenePainter extends CustomPainter {
   }
 
   void _drawBall(Canvas canvas, double cx, double cy, double radius) {
-    canvas.save();
-    canvas.clipPath(
-      Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: radius)),
-    );
+    // Per-pixel ray-sphere rendering for faithful checker pattern.
+    // For each pixel in the bounding box, project onto unit sphere,
+    // apply rotation, compute spherical UV, pick red or white.
+    final diam = (radius * 2).toInt();
+    if (diam <= 0) return;
 
+    // Render at half resolution for performance, scale up
+    final res = (diam / 2).clamp(20, 200).toInt();
+    final step = diam / res;
+    const lonStripes = 14; // 7 red + 7 white
     const latBands = 8;
-    const lonStripes = 16;
     final rotAngle = phase / lonStripes * 2 * pi;
+    final redPaint = Paint()..color = _ballRed;
+    final whitePaint = Paint()..color = _ballWhite;
 
-    for (int lat = 0; lat < latBands; lat++) {
-      final theta0 = pi * lat / latBands;
-      final theta1 = pi * (lat + 1) / latBands;
-      final screenY0 = cy - cos(theta0) * radius;
-      final screenY1 = cy - cos(theta1) * radius;
-      final rSlice0 = sin(theta0) * radius;
-      final rSlice1 = sin(theta1) * radius;
+    for (int py = 0; py < res; py++) {
+      for (int px = 0; px < res; px++) {
+        // Normalise to -1..1
+        final nx = (px + 0.5) / res * 2 - 1;
+        final ny = (py + 0.5) / res * 2 - 1;
+        final r2 = nx * nx + ny * ny;
+        if (r2 > 1) continue;
 
-      for (int lon = 0; lon < lonStripes; lon++) {
-        final offset = (lat % 2 == 0) ? 0.0 : 0.5;
-        final color = (lon % 2 == 0) ? _ballRed : _ballWhite;
+        // Point on unit sphere
+        final nz = sqrt(1 - r2);
+        // Apply Y-axis rotation
+        final rx = nx * cos(rotAngle) + nz * sin(rotAngle);
+        final ry = ny;
+        final rz = -nx * sin(rotAngle) + nz * cos(rotAngle);
 
-        final phi0 = 2 * pi * (lon + offset) / lonStripes + rotAngle;
-        final phi1 = 2 * pi * (lon + 1 + offset) / lonStripes + rotAngle;
+        // Spherical coordinates
+        final theta = acos(ry.clamp(-1.0, 1.0)); // 0..pi
+        final phi = atan2(rx, rz) + pi; // 0..2pi
 
-        if (cos((phi0 + phi1) / 2) < -0.1) continue;
+        // Checker: latitude band + longitude stripe with half-offset
+        final latIdx = (theta / pi * latBands).floor().clamp(0, latBands - 1);
+        final offset = (latIdx % 2 == 0) ? 0.0 : 0.5;
+        final lonIdx = ((phi / (2 * pi) * lonStripes + offset) % lonStripes)
+            .floor();
+        final isRed = (lonIdx % 2 == 0);
 
-        // Subdivide the quad along longitude for smoother curved edges
-        const subDiv = 4;
-        final path = Path();
-        // Top edge (left to right)
-        for (int s = 0; s <= subDiv; s++) {
-          final phi = phi0 + (phi1 - phi0) * s / subDiv;
-          final x = cx + sin(phi) * rSlice0;
-          if (s == 0) {
-            path.moveTo(x, screenY0);
-          } else {
-            path.lineTo(x, screenY0);
-          }
-        }
-        // Bottom edge (right to left)
-        for (int s = subDiv; s >= 0; s--) {
-          final phi = phi0 + (phi1 - phi0) * s / subDiv;
-          path.lineTo(cx + sin(phi) * rSlice1, screenY1);
-        }
-        path.close();
-        canvas.drawPath(path, Paint()..color = color);
+        final screenX = cx - radius + px * step;
+        final screenY = cy - radius + py * step;
+        canvas.drawRect(
+          Rect.fromLTWH(screenX, screenY, step + 0.5, step + 0.5),
+          isRed ? redPaint : whitePaint,
+        );
       }
     }
-
-    canvas.restore();
 
     // Specular highlight
     canvas.drawCircle(
       Offset(cx - radius * 0.3, cy - radius * 0.3),
-      radius * 0.18,
+      radius * 0.22,
       Paint()
-        ..color = Colors.white.withValues(alpha: 0.5)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12),
+        ..color = Colors.white.withValues(alpha: 0.45)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16),
     );
 
     // Outline
@@ -456,8 +455,8 @@ class _BoingScenePainter extends CustomPainter {
       radius,
       Paint()
         ..style = PaintingStyle.stroke
-        ..color = Colors.black26
-        ..strokeWidth = 1.5,
+        ..color = Colors.black38
+        ..strokeWidth = 2,
     );
   }
 
