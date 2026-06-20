@@ -46,7 +46,9 @@ relate to your home directory path.
 Because all workspace members share the same UNIX user, every member
 can read and modify every file under `/home` — including other members'
 home directories and dotfiles. This is the cost of frictionless
-collaboration.
+collaboration. Use separate workspaces for collaboration with different
+groups of differently trusted users, or for solo work where you need
+full privacy.
 
 !!! warning
 Do not store secrets or sensitive data in your home directory if
