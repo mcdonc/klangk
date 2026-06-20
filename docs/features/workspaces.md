@@ -2,30 +2,62 @@
 
 ![Workspaces page](../assets/workspaces.png)
 
-- Multiple workspaces per user
-- Each workspace gets its own podman container + bind-mounted directory
-- URL-based workspace routing (survives page reload via hash URL reading)
-- Workspace name and logged-in user email shown in app bar, browser tab title
-- Containers stay alive after disconnect — idle timeout handles cleanup
-- On logout, containers are only stopped if no other users are actively connected to shared workspaces
-- Container lifecycle visible in debug panel
+A workspace is an isolated coding environment — its own container with
+a terminal, file browser, and chat. Each user can create multiple
+workspaces for different projects.
 
-## Workspace Sharing
+## Creating a workspace
 
-Owners can grant access to other users via the edit dialog (autocomplete user search) or API (`POST /workspaces/{id}/members`). Shared users connect to the same container and see the workspace in a "Shared with Me" section on their workspace list. File API resolves paths using the owner's directory. Shared member avatars (first letter of email) shown on workspace cards.
+Click the **+** button on the Workspaces page. Give it a name and
+optionally configure:
 
-## Idle Timeout
+- **Image** — the container image to use (defaults to
+  `klangk-workspace`)
+- **Default command** — a command to run when you open the terminal
+  (e.g., `pi` to start the AI agent automatically)
+- **Bind mounts** — mount host directories into the container
+- **Environment variables** — set custom env vars for the container
 
-30-minute idle timeout (configurable via `KLANGK_IDLE_TIMEOUT_SECONDS`) with automatic container stop, debug notification, and terminal overlay with restart button. Activity is recorded on user actions (prompt, steer, terminal input) and on every Pi event (tool calls, text streaming), so containers stay alive during long-running LLM requests as long as events are flowing. Stuck tool executions (e.g., foreground server) produce no events and will eventually time out.
+You can change all of these later from the workspace Settings tab.
 
-## Container Details
+## What's inside a workspace
 
-- `/home/klangk` — bind mount to host (`$KLANGK_DATA_DIR/workspaces/<user>/home/<workspace>/`). Contains `work/` subdirectory for user files, plus dotfiles (`.bashrc`, `.vimrc`, `.gitconfig`), bash history, and Pi sessions. All persist across container restarts. Pi agent config (`.pi/agent/`) is cleaned and regenerated each start.
-- `klangk` user baked into the image at build time; `--userns=keep-id:uid=1000,gid=1000` maps the host user to uid/gid 1000 inside the container so bind-mounted files have correct ownership
-- Root escalation prevented: root password locked, suid removed from `su`/`chsh`/`chfn`/`newgrp`
-- Containers labeled with `klangk.managed=true`, `klangk.instance=<KLANGK_INSTANCE_ID>`, and `klangk.workspace-id=<id>` for identification, cleanup, and orphan detection
-- `--init` runs an init process as PID 1 to reap zombie processes from terminal sessions and tool executions
+Each workspace runs in its own container with:
 
-## Export/Import
+- A persistent home directory at `/home/<handle>/` (survives container
+  restarts)
+- A shared `work/` directory for project files
+- Pre-installed tools and AI agents (see
+  [Container Packages](container-packages.md) and
+  [AI Coding Harnesses](ai-coding-harnesses.md))
 
-Workspaces can be exported as archives and imported to create new ones. See [Export & Import](export-import.md).
+Your dotfiles (`.bashrc`, `.gitconfig`, etc.), bash history, and Pi
+sessions all persist across container restarts.
+
+## Sharing workspaces
+
+Workspace owners can share access with other users or groups from the
+**Sharing** tab. Shared users connect to the same container and see
+the workspace in a "Shared with Me" section on their workspace list.
+
+Each shared user gets a role that controls what they can do — see
+[Authorization](authorization.md#workspace-roles) for details.
+
+Shared member avatars appear on workspace cards so you can see who
+has access at a glance.
+
+## Idle timeout
+
+Containers stop automatically after 30 minutes of inactivity
+(configurable via `KLANGK_IDLE_TIMEOUT_SECONDS`). Activity includes
+terminal input, file operations, and AI agent events — so containers
+stay alive during long-running LLM requests as long as events are
+flowing.
+
+When a container stops, the terminal shows an overlay with a restart
+button. Your files and home directory are preserved.
+
+## Export and import
+
+Workspaces can be exported as archives and imported to create new
+ones. See [Export & Import](export-import.md).
