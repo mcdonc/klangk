@@ -111,7 +111,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
   static const double _maxVy = 0.012; // cap vertical velocity
   static const double _ballFrac = 0.33;
   static const int _minBounceInterval = 8; // min frames between sounds
-  static const _durationSec = 24;
+  static const _durationSec = 20;
   int _frame = 0;
 
   @override
@@ -228,8 +228,8 @@ class _BoingOverlayState extends State<_BoingOverlay>
       }
 
       _phase += 0.09 * _spinDir * speed;
-      if (_phase < 0) _phase += 14;
-      if (_phase >= 14) _phase -= 14;
+      if (_phase < 0) _phase += 16;
+      if (_phase >= 16) _phase -= 16;
     });
   }
 
@@ -366,8 +366,8 @@ class _BoingScenePainter extends CustomPainter {
       Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: radius)),
     );
 
-    const latBands = 12;
-    const lonStripes = 14;
+    const latBands = 8;
+    const lonStripes = 16;
     final rotAngle = phase / lonStripes * 2 * pi;
 
     for (int lat = 0; lat < latBands; lat++) {
@@ -387,15 +387,26 @@ class _BoingScenePainter extends CustomPainter {
 
         if (cos((phi0 + phi1) / 2) < -0.1) continue;
 
-        canvas.drawPath(
-          Path()
-            ..moveTo(cx + sin(phi0) * rSlice0, screenY0)
-            ..lineTo(cx + sin(phi1) * rSlice0, screenY0)
-            ..lineTo(cx + sin(phi1) * rSlice1, screenY1)
-            ..lineTo(cx + sin(phi0) * rSlice1, screenY1)
-            ..close(),
-          Paint()..color = color,
-        );
+        // Subdivide the quad along longitude for smoother curved edges
+        const subDiv = 4;
+        final path = Path();
+        // Top edge (left to right)
+        for (int s = 0; s <= subDiv; s++) {
+          final phi = phi0 + (phi1 - phi0) * s / subDiv;
+          final x = cx + sin(phi) * rSlice0;
+          if (s == 0) {
+            path.moveTo(x, screenY0);
+          } else {
+            path.lineTo(x, screenY0);
+          }
+        }
+        // Bottom edge (right to left)
+        for (int s = subDiv; s >= 0; s--) {
+          final phi = phi0 + (phi1 - phi0) * s / subDiv;
+          path.lineTo(cx + sin(phi) * rSlice1, screenY1);
+        }
+        path.close();
+        canvas.drawPath(path, Paint()..color = color);
       }
     }
 
