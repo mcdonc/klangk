@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import http.server
 import threading
 import webbrowser
@@ -75,20 +76,22 @@ def _oidc_browser_login(  # pragma: no cover
                 )
 
         def _send_page(self, code, title, message, color):
+            safe_title = html.escape(title)
+            safe_message = html.escape(message)
             self.send_response(code)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(
                 f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>{title}</title></head>
+<html><head><meta charset="utf-8"><title>{safe_title}</title></head>
 <body style="font-family:system-ui,sans-serif;display:flex;
 justify-content:center;align-items:center;min-height:100vh;
 margin:0;background:#1a1a2e;color:#e0e0e0">
 <div style="text-align:center;max-width:400px;padding:40px">
 <div style="font-size:48px;margin-bottom:16px">
 {"&#10003;" if code == 200 else "&#10007;"}</div>
-<h1 style="color:{color};margin:0 0 12px">{title}</h1>
-<p style="color:#aaa;font-size:16px">{message}</p>
+<h1 style="color:{color};margin:0 0 12px">{safe_title}</h1>
+<p style="color:#aaa;font-size:16px">{safe_message}</p>
 </div></body></html>""".encode()
             )
 

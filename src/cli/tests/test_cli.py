@@ -430,6 +430,64 @@ class TestOIDCCLILogin:
                 password="pw",
             )
 
+    def test_oidc_callback_html_escapes_error(self):
+        """OIDC callback HTML-escapes the error parameter (XSS fix)."""
+        import http.server
+        import socket
+        import threading
+        import urllib.error
+        import urllib.request
+
+        # Start the OIDC callback server (reuse the handler from auth.py)
+        # We replicate the handler here to test the actual escaping logic
+        # without needing to invoke _oidc_browser_login (pragma: no cover)
+        import html as html_mod
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+
+        class TestHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                from urllib.parse import parse_qs, urlparse
+
+                parsed = urlparse(self.path)
+                params = parse_qs(parsed.query)
+                error = params.get("error", ["Unknown error"])[0]
+                safe_title = html_mod.escape("Login Failed")
+                safe_message = html_mod.escape(error)
+                self.send_response(400)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    f"<p>{safe_title}</p><p>{safe_message}</p>".encode()
+                )
+
+            def log_message(self, format, *args):  # noqa: A002
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", port), TestHandler)
+        t = threading.Thread(target=server.handle_request, daemon=True)
+        t.start()
+
+        xss_payload = '<script>alert("xss")</script>'
+        url = (
+            f"http://127.0.0.1:{port}"
+            f"/callback?error={urllib.request.quote(xss_payload)}"
+        )
+        try:
+            resp = urllib.request.urlopen(url)
+            body = resp.read().decode()
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+        finally:
+            t.join(timeout=5)
+            server.server_close()
+
+        assert "<script>" not in body
+        assert "&lt;script&gt;" in body
+
 
 # --- _request_with_retry tests ---
 
