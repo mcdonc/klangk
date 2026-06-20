@@ -17,7 +17,7 @@ to enable AI features:
 | `KLANGK_LLM_MODEL`    | `gpt-4o`                    | Default model name         |
 | `KLANGK_LLM_API_KEY`  | `sk-...`                    | Provider API key           |
 
-Without these, the agents are non-functional. See
+Without these, Pi and the Pi agent via the chat are non-functional. See
 [Environment Variables](../reference/environment.md) for the full
 list.
 
