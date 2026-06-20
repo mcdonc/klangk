@@ -15,6 +15,7 @@ from klangk_backend import (
     container,
     workspaces as ws_mod,
 )
+from klangk_backend.exceptions import TerminalError
 from klangk_backend.util import (
     derive_hosting_info,
 )
@@ -773,7 +774,7 @@ class TestHandleTerminalStart:
             patch.object(wshandler, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
-                side_effect=RuntimeError("tmux not ready"),
+                side_effect=TerminalError("tmux not ready"),
             ),
         ):
             mock_session = _mock_terminal()
@@ -3588,7 +3589,7 @@ class TestTerminalWindowHandlers:
         conn._user_home = "/home/alice"
         with patch(
             "klangk_backend.terminal.select_window",
-            side_effect=RuntimeError("no such window"),
+            side_effect=TerminalError("no such window"),
         ):
             await conn.handle_terminal_select_window({"index": 99})
         sent = sock.send_json.call_args[0][0]
@@ -3650,7 +3651,7 @@ class TestTerminalWindowHandlers:
         conn._user_home = "/home/alice"
         with patch(
             "klangk_backend.terminal.close_window",
-            side_effect=RuntimeError("no such window"),
+            side_effect=TerminalError("no such window"),
         ):
             await conn.handle_terminal_close_window({"index": 99})
         sent = sock.send_json.call_args[0][0]
@@ -3726,7 +3727,7 @@ class TestTerminalWindowHandlers:
         conn._user_home = "/home/alice"
         with patch(
             "klangk_backend.terminal.list_windows",
-            side_effect=RuntimeError("tmux not running"),
+            side_effect=TerminalError("tmux not running"),
         ):
             await conn.handle_terminal_list_windows()
         sent = sock.send_json.call_args[0][0]
@@ -4067,7 +4068,7 @@ class TestShareWindowHandlers:
                 ),
                 patch(
                     "klangk_backend.terminal.kill_joiner_sessions",
-                    side_effect=RuntimeError("no sessions"),
+                    side_effect=TerminalError("no sessions"),
                 ),
             ):
                 await conn.handle_unshare_window({"window_id": "@0"})
@@ -4229,7 +4230,7 @@ class TestShareWindowHandlers:
                 patch(
                     "klangk_backend.terminal.tmux_command",
                     new_callable=AsyncMock,
-                    side_effect=RuntimeError("can't find session"),
+                    side_effect=TerminalError("can't find session"),
                 ),
                 patch(
                     "klangk_backend.terminal.select_window",
@@ -4334,7 +4335,7 @@ class TestShareWindowHandlers:
             ):
                 mock_sess = _mock_terminal()
                 mock_sess.start = AsyncMock(
-                    side_effect=RuntimeError("start failed")
+                    side_effect=TerminalError("start failed")
                 )
                 MockTS.return_value = mock_sess
 

@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
 
 from klangk_backend import auth, model
+from klangk_backend.exceptions import ConfigurationError
 
 
 class TestPasswordHashing:
@@ -631,12 +632,12 @@ class TestRequireSecureJwtSecret:
     def test_default_secret_blocks_with_prevent(self, monkeypatch):
         monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
         monkeypatch.setenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", "1")
-        with pytest.raises(RuntimeError, match="KLANGK_JWT_SECRET"):
+        with pytest.raises(ConfigurationError, match="KLANGK_JWT_SECRET"):
             auth.require_secure_jwt_secret()
 
     def test_empty_secret_blocks_with_prevent(self, monkeypatch):
         monkeypatch.setattr(auth, "SECRET_KEY", "")
         monkeypatch.setenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", "1")
         assert auth.jwt_secret_is_secure() is False
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ConfigurationError):
             auth.require_secure_jwt_secret()

@@ -9,6 +9,7 @@ import yaml
 import pytest
 
 from klangk_backend import oidc
+from klangk_backend.exceptions import ConfigurationError
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +44,7 @@ class TestLoadConfig:
 
     def test_missing_file(self, monkeypatch, tmp_path):
         monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(tmp_path / "nope.json"))
-        with pytest.raises(RuntimeError, match="absolute path"):
+        with pytest.raises(ConfigurationError, match="absolute path"):
             oidc.load_config()
 
     def test_valid_config(self, monkeypatch, tmp_path):
@@ -232,7 +233,7 @@ class TestProviderRegistry:
     ):
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
         monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
-        with pytest.raises(RuntimeError, match="no OIDC providers"):
+        with pytest.raises(ConfigurationError, match="no OIDC providers"):
             oidc.init_providers()
 
     def test_init_raises_when_both_required_but_no_providers(
@@ -240,7 +241,7 @@ class TestProviderRegistry:
     ):
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
         monkeypatch.setenv("KLANGK_AUTH_MODES", "both")
-        with pytest.raises(RuntimeError, match="no OIDC providers"):
+        with pytest.raises(ConfigurationError, match="no OIDC providers"):
             oidc.init_providers()
 
     def test_init_ok_when_password_only(self, monkeypatch):
@@ -580,7 +581,7 @@ class TestLoadLoginHook:
 
     def test_bad_format_no_dot(self, monkeypatch):
         monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "nofunc")
-        with pytest.raises(RuntimeError, match="module.path.func_name"):
+        with pytest.raises(ConfigurationError, match="module.path.func_name"):
             oidc.load_login_hook()
 
     def test_bad_module(self, monkeypatch):
@@ -595,7 +596,7 @@ class TestLoadLoginHook:
 
     def test_not_callable(self, monkeypatch):
         monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "os.sep")
-        with pytest.raises(RuntimeError, match="not callable"):
+        with pytest.raises(ConfigurationError, match="not callable"):
             oidc.load_login_hook()
 
 
