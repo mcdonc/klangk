@@ -8,21 +8,6 @@ Pi agent with new tools, or add UI widgets to the web frontend.
 For details on creating plugins, see the
 [Plugin System](../reference/plugin-system.md) reference.
 
-## Default plugins
-
-These plugins are included in the default `plugins.yaml`:
-
-| Plugin           | What it does                                              |
-| ---------------- | --------------------------------------------------------- |
-| `claude-code`    | Installs Claude Code CLI agent at image build time        |
-| `git-credential` | Git credential helper with browser-based PAT/OAuth dialog |
-| `word-count`     | File stats tool for Pi (lines, words, characters, size)   |
-| `pig-latin`      | Text-to-Pig-Latin converter for Pi                        |
-| `celebrate`      | Triggers confetti animation in the browser via Pi         |
-| `beep`           | Plays an audible beep via Web Audio API                   |
-| `browser-fetch`  | HTTP fetch using browser session cookies via Pi           |
-| `marquee`        | Scrolling marquee text display in the browser via Pi      |
-
 ## Plugin management
 
 Run `update-plugins` to fetch plugins. On first run it creates a
@@ -52,3 +37,18 @@ plugins:
   same as a fetched plugin
 - If you are running devenv, it watches `$KLANGK_PLUGINS_DIR` to
   trigger rebuilds when plugin content or the lockfile changes
+
+## Default plugins
+
+These plugins are included in the default `plugins.yaml`:
+
+| Plugin           | What it does                                              |
+| ---------------- | --------------------------------------------------------- |
+| `claude-code`    | Installs Claude Code CLI agent at image build time        |
+| `git-credential` | Git credential helper with browser-based PAT/OAuth dialog |
+| `word-count`     | File stats tool for Pi (lines, words, characters, size)   |
+| `pig-latin`      | Text-to-Pig-Latin converter for Pi                        |
+| `celebrate`      | Triggers confetti animation in the browser via Pi         |
+| `beep`           | Plays an audible beep via Web Audio API                   |
+| `browser-fetch`  | HTTP fetch using browser session cookies via Pi           |
+| `marquee`        | Scrolling marquee text display in the browser via Pi      |
