@@ -69,10 +69,9 @@ RUN ssh-keyscan -t ed25519,ecdsa,rsa github.com >> /etc/ssh/ssh_known_hosts 2>/d
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 
 # Node/npm already present from base image.
-# Install both old and new Pi package names: pi-otel-telemetry still
-# depends on @mariozechner/*, while newer extensions use @earendil-works/*.
-# Install @earendil-works last so its `pi` binary wins.
-RUN npm install -g @mariozechner/pi-coding-agent @earendil-works/pi-coding-agent @anthropic-ai/claude-code
+# @mariozechner/pi-coding-agent removed — has CVE-2026-54328 and
+# pi-otel-telemetry does not depend on it.
+RUN npm install -g @earendil-works/pi-coding-agent @anthropic-ai/claude-code
 
 # Create klangk user with fixed UID/GID 1000. The container runs with
 # --userns=keep-id:uid=1000,gid=1000 which maps the host user to
