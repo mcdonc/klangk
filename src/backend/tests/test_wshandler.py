@@ -5480,6 +5480,36 @@ class TestPresence:
             wshandler.state.connections.pop(sock3, None)
 
 
+class TestRefreshUserHandle:
+    async def test_refresh_updates_connections_and_broadcasts(self, user):
+        workspace = await _create_workspace_with_acl(
+            user["id"], "handle-refresh-ws"
+        )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+
+        session = WorkspaceSession(workspace["id"])
+        session.subscribers.add(sock)
+        wshandler.state.sessions[workspace["id"]] = session
+        wshandler.state.connections[sock] = conn
+
+        try:
+            await wshandler.refresh_user_handle(user["id"], "newhandle")
+            assert conn.user["handle"] == "newhandle"
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            plist = [c for c in calls if c.get("type") == "presence_list"]
+            assert len(plist) == 1
+            handles = [u["user_handle"] for u in plist[0]["users"]]
+            assert "newhandle" in handles
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock, None)
+
+    async def test_refresh_no_connections(self):
+        await wshandler.refresh_user_handle("nonexistent", "whatever")
+
+
 class TestChatDelete:
     async def test_chat_delete_broadcasts_update(self, user):
         from klangk_backend import model

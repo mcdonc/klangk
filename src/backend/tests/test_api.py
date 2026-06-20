@@ -5594,6 +5594,21 @@ class TestHandleEndpoints:
         updated = await model.get_user_by_id(user["id"])
         assert updated["handle"] == "newhandle"
 
+    async def test_change_handle_refreshes_presence(self, client, user):
+        headers = await _auth_headers(client)
+        with patch.object(
+            api.wshandler,
+            "refresh_user_handle",
+            new_callable=AsyncMock,
+        ) as mock_refresh:
+            resp = await client.post(
+                "/auth/change-handle",
+                json={"handle": "freshhandle", "password": "testpass"},
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        mock_refresh.assert_awaited_once_with(user["id"], "freshhandle")
+
     async def test_change_handle_invalid_empty(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -5660,6 +5675,29 @@ class TestHandleEndpoints:
         assert resp.status_code == 200
         updated = await model.get_user_by_id(user["id"])
         assert updated["handle"] == "admin-set-handle"
+
+    async def test_admin_change_handle_refreshes_presence(
+        self, client, admin_user, user
+    ):
+        admin_resp = await client.post(
+            "/auth/login",
+            json={"email": "testadmin@example.com", "password": "testpass"},
+        )
+        admin_headers = {
+            "Authorization": f"Bearer {admin_resp.json()['access_token']}"
+        }
+        with patch.object(
+            api.wshandler,
+            "refresh_user_handle",
+            new_callable=AsyncMock,
+        ) as mock_refresh:
+            resp = await client.patch(
+                f"/admin/users/{user['id']}",
+                json={"handle": "admin-refreshed"},
+                headers=admin_headers,
+            )
+        assert resp.status_code == 200
+        mock_refresh.assert_awaited_once_with(user["id"], "admin-refreshed")
 
     async def test_admin_change_user_handle_invalid(
         self, client, admin_user, user

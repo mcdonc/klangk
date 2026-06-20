@@ -2520,6 +2520,22 @@ async def reset_workspace_state(workspace_id: str) -> None:
     await state.reset_workspace(workspace_id)
 
 
+async def refresh_user_handle(user_id: str, new_handle: str) -> None:
+    """Update the cached handle on all active connections for a user
+    and re-broadcast presence to affected workspaces."""
+    affected_workspaces: set[str] = set()
+    for conn in state.connections.values():
+        if conn.user["id"] == user_id:
+            conn.user["handle"] = new_handle
+            if conn.workspace_id:
+                affected_workspaces.add(conn.workspace_id)
+    for ws_id in affected_workspaces:
+        session = state.get_session(ws_id)
+        if session:
+            presence = await _get_presence_list(ws_id)
+            session.broadcast({"type": "presence_list", "users": presence})
+
+
 def _send_event(
     sock: SafeWebSocket, name: str, reason: str | None = None
 ) -> None:
