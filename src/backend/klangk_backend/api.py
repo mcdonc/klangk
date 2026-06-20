@@ -1623,6 +1623,51 @@ async def remove_from_workspace_role(
     return {"ok": True}
 
 
+class ChangeRoleRequest(BaseModel):
+    email: str
+    role: str | None = None  # None = remove from all roles
+
+
+@router.patch("/workspaces/{workspace_id}/roles")
+async def change_workspace_role(
+    workspace_id: str,
+    body: ChangeRoleRequest,
+    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+):
+    """Atomically change a user's workspace role.
+
+    If ``role`` is set, removes the user from all other roles and adds
+    them to the target role.  If ``role`` is null, removes the user
+    from all roles.
+    """
+    target = await model.get_user_by_email(body.email)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if body.role is not None and body.role not in ROLE_GROUP_SUFFIXES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid role: {body.role}"
+        )
+
+    # Remove from all current roles
+    for suffix in ROLE_GROUP_SUFFIXES:
+        group_name = f"{suffix}-{workspace_id}"
+        group = await model.get_group_by_name(group_name)
+        if group is None:
+            continue
+        await model.remove_user_from_group(target["id"], group["id"])
+
+    # Add to target role if specified
+    if body.role is not None:
+        group_name = f"{body.role}-{workspace_id}"
+        group = await model.get_group_by_name(group_name)
+        if group is None:
+            raise HTTPException(status_code=404, detail="Role group not found")
+        await model.add_user_to_group(target["id"], group["id"])
+
+    return {"ok": True, "email": body.email, "role": body.role}
+
+
 @router.get("/workspaces/{workspace_id}/groups")
 async def get_workspace_groups(
     workspace_id: str,

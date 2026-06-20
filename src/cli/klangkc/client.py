@@ -165,6 +165,14 @@ class KlangkClient:
             **kwargs,
         )
 
+    def patch(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
+        return _request_with_retry(
+            "PATCH",
+            f"{self.cfg.server.url}{path}",
+            headers=self._headers(),
+            **kwargs,
+        )
+
     def delete(
         self, path: str, **kwargs
     ) -> httpx.Response:  # pragma: no cover
@@ -269,6 +277,38 @@ class KlangkClient:
         ws = self.resolve_workspace(name)
         resp = self.delete(f"/workspaces/{ws.id}")
         self._check_auth(resp)
+        resp.raise_for_status()
+
+    def list_workspace_members(self, name: str) -> list[dict]:
+        ws = self.resolve_workspace(name)
+        resp = self.get(f"/workspaces/{ws.id}/members")
+        self._check_auth(resp)
+        resp.raise_for_status()
+        return resp.json()
+
+    def add_workspace_member(
+        self, name: str, email: str, role: str = "coders"
+    ) -> dict:
+        ws = self.resolve_workspace(name)
+        resp = self.patch(
+            f"/workspaces/{ws.id}/roles",
+            json={"email": email, "role": role},
+        )
+        self._check_auth(resp)
+        resp.raise_for_status()
+        return resp.json()
+
+    def remove_workspace_member(self, name: str, email: str) -> None:
+        ws = self.resolve_workspace(name)
+        resp = self.patch(
+            f"/workspaces/{ws.id}/roles",
+            json={"email": email, "role": None},
+        )
+        self._check_auth(resp)
+        if resp.status_code == 404:
+            raise WorkspaceNotFoundError(
+                f"User '{email}' is not a member of '{name}'"
+            )
         resp.raise_for_status()
 
     def restart_workspace(self, name: str) -> None:

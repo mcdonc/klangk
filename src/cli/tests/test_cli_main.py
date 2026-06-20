@@ -301,6 +301,142 @@ class TestMainCLI:
         with pytest.raises(typer.Exit):
             main.rm("nope")
 
+    def test_members_command(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from klangkc.client import Workspace
+
+        client = MagicMock()
+        client.resolve_workspace.return_value = Workspace(
+            id="ws-1", name="my-ws", created_at="2025-01-01"
+        )
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {
+                "role": "coders",
+                "members": [{"id": "u1", "email": "alice@test.com"}],
+            },
+            {"role": "spectators", "members": []},
+        ]
+        client.get.return_value = roles_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        calls = []
+        monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
+        main.members("my-ws")
+        assert any("alice@test.com" in c for c in calls)
+        assert any("coder" in c for c in calls)
+
+    def test_members_empty(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from klangkc.client import Workspace
+
+        client = MagicMock()
+        client.resolve_workspace.return_value = Workspace(
+            id="ws-1", name="my-ws", created_at="2025-01-01"
+        )
+        roles_resp = MagicMock()
+        roles_resp.status_code = 200
+        roles_resp.json.return_value = [
+            {"role": "coders", "members": []},
+        ]
+        client.get.return_value = roles_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        calls = []
+        monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
+        main.members("my-ws")
+        assert any("No shared" in c for c in calls)
+
+    def test_members_not_found(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.members("nope")
+
+    def test_share_workspace_command(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        client.add_workspace_member.return_value = {
+            "email": "alice@test.com",
+            "role": "coders",
+        }
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        calls = []
+        monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
+        main.share_workspace("my-ws", "alice@test.com", role="coder")
+        assert any("alice@test.com" in c for c in calls)
+        assert any("coder" in c for c in calls)
+        client.add_workspace_member.assert_called_once_with(
+            "my-ws", "alice@test.com", role="coders"
+        )
+
+    def test_share_workspace_with_role(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        client.add_workspace_member.return_value = {
+            "email": "alice@test.com",
+            "role": "spectators",
+        }
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        calls = []
+        monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
+        main.share_workspace("my-ws", "alice@test.com", role="spectator")
+        client.add_workspace_member.assert_called_once_with(
+            "my-ws", "alice@test.com", role="spectators"
+        )
+
+    def test_share_workspace_invalid_role(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        monkeypatch.setattr(main, "_client", lambda: MagicMock())
+
+        with pytest.raises(typer.Exit):
+            main.share_workspace("my-ws", "a@b.com", role="admin")
+
+    def test_share_workspace_not_found(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        client.add_workspace_member.side_effect = WorkspaceNotFoundError(
+            "nope"
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.share_workspace("nope", "alice@test.com", role="coder")
+
+    def test_unshare_workspace_command(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        calls = []
+        monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
+        main.unshare_workspace("my-ws", "alice@test.com")
+        assert any("alice@test.com" in c for c in calls)
+
+    def test_unshare_workspace_not_found(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        client.remove_workspace_member.side_effect = WorkspaceNotFoundError(
+            "not a member"
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.unshare_workspace("my-ws", "nobody@test.com")
+
     def test_restart_workspace(self, logged_in_cfg, monkeypatch):
         from klangkc import main
 
@@ -808,7 +944,7 @@ class TestMainCLI:
             patch("websockets.connect", return_value=mock_ws),
         ):
             os.environ["TERM"] = "xterm-256color"
-            main.share("my-ws", "build")
+            main.share_terminal("my-ws", "build")
 
         # Should have sent share_window command
         sent = [
@@ -863,7 +999,7 @@ class TestMainCLI:
             patch("websockets.connect", return_value=mock_ws),
         ):
             os.environ["TERM"] = "xterm-256color"
-            main.unshare("my-ws", "build")
+            main.unshare_terminal("my-ws", "build")
 
         sent = [
             json.loads(c[0][0])
@@ -913,7 +1049,7 @@ class TestMainCLI:
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(typer.Exit):
-                main.share("my-ws", "nonexistent")
+                main.share_terminal("my-ws", "nonexistent")
 
     def test_terminals_workspace_not_found(self, logged_in_cfg, monkeypatch):
         from klangkc import main
@@ -985,7 +1121,7 @@ class TestMainCLI:
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(ConnectionError):
-                main.share("my-ws", "build")
+                main.share_terminal("my-ws", "build")
 
     def test_unshare_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env
@@ -1016,7 +1152,7 @@ class TestMainCLI:
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(ConnectionError):
-                main.unshare("my-ws", "build")
+                main.unshare_terminal("my-ws", "build")
 
     def test_unshare_terminal_not_found(
         self, logged_in_cfg, monkeypatch, reset_env
@@ -1059,7 +1195,7 @@ class TestMainCLI:
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(typer.Exit):
-                main.unshare("my-ws", "nonexistent")
+                main.unshare_terminal("my-ws", "nonexistent")
 
     def test_edit_with_flags(self, logged_in_cfg, monkeypatch):
         from klangkc import main

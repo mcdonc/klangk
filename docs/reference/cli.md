@@ -43,9 +43,13 @@ klangkc export my-project            # export workspace to my-project.tar.gz (ad
 klangkc export my-project -o bak.tar.gz  # export to specific file
 klangkc import bak.tar.gz            # import workspace from archive
 klangkc import bak.tar.gz --name new-name  # import with a different name
-klangkc terminals my-project         # list all terminals (own + shared)
-klangkc share my-project bash        # share a terminal with workspace members
-klangkc unshare my-project bash      # stop sharing a terminal
+klangkc members my-project           # list workspace members by role
+klangkc share my-project user@x.com  # share workspace (default: coder role)
+klangkc share my-project user@x.com --role=spectator  # share with specific role
+klangkc unshare my-project user@x.com # remove a user from all roles
+klangkc terminal ls my-project       # list all terminals (own + shared)
+klangkc terminal share my-project bash        # share a terminal with workspace members
+klangkc terminal unshare my-project bash      # stop sharing a terminal
 klangkc invite user@example.com      # send an invitation email (admin only)
 klangkc invitations                  # list all invitations (admin only)
 klangkc images                       # list available container images

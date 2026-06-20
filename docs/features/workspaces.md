@@ -41,8 +41,17 @@ sessions all persist across container restarts.
 ## Sharing workspaces
 
 Workspace owners can share access with other users or groups from the
-**Sharing** tab. Shared users connect to the same container and see
-the workspace in a "Shared with Me" section on their workspace list.
+**Sharing** tab, or from the CLI:
+
+```bash
+klangkc share my-project user@example.com                # share (coder role)
+klangkc share my-project user@example.com --role=owner   # share with role
+klangkc unshare my-project user@example.com              # remove access
+klangkc members my-project                               # list members
+```
+
+Shared users connect to the same container and see the workspace in
+a "Shared with Me" section on their workspace list.
 
 Each shared user gets a role that controls what they can do — see
 [Authorization](authorization.md#workspace-roles) for details.
