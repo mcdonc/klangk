@@ -1,50 +1,19 @@
 # Features
 
-Klangk provides a rich set of features for multi-user AI collaboration:
+Klangk's workspace UI is a single-page web application with a dark
+theme. When you open a workspace, you see a tabbed layout:
 
-- [**Authentication**](authentication.md) — Email/password, OIDC/SSO, brute-force protection
-- [**Authorization**](authorization.md) — Pyramid-style ACL system with resource tree and principals
-- [**Handles**](handles.md) — Unique per-user identifiers used in chat, terminals, and presence
-- [**Admin Management**](admin-management.md) — User/group management, ACL editing, user archival
-- [**Invitations**](invitations.md) — Admin invitation workflow for onboarding new users
-- [**Workspaces**](workspaces.md) — Isolated coding environments with sharing, port allocation, export/import
-- [**Terminal**](terminal.md) — Full terminal emulator with Pi agent integration, idle timeout, session persistence
-- [**The Shell**](the-shell.md) — Bash is default; switch to zsh or customize your shell environment
-- [**Sandbox**](sandbox.md) — One-command workspace setup from a project config file
-- [**Chat**](chat.md) — Real-time workspace chat with markdown, @mentions, message types, container-to-chat API
-- [**File Viewer**](file-viewer.md) — Directory tree, drag-and-drop upload, preview, download
-- [**AI Coding Harnesses**](ai-coding-harnesses.md) — Pi and Claude Code agents pre-installed in every workspace
-- [**Klangk Plugins**](plugins.md) — Server-side and client-side extensions via TypeScript and Dart
-- [**Container Packages**](container-packages.md) — Pre-installed languages, tools, and CLI utilities in workspace containers
-- [**Export & Import**](export-import.md) — Export workspaces as archives and import them to create new workspaces
-- [**Hosted Apps**](hosted-apps.md) — Run development servers on mapped ports, accessible via reverse-proxy URLs
-- [**CLI**](../reference/cli.md) — Command-line client for managing workspaces, shells, and file sync
-- [**SSH Agent Forwarding**](ssh-agent-forwarding.md) — Forward local SSH keys into containers via `klangkc shell`
-- [**GitHub HTTPS Authentication**](github-authentication.md) — HTTPS git credentials via browser-based PAT dialog
+- **Terminal** — full terminal emulator at the top
+- **Files** — file browser and previewer
+- **Chat** — real-time messaging with @mentions and AI agent
+- **Sharing** — role-based access control for the workspace
+- **Settings** — workspace configuration (image, mounts, env vars)
 
-## UI/Theme
+A collapsible **Debug panel** at the bottom shows WebSocket activity
+and container lifecycle events. It collects events from the moment
+you connect, so you can open it at any time to see what happened.
 
-- Dark theme inspired by GitHub's dark default (dark canvas background, surface cards, muted borders)
-- Centralized color palette in `KColors` (`src/frontend/lib/theme/colors.dart`) — named tokens for backgrounds, borders, text, and accents
-- Green Klangk logo (robot icon + lowercase "klangk" text) with matching green FAB and primary action buttons
-- Full-width Terminal+Files tabs with background-only active state (no indicator bar), rounded bottom corners
-- Slidable Debug panel on bottom (collapsed by default)
-- Browser tab title updates per page ("Klangk - Login", "Klangk - Workspaces", "Klangk - workspace-name")
+All panels stay alive when you switch between tabs — your terminal
+session, chat scroll position, and file browser state are preserved.
 
-## Panel Layout
-
-- Two-part split: tabbed panel on top (Terminal, Files tabs) and slidable Debug panel on bottom
-- Debug panel collapsed by default, expandable via draggable horizontal divider
-- All panels stay alive across switches (IndexedStack for tabs, always-mounted Debug)
-- Debug pane receives events from the start, even before first viewed
-
-## Debug Panel
-
-- Container lifecycle events (starting, ready with port info and status, idle stop, restart)
-- Session resume notifications
-- Query text shown for each prompt sent
-- Tool call entries from Pi (including extension tools)
-- Error entries
-- Timestamps and color-coded entries
-- Selectable text for titles and content
-- Clear button
+Use the sidebar navigation to learn about each feature in detail.

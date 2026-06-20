@@ -3,9 +3,9 @@
 Per-workspace chat panel with real-time messaging. All workspace members
 see messages instantly via WebSocket. Click the **Chat** tab to open.
 
-![Empty chat panel](../assets/chat/01-chat-panel.png)
+[![Empty chat panel](../assets/chat/01-chat-panel.png)](../assets/chat/01-chat-panel.png)
 
-![Chat with agent response](../assets/chat/03-agent-response.png)
+[![Chat with agent response](../assets/chat/03-agent-response.png)](../assets/chat/03-agent-response.png)
 
 ## Sending Messages
 
@@ -43,7 +43,7 @@ terminal and filesystem. It can:
 - Run shell commands
 - Answer questions about the project
 
-![Conversation with the AI agent](../assets/chat/04-agent-conversation.png)
+[![Conversation with the AI agent](../assets/chat/04-agent-conversation.png)](../assets/chat/04-agent-conversation.png)
 
 ### Follow-up Conversations
 

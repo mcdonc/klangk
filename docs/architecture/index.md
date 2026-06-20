@@ -1,6 +1,6 @@
 # Architecture Overview
 
-![Architecture Overview](../assets/architecture-overview.svg)
+[![Architecture Overview](../assets/architecture-overview.svg)](../assets/architecture-overview.svg)
 
 ```text
 Browser (Flutter Web + Terminal + Files + Chat)
@@ -33,25 +33,6 @@ $KLANGK_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 - **CLI** (`src/cli/klangkc/`): `klangkc` command — typer-based thin client that talks to the backend over HTTP + WebSocket for terminal access to containers
 - **Frontend** (`src/frontend/`): Flutter Web — chat (markdown rendering, syntax-highlighted code blocks, @mentions, message types, pagination, history recall), file viewer, debug panel, workspace presence
 - **Containers** (`src/containers/`): Custom Dockerfile for Pi agent containers with Python3, Node.js, build-essential, SQLite, vim, emacs, network tools, Pi extensions (built and run via podman)
-
-## Project Layout
-
-```text
-src/
-  backend/             # FastAPI app
-    tests/             # Backend unit tests
-    e2e-tests/         # Backend E2E tests
-  frontend/            # Flutter web app
-    test/              # Frontend unit tests
-    e2e-tests/         # Playwright E2E tests
-  containers/
-    host/              # Host container (Dockerfile, entrypoint)
-    workspace/         # Workspace container (Dockerfile, base, entrypoint)
-  bridge/              # @klangk/bridge npm package
-plugins/               # Built-in plugins (celebrate, beep, etc.)
-scripts/               # Build and utility scripts
-devenv.nix             # devenv configuration
-```
 
 ## Data
 

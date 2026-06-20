@@ -1,4 +1,4 @@
-# Plugin System
+# Creating Plugins
 
 All plugins live in `$KLANGK_PLUGINS_DIR/<name>/` directories (defaults to `.devenv/state/klangk/plugins/`). A plugin can contain any combination of:
 
@@ -35,28 +35,6 @@ For local development, create files directly in `$KLANGK_PLUGINS_DIR`:
 4. `devenv up` rebuilds automatically when `$KLANGK_PLUGINS_DIR` changes
 
 For remote plugins, add an entry to `$KLANGK_PLUGINS_DIR/plugins.yaml` and run `update-plugins` to fetch it.
-
-## Plugin Management
-
-Run `update-plugins` to fetch plugins. On first run it creates a `plugins.yaml` template with the default plugins. Plugins are declared in `$KLANGK_PLUGINS_DIR/plugins.yaml`. Each entry requires `name` and `git`; `path` and `ref` are optional:
-
-```yaml
-plugins:
-  - name: celebrate
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/celebrate
-    ref: main
-  - name: beep
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/beep
-    ref: main
-```
-
-- `update-plugins` — fetches all plugins listed in `plugins.yaml`, resolves git refs to commit SHAs, writes `plugins.lock`
-- `update-plugins <name>` — fetch/update a single plugin by name
-- `plugins.lock` — records resolved commit SHAs for reproducible builds
-- Local plugin development: drop a directory into `$KLANGK_PLUGINS_DIR` directly — the build system treats it the same as a fetched plugin
-- `execIfModified` watches `$KLANGK_PLUGINS_DIR` to trigger rebuilds when plugin content or the lockfile changes
 
 ## Lifecycle Hooks
 

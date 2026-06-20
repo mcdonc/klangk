@@ -1,6 +1,6 @@
 # Klangk: Multi-User AI Sandboxing, Collaboration and Coding Platform
 
-![Klangk workspace with terminal and chat](assets/screenshot.png)
+[![Klangk workspace with terminal and chat](assets/screenshot.png)](assets/screenshot.png)
 
 ## Why Klangk?
 
@@ -70,27 +70,7 @@ connect from your local terminal with
 - [OIDC single sign-on](reference/oidc.md) (Google, GitHub, etc.)
 - [Email invitations](features/invitations.md)
 
-## Quick Start
-
-```bash
-git clone https://github.com/mcdonc/klangk.git
-cd klangk
-devenv up
-```
-
-Then open <http://localhost:8995> in your browser.
-
-Install the [CLI](reference/cli.md) (optional):
-
-```bash
-pip install klangkc
-```
-
 ## Architecture
 
-![Architecture Overview](assets/architecture-overview.svg)
-
-Klangk is a FastAPI backend serving a Flutter Web frontend, with
-rootless Podman managing workspace containers. An nginx reverse proxy
-ties it together. See the [architecture docs](architecture/index.md)
-for details.
+See the [architecture overview](architecture/index.md) for how the
+backend, frontend, containers, and nginx fit together.

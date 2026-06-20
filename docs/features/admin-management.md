@@ -5,7 +5,7 @@ provides user and group management for the entire Klangk instance.
 
 ## Users
 
-![Admin users panel](../assets/admin/users.png)
+[![Admin users panel](../assets/admin/users.png)](../assets/admin/users.png)
 
 The Users tab lists all registered accounts. From here you can:
 
@@ -19,7 +19,7 @@ The Users tab lists all registered accounts. From here you can:
 
 ## Groups
 
-![Admin groups panel](../assets/admin/groups.png)
+[![Admin groups panel](../assets/admin/groups.png)](../assets/admin/groups.png)
 
 The Groups tab lets you organize users into named groups. Groups are
 used for sharing workspaces and controlling access via

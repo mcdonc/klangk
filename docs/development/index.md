@@ -6,79 +6,66 @@
 # Backend unit tests (Python, pytest, parallel)
 test-backend
 
+# CLI unit tests
+test-cli
+
 # Frontend unit tests (Dart, flutter test, 100% coverage required)
 test-frontend
 
 # Backend E2E tests (starts real server + podman containers)
 test-backend-e2e
 
-# Flutter E2E tests (Playwright, needs flutter build + podman build)
+# CLI E2E tests (starts real server, runs klangkc commands)
+test-cli-e2e
+
+# Frontend E2E tests (Playwright, needs flutter build + podman build)
 test-frontend-e2e
 
-# Run a specific E2E test
-cd src/frontend/e2e-tests && npx playwright test --project=chromium --no-deps --grep "test name"
+# Run a specific frontend E2E test
+test-frontend-e2e --project=chromium --no-deps -g "test name"
 ```
 
-Backend tests for Python changes, frontend tests for Dart changes. Run E2E tests before committing cross-cutting changes.
-
-## Project Layout
-
-```text
-src/
-  backend/             # FastAPI app
-    tests/             # Backend unit tests
-    e2e-tests/         # Backend E2E tests
-  frontend/            # Flutter web app
-    test/              # Frontend unit tests
-    e2e-tests/         # Playwright E2E tests
-  containers/
-    host/              # Host container (Dockerfile, entrypoint)
-    workspace/         # Workspace container (Dockerfile, base, entrypoint)
-  bridge/              # @klangk/bridge npm package
-plugins/               # Built-in plugins (celebrate, beep, etc.)
-scripts/               # Build and utility scripts
-devenv.nix             # devenv configuration
-```
+Backend tests for Python changes, CLI tests for CLI changes, frontend
+tests for Dart changes. Run E2E tests before committing cross-cutting
+changes.
 
 ## Shell Commands
 
 Inside `devenv shell`, these commands are available:
 
-| Command                 | Description                           |
-| ----------------------- | ------------------------------------- |
-| `test-backend`          | Run backend unit tests                |
-| `test-frontend`         | Run frontend unit tests with coverage |
-| `test-backend-e2e`      | Run backend E2E tests                 |
-| `test-frontend-e2e`     | Run Flutter E2E tests (all browsers)  |
-| `flutterbuildweb`       | Rebuild Flutter web only              |
-| `build-workspace-image` | Rebuild workspace image (podman)      |
-| `build-base-image`      | Rebuild workspace base image          |
-| `build-host-image`      | Build host container image            |
-| `run-host-container`    | Run host container locally            |
-| `trivy-host`            | Scan host image for vulnerabilities   |
-| `update-plugins`        | Fetch plugins from plugins.yaml       |
+| Command                 | Description                                 |
+| ----------------------- | ------------------------------------------- |
+| `test-backend`          | Run backend unit tests                      |
+| `test-cli`              | Run CLI unit tests                          |
+| `test-frontend`         | Run frontend unit tests with coverage       |
+| `test-backend-e2e`      | Run backend E2E tests                       |
+| `test-cli-e2e`          | Run CLI E2E tests                           |
+| `test-frontend-e2e`     | Run frontend E2E tests (Playwright)         |
+| `flutterbuildweb`       | Rebuild Flutter web only                    |
+| `build-workspace-image` | Rebuild workspace image (podman)            |
+| `build-base-image`      | Rebuild workspace base image                |
+| `build-host-image`      | Build host container image                  |
+| `run-host-container`    | Run host container locally                  |
+| `trivy-host`            | Scan host image for vulnerabilities         |
+| `trivy-workspace`       | Scan workspace image for vulnerabilities    |
+| `update-plugins`        | Fetch plugins from plugins.yaml             |
+| `kill-containers`       | Stop and remove all klangk containers       |
+| `restart`               | Rebuild images and restart devenv processes |
+| `rebuild`               | Rebuild workspace image and Flutter web     |
+| `serve-docs`            | Serve docs locally for preview              |
+| `build-docs`            | Build docs for deployment                   |
 
 ## Branch Protection
 
-`main` requires a PR with 4 passing checks before merge:
+`main` requires a PR with passing checks before merge:
 
 - `test-backend`
 - `test-frontend`
 - `test-backend-e2e`
 - `test-frontend-e2e`
 
-All 4 run automatically on PRs. You can bypass as repo admin.
-
-## Mount Security
-
-Workspace bind mounts are validated at create and edit time. Two protections apply regardless of `KLANGK_ALLOWED_MOUNT_ROOTS`:
-
-**Protected paths** — the following host paths are always blocked, even if they fall under an allowed root:
-
-- `/var/run/docker.sock`, `/run/docker.sock`, `/run/podman/podman.sock` — mounting a container engine socket grants full host control
-- `KLANGK_DATA_DIR` (and anything beneath it) — contains every user's workspace home and the database
-
-**Volume isolation** — named volumes (e.g., `nix-store:/nix`) are labelled with `klangk.instance` and `klangk.user-id` at creation time. A workspace cannot mount a volume created by a different `KLANGK_INSTANCE_ID` or a different user. This prevents both cross-tenant and cross-user data access on shared hosts.
+CLI, CLI E2E, and cross-browser E2E checks also run on PRs but are
+not required for merge. You can bypass as repo admin.
 
 ## Build Architecture (amd64 / arm64)
 

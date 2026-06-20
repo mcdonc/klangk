@@ -1,6 +1,6 @@
 # Workspaces
 
-![Workspaces page](../assets/workspaces.png)
+[![Workspaces page](../assets/workspaces.png)](../assets/workspaces.png)
 
 A workspace is an isolated coding environment — its own container with
 a terminal, file browser, and chat. Each user can create multiple
@@ -14,8 +14,12 @@ optionally configure:
 - **Image** — the container image to use (defaults to
   `klangk-workspace`)
 - **Default command** — a command to run when you open the terminal
-  (e.g., `pi` to start the AI agent automatically)
-- **Bind mounts** — mount host directories into the container
+  (e.g., `pi` to start the AI agent automatically). If unset, the
+  terminal starts a tmux session with a login shell.
+- **Bind mounts** — mount host directories into the container.
+  If `KLANGK_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
+  paths), only directories under those roots can be bind-mounted.
+  Protected paths like the Docker/Podman socket are always blocked.
 - **Environment variables** — set custom env vars for the container
 
 You can change all of these later from the workspace Settings tab.
@@ -45,6 +49,26 @@ Each shared user gets a role that controls what they can do — see
 
 Shared member avatars appear on workspace cards so you can see who
 has access at a glance.
+
+## Mount security
+
+Workspace bind mounts are validated at create and edit time. Two
+protections apply regardless of `KLANGK_ALLOWED_MOUNT_ROOTS`:
+
+**Protected paths** — the following host paths are always blocked,
+even if they fall under an allowed root:
+
+- `/var/run/docker.sock`, `/run/docker.sock`,
+  `/run/podman/podman.sock` — mounting a container engine socket
+  grants full host control
+- `KLANGK_DATA_DIR` (and anything beneath it) — contains every
+  user's workspace home and the database
+
+**Volume isolation** — named volumes (e.g., `nix-store:/nix`) are
+labelled with `klangk.instance` and `klangk.user-id` at creation
+time. A workspace cannot mount a volume created by a different
+`KLANGK_INSTANCE_ID` or a different user. This prevents both
+cross-tenant and cross-user data access on shared hosts.
 
 ## Idle timeout
 

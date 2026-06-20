@@ -98,7 +98,7 @@ plugins:
     ref: main
 ```
 
-See the [Plugin System](../reference/plugin-system.md) reference for plugin structure details.
+See the [Creating Plugins](../development/creating-plugins.md) reference for plugin structure details.
 
 ## Custom CA Certificates
 
@@ -180,4 +180,50 @@ docker run -d \
   ghcr.io/mcdonc/klangk/klangk-host-custom
 ```
 
-Or use `docker-compose.yml` with a `.env` file. The provided `docker-compose.yml` has all options documented as comments.
+Or use `docker-compose.yml` with a `.env` file:
+
+```yaml
+services:
+  klangk:
+    image: ghcr.io/mcdonc/klangk/klangk-host-custom
+    ports:
+      - "8995:8995"
+    volumes:
+      - ./data:/home/klangk/data
+      - ./mount:/home/klangk/mount
+      - ./oidc.yaml:/home/klangk/oidc.yaml:ro
+      - ./cacert.pem:/home/klangk/cacert.pem:ro
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+      - /dev/net/tun
+    security_opt:
+      - seccomp=unconfined
+      - systempaths=unconfined
+    environment:
+      KLANGK_NGINX_PORT: "8995"
+      KLANGK_PORT: "8997"
+      KLANGK_DEFAULT_USER: admin@example.com
+      KLANGK_DEFAULT_PASSWORD: changeme
+      KLANGK_JWT_SECRET: change-this-to-a-random-secret
+      KLANGK_PREVENT_INSECURE_JWT_SECRET: "1"
+      KLANGK_DATA_DIR: /home/klangk/data
+      KLANGK_LLM_BASE_URL: https://ollama.com/v1
+      KLANGK_LLM_API_KEY: your-api-key
+      KLANGK_LLM_MODEL: gemma4:31b
+      KLANGK_INSTANCE_ID: default
+      KLANGK_OIDC_CONFIG: /home/klangk/oidc.yaml
+      KLANGK_AUTH_MODES: both
+      KLANGK_OIDC_LOGIN_HOOK: login_hook.require_invitation
+      KLANGK_DISABLE_REGISTRATION: "1"
+      KLANGK_DNS_SERVERS: 100.100.100.100,8.8.8.8
+      KLANGK_ALLOWED_MOUNT_ROOTS: /home/klangk/mount
+      KLANGK_SMTP_HOST: smtp.example.com
+      KLANGK_SMTP_USER: you@example.com
+      KLANGK_SMTP_PASSWORD: your-smtp-password
+      KLANGK_SMTP_FROM: noreply@example.com
+      LOGFIRE_BASE_URL: https://logfire-api.pydantic.dev
+      LOGFIRE_TOKEN: your-logfire-token
+      LOGFIRE_ENVIRONMENT: production
+```

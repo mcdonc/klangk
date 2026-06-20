@@ -1,9 +1,10 @@
 # AI Coding Harnesses
 
-Every workspace container ships with two AI coding agents
-pre-installed: **Pi** and **Claude Code**. Both connect to your LLM
-backend through the [LLM proxy](../architecture/llm-proxy.md) so no
-API keys are exposed inside containers.
+Workspace containers ship with **Pi** pre-installed. **Claude Code**
+is available via the `claude-code`
+[plugin](plugins.md). Pi can connect to your LLM backend through the
+[LLM proxy](../architecture/llm-proxy.md) so no API keys are exposed
+inside containers.
 
 ## Prerequisites
 
@@ -16,7 +17,7 @@ to enable AI features:
 | `KLANGK_LLM_MODEL`    | `gpt-4o`                    | Default model name         |
 | `KLANGK_LLM_API_KEY`  | `sk-...`                    | Provider API key           |
 
-Without these, both agents are non-functional. See
+Without these, Pi and the Pi agent via the chat are non-functional. See
 [Environment Variables](../reference/environment.md) for the full
 list.
 
@@ -34,10 +35,10 @@ Open a terminal tab and run:
 pi
 ```
 
-Pi starts in interactive TUI mode with access to the workspace
-filesystem (`/home/work`), shell commands, and all mapped ports. It
-reads its config from `~/.pi/agent/` which is populated automatically
-at first login by `setup-clankers`.
+By default Pi uses the LLM proxy with the provider and model
+configured via `KLANGK_LLM_BASE_URL`, `KLANGK_LLM_MODEL`, and
+`KLANGK_LLM_API_KEY`. Its config is stored in `~/.pi/agent/` and
+populated automatically at first login by klangk itself.
 
 ### Using Pi from chat
 
@@ -68,9 +69,6 @@ follow-up conversations and interjections.
 The workspace image ships with several Pi extensions pre-installed:
 
 - **pi-web-agent** — web-based agent UI
-- **pi-otel-telemetry** — OpenTelemetry tracing (opt-in via
-  `LOGFIRE_TOKEN`)
-- **pi-mcp-extension** — MCP (Model Context Protocol) server support
 - **llm-proxy-models** — dynamically fetches available models from the
   LLM proxy
 - **minimax-thinking-tags** — strips `<think>` tags from models that
@@ -84,8 +82,9 @@ with `pi install`.
 ## Claude Code
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is
-Anthropic's CLI coding agent. It is installed via the `claude-code`
-plugin (included in the default plugins.yaml).
+Anthropic's CLI coding agent. It is not pre-installed — enable it by
+adding the `claude-code` plugin to your `plugins.yaml`. See
+[Plugins](plugins.md) for details.
 
 ### Using Claude Code from the terminal
 
@@ -95,20 +94,14 @@ Open a terminal tab and run:
 claude
 ```
 
-Claude Code connects to the LLM proxy automatically — the workspace
-JWT is used as the API key, and the proxy forwards requests to your
-configured `KLANGK_LLM_BASE_URL` with the real API key injected by
-nginx.
-
-!!! note
-Claude Code requires an Anthropic-compatible API endpoint. If your
-`KLANGK_LLM_BASE_URL` points to a non-Anthropic provider (e.g.
-Ollama, OpenAI), Claude Code will not work. Use Pi instead, which
-supports any OpenAI-compatible endpoint.
+Claude Code connects directly to the Anthropic API — it does not use
+the LLM proxy. On first run, Claude Code prompts you to authenticate
+via a browser-based flow: it displays a URL, you open it in your
+browser, and paste the resulting API key back into the terminal.
 
 ## System prompt
 
-Both agents share a system prompt installed at `~/AGENTS.md` on first
+Agents share a system prompt installed at `~/AGENTS.md` on first
 login. This prompt configures workspace-specific behavior:
 
 - File and project creation conventions
@@ -121,15 +114,11 @@ in the container.
 
 ## How the LLM proxy works
 
-Neither agent has direct access to your LLM API key. Instead:
+Pi does not have direct access to your LLM API key. Instead, klangk
+configures Pi to send requests through an nginx reverse proxy on the
+host. Nginx forwards the request to your `KLANGK_LLM_BASE_URL` and
+injects the real `KLANGK_LLM_API_KEY` in the `Authorization` header.
 
-1. `setup-clankers` writes `~/.pi/agent/models.json` with
-   `KLANGK_LLM_PROXY_URL` (pointing to nginx on the host) and the
-   workspace JWT as the API key.
-2. When an agent makes an LLM request, nginx validates the JWT via
-   `auth_request`, strips it, and forwards the request to
-   `KLANGK_LLM_BASE_URL` with the real `KLANGK_LLM_API_KEY` in the
-   `Authorization` header.
-
-This means API keys never enter the container environment. See
-[LLM Proxy](../architecture/llm-proxy.md) for the full architecture.
+This means your LLM API key never enters the container environment.
+See [LLM Proxy](../architecture/llm-proxy.md) for the full
+architecture.
