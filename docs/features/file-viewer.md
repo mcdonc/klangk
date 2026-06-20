@@ -6,7 +6,7 @@ all without using the terminal.
 
 Click the **Files** tab in the workspace to open.
 
-![File browser showing workspace files](../assets/files/01-file-browser.png)
+[![File browser showing workspace files](../assets/files/01-file-browser.png)](../assets/files/01-file-browser.png)
 
 ## Browsing
 
@@ -47,7 +47,7 @@ Click a file to view its contents in a read-only viewer with syntax
 highlighting (JetBrains Mono font). Toggle between rendered **View**
 and **Raw** modes using the buttons at the top right.
 
-![File preview showing rendered Markdown](../assets/files/02-file-preview.png)
+[![File preview showing rendered Markdown](../assets/files/02-file-preview.png)](../assets/files/02-file-preview.png)
 
 Supported previews include:
 

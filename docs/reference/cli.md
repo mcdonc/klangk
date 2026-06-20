@@ -7,7 +7,7 @@ supports [sandboxing projects](../features/sandbox.md) from a config
 file and [SSH agent forwarding](../features/ssh-agent-forwarding.md)
 for using your local SSH keys inside containers.
 
-![klangkc --help](../assets/cli-help.png)
+[![klangkc --help](../assets/cli-help.png)](../assets/cli-help.png)
 
 ## Installation
 

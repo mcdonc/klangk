@@ -1,6 +1,6 @@
 # Authorization
 
-![Access control panel](../assets/admin/access-control.png)
+[![Access control panel](../assets/admin/access-control.png)](../assets/admin/access-control.png)
 
 Klangk controls who can do what through an Access Control List (ACL)
 system. Every resource — workspaces, admin pages, groups — has a list

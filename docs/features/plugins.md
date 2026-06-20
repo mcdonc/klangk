@@ -10,7 +10,7 @@ For details on creating plugins, see the
 
 ## Plugin management
 
-![Running update-plugins](../assets/update-plugins.png)
+[![Running update-plugins](../assets/update-plugins.png)](../assets/update-plugins.png)
 
 Run `update-plugins` to fetch plugins. On first run it creates a
 `plugins.yaml` template with the default plugins. Plugins are

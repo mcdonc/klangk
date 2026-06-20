@@ -85,7 +85,7 @@ helper falls through to the PAT dialog.
 If GitHub OAuth is not configured, or for non-GitHub hosts, the
 credential dialog shows username and PAT fields:
 
-![Git credentials dialog](../assets/github-auth/01-credential-dialog.png)
+[![Git credentials dialog](../assets/github-auth/01-credential-dialog.png)](../assets/github-auth/01-credential-dialog.png)
 
 ### Generating a GitHub PAT
 

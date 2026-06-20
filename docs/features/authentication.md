@@ -1,6 +1,6 @@
 # Authentication
 
-![Login page](../assets/admin/login.png)
+[![Login page](../assets/admin/login.png)](../assets/admin/login.png)
 
 Klangk supports two ways to log in: email/password accounts and
 single sign-on (SSO) via OIDC providers like Keycloak, Okta, or

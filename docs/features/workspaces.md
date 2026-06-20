@@ -1,6 +1,6 @@
 # Workspaces
 
-![Workspaces page](../assets/workspaces.png)
+[![Workspaces page](../assets/workspaces.png)](../assets/workspaces.png)
 
 A workspace is an isolated coding environment — its own container with
 a terminal, file browser, and chat. Each user can create multiple

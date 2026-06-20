@@ -3,7 +3,7 @@
 Admins can invite new users by email. The invited user receives a link
 to create their account with a password — no self-registration required.
 
-![Invitations tab showing pending invitations](../assets/invitations/02-invitations-tab.png)
+[![Invitations tab showing pending invitations](../assets/invitations/02-invitations-tab.png)](../assets/invitations/02-invitations-tab.png)
 
 ## Sending an Invitation
 
@@ -11,7 +11,7 @@ From the admin panel (**Admin > Invitations** tab), click the **+** button
 and enter the email address. The system sends an invitation email with a
 secure link that expires after 72 hours.
 
-![Sending an invitation](../assets/invitations/03-send-invitation.png)
+[![Sending an invitation](../assets/invitations/03-send-invitation.png)](../assets/invitations/03-send-invitation.png)
 
 You can also invite users from the CLI:
 

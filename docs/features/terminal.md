@@ -1,6 +1,6 @@
 # Terminal
 
-![Terminal](../assets/terminal.png)
+[![Terminal](../assets/terminal.png)](../assets/terminal.png)
 
 Klangk terminals give you shell access to a Linux container. Each
 workspace runs its own isolated Linux environment — when you open a
@@ -75,7 +75,7 @@ Each user has their own set of terminal tabs. Tabs map 1:1 to tmux
 windows inside the container. All tabs share a single tmux session
 named by your user ID, so switching tabs is instant.
 
-![Initial terminal with a single tab](../assets/terminal-sharing/01-initial-terminal.png)
+[![Initial terminal with a single tab](../assets/terminal-sharing/01-initial-terminal.png)](../assets/terminal-sharing/01-initial-terminal.png)
 
 - Click **+** to create a new terminal tab (tmux window)
 - Click a tab to switch to it
@@ -88,7 +88,7 @@ Right-click any tab and select **Rename** to change its display name. The
 name is stored as the tmux window name, so it persists across reconnections
 and is visible to other users if the tab is shared.
 
-![Two terminal tabs — one shared, one isolated](../assets/terminal-sharing/06-two-tabs.png)
+[![Two terminal tabs — one shared, one isolated](../assets/terminal-sharing/06-two-tabs.png)](../assets/terminal-sharing/06-two-tabs.png)
 
 ## Shared terminals
 
@@ -109,7 +109,7 @@ Right-click a tab and select **Share**. The tab gains a broadcast icon
 indicating it is now shared. Other workspace members see the shared
 tab appear in their tab bar.
 
-![Tab with broadcast icon indicating it is shared](../assets/terminal-sharing/04-shared-tab-with-icon.png)
+[![Tab with broadcast icon indicating it is shared](../assets/terminal-sharing/04-shared-tab-with-icon.png)](../assets/terminal-sharing/04-shared-tab-with-icon.png)
 
 To unshare, either:
 
@@ -122,7 +122,7 @@ Shared terminals from other users appear in your tab bar with a prefix
 showing the owner's handle (e.g., `alice:build`). Click the tab to join —
 you are now seeing the same terminal session as the owner.
 
-![Collaborator's view showing a shared terminal from another user](../assets/terminal-sharing/08-collaborator-view.png)
+[![Collaborator's view showing a shared terminal from another user](../assets/terminal-sharing/08-collaborator-view.png)](../assets/terminal-sharing/08-collaborator-view.png)
 
 Depending on your role, you may be able to type (read-write) or only
 watch (read-only). A lock icon indicates read-only access.
@@ -132,7 +132,7 @@ watch (read-only). A lock icon indicates read-only access.
 When someone joins your shared terminal, an eye icon with a count appears
 on the tab showing how many users are currently viewing.
 
-![Shared tab showing one viewer](../assets/terminal-sharing/07-viewer-count.png)
+[![Shared tab showing one viewer](../assets/terminal-sharing/07-viewer-count.png)](../assets/terminal-sharing/07-viewer-count.png)
 
 Hover over the tab to see a tooltip listing the full tab name and the
 handles of all current viewers.

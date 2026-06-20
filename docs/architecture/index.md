@@ -1,6 +1,6 @@
 # Architecture Overview
 
-![Architecture Overview](../assets/architecture-overview.svg)
+[![Architecture Overview](../assets/architecture-overview.svg)](../assets/architecture-overview.svg)
 
 ```text
 Browser (Flutter Web + Terminal + Files + Chat)
