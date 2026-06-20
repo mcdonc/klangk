@@ -374,17 +374,17 @@ class _BoingScenePainter extends CustomPainter {
   }
 
   void _drawBall(Canvas canvas, double cx, double cy, double radius) {
-    // Per-pixel sphere rendering with screen-space latitude bands.
-    // 9 lat bands x 14 lon stripes, half-offset on odd rows.
-    // Rendered at 1/3 resolution for performance.
+    // Per-pixel sphere rendering. Checker defined in (phi, ny) space:
+    // u = longitude mapped to 0..14, v = screen-Y mapped to 0..8.
+    // Color = (floor(u) + floor(v)) % 2. Diagonal corners touch.
     final diam = (radius * 2).toInt();
     if (diam <= 0) return;
 
     final res = max(60, diam ~/ 3);
     final step = diam / res;
-    const latBands = 9;
-    const lonStripes = 14;
-    final rotAngle = phase / lonStripes * 2 * pi;
+    const cols = 14;
+    const rows = 8;
+    final rotAngle = phase / cols * 2 * pi;
     final cosRot = cos(rotAngle);
     final sinRot = sin(rotAngle);
     final redPaint = Paint()..color = _ballRed;
@@ -398,21 +398,14 @@ class _BoingScenePainter extends CustomPainter {
         if (r2 > 1) continue;
 
         final nz = sqrt(1 - r2);
-        // Y-axis rotation
         final rx = nx * cosRot + nz * sinRot;
-        final ry = ny;
         final rz = -nx * sinRot + nz * cosRot;
 
-        // Screen-space latitude (linear in Y for equal-height bands)
-        var band = ((ry + 1) / 2 * latBands).floor();
-        if (band >= latBands) band = latBands - 1;
-
-        // Longitude
         final phi = atan2(rx, rz) + pi;
-        final offset = (band % 2 == 1) ? 0.5 : 0.0;
-        var lon = ((phi / (2 * pi) * lonStripes + offset) % lonStripes).floor();
+        final u = (phi / (2 * pi) * cols).floor();
+        final v = ((ny + 1) / 2 * rows).clamp(0, rows - 1).floor();
 
-        final isRed = lon % 2 == 0;
+        final isRed = (u + v) % 2 == 0;
         final screenX = cx - radius + px * step;
         final screenY = cy - radius + py * step;
         canvas.drawRect(
