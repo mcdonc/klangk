@@ -1,5 +1,7 @@
 # Terminal
 
+![Terminal](../assets/terminal.png)
+
 Klangk terminals give you shell access to a Linux container. Each
 workspace runs its own isolated Linux environment — when you open a
 terminal, you get a bash shell running on Linux regardless of
