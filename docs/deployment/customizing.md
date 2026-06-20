@@ -98,7 +98,7 @@ plugins:
     ref: main
 ```
 
-See the [Plugin System](../reference/plugin-system.md) reference for plugin structure details.
+See the [Creating Plugins](../development/creating-plugins.md) reference for plugin structure details.
 
 ## Custom CA Certificates
 

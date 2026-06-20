@@ -1,4 +1,4 @@
-# Existing Plugins
+# Using Plugins
 
 Plugins extend klangk workspaces with additional tools, UI widgets,
 and container customizations. A plugin can install system packages
@@ -6,7 +6,7 @@ at image build time, add CLI tools to the container PATH, extend the
 Pi agent with new tools, or add UI widgets to the web frontend.
 
 For details on creating plugins, see the
-[Plugin System](../reference/plugin-system.md) reference.
+[Creating Plugins](../development/creating-plugins.md) reference.
 
 ## Plugin management
 

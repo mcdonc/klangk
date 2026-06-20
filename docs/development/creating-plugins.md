@@ -1,4 +1,4 @@
-# Plugin System
+# Creating Plugins
 
 All plugins live in `$KLANGK_PLUGINS_DIR/<name>/` directories (defaults to `.devenv/state/klangk/plugins/`). A plugin can contain any combination of:
 

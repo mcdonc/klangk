@@ -25,7 +25,7 @@ nav = [
     { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },
     { "AI Coding Harnesses" = "features/ai-coding-harnesses.md" },
-    { "Existing Plugins" = "features/plugins.md" },
+    { "Using Plugins" = "features/plugins.md" },
     { "Export & Import" = "features/export-import.md" },
     { "Hosted Apps" = "features/hosted-apps.md" },
     { "CLI" = "reference/cli.md" },
@@ -42,13 +42,13 @@ nav = [
   { "Reference" = [
     { "ACL System" = "reference/acl.md" },
     { "Environment Variables" = "reference/environment.md" },
-    { "Plugin System" = "reference/plugin-system.md" },
   ]},
   { "Klangk Development" = [
     { "Overview" = "development/index.md" },
     { "CI" = "development/ci.md" },
     { "Pre-commit Hooks" = "development/pre-commit.md" },
     { "Releasing" = "development/releasing.md" },
+    { "Creating Plugins" = "development/creating-plugins.md" },
     { "Stable Branches" = "development/stable-branches.md" },
   ]},
   { "Architecture" = [
