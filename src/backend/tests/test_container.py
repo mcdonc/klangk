@@ -626,11 +626,11 @@ class TestStartContainer:
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
-                extra_env={"KLANGK_SKILLS": "stats,rdkit", "FOO": "bar"},
+                extra_env={"MY_VAR": "hello", "FOO": "bar"},
             )
         env_list = p.create_container.call_args.kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env_list)
-        assert env_dict["KLANGK_SKILLS"] == "stats,rdkit"
+        assert env_dict["MY_VAR"] == "hello"
         assert env_dict["FOO"] == "bar"
 
     async def test_plugins_env_injected(self, workspace, monkeypatch):

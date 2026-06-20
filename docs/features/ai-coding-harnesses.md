@@ -84,8 +84,8 @@ with `pi install`.
 ## Claude Code
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is
-Anthropic's CLI coding agent. It is installed globally in the
-workspace container via npm.
+Anthropic's CLI coding agent. It is installed via the `claude-code`
+plugin (included in the default plugins.yaml).
 
 ### Using Claude Code from the terminal
 
@@ -105,19 +105,6 @@ Claude Code requires an Anthropic-compatible API endpoint. If your
 `KLANGK_LLM_BASE_URL` points to a non-Anthropic provider (e.g.
 Ollama, OpenAI), Claude Code will not work. Use Pi instead, which
 supports any OpenAI-compatible endpoint.
-
-### Skills
-
-Both Pi and Claude Code support **skills** — reusable prompt
-templates that can be invoked by name. Plugin-provided skills are
-symlinked into both agents' discovery paths at login:
-
-- Pi: `~/.pi/agent/skills/`
-- Claude Code: `~/.claude/skills/`
-
-Enable skills for a workspace by setting `KLANGK_SKILLS` to a
-comma-separated list of skill names (matching directories under
-`/opt/klangk/pi-agent/skills/`).
 
 ## System prompt
 

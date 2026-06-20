@@ -1,0 +1,5 @@
+{
+  "name": "@klangk/claude-code",
+  "version": "1.0.0",
+  "description": "Claude Code CLI agent — Anthropic's terminal-based coding assistant"
+}

@@ -842,7 +842,7 @@ class TestEnvVars:
                     "--env",
                     "FOO=bar",
                     "--env",
-                    "KLANGK_SKILLS=test",
+                    "BAZ=qux",
                 ],
                 env=env,
             )
