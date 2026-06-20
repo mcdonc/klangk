@@ -105,10 +105,14 @@ class _BoingOverlayState extends State<_BoingOverlay>
   double _phase = 0;
   int _spinDir = 1;
   double _aspectRatio = 1.5; // updated each build
-  static const double _gravity = 0.00025;
-  static const double _damping = 0.97;
+  int _lastBounceFrame = -100; // throttle bounce sound
+  static const double _gravity = 0.00015;
+  static const double _damping = 0.92;
+  static const double _maxVy = 0.012; // cap vertical velocity
   static const double _ballFrac = 0.33;
+  static const int _minBounceInterval = 8; // min frames between sounds
   static const _durationSec = 24;
+  int _frame = 0;
 
   @override
   void initState() {
@@ -142,11 +146,13 @@ class _BoingOverlayState extends State<_BoingOverlay>
   void _startAnimation() {
     setState(() => _visible = true);
     _x = 0.15;
-    _y = 0.15;
-    _vx = 0.005 * widget.plugin._speed;
+    _y = _ballFrac + 0.02; // start near top
+    _vx = 0.004 * widget.plugin._speed;
     _vy = 0.0;
     _phase = 0;
     _spinDir = 1;
+    _frame = 0;
+    _lastBounceFrame = -100;
     _ctrl.reset();
     _ctrl.forward().then((_) {
       if (mounted) _dismiss();
@@ -171,40 +177,54 @@ class _BoingOverlayState extends State<_BoingOverlay>
   void _tick() {
     if (!mounted || !_visible) return;
     final speed = widget.plugin._speed;
+    _frame++;
     setState(() {
       _vy += _gravity * speed;
+      // Cap vertical velocity to prevent frantic bouncing
+      _vy = _vy.clamp(-_maxVy, _maxVy);
       _x += _vx * speed;
       _y += _vy * speed;
 
-      // Bounce boundaries: ball radius is h * _ballFrac.
-      // Floor is at 0.75 of scene height, so ball center must stay
-      // above (0.75 - _ballFrac). X bounds use actual aspect ratio.
+      // Ball bounces at scene edges (ball edge touches wall/floor).
+      // Y: bottom of scene minus ball radius, top plus ball radius.
       const yMin = _ballFrac;
-      const yMax = 0.75 - _ballFrac; // bounce off the floor line
+      const yMax = 1.0 - _ballFrac;
+      // X: use actual aspect ratio to compute ball width in normalised X
       final xPad = _ballFrac / _aspectRatio;
       final xMin = xPad;
       final xMax = 1.0 - xPad;
 
+      final canBounce = (_frame - _lastBounceFrame) >= _minBounceInterval;
+
       if (_y >= yMax) {
         _y = yMax;
         _vy = -_vy.abs() * _damping;
-        _playBoingSound(panX: _x, isFloor: true);
+        if (canBounce) {
+          _playBoingSound(panX: _x, isFloor: true);
+          _lastBounceFrame = _frame;
+        }
       }
       if (_y <= yMin) {
         _y = yMin;
-        _vy = _vy.abs();
+        _vy = _vy.abs() * _damping;
       }
       if (_x <= xMin) {
         _x = xMin;
         _vx = _vx.abs();
         _spinDir = 1;
-        _playBoingSound(panX: _x, isFloor: false);
+        if (canBounce) {
+          _playBoingSound(panX: _x, isFloor: false);
+          _lastBounceFrame = _frame;
+        }
       }
       if (_x >= xMax) {
         _x = xMax;
         _vx = -_vx.abs();
         _spinDir = -1;
-        _playBoingSound(panX: _x, isFloor: false);
+        if (canBounce) {
+          _playBoingSound(panX: _x, isFloor: false);
+          _lastBounceFrame = _frame;
+        }
       }
 
       _phase += 0.09 * _spinDir * speed;
