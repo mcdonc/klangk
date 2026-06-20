@@ -40,6 +40,8 @@ Klangk provides a rich set of features for multi-user AI collaboration:
 
 ## Debug Panel
 
+[![Debug panel showing WebSocket messages](../assets/debug-panel.png)](../assets/debug-panel.png)
+
 - Container lifecycle events (starting, ready with port info and status, idle stop, restart)
 - Session resume notifications
 - Query text shown for each prompt sent
