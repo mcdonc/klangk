@@ -1236,13 +1236,14 @@ class TestShellConnectionError:
         monkeypatch.setattr("klangkc.client.reset_terminal", lambda: None)
 
     def test_shell_catches_expired_token(self, monkeypatch):
-        """shell() catches InvalidStatusCode with 4001/4002 and shows auth error."""
-        from websockets.exceptions import InvalidStatusCode
+        """shell() catches InvalidStatus with 4001/4002 and shows auth error."""
+        from websockets import InvalidStatus, Response
 
         from klangkc.main import shell
 
         self._shell_with_side_effect(
-            monkeypatch, InvalidStatusCode(4002, None)
+            monkeypatch,
+            InvalidStatus(Response(4002, "Token expired", {}, b"")),
         )
 
         import typer
@@ -1252,12 +1253,15 @@ class TestShellConnectionError:
         assert exc_info.value.exit_code == 1
 
     def test_shell_catches_non_auth_invalid_status(self, monkeypatch):
-        """shell() catches InvalidStatusCode with non-auth code (e.g. 500)."""
-        from websockets.exceptions import InvalidStatusCode
+        """shell() catches InvalidStatus with non-auth code (e.g. 500)."""
+        from websockets import InvalidStatus, Response
 
         from klangkc.main import shell
 
-        self._shell_with_side_effect(monkeypatch, InvalidStatusCode(500, None))
+        self._shell_with_side_effect(
+            monkeypatch,
+            InvalidStatus(Response(500, "Internal Server Error", {}, b"")),
+        )
 
         import typer
 
@@ -1267,6 +1271,7 @@ class TestShellConnectionError:
 
 
 class TestSSHAgentForwarding:
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
     async def test_ws_shell_sends_agent_start_when_flag_set(self, tmp_path):
         """With forward_agent=True and a valid SSH_AUTH_SOCK, ssh_agent_start
         is sent before terminal_start."""
@@ -1542,6 +1547,7 @@ class TestSSHAgentForwarding:
         assert "ssh_agent_start" in cmds
         assert "terminal_start" in cmds
 
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
     async def test_ws_shell_sends_agent_stop_on_exit(self, tmp_path):
         """When agent was active, ssh_agent_stop is sent on shell exit."""
         from klangkc.client import _ws_shell

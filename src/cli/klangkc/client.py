@@ -910,7 +910,8 @@ async def _run_shell(
                         break
         except websockets.ConnectionClosed as exc:
             if not stop_event.is_set():
-                if exc.code in (4001, 4002):
+                _code = exc.rcvd.code if exc.rcvd else None
+                if _code in (4001, 4002):
                     stdout.write(
                         "\r\nSession expired. Run `klangkc login` to"
                         " re-authenticate.\r\n"
