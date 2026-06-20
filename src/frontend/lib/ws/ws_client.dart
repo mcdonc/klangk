@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../auth/auth_service.dart';
 import '../utils/web_helpers_stub.dart'
@@ -52,6 +53,11 @@ class WsClient extends ChangeNotifier {
   /// Whether auto-reconnect should be attempted on disconnect.
   /// Set to false during intentional disconnects.
   bool _autoReconnect = false;
+
+  /// Whether the last WebSocket close was unclean (not code 1000).
+  /// Firefox's FailDelayManager throttles reconnections after unclean
+  /// closes, so we pre-check via HTTP before reconnecting.
+  bool _lastCloseUnclean = false;
 
   /// Max backoff duration in seconds.
   static const int _maxBackoffSeconds = 30;
@@ -148,10 +154,52 @@ class WsClient extends ChangeNotifier {
     }
   }
 
+  /// HTTP base URL for pre-connect checks, derived from the page location.
+  // coverage:ignore-start
+  static String get _httpBaseUrl {
+    final loc = Uri.base;
+    return '${loc.scheme}://${loc.host}:${loc.port}$baseUrl';
+  }
+  // coverage:ignore-end
+
+  /// Override for testing to inject a custom HTTP pre-check function.
+  @visibleForTesting
+  static Future<bool> Function()? testHttpPreCheck;
+
+  /// Wait for the server to respond via HTTP before opening a WebSocket.
+  /// This drains Firefox's FailDelayManager throttle (which only affects
+  /// WebSocket connections, not HTTP) so the subsequent WS connect succeeds
+  /// without a 30-60s delay.
+  Future<bool> _waitForServer() async {
+    if (testHttpPreCheck != null) return testHttpPreCheck!();
+    if (testChannelFactory != null) return true; // coverage:ignore-line
+    // coverage:ignore-start
+    try {
+      final resp = await http.get(Uri.parse('$_httpBaseUrl/api/config'));
+      return resp.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+    // coverage:ignore-end
+  }
+
   Future<void> connect() async {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     if (_connected || _auth?.token == null) return;
+
+    // After an unclean WebSocket close, Firefox's FailDelayManager throttles
+    // new WebSocket connections by up to 60s. HTTP requests are not affected,
+    // so we pre-check via HTTP to confirm the server is reachable before
+    // opening a new WebSocket. This avoids hanging on `channel.ready`.
+    if (_lastCloseUnclean) {
+      final serverUp = await _waitForServer();
+      if (!serverUp) {
+        _scheduleReconnect();
+        return;
+      }
+      _lastCloseUnclean = false;
+    }
 
     if (testChannelFactory != null) {
       _channel = testChannelFactory!(Uri());
@@ -290,8 +338,9 @@ class WsClient extends ChangeNotifier {
         _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
         _defaultCommand = null;
-        notifyListeners();
         final code = _channel?.closeCode;
+        _lastCloseUnclean = code != 1000;
+        notifyListeners();
         if (code == 4001 || code == 4002) {
           _errorController.add('Session expired, please log in again');
           _auth?.logout();
