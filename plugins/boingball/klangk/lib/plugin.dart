@@ -387,6 +387,10 @@ class _BoingScenePainter extends CustomPainter {
     final rotAngle = phase / cols * 2 * pi;
     final cosRot = cos(rotAngle);
     final sinRot = sin(rotAngle);
+    // ~17 degree axis tilt (like the original)
+    const tilt = 17 * pi / 180;
+    final cosTilt = cos(tilt);
+    final sinTilt = sin(tilt);
     final redPaint = Paint()..color = _ballRed;
     final whitePaint = Paint()..color = _ballWhite;
 
@@ -398,12 +402,16 @@ class _BoingScenePainter extends CustomPainter {
         if (r2 > 1) continue;
 
         final nz = sqrt(1 - r2);
-        final rx = nx * cosRot + nz * sinRot;
-        final rz = -nx * sinRot + nz * cosRot;
+        // Apply Z-axis tilt first (tilts the rotation axis)
+        final tx = nx * cosTilt - ny * sinTilt;
+        final ty = nx * sinTilt + ny * cosTilt;
+        // Then Y-axis rotation
+        final rx = tx * cosRot + nz * sinRot;
+        final rz = -tx * sinRot + nz * cosRot;
 
         final phi = atan2(rx, rz) + pi;
         final u = (phi / (2 * pi) * cols).floor();
-        final v = ((ny + 1) / 2 * rows).clamp(0, rows - 1).floor();
+        final v = ((ty + 1) / 2 * rows).clamp(0, rows - 1).floor();
 
         final isRed = (u + v) % 2 == 0;
         final screenX = cx - radius + px * step;
