@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>
+      Klangk — Multi-User AI Sandboxing, Collaboration &amp; Coding Platform
+    </title>
+    <meta
+      name="description"
+      content="Klangk gives teams and solo developers sandboxed AI coding environments with shared terminals, chat, file management, and a plugin system."
+    />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <style>
+      /* ── Reset & Base ─────────────────────────────────────── */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg-deep: #0a0e17;
+        --bg-surface: #111827;
+        --bg-card: #1a2236;
+        --bg-card-hover: #1f2a42;
+        --border: #2a3654;
+        --text: #e2e8f0;
+        --text-muted: #94a3b8;
+        --accent: #f59e0b;
+        --accent-dim: rgba(245, 158, 11, 0.15);
+        --accent2: #3b82f6;
+        --accent2-dim: rgba(59, 130, 246, 0.12);
+        --gradient-1: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+        --gradient-2: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        --radius: 12px;
+        --radius-lg: 20px;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        background: var(--bg-deep);
+        color: var(--text);
+        line-height: 1.7;
+        overflow-x: hidden;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+        transition: color 0.2s;
+      }
+      a:hover {
+        color: #fbbf24;
+      }
+
+      /* ── Ambient background ───────────────────────────────── */
+      body::before {
+        content: "";
+        position: fixed;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background:
+          radial-gradient(
+            ellipse 600px 600px at 20% 20%,
+            rgba(245, 158, 11, 0.06),
+            transparent
+          ),
+          radial-gradient(
+            ellipse 500px 500px at 80% 60%,
+            rgba(59, 130, 246, 0.05),
+            transparent
+          ),
+          radial-gradient(
+            ellipse 400px 400px at 50% 90%,
+            rgba(139, 92, 246, 0.04),
+            transparent
+          );
+        pointer-events: none;
+        z-index: 0;
+        animation: drift 30s ease-in-out infinite alternate;
+      }
+
+      @keyframes drift {
+        from {
+          transform: translate(0, 0) rotate(0deg);
+        }
+        to {
+          transform: translate(-40px, -30px) rotate(3deg);
+        }
+      }
+
+      /* ── Layout ───────────────────────────────────────────── */
+      .container {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 0 24px;
+        position: relative;
+        z-index: 1;
+      }
+
+      section {
+        padding: 100px 0;
+      }
+
+      /* ── Nav ───────────────────────────────────────────────── */
+      nav {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 100;
+        background: rgba(10, 14, 23, 0.8);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid rgba(42, 54, 84, 0.5);
+      }
+
+      nav .container {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 64px;
+      }
+
+      .nav-logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: -0.02em;
+      }
+
+      .nav-logo .robot {
+        font-size: 1.5rem;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 32px;
+        list-style: none;
+      }
+
+      .nav-links a {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        font-weight: 500;
+        transition: color 0.2s;
+      }
+
+      .nav-links a:hover {
+        color: var(--text);
+      }
+
+      /* ── Hero ──────────────────────────────────────────────── */
+      .hero {
+        padding: 160px 0 80px;
+        text-align: center;
+      }
+
+      .hero-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        border-radius: 100px;
+        background: var(--accent-dim);
+        border: 1px solid rgba(245, 158, 11, 0.25);
+        color: var(--accent);
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-bottom: 32px;
+        animation: fadeInUp 0.6s ease-out;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.5rem, 6vw, 4.2rem);
+        font-weight: 800;
+        line-height: 1.15;
+        letter-spacing: -0.03em;
+        margin-bottom: 24px;
+        animation: fadeInUp 0.6s ease-out 0.1s both;
+      }
+
+      .hero h1 .gradient-text {
+        background: var(--gradient-1);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      .hero p {
+        font-size: 1.25rem;
+        color: var(--text-muted);
+        max-width: 640px;
+        margin: 0 auto 40px;
+        animation: fadeInUp 0.6s ease-out 0.2s both;
+      }
+
+      .hero-buttons {
+        display: flex;
+        gap: 16px;
+        justify-content: center;
+        flex-wrap: wrap;
+        animation: fadeInUp 0.6s ease-out 0.3s both;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 28px;
+        border-radius: 10px;
+        font-size: 1rem;
+        font-weight: 600;
+        transition: all 0.25s ease;
+        cursor: pointer;
+        border: none;
+      }
+
+      .btn-primary {
+        background: var(--gradient-1);
+        color: #fff;
+        box-shadow: 0 4px 24px rgba(245, 158, 11, 0.25);
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 32px rgba(245, 158, 11, 0.35);
+        color: #fff;
+      }
+
+      .btn-secondary {
+        background: var(--bg-card);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
+      .btn-secondary:hover {
+        background: var(--bg-card-hover);
+        transform: translateY(-2px);
+        color: var(--text);
+      }
+
+      /* ── Screenshot ────────────────────────────────────────── */
+      .screenshot-wrap {
+        margin-top: 64px;
+        animation: fadeInUp 0.8s ease-out 0.4s both;
+      }
+
+      .screenshot-wrap img {
+        width: 100%;
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border);
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.03),
+          0 20px 60px rgba(0, 0, 0, 0.5),
+          0 0 120px rgba(245, 158, 11, 0.06);
+      }
+
+      /* ── Features ──────────────────────────────────────────── */
+      .features-group {
+        margin-bottom: 48px;
+      }
+
+      .features-group:last-child {
+        margin-bottom: 0;
+      }
+
+      .features-group-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 20px;
+        padding: 6px 14px;
+        border-radius: 6px;
+      }
+
+      .features-group-label.solo {
+        color: var(--accent);
+        background: var(--accent-dim);
+        border: 1px solid rgba(245, 158, 11, 0.2);
+      }
+
+      .features-group-label.team {
+        color: var(--accent2);
+        background: var(--accent2-dim);
+        border: 1px solid rgba(59, 130, 246, 0.2);
+      }
+
+      .features-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 24px;
+      }
+
+      .feature-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 32px;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .feature-card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: var(--gradient-1);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+
+      .feature-card:hover {
+        border-color: rgba(245, 158, 11, 0.3);
+        transform: translateY(-4px);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+      }
+
+      .feature-card:hover::before {
+        opacity: 1;
+      }
+
+      .feature-icon {
+        font-size: 2rem;
+        margin-bottom: 16px;
+        display: block;
+      }
+
+      .feature-card h3 {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+
+      .feature-card p {
+        color: var(--text-muted);
+        font-size: 0.95rem;
+        line-height: 1.6;
+      }
+
+      /* ── Section headers ──────────────────────────────────── */
+      .section-header {
+        text-align: center;
+        margin-bottom: 56px;
+      }
+
+      .section-header h2 {
+        font-size: 2.2rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin-bottom: 16px;
+      }
+
+      .section-header p {
+        color: var(--text-muted);
+        font-size: 1.1rem;
+        max-width: 560px;
+        margin: 0 auto;
+      }
+
+      /* ── Use cases ─────────────────────────────────────────── */
+      .use-cases {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 32px;
+      }
+
+      .use-case {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 40px;
+        transition: all 0.3s ease;
+      }
+
+      .use-case:hover {
+        border-color: rgba(59, 130, 246, 0.3);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+      }
+
+      .use-case h3 {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .use-case p {
+        color: var(--text-muted);
+        font-size: 1rem;
+      }
+
+      .use-case ul {
+        list-style: none;
+        margin-top: 16px;
+      }
+
+      .use-case ul li {
+        color: var(--text-muted);
+        font-size: 0.95rem;
+        padding: 6px 0;
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .use-case ul li::before {
+        content: "→";
+        color: var(--accent);
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      /* ── Sponsors ──────────────────────────────────────────── */
+      .sponsors-section {
+        background: var(--bg-surface);
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .sponsors-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 48px;
+        max-width: 700px;
+        margin: 0 auto;
+      }
+
+      .sponsor {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 32px 48px;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        transition: all 0.3s ease;
+      }
+
+      .sponsor:hover {
+        border-color: rgba(245, 158, 11, 0.3);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+      }
+
+      .sponsor-logo {
+        height: 60px;
+        max-width: 220px;
+        object-fit: contain;
+      }
+
+      .sponsor-name {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-muted);
+      }
+
+      .sponsor-desc {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        text-align: center;
+        line-height: 1.5;
+      }
+
+      .sponsor-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+        font-weight: 600;
+      }
+
+      /* ── Footer ────────────────────────────────────────────── */
+      footer {
+        padding: 48px 0;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+      }
+
+      footer .footer-links {
+        display: flex;
+        justify-content: center;
+        gap: 32px;
+        margin-bottom: 24px;
+      }
+
+      footer .footer-links a {
+        color: var(--text-muted);
+        font-weight: 500;
+      }
+
+      footer .footer-links a:hover {
+        color: var(--text);
+      }
+
+      .footer-separator {
+        width: 48px;
+        height: 1px;
+        background: var(--border);
+        margin: 0 auto 24px;
+      }
+
+      /* ── Lightbox ───────────────────────────────────────────── */
+      .lightbox {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        background: rgba(0, 0, 0, 0.85);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: zoom-out;
+        opacity: 0;
+        visibility: hidden;
+        transition:
+          opacity 0.3s ease,
+          visibility 0.3s ease;
+      }
+
+      .lightbox.open {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      .lightbox img {
+        max-width: 92vw;
+        max-height: 92vh;
+        border-radius: var(--radius);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+        transform: scale(0.95);
+        transition: transform 0.3s ease;
+      }
+
+      .lightbox.open img {
+        transform: scale(1);
+      }
+
+      .screenshot-wrap img {
+        cursor: zoom-in;
+      }
+
+      /* ── Animations ────────────────────────────────────────── */
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(24px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .reveal {
+        opacity: 0;
+        transform: translateY(24px);
+        transition: all 0.6s ease-out;
+      }
+
+      .reveal.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      /* ── Responsive ────────────────────────────────────────── */
+      @media (max-width: 768px) {
+        section {
+          padding: 64px 0;
+        }
+        .hero {
+          padding: 120px 0 48px;
+        }
+        .hero h1 {
+          font-size: 2rem;
+        }
+        .hero p {
+          font-size: 1.05rem;
+        }
+        .use-cases {
+          grid-template-columns: 1fr;
+        }
+        .nav-links {
+          gap: 20px;
+        }
+        .nav-links a {
+          font-size: 0.85rem;
+        }
+        .sponsors-grid {
+          grid-template-columns: 1fr;
+        }
+        .sponsor {
+          padding: 24px 32px;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .nav-links {
+          display: none;
+        }
+        .hero-buttons {
+          flex-direction: column;
+          align-items: center;
+        }
+        .features-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Nav -->
+    <nav>
+      <div class="container">
+        <a href="#" class="nav-logo">
+          <span class="robot">🤖</span>
+          <span>Klangk</span>
+        </a>
+        <ul class="nav-links">
+          <li><a href="#features">Features</a></li>
+          <li><a href="#use-cases">Use Cases</a></li>
+          <li><a href="#sponsors">Sponsors</a></li>
+          <li><a href="https://mcdonc.github.io/klangk/">Docs</a></li>
+          <li><a href="https://github.com/mcdonc/klangk">GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container">
+        <h1>
+          Sandbox your AI agents.<br />
+          <span class="gradient-text">Solo or as a team.</span>
+        </h1>
+        <p>
+          Klangk gives every AI agent its own isolated container — whether
+          you're working alone or collaborating with a team. Shared terminals,
+          chat, file management, and a plugin system are all built in.
+        </p>
+        <div class="hero-buttons">
+          <a href="https://mcdonc.github.io/klangk/" class="btn btn-primary">
+            Read the Docs
+          </a>
+          <a href="https://github.com/mcdonc/klangk" class="btn btn-secondary">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+              />
+            </svg>
+            View on GitHub
+          </a>
+        </div>
+
+        <div class="screenshot-wrap">
+          <img
+            src="screenshot.png"
+            alt="Klangk workspace showing terminal with Pi agent, chat panel, and file browser"
+            loading="lazy"
+          />
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features">
+      <div class="container">
+        <div class="section-header reveal">
+          <h2>Everything you need to run AI agents safely</h2>
+          <p>
+            Each workspace is its own container with its own filesystem,
+            terminals, and network — fully isolated from your host.
+          </p>
+        </div>
+
+        <div class="features-group reveal">
+          <div class="features-group-label solo">👤 Start Solo</div>
+          <div class="features-grid">
+            <div class="feature-card">
+              <span class="feature-icon">📦</span>
+              <h3>Sandboxed Workspaces</h3>
+              <p>
+                Every workspace is an isolated container. Mount source code, run
+                agents, tear it down when done. Bring your own images and
+                toolchains.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <span class="feature-icon">🧠</span>
+              <h3>AI Agent Integration</h3>
+              <p>
+                Run Pi, Claude Code, or any coding harness inside containers
+                with full terminal access. Works with any OpenAI-compatible LLM
+                provider.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <span class="feature-icon">📁</span>
+              <h3>File Management</h3>
+              <p>
+                Browse, preview, upload, and download files. Syntax-highlighted
+                code editing, PDF viewing, image previews, and drag-and-drop
+                uploads.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="features-group reveal">
+          <div class="features-group-label team">👥 Invite your Team</div>
+          <div class="features-grid">
+            <div class="feature-card">
+              <span class="feature-icon">🖥️</span>
+              <h3>Shared Terminals</h3>
+              <p>
+                Pair-program through shared tmux sessions. Multiple users can
+                view and interact with the same terminal in real time.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <span class="feature-icon">💬</span>
+              <h3>Built-in Chat</h3>
+              <p>
+                Chat alongside your AI agent with @mentions, workspace-scoped
+                conversations, and real-time message streaming.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <span class="feature-icon">🔒</span>
+              <h3>Access Control</h3>
+              <p>
+                Per-user roles, group-based permissions, and workspace-level
+                access control. Invite teammates and manage who can see and do
+                what.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="features-group reveal">
+          <div
+            class="features-group-label solo"
+            style="
+              color: var(--text-muted);
+              background: rgba(148, 163, 184, 0.1);
+              border-color: rgba(148, 163, 184, 0.2);
+            "
+          >
+            🔌 For Everyone
+          </div>
+          <div class="features-grid">
+            <div class="feature-card">
+              <span class="feature-icon">🔌</span>
+              <h3>Plugin System</h3>
+              <p>
+                Extend Klangk with plugins that add new UI overlays, Pi
+                extensions, and tools. Plugins are self-contained and easy to
+                install.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Use Cases -->
+    <section id="use-cases">
+      <div class="container">
+        <div class="section-header reveal">
+          <h2>Built for developers who use AI</h2>
+        </div>
+
+        <div class="use-cases">
+          <div class="use-case reveal">
+            <h3>👤 Solo Developers</h3>
+            <p>
+              AI agents like Pi and Claude Code are powerful but intentionally
+              given wide permissions. Klangk keeps them safely isolated.
+            </p>
+            <ul>
+              <li>Agents can't touch your host filesystem</li>
+              <li>Experiment freely and dispose when done</li>
+              <li>Run untrusted code without risk</li>
+            </ul>
+          </div>
+
+          <div class="use-case reveal">
+            <h3>👥 Teams</h3>
+            <p>
+              Add multi-user collaboration on top of sandboxing. Share
+              workspaces, pair-program, and chat alongside your AI agent.
+            </p>
+            <ul>
+              <li>Per-user roles and access control</li>
+              <li>Shared terminals for pair programming</li>
+              <li>Group-based workspace permissions</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sponsors -->
+    <section id="sponsors" class="sponsors-section">
+      <div class="container">
+        <div class="section-header reveal">
+          <h2>Sponsors</h2>
+          <p>Klangk's development is sponsored by</p>
+        </div>
+
+        <div class="sponsors-grid reveal">
+          <a href="https://agendaless.com" class="sponsor">
+            <span class="sponsor-label">Consultant</span>
+            <img
+              src="agendaless.png"
+              alt="Agendaless Consulting"
+              class="sponsor-logo"
+            />
+            <span class="sponsor-name">Agendaless Consulting</span>
+            <span class="sponsor-desc"
+              >Contact Agendaless Consulting for general business consulting
+              queries</span
+            >
+          </a>
+          <a href="https://enfoldsystems.com" class="sponsor">
+            <span class="sponsor-label">Consultant</span>
+            <img src="enfold.png" alt="Enfold Systems" class="sponsor-logo" />
+            <span class="sponsor-name">Enfold Systems</span>
+            <span class="sponsor-desc"
+              >Contact Enfold Systems for Klangk consulting queries for
+              governments</span
+            >
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <div class="container">
+        <div class="footer-links">
+          <a href="https://mcdonc.github.io/klangk/">Documentation</a>
+          <a href="https://github.com/mcdonc/klangk">GitHub</a>
+          <a href="https://github.com/mcdonc/klangk/issues">Issues</a>
+        </div>
+        <div class="footer-separator"></div>
+        <p>
+          Klangk is open source software licensed under the
+          <a href="https://github.com/mcdonc/klangk/blob/main/LICENSE.md"
+            >MIT License</a
+          >.
+        </p>
+      </div>
+    </footer>
+
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox" onclick="this.classList.remove('open')">
+      <img src="screenshot.png" alt="Klangk workspace screenshot" />
+    </div>
+
+    <!-- Scroll reveal + lightbox -->
+    <script>
+      document
+        .querySelector(".screenshot-wrap img")
+        .addEventListener("click", function () {
+          document.getElementById("lightbox").classList.add("open");
+        });
+
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape")
+          document.getElementById("lightbox").classList.remove("open");
+      });
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("visible");
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.1, rootMargin: "0px 0px -40px 0px" },
+      );
+
+      document
+        .querySelectorAll(".reveal")
+        .forEach((el) => observer.observe(el));
+    </script>
+  </body>
+</html>
