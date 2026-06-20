@@ -51,6 +51,12 @@ To run project commands like `test-backend` or `build-workspace-image`
 in a separate terminal, use `devenv shell` to enter the same
 environment.
 
+!!! note "Podman policy errors"
+If you see errors about missing container signatures or policies,
+you may need to create a policy file. See
+[Container Policy](reference/podman.md#container-policy) for
+instructions.
+
 ## Logging In
 
 Log in with `admin@example.com` (or whatever you set

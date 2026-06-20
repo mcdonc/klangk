@@ -36,6 +36,29 @@ achieve `Supports shifting: true`.
 This means `storage-chown-by-maps` is the normal and expected path
 for rootless podman.
 
+## Container Policy
+
+Podman requires a container signature policy file to pull and manage
+images. The devenv shell creates one automatically, but outside of
+devenv (e.g., production deployments) you need to create it yourself:
+
+```bash
+mkdir -p ~/.config/containers
+cat > ~/.config/containers/policy.json <<'EOF'
+{
+    "default": [
+        {
+            "type": "insecureAcceptAnything"
+        }
+    ]
+}
+EOF
+```
+
+Alternatively, create it system-wide at `/etc/containers/policy.json`.
+Without this file, podman operations fail with confusing errors about
+missing signatures or policies.
+
 ## Configuring Storage
 
 By default, podman stores images and runtime state under
