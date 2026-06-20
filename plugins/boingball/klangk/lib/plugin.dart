@@ -57,6 +57,7 @@ void _playBoingSound({required double panX, bool isFloor = true}) {
       '''
     (function() {
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume();
       var now = ctx.currentTime;
       var pan = ctx.createStereoPanner();
       pan.pan.value = $pan;
@@ -390,55 +391,66 @@ class _BoingScenePainter extends CustomPainter {
   }
 
   void _drawBall(Canvas canvas, double cx, double cy, double radius) {
-    // Per-pixel ray-sphere rendering for faithful checker pattern.
-    // For each pixel in the bounding box, project onto unit sphere,
-    // apply rotation, compute spherical UV, pick red or white.
-    final diam = (radius * 2).toInt();
-    if (diam <= 0) return;
+    // Draw checker sphere using longitude strips as curved paths.
+    // 7 red + 7 white vertical stripes with half-stripe offset every
+    // other latitude row — matches the original Boing Ball pattern.
+    canvas.save();
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: radius)),
+    );
 
-    // Render at half resolution for performance, scale up
-    final res = (diam / 2).clamp(20, 200).toInt();
-    final step = diam / res;
-    const lonStripes = 14; // 7 red + 7 white
-    const latBands = 8;
-    final rotAngle = phase / lonStripes * 2 * pi;
+    // White base
+    canvas.drawCircle(Offset(cx, cy), radius, Paint()..color = _ballWhite);
+
+    // Red stripes as curved vertical bands
+    const nStripes = 14; // 7 red + 7 white
+    const nLatRows = 9; // latitude divisions
+    final rotAngle = phase / nStripes * 2 * pi;
     final redPaint = Paint()..color = _ballRed;
-    final whitePaint = Paint()..color = _ballWhite;
 
-    for (int py = 0; py < res; py++) {
-      for (int px = 0; px < res; px++) {
-        // Normalise to -1..1
-        final nx = (px + 0.5) / res * 2 - 1;
-        final ny = (py + 0.5) / res * 2 - 1;
-        final r2 = nx * nx + ny * ny;
-        if (r2 > 1) continue;
+    for (int row = 0; row < nLatRows; row++) {
+      final theta0 = pi * row / nLatRows;
+      final theta1 = pi * (row + 1) / nLatRows;
+      final y0 = cy - cos(theta0) * radius;
+      final y1 = cy - cos(theta1) * radius;
+      final rSlice0 = sin(theta0) * radius;
+      final rSlice1 = sin(theta1) * radius;
+      // Half-stripe offset on odd rows creates the diagonal pattern
+      final offset = (row % 2 == 0) ? 0.0 : 0.5;
 
-        // Point on unit sphere
-        final nz = sqrt(1 - r2);
-        // Apply Y-axis rotation
-        final rx = nx * cos(rotAngle) + nz * sin(rotAngle);
-        final ry = ny;
-        final rz = -nx * sin(rotAngle) + nz * cos(rotAngle);
+      for (int s = 0; s < nStripes; s += 2) {
+        // Only draw even-numbered stripes (red)
+        final phi0 = 2 * pi * (s + offset) / nStripes + rotAngle;
+        final phi1 = 2 * pi * (s + 1 + offset) / nStripes + rotAngle;
+        final midPhi = (phi0 + phi1) / 2;
 
-        // Spherical coordinates
-        final theta = acos(ry.clamp(-1.0, 1.0)); // 0..pi
-        final phi = atan2(rx, rz) + pi; // 0..2pi
+        // Skip back-facing stripes
+        if (cos(midPhi) < -0.15) continue;
 
-        // Checker: latitude band + longitude stripe with half-offset
-        final latIdx = (theta / pi * latBands).floor().clamp(0, latBands - 1);
-        final offset = (latIdx % 2 == 0) ? 0.0 : 0.5;
-        final lonIdx = ((phi / (2 * pi) * lonStripes + offset) % lonStripes)
-            .floor();
-        final isRed = (lonIdx % 2 == 0);
-
-        final screenX = cx - radius + px * step;
-        final screenY = cy - radius + py * step;
-        canvas.drawRect(
-          Rect.fromLTWH(screenX, screenY, step + 0.5, step + 0.5),
-          isRed ? redPaint : whitePaint,
-        );
+        // Build a curved path with subdivisions for smooth edges
+        const sub = 8;
+        final path = Path();
+        // Top edge
+        for (int i = 0; i <= sub; i++) {
+          final phi = phi0 + (phi1 - phi0) * i / sub;
+          final x = cx + sin(phi) * rSlice0;
+          if (i == 0) {
+            path.moveTo(x, y0);
+          } else {
+            path.lineTo(x, y0);
+          }
+        }
+        // Bottom edge (reverse)
+        for (int i = sub; i >= 0; i--) {
+          final phi = phi0 + (phi1 - phi0) * i / sub;
+          path.lineTo(cx + sin(phi) * rSlice1, y1);
+        }
+        path.close();
+        canvas.drawPath(path, redPaint);
       }
     }
+
+    canvas.restore();
 
     // Specular highlight
     canvas.drawCircle(
