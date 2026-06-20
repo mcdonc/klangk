@@ -104,6 +104,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
   double _vy = 0.0;
   double _phase = 0;
   int _spinDir = 1;
+  double _aspectRatio = 1.5; // updated each build
   static const double _gravity = 0.00025;
   static const double _damping = 0.97;
   static const double _ballFrac = 0.33;
@@ -175,15 +176,14 @@ class _BoingOverlayState extends State<_BoingOverlay>
       _x += _vx * speed;
       _y += _vy * speed;
 
-      // Bounce boundaries: ball radius is h * _ballFrac, so Y bounds
-      // are _ballFrac..1-_ballFrac. X bounds depend on aspect ratio;
-      // approximate using the overlay's typical ~3:2 ratio.
+      // Bounce boundaries: ball radius is h * _ballFrac.
+      // Floor is at 0.75 of scene height, so ball center must stay
+      // above (0.75 - _ballFrac). X bounds use actual aspect ratio.
       const yMin = _ballFrac;
-      const yMax = 1.0 - _ballFrac;
-      // Assume overlay is roughly 1.5x wider than tall
-      const xPad = _ballFrac / 1.5;
-      const xMin = xPad;
-      const xMax = 1.0 - xPad;
+      const yMax = 0.75 - _ballFrac; // bounce off the floor line
+      final xPad = _ballFrac / _aspectRatio;
+      final xMin = xPad;
+      final xMax = 1.0 - xPad;
 
       if (_y >= yMax) {
         _y = yMax;
@@ -219,6 +219,9 @@ class _BoingOverlayState extends State<_BoingOverlay>
     final size = MediaQuery.of(context).size;
     final insetX = size.width * 0.125;
     final insetY = size.height * 0.125;
+    final overlayW = size.width - insetX * 2;
+    final overlayH = size.height - insetY * 2;
+    if (overlayH > 0) _aspectRatio = overlayW / overlayH;
     return Positioned.fill(
       child: GestureDetector(
         onTap: _dismiss,
@@ -343,13 +346,13 @@ class _BoingScenePainter extends CustomPainter {
       Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: radius)),
     );
 
-    const latBands = 8;
+    const latBands = 12;
     const lonStripes = 14;
     final rotAngle = phase / lonStripes * 2 * pi;
 
     for (int lat = 0; lat < latBands; lat++) {
-      final theta0 = pi * (lat + 0.5) / (latBands + 1);
-      final theta1 = pi * (lat + 1.5) / (latBands + 1);
+      final theta0 = pi * lat / latBands;
+      final theta1 = pi * (lat + 1) / latBands;
       final screenY0 = cy - cos(theta0) * radius;
       final screenY1 = cy - cos(theta1) * radius;
       final rSlice0 = sin(theta0) * radius;
