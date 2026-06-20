@@ -1656,3 +1656,84 @@ class TestContainerReplace:
             assert "second" in result.stdout
         finally:
             _run(["klangkc", "rm", "e2e-replace"], env=env)
+
+
+class TestWorkspaceSharing:
+    """Test klangkc share/unshare/members commands."""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def setup(self, server, tmp_path_factory):
+        base_url = server["url"]
+
+        # Register a second user
+        import httpx
+
+        httpx.post(
+            f"{base_url}/auth/register",
+            json={
+                "email": "share-user@example.com",
+                "password": "testpass",
+            },
+        )
+
+        config_dir = tmp_path_factory.mktemp("klangk-ws-share")
+        env = {**os.environ, "HOME": str(config_dir)}
+        (config_dir / ".config" / "klangk").mkdir(parents=True)
+        _run(
+            [
+                "klangkc",
+                "login",
+                "test@example.com",
+                "--server",
+                base_url,
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+        _run(["klangkc", "create", "e2e-ws-share"], env=env)
+        self.__class__._env = env
+
+    @pytest.fixture(autouse=True)
+    def env(self):
+        self.env = self.__class__._env
+
+    def test_share_and_unshare_workspace(self):
+        env = self.env
+
+        # Share workspace with second user
+        result = _run(
+            ["klangkc", "share", "e2e-ws-share", "share-user@example.com"],
+            env=env,
+        )
+        assert result.returncode == 0
+        assert "share-user@example.com" in result.stdout
+
+        # List members — should include the shared user
+        result = _run(
+            ["klangkc", "members", "e2e-ws-share"],
+            env=env,
+        )
+        assert result.returncode == 0
+        assert "share-user@example.com" in result.stdout
+
+        # Unshare
+        result = _run(
+            [
+                "klangkc",
+                "unshare",
+                "e2e-ws-share",
+                "share-user@example.com",
+            ],
+            env=env,
+        )
+        assert result.returncode == 0
+
+        # Members should be empty now
+        result = _run(
+            ["klangkc", "members", "e2e-ws-share"],
+            env=env,
+        )
+        assert result.returncode == 0
+        assert "No shared members" in result.stdout
