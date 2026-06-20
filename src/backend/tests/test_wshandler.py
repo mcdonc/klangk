@@ -245,12 +245,13 @@ class TestDeriveHostingInfo:
         assert p == "https"
         assert b == "/app"
 
-    def test_forwarded_host_used_as_is(self, monkeypatch):
-        """Behind external reverse proxy — trust X-Forwarded-Host."""
+    def test_forwarded_host_trusted_by_default(self, monkeypatch):
+        """Forwarded headers trusted by default (klangk's nginx sets them)."""
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
         sock = _mock_sock(
             headers={
                 "x-forwarded-host": "arctor.repoze.org",
@@ -262,6 +263,26 @@ class TestDeriveHostingInfo:
         assert h == "arctor.repoze.org"
         assert p == "https"
         assert b == "/klangk"
+
+    def test_forwarded_headers_rejected_when_configured(self, monkeypatch):
+        """With KLANGK_REJECT_PROXY_HEADERS=1, forwarded headers are ignored."""
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", True)
+        sock = _mock_sock(
+            headers={
+                "host": "localhost:8997",
+                "x-forwarded-host": "evil.com",
+                "x-forwarded-proto": "https",
+                "x-forwarded-prefix": "/phish",
+            }
+        )
+        h, p, b = derive_hosting_info(sock.headers)
+        assert h == "localhost:8995"
+        assert p == "http"
+        assert b == ""
 
     def test_host_header_with_nginx_port(self, monkeypatch):
         """Direct access (local dev) — substitute nginx port."""
