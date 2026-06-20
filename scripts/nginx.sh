@@ -10,6 +10,13 @@ if [ -z "${KLANGK_STATE_DIR:-}${DEVENV_STATE:-}" ]; then
 fi
 mkdir -p "$NGINX_STATE"
 
+# Derive nginx client_max_body_size from KLANGK_FILE_UPLOAD_SIZE_MAX (bytes).
+# Default 500 MB. Convert to MB for nginx (minimum 1m).
+_upload_bytes="${KLANGK_FILE_UPLOAD_SIZE_MAX:-524288000}"
+_upload_mb=$((_upload_bytes / 1048576))
+[ "$_upload_mb" -lt 1 ] && _upload_mb=1
+KLANGK_NGINX_CLIENT_MAX_BODY_SIZE="${_upload_mb}m"
+
 # nginx resolver needs space-separated IPs; env var may use commas.
 # Default: parse /etc/resolv.conf for nameservers (works on host and
 # in Docker). Fall back to 8.8.8.8 if resolv.conf has no entries.
@@ -126,7 +133,7 @@ http {
     "" close;
   }
 
-  client_max_body_size 500m;
+  client_max_body_size ${KLANGK_NGINX_CLIENT_MAX_BODY_SIZE};
 
   server {
     listen ${KLANGK_NGINX_PORT};

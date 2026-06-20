@@ -99,3 +99,16 @@ def write_file(
     return str(
         path.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
     )
+
+
+def write_file_path(
+    user_id: str, workspace_id: str, relative_path: str
+) -> Path:
+    """Resolve and prepare a file path for writing.
+
+    Creates parent directories and returns the resolved ``Path``.
+    Callers are responsible for writing data to the returned path.
+    """
+    path = resolve_path(user_id, workspace_id, relative_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path

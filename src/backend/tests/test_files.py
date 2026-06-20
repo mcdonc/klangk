@@ -227,3 +227,16 @@ class TestWriteFile:
         uid, wid, _ = workspace_dir
         with pytest.raises(ValueError, match="traversal"):
             files.write_file(uid, wid, "../../evil.txt", b"bad")
+
+
+class TestWriteFilePath:
+    async def test_returns_path_and_creates_parents(self, workspace_dir):
+        uid, wid, base = workspace_dir
+        dest = files.write_file_path(uid, wid, "sub/new.txt")
+        assert dest.parent.exists()
+        assert str(dest).startswith(str(base))
+
+    async def test_traversal_rejected(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        with pytest.raises(ValueError, match="traversal"):
+            files.write_file_path(uid, wid, "../../evil.txt")
