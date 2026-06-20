@@ -2,7 +2,7 @@
 
 Workspace containers ship with **Pi** pre-installed. **Claude Code**
 is available via the `claude-code`
-[plugin](plugins.md). Both can connect to your LLM backend through the
+[plugin](plugins.md). Pi can connect to your LLM backend through the
 [LLM proxy](../architecture/llm-proxy.md) so no API keys are exposed
 inside containers.
 
