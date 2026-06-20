@@ -27,7 +27,7 @@ klangkc ls                               # list workspaces
 klangkc create my-project                # create a workspace
 klangkc create my-project --mount ~/src:/home/klangk/work/src          # with bind mount
 klangkc create my-project --mount nix-store:/nix           # with named volume
-klangkc create my-project --env KLANGK_SKILLS=stats,rdkit    # with env vars
+klangkc create my-project --env FOO=bar                      # with env vars
 klangkc edit my-project                  # interactive edit (name, image, command, mounts, env)
 klangkc edit my-project --env FOO=bar    # set env var via flag
 klangkc dup my-project my-copy           # duplicate a workspace

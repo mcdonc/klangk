@@ -106,19 +106,6 @@ Claude Code requires an Anthropic-compatible API endpoint. If your
 Ollama, OpenAI), Claude Code will not work. Use Pi instead, which
 supports any OpenAI-compatible endpoint.
 
-### Skills
-
-Both Pi and Claude Code support **skills** — reusable prompt
-templates that can be invoked by name. Plugin-provided skills are
-symlinked into both agents' discovery paths at login:
-
-- Pi: `~/.pi/agent/skills/`
-- Claude Code: `~/.claude/skills/`
-
-Enable skills for a workspace by setting `KLANGK_SKILLS` to a
-comma-separated list of skill names (matching directories under
-`/opt/klangk/pi-agent/skills/`).
-
 ## System prompt
 
 Both agents share a system prompt installed at `~/AGENTS.md` on first

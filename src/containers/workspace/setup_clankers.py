@@ -3,8 +3,8 @@
 
 Called from bash.bashrc on each shell.  Creates $HOME/.pi/agent/ with
 all the files Pi needs: settings.json, models.json, keybindings.json,
-extensions (rsynced from image), npm/git packages, bin tools, skills,
-AGENTS.md, and Claude Code skills.
+extensions (rsynced from image), npm/git packages, bin tools, and
+AGENTS.md.
 
 Skips setup if $HOME/.pi/agent/settings.json already exists.
 """
@@ -16,7 +16,6 @@ import traceback
 from pathlib import Path
 
 IMAGE_DIR = Path("/opt/klangk/pi-agent")
-SKILLS_DIR = IMAGE_DIR / "skills"
 SYSTEM_PROMPT_SRC = Path("/opt/klangk/system-prompt.md")
 ERROR_LOG = Path("/tmp/setup_clankers_errors.log")
 
@@ -28,7 +27,7 @@ def _agent_dir():
 def setup_dirs():
     """Create agent directories."""
     agent = _agent_dir()
-    for d in ("bin", "npm", "git", "extensions", "skills"):
+    for d in ("bin", "npm", "git", "extensions"):
         (agent / d).mkdir(parents=True, exist_ok=True)
 
 
@@ -36,8 +35,7 @@ def sync_image_packages():
     """Rsync image npm and git packages into the user's agent dir.
 
     Pi resolves these by path (npm/node_modules/<pkg>).  Extensions
-    and skills are NOT copied — settings.json points directly at the
-    image dirs for those.
+    are NOT copied — settings.json points directly at the image dir.
     """
     agent = _agent_dir()
     for subdir in ("npm", "git"):
@@ -76,8 +74,6 @@ def write_settings():
     # Point at image extensions dir directly — Pi also auto-discovers
     # ~/.pi/agent/extensions/ for user-installed extensions.
     image_settings["extensions"] = [str(IMAGE_DIR / "extensions")]
-    if SKILLS_DIR.is_dir():
-        image_settings["skills"] = [str(SKILLS_DIR)]
 
     settings_path.write_text(json.dumps(image_settings, indent=2))
 
@@ -126,22 +122,6 @@ def build_system_prompt():
         prompt_path.write_text(SYSTEM_PROMPT_SRC.read_text())
 
 
-def setup_pi_skills():
-    """Symlink enabled skill dirs into Pi's skills dir."""
-    skills_env = os.environ.get("KLANGK_SKILLS", "")
-    if not skills_env or not SKILLS_DIR.is_dir():
-        return
-
-    agent = _agent_dir()
-    pi_skills_dir = agent / "skills"
-
-    for name in skills_env.split(","):
-        name = name.strip()
-        link = pi_skills_dir / name
-        if name and (SKILLS_DIR / name).is_dir() and not link.exists():
-            link.symlink_to(SKILLS_DIR / name)
-
-
 def _run_step(name, fn):
     """Run a setup step, logging errors to a tempfile and continuing."""
     try:
@@ -174,7 +154,6 @@ def main():
     _run_step("write_models", write_models)
     _run_step("write_keybindings", write_keybindings)
     _run_step("build_system_prompt", build_system_prompt)
-    _run_step("setup_pi_skills", setup_pi_skills)
 
     if ERROR_LOG.exists():
         print(f"setup_clankers: some steps failed, see {ERROR_LOG}")

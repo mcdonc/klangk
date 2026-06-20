@@ -10,7 +10,7 @@ Extensions are TypeScript files collected from `$KLANGK_PLUGINS_DIR/*/extension.
 
 These plugins are included in the default `plugins.yaml` template:
 
-- `claude-code` — installs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI agent and sets up skills symlinks
+- `claude-code` — installs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI agent
 - `git-credential` — Git credential helper with browser-based PAT dialog and GitHub OAuth device flow
 - `word-count` — fast file stats (lines, words, characters, size) via Python script (server-side)
 - `pig-latin` — text to Pig Latin converter, pure TypeScript (server-side)
