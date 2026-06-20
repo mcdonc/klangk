@@ -58,6 +58,10 @@ plugins:
     git: git@github.com:mcdonc/klangk.git
     path: plugins/git-credential
     ref: main
+  - name: claude-code
+    git: git@github.com:mcdonc/klangk.git
+    path: plugins/claude-code
+    ref: main
   # Add more plugins:
   # - name: my-plugin
   #   git: git@github.com:user/repo.git

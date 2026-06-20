@@ -84,8 +84,8 @@ with `pi install`.
 ## Claude Code
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is
-Anthropic's CLI coding agent. It is installed globally in the
-workspace container via npm.
+Anthropic's CLI coding agent. It is installed via the `claude-code`
+plugin (included in the default plugins.yaml).
 
 ### Using Claude Code from the terminal
 

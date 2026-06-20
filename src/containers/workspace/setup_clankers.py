@@ -142,23 +142,6 @@ def setup_pi_skills():
             link.symlink_to(SKILLS_DIR / name)
 
 
-def setup_claude_code_skills():
-    """Symlink enabled skill dirs into Claude Code's discovery path."""
-    skills_env = os.environ.get("KLANGK_SKILLS", "")
-    if not skills_env or not SKILLS_DIR.is_dir():
-        return
-
-    home = Path(os.environ.get("HOME", ""))
-    cc_skills_dir = home / ".claude" / "skills"
-    cc_skills_dir.mkdir(parents=True, exist_ok=True)
-
-    for name in skills_env.split(","):
-        name = name.strip()
-        link = cc_skills_dir / name
-        if name and (SKILLS_DIR / name).is_dir() and not link.exists():
-            link.symlink_to(SKILLS_DIR / name)
-
-
 def _run_step(name, fn):
     """Run a setup step, logging errors to a tempfile and continuing."""
     try:
@@ -192,7 +175,6 @@ def main():
     _run_step("write_keybindings", write_keybindings)
     _run_step("build_system_prompt", build_system_prompt)
     _run_step("setup_pi_skills", setup_pi_skills)
-    _run_step("setup_claude_code_skills", setup_claude_code_skills)
 
     if ERROR_LOG.exists():
         print(f"setup_clankers: some steps failed, see {ERROR_LOG}")
