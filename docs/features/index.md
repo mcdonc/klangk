@@ -1,17 +1,19 @@
 # Features
 
-## UI/Theme
+Klangk's workspace UI is a single-page web application with a dark
+theme. When you open a workspace, you see a tabbed layout:
 
-- Dark theme inspired by GitHub's dark default (dark canvas background, surface cards, muted borders)
-- Centralized color palette in `KColors` (`src/frontend/lib/theme/colors.dart`) — named tokens for backgrounds, borders, text, and accents
-- Green Klangk logo (robot icon + lowercase "klangk" text) with matching green FAB and primary action buttons
-- Full-width Terminal+Files tabs with background-only active state (no indicator bar), rounded bottom corners
-- Slidable Debug panel on bottom (collapsed by default)
-- Browser tab title updates per page ("Klangk - Login", "Klangk - Workspaces", "Klangk - workspace-name")
+- **Terminal** — full terminal emulator at the top
+- **Files** — file browser and previewer
+- **Chat** — real-time messaging with @mentions and AI agent
+- **Sharing** — role-based access control for the workspace
+- **Settings** — workspace configuration (image, mounts, env vars)
 
-## Panel Layout
+A collapsible **Debug panel** at the bottom shows WebSocket activity
+and container lifecycle events. It collects events from the moment
+you connect, so you can open it at any time to see what happened.
 
-- Two-part split: tabbed panel on top (Terminal, Files tabs) and slidable Debug panel on bottom
-- Debug panel collapsed by default, expandable via draggable horizontal divider
-- All panels stay alive across switches (IndexedStack for tabs, always-mounted Debug)
-- Debug pane receives events from the start, even before first viewed
+All panels stay alive when you switch between tabs — your terminal
+session, chat scroll position, and file browser state are preserved.
+
+Use the sidebar navigation to learn about each feature in detail.
