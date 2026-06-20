@@ -22,7 +22,7 @@ jobs:
       KLANGK_TEST_MODE: "1"
       KLANGK_PODMAN_BIN: /usr/bin/podman
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/devenv-setup
         with:
