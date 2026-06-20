@@ -6,7 +6,6 @@ FROM $WORKSPACE_BASE_IMAGE
 # Records packages in settings.json for Pi to discover at runtime.
 RUN mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:@demigodmode/pi-web-agent \
-    && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:pi-mcp-extension \
     && cd /opt/klangk/pi-agent/npm \
     && npm update undici ws protobufjs 2>/dev/null; true
 
