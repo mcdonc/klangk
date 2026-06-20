@@ -1,9 +1,10 @@
 # AI Coding Harnesses
 
-Every workspace container ships with two AI coding agents
-pre-installed: **Pi** and **Claude Code**. Both connect to your LLM
-backend through the [LLM proxy](../architecture/llm-proxy.md) so no
-API keys are exposed inside containers.
+Workspace containers ship with **Pi** pre-installed. **Claude Code**
+is available via the `claude-code`
+[plugin](plugins.md). Both can connect to your LLM backend through the
+[LLM proxy](../architecture/llm-proxy.md) so no API keys are exposed
+inside containers.
 
 ## Prerequisites
 
@@ -16,7 +17,7 @@ to enable AI features:
 | `KLANGK_LLM_MODEL`    | `gpt-4o`                    | Default model name         |
 | `KLANGK_LLM_API_KEY`  | `sk-...`                    | Provider API key           |
 
-Without these, both agents are non-functional. See
+Without these, the agents are non-functional. See
 [Environment Variables](../reference/environment.md) for the full
 list.
 
@@ -68,9 +69,6 @@ follow-up conversations and interjections.
 The workspace image ships with several Pi extensions pre-installed:
 
 - **pi-web-agent** — web-based agent UI
-- **pi-otel-telemetry** — OpenTelemetry tracing (opt-in via
-  `LOGFIRE_TOKEN`)
-- **pi-mcp-extension** — MCP (Model Context Protocol) server support
 - **llm-proxy-models** — dynamically fetches available models from the
   LLM proxy
 - **minimax-thinking-tags** — strips `<think>` tags from models that
@@ -84,8 +82,9 @@ with `pi install`.
 ## Claude Code
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is
-Anthropic's CLI coding agent. It is installed via the `claude-code`
-plugin (included in the default plugins.yaml).
+Anthropic's CLI coding agent. It is not pre-installed — enable it by
+adding the `claude-code` plugin to your `plugins.yaml`. See
+[Plugins](plugins.md) for details.
 
 ### Using Claude Code from the terminal
 
@@ -108,7 +107,7 @@ supports any OpenAI-compatible endpoint.
 
 ## System prompt
 
-Both agents share a system prompt installed at `~/AGENTS.md` on first
+Agents share a system prompt installed at `~/AGENTS.md` on first
 login. This prompt configures workspace-specific behavior:
 
 - File and project creation conventions
@@ -121,7 +120,7 @@ in the container.
 
 ## How the LLM proxy works
 
-Neither agent has direct access to your LLM API key. Instead:
+No agent has direct access to your LLM API key. Instead:
 
 1. `setup-clankers` writes `~/.pi/agent/models.json` with
    `KLANGK_LLM_PROXY_URL` (pointing to nginx on the host) and the
