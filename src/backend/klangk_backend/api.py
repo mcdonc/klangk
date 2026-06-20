@@ -51,10 +51,10 @@ from .util import derive_hosting_info, resolve_env_secret
 
 logger = logging.getLogger(__name__)
 
-# Maximum upload size for workspace import (bytes).
-# Default 500 MB; override via KLANGK_IMPORT_MAX_SIZE (in bytes).
-IMPORT_MAX_SIZE = int(
-    resolve_env_secret("KLANGK_IMPORT_MAX_SIZE", str(500 * 1024 * 1024))
+# Maximum upload size for file uploads and workspace imports (bytes).
+# Default 500 MB; override via KLANGK_FILE_UPLOAD_SIZE_MAX (in bytes).
+FILE_UPLOAD_SIZE_MAX = int(
+    resolve_env_secret("KLANGK_FILE_UPLOAD_SIZE_MAX", str(500 * 1024 * 1024))
 )
 
 router = APIRouter()
@@ -1291,7 +1291,7 @@ async def import_workspace(
     extracts the home directory from the archive.
     """
     # Stream upload to a temp file — abort if over the configured limit.
-    max_upload = IMPORT_MAX_SIZE
+    max_upload = FILE_UPLOAD_SIZE_MAX
     tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
     total = 0
     try:
@@ -1884,13 +1884,35 @@ async def upload_file(
     if container_id is not None:
         container.registry.record_activity(container_id)
 
-    content = await file.read()
     try:
-        saved_path = files.write_file(
-            workspace["user_id"], workspace_id, filename, content
+        dest = files.write_file_path(
+            workspace["user_id"], workspace_id, filename
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    max_upload = FILE_UPLOAD_SIZE_MAX
+    total = 0
+    try:
+        with open(dest, "wb") as fp:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > max_upload:
+                    fp.close()
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds {max_upload // (1024 * 1024)} MB limit",
+                    )
+                fp.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:  # pragma: no cover
+        dest.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=500, detail=f"Upload failed: {e}"
+        ) from e
+    home = workspaces.get_home_host_path(workspace["user_id"], workspace_id)
+    saved_path = str(dest.relative_to(home))
     return {"path": saved_path, "status": "uploaded"}
 
 

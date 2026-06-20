@@ -2410,6 +2410,18 @@ class TestFileRoutes:
         container.registry.states.pop(ws_id, None)
         container.registry._cid_to_wsid.pop(cid, None)
 
+    async def test_upload_exceeds_size_limit(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        with patch.object(api, "FILE_UPLOAD_SIZE_MAX", 10):
+            resp = await client.post(
+                f"/workspaces/{ws_id}/files/upload?path=big.txt",
+                headers=headers,
+                files={"file": ("big.txt", b"x" * 100, "text/plain")},
+            )
+        assert resp.status_code == 413
+        assert "limit" in resp.json()["detail"].lower()
+
     async def test_read_nonexistent(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
@@ -4384,7 +4396,7 @@ class TestWorkspaceExportImport:
         """Upload exceeding size limit is rejected."""
         import klangk_backend.api as api_mod
 
-        monkeypatch.setattr(api_mod, "IMPORT_MAX_SIZE", 100)
+        monkeypatch.setattr(api_mod, "FILE_UPLOAD_SIZE_MAX", 100)
 
         headers = await self._user_headers(client)
         resp = await client.post(
