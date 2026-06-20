@@ -10,6 +10,7 @@ podman with ``SIGWINCH`` so it resizes the container PTY.
 import asyncio
 import codecs
 import fcntl
+import re
 import json
 import logging
 import os
@@ -28,6 +29,22 @@ logger = logging.getLogger(__name__)
 
 _READ_CHUNK = 65536
 CONTAINER_USER = "klangk"
+
+_SAFE_WINDOW_NAME = re.compile(r"^[A-Za-z0-9 _.\-]+$")
+_MAX_WINDOW_NAME_LEN = 64
+
+
+def _validate_window_name(name: str) -> None:
+    """Raise ``ValueError`` if *name* contains shell-unsafe characters."""
+    if not name or len(name) > _MAX_WINDOW_NAME_LEN:
+        raise ValueError(
+            f"Window name must be 1-{_MAX_WINDOW_NAME_LEN} characters"
+        )
+    if not _SAFE_WINDOW_NAME.match(name):
+        raise ValueError(
+            "Window name may only contain letters, digits,"
+            " spaces, hyphens, underscores, and dots"
+        )
 
 
 def terminal_tmux_enabled() -> bool:
@@ -271,6 +288,7 @@ async def new_window(
     round-trips (list + create + list in one call).
     """
     if name is not None:
+        _validate_window_name(name)
         # Explicit name — check + create + list in one exec.
         script = (
             f"existing=$(tmux list-windows -t {session_name}"
@@ -334,8 +352,10 @@ async def rename_window(
 ) -> None:
     """Rename a tmux window.
 
-    Raises ``ValueError`` if *name* duplicates another window's name.
+    Raises ``ValueError`` if *name* contains unsafe characters or
+    duplicates another window's name.
     """
+    _validate_window_name(name)
     existing = await list_windows(container_id, session_name)
     if any(w["name"] == name and w["index"] != index for w in existing):
         raise ValueError(f"Window name '{name}' already exists")

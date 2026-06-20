@@ -15,6 +15,7 @@ from klangk_backend.terminal import (
     _build_environment,
     _build_shell_command,
     _make_shell_process,
+    _validate_window_name,
     attach_browser,
     close_window,
     kill_joiner_sessions,
@@ -632,6 +633,25 @@ class TestListWindows:
         assert result == []
 
 
+class TestValidateWindowName:
+    def test_accepts_safe_names(self):
+        for name in ["bash", "build-1", "my_window", "test.log", "A B C"]:
+            _validate_window_name(name)
+
+    def test_rejects_empty(self):
+        with pytest.raises(ValueError, match="1-64 characters"):
+            _validate_window_name("")
+
+    def test_rejects_too_long(self):
+        with pytest.raises(ValueError, match="1-64 characters"):
+            _validate_window_name("a" * 65)
+
+    def test_rejects_shell_metacharacters(self):
+        for name in ["a'b", 'a"b', "a;b", "a|b", "a`b", "a$(cmd)", "a&b"]:
+            with pytest.raises(ValueError, match="only contain"):
+                _validate_window_name(name)
+
+
 class TestNewWindow:
     async def test_creates_window_auto_name(self):
         proc = AsyncMock()
@@ -662,6 +682,10 @@ class TestNewWindow:
             result = await new_window("cid", "sess", name="build")
         assert len(result) == 2
         assert result[1]["name"] == "build"
+
+    async def test_rejects_shell_injection(self):
+        with pytest.raises(ValueError, match="only contain"):
+            await new_window("cid", "sess", name="';rm -rf /;'")
 
     async def test_rejects_duplicate_name(self):
         proc = AsyncMock()
@@ -754,6 +778,10 @@ class TestRenameWindow:
         mock_cmd.assert_called_once_with(
             "cid", "sess", ["rename-window", "-t", "sess:0", "build"]
         )
+
+    async def test_rejects_shell_injection(self):
+        with pytest.raises(ValueError, match="only contain"):
+            await rename_window("cid", "sess", 0, "';rm -rf /;'")
 
     async def test_rejects_duplicate_name(self):
         with patch(
