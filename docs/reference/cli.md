@@ -2,7 +2,7 @@
 
 `klangkc` is the command-line client for Klangk. It lets you manage
 workspaces, connect to container shells, sync files, and administer
-users — all from your terminal without needing the web UI. It also
+users from your terminal without needing the web UI. It also
 supports [sandboxing projects](../features/sandbox.md) from a config
 file and [SSH agent forwarding](../features/ssh-agent-forwarding.md)
 for using your local SSH keys inside containers.

@@ -13,7 +13,7 @@ risking your host system or other projects.
 **For teams:** Klangk adds multi-user collaboration on top of
 sandboxing. Share workspaces with teammates, pair-program through
 shared terminals, chat alongside your AI agent, and control access
-with per-user roles and permissions — all within the same isolated
+with per-user roles and permissions within the same isolated
 containers.
 
 ## Core Features
@@ -35,8 +35,7 @@ run agents, and tear it down when you're done.
 
 Harnesses like Pi and Claude Code can run inside workspace containers
 with full terminal access. The built-in chat agent ([MrBoops](features/chat.md)) can
-answer questions, run commands, and edit files — all confined to the
-workspace.
+answer questions, run commands, and edit files, confined to the workspace.
 
 - Any OpenAI-compatible LLM provider (Ollama, cloud APIs, self-hosted)
 - Agent responses stream into chat alongside human conversation
