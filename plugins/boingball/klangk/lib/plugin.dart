@@ -214,8 +214,10 @@ class _BoingOverlayState extends State<_BoingOverlay>
 
   void _tick() {
     if (!mounted || !_visible) return;
-    final speed = widget.plugin._speed;
     _frame++;
+    // Skip every other frame for ~30fps rendering
+    if (_frame % 2 != 0) return;
+    final speed = widget.plugin._speed;
     setState(() {
       _vy += _gravity * speed;
       _vy = _vy.clamp(-_maxVy, _maxVy);
