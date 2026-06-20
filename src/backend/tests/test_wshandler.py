@@ -5502,6 +5502,10 @@ class TestRefreshUserHandle:
             assert len(plist) == 1
             handles = [u["user_handle"] for u in plist[0]["users"]]
             assert "newhandle" in handles
+            # System chat message broadcast
+            chats = [c for c in calls if c.get("type") == "chat_message"]
+            assert len(chats) == 1
+            assert "is now known as newhandle" in chats[0]["message"]
         finally:
             wshandler.state.sessions.pop(workspace["id"], None)
             wshandler.state.connections.pop(sock, None)
