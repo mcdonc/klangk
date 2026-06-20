@@ -1,15 +1,14 @@
-"""CLI configuration storage (~/.config/klangk/cli.toml)."""
+"""CLI configuration storage (~/.config/klangk/cli.yaml)."""
 
 from __future__ import annotations
 
 
 import os
-import tomllib
-import tomli_w
+import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_CONFIG_PATH = Path.home() / ".config" / "klangk" / "cli.toml"
+_CONFIG_PATH = Path.home() / ".config" / "klangk" / "cli.yaml"
 
 
 @dataclass
@@ -33,7 +32,7 @@ class CLIConfig:
         if not _CONFIG_PATH.exists():
             return cls()
         text = _CONFIG_PATH.read_text()
-        data = tomllib.loads(text)
+        data = yaml.safe_load(text) or {}
         return cls(
             server=ServerConfig(
                 url=data.get("server", {}).get("url", "http://localhost:8995")
@@ -57,6 +56,6 @@ class CLIConfig:
                 if v is not None
             },
         }
-        content = tomli_w.dumps(data)
+        content = yaml.dump(data, default_flow_style=False)
         _CONFIG_PATH.write_text(content)
         os.chmod(_CONFIG_PATH, 0o600)

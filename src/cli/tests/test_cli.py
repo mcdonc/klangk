@@ -37,10 +37,10 @@ class TestCLIConfig:
         assert cfg.auth.email is None
 
     def test_load_existing(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         config_path.write_text(
-            '[server]\nurl = "http://custom:9999"\n\n'
-            '[auth]\ntoken = "abc123"\nemail = "test@example.com"\n'
+            "server:\n  url: http://custom:9999\n"
+            "auth:\n  token: abc123\n  email: test@example.com\n"
         )
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
@@ -49,7 +49,7 @@ class TestCLIConfig:
         assert cfg.auth.email == "test@example.com"
 
     def test_save_roundtrip(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://saved:5678"
@@ -62,14 +62,14 @@ class TestCLIConfig:
         assert loaded.auth.email == "save@test.com"
 
     def test_save_creates_parent_dirs(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "sub" / "dir" / "cli.toml"
+        config_path = tmp_path / "sub" / "dir" / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.save()
         assert config_path.exists()
 
     def test_save_sets_restrictive_permissions(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "klangk" / "cli.toml"
+        config_path = tmp_path / "klangk" / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.auth.token = "secret"
@@ -78,8 +78,8 @@ class TestCLIConfig:
         assert oct(config_path.parent.stat().st_mode & 0o777) == oct(0o700)
 
     def test_load_token_only(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
-        config_path.write_text('[auth]\ntoken = "tok"\n')
+        config_path = tmp_path / "cli.yaml"
+        config_path.write_text("auth:\n  token: tok\n")
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.auth.token == "tok"
@@ -95,7 +95,7 @@ class TestAuth:
         monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: None)
 
     def test_login_success(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -113,7 +113,7 @@ class TestAuth:
         assert cfg.auth.email == "u@test.com"
 
     def test_login_with_user_flag(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -132,7 +132,7 @@ class TestAuth:
         assert cfg.auth.email == "cli@test.com"
 
     def test_login_with_password_file(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         pw_file = tmp_path / "pw.txt"
         pw_file.write_text("file-secret\n")
@@ -152,7 +152,7 @@ class TestAuth:
         assert cfg.auth.email == "pw@test.com"
 
     def test_login_reuses_valid_token(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         # Save a config with an existing token
         cfg = CLIConfig()
@@ -174,7 +174,7 @@ class TestAuth:
         assert loaded.auth.email == "saved@test.com"
 
     def test_login_network_error_falls_through(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://localhost:8995"
@@ -200,7 +200,7 @@ class TestAuth:
         assert loaded.auth.token == "fresh"
 
     def test_login_expired_token_prompts(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.server.url = "http://localhost:8995"
@@ -229,7 +229,7 @@ class TestAuth:
         assert loaded.auth.email == "new@test.com"
 
     def test_login_failure(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -245,8 +245,8 @@ class TestAuth:
                     auth.login("http://localhost:8995")
 
     def test_logout_clears_token(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
-        config_path.write_text('[auth]\ntoken = "tok"\nemail = "x@y.com"\n')
+        config_path = tmp_path / "cli.yaml"
+        config_path.write_text("auth:\n  token: tok\n  email: x@y.com\n")
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -259,7 +259,7 @@ class TestAuth:
         assert cfg.auth.email is None
 
     def test_logout_swallows_server_error(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig()
         cfg.save()
@@ -291,7 +291,7 @@ class TestOIDCCLILogin:
         """OIDC login with single provider goes straight to browser."""
         from klangkc import auth
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
             "klangkc.auth._fetch_config",
@@ -309,7 +309,7 @@ class TestOIDCCLILogin:
         """OIDC login with multiple providers prompts for selection."""
         from klangkc import auth
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
             "klangkc.auth._fetch_config",
@@ -338,7 +338,7 @@ class TestOIDCCLILogin:
         """Explicit email+password skips OIDC even in both mode."""
         from klangkc import auth
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
             "klangkc.auth._fetch_config",
@@ -362,7 +362,7 @@ class TestOIDCCLILogin:
     def test_oidc_invalid_provider_choice(self, tmp_path, monkeypatch):
         from klangkc import auth
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
             "klangkc.auth._fetch_config",
@@ -387,7 +387,7 @@ class TestOIDCCLILogin:
         """301 redirect shows a helpful hint about HTTPS."""
         from klangkc import auth
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
             "klangkc.auth._fetch_config",
@@ -410,7 +410,7 @@ class TestOIDCCLILogin:
         """Login with empty error response doesn't crash."""
         from klangkc import auth
 
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         monkeypatch.setattr(
             "klangkc.auth._fetch_config",
@@ -1174,7 +1174,7 @@ class TestMisc:
         assert ws.created_at == "z"
 
     def test_login_success_stores_email(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.toml"
+        config_path = tmp_path / "cli.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
