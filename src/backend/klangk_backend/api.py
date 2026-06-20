@@ -145,6 +145,11 @@ if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
             container.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
         return {"idle_timeout_seconds": seconds}
 
+    @router.get("/api/test/workspace-token/{workspace_id}")
+    async def get_workspace_token(workspace_id: str):
+        """Return a workspace JWT for testing (test only)."""
+        return {"token": auth.create_workspace_token(workspace_id)}
+
     @router.get("/api/test/browsers/{workspace_id}")
     async def get_browsers(workspace_id: str):
         """Return all active browser registrations for a workspace (test only)."""

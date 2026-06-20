@@ -1185,9 +1185,18 @@ test.describe("Klangk E2E", () => {
     expect(ownerBrowser).toBeTruthy();
     expect(memberBrowser).toBeTruthy();
 
+    // Get a workspace token for the bridge requests
+    const tokenResp = await request.get(
+      `${API_BASE}/api/test/workspace-token/${workspaceId}`,
+    );
+    expect(tokenResp.ok()).toBeTruthy();
+    const wsToken = (await tokenResp.json()).token;
+    const bridgeHeaders = { Authorization: `Bearer ${wsToken}` };
+
     // Send bridge request targeting the OWNER — the auto-responder
     // in page1 will reply with {pong: "ping owner"}.
     const resp1 = await request.post(`${API_BASE}/api/browser-delegate`, {
+      headers: bridgeHeaders,
       data: {
         action: "test_ping",
         message: "ping owner",
@@ -1200,6 +1209,7 @@ test.describe("Klangk E2E", () => {
     // Send bridge request targeting the MEMBER — the auto-responder
     // in page2 will reply with {pong: "ping member"}.
     const resp2 = await request.post(`${API_BASE}/api/browser-delegate`, {
+      headers: bridgeHeaders,
       data: {
         action: "test_ping",
         message: "ping member",
