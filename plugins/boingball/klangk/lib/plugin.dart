@@ -261,7 +261,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
         }
       }
 
-      _phase += 0.09 * _spinDir * speed;
+      _phase += 0.0675 * _spinDir * speed;
       if (_phase < 0) _phase += 14;
       if (_phase >= 14) _phase -= 14;
     });
