@@ -81,7 +81,7 @@ devenv up
 
 Then open <http://localhost:8995> in your browser.
 
-Install the CLI (optional):
+Install the [CLI](reference/cli.md) (optional):
 
 ```bash
 pip install klangkc
