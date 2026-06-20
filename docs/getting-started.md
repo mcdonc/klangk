@@ -7,7 +7,7 @@ on your own machine. For multi-user or team deployments, see
 ## Prerequisites
 
 - Linux or macOS
-- [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (or run `./bootstrap`)
+- [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (run `./bootstrap` to install both)
 - An OpenAI-compatible LLM provider (e.g., [Ollama Cloud](https://ollama.com) or self-hosted Ollama or LiteLLM instance)
 
 ## Setup
