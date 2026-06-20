@@ -2,44 +2,83 @@
 
 ![Login page](../assets/admin/login.png)
 
-## Auth Methods
+Klangk supports two ways to log in: email/password accounts and
+single sign-on (SSO) via OIDC providers like Keycloak, Okta, or
+Azure AD. You can use either or both.
 
-- **Two auth methods**: email/password (local) and OIDC (external Identity Providers). Configurable via `KLANGK_AUTH_MODES`: `password`, `oidc`, or `both` (default: `both` if OIDC configured, `password` otherwise).
-- **OIDC authentication**: Supports multiple OIDC providers (e.g., two Keycloak realms for CAC + internal SSO). Configured via a JSON file (`KLANGK_OIDC_CONFIG`). Each provider has its own login/callback endpoints (`GET /auth/oidc/{provider_id}/login`, `GET /auth/oidc/{provider_id}/callback`). Uses Authorization Code flow with PKCE. ID token signature validated against the IdP's JWKS. Login page shows one button per configured provider. JIT user provisioning on first OIDC login — users are created as verified with no password. Existing email/password users are linked to their OIDC identity on first SSO login. Per-provider group mapping syncs IdP group claims to Klangk admin group membership on every login. CLI login (`klangkc login`) opens a browser for the OIDC flow and receives the token via a temporary localhost callback server.
-- **Email/password authentication**: bcrypt hashing, email validated at registration
+## Email and password
 
-See [OIDC Configuration](../reference/oidc.md) for detailed setup instructions.
+The default setup uses email/password accounts. New users register
+with an email address, receive a verification link, and set a
+password. Passwords are hashed with bcrypt.
 
-## Email Verification
+### Registration
 
-- Registration sends a verification email with a signed token link; user must click to activate account and is auto-logged-in on verification
-- Resend via "Resend verification email" link on login page (shown on 403 "not verified" error, rate-limited to 1/min per email)
-- Email sent via SMTP (`KLANGK_SMTP_HOST/PORT/USER/PASSWORD/FROM`) or local sendmail (default, configurable via `KLANGK_SENDMAIL_PATH`)
+By default, anyone can register. Set `KLANGK_DISABLE_REGISTRATION`
+to block new signups and hide the registration link.
 
-## Password Reset
+After registering, users must verify their email before they can log
+in. The verification email contains a signed link that activates the
+account and logs the user in automatically.
 
-- User requests reset via `POST /auth/forgot-password` with their email address
-- Response is always `{"status": "sent"}` regardless of whether the email exists (prevents email enumeration)
-- Rate limited: one reset email per address per 60 seconds (in-memory cooldown, resets on server restart)
-- Token: JWT (HS256) containing `{sub: user_id, purpose: "reset", exp: timestamp}`, expires in 1 hour
-- Reset URL sent via email: `{proto}://{hostname}/#/reset-password?token={token}`
-- User submits new password via `POST /auth/reset-password` with the token
-- Tokens are stateless (no database tracking) — the same token can be reused until it expires
+If the email doesn't arrive, click **Resend verification email** on
+the login page (rate-limited to once per minute).
 
-## JWT Sessions
+### Password reset
 
-- JWT tokens (24hr expiry, secret configurable via `KLANGK_JWT_SECRET`) with token blocklist for logout; no refresh/renewal mechanism — users must re-authenticate when tokens expire
-- Workspace containers receive a separate JWT (`KLANGK_WORKSPACE_TOKEN`) at startup for bridge API calls; lifetime controlled by `KLANGK_WORKSPACE_TOKEN_HOURS` (default 24h). No renewal — containers running longer than the token lifetime lose bridge access until restarted. See [Workspace JWT Auth](../architecture/workspace-jwt.md) for details.
-- Session persists across page reloads (async token loading before routing)
-- Deep link preservation: unauthenticated visits to protected URLs redirect to login, then return to the original URL after successful login
+Click **Forgot password?** on the login page. A reset link is sent to
+the email address (the response is always "sent" regardless of whether
+the account exists, to prevent email enumeration). The link expires
+after 1 hour.
 
-## Brute-Force Protection
+### Email delivery
 
-- Failed login attempts tracked per email in SQLite
-- `KLANGK_LOGIN_LOCKOUT_FAILURES=N` failures within `KLANGK_LOGIN_LOCKOUT_WINDOW=S` (default 300s) triggers a `KLANGK_LOGIN_LOCKOUT_DURATION=D` (default 900s) lockout (429 with remaining seconds)
-- Disabled by default (N=0)
+Verification and password-reset emails are sent via SMTP if configured
+(`KLANGK_SMTP_HOST`, `KLANGK_SMTP_PORT`, etc.), or via the local
+`sendmail` binary otherwise. See
+[Environment Variables](../reference/environment.md) for the full list
+of SMTP settings.
 
-## Registration
+## Single sign-on (OIDC)
 
-- Open registration with email verification (test mode auto-verifies for E2E tests)
-- Login rejects unverified accounts
+Klangk can authenticate users through one or more OIDC identity
+providers. When configured, the login page shows a button for each
+provider alongside the email/password form (or instead of it, if
+`KLANGK_AUTH_MODES` is set to `oidc`).
+
+Users are created automatically on their first SSO login — no
+separate registration step. If a user already has an email/password
+account with the same address, it is linked to their SSO identity.
+
+The CLI (`klangkc login`) supports OIDC too: it opens a browser for
+the SSO flow and receives the token via a temporary localhost callback.
+
+See [OIDC Configuration](../reference/oidc.md) for setup instructions.
+
+## Sessions
+
+Klangk uses JWT tokens for sessions. Tokens expire after 24 hours
+(configurable via `KLANGK_JWT_SECRET`), after which you must log in
+again. Logging out blocklists the token immediately.
+
+Your session survives page refreshes. If you navigate to a workspace
+URL while logged out, you'll be redirected to the login page and
+returned to your original URL after logging in.
+
+## Brute-force protection
+
+Optionally, Klangk can lock accounts after repeated failed login
+attempts. This is disabled by default. To enable it, set:
+
+| Variable                        | Default | Description                              |
+| ------------------------------- | ------- | ---------------------------------------- |
+| `KLANGK_LOGIN_LOCKOUT_FAILURES` | `0`     | Failed attempts before lockout (0 = off) |
+| `KLANGK_LOGIN_LOCKOUT_WINDOW`   | `300`   | Time window in seconds for counting      |
+| `KLANGK_LOGIN_LOCKOUT_DURATION` | `900`   | How long the lockout lasts (seconds)     |
+
+## Consent banner
+
+If `KLANGK_LOGIN_BANNER` is set, users see a consent page before
+the login form. They must accept before proceeding. This is useful
+for legal notices or terms-of-service acknowledgements. See
+[Environment Variables](../reference/environment.md) for details.
