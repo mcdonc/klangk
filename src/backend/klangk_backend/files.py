@@ -3,8 +3,7 @@
 All path-accepting functions in this module delegate to ``resolve_path``
 which validates that the resolved path stays within the workspace root
 via ``Path.is_relative_to``.  CodeQL cannot trace this inter-procedural
-validation, so downstream filesystem operations are annotated with
-``lgtm[py/path-injection]`` suppressions.
+validation; the corresponding alerts are dismissed as false positives.
 """
 
 import shutil
@@ -16,7 +15,7 @@ from . import workspaces
 def resolve_path(user_id: str, workspace_id: str, relative_path: str) -> Path:
     """Resolve a relative path within a workspace, preventing traversal."""
     root = workspaces.get_home_host_path(user_id, workspace_id).resolve()
-    resolved = (root / relative_path).resolve()  # lgtm[py/path-injection]
+    resolved = (root / relative_path).resolve()
     if not resolved.is_relative_to(root):
         raise ValueError("Path traversal not allowed")
     return resolved
@@ -27,7 +26,7 @@ def list_files(
 ) -> list[dict]:
     """List files and directories at the given path."""
     path = resolve_path(user_id, workspace_id, relative_path)
-    if not path.exists() or not path.is_dir():  # lgtm[py/path-injection]
+    if not path.exists() or not path.is_dir():
         return []
 
     entries = []
@@ -52,17 +51,15 @@ def read_file(
 ) -> str | None:
     """Read file contents. Returns None if file doesn't exist or is too large."""
     path = resolve_path(user_id, workspace_id, relative_path)
-    if not path.exists() or not path.is_file():  # lgtm[py/path-injection]
+    if not path.exists() or not path.is_file():
         return None
 
     # Limit to 1MB
-    if path.stat().st_size > 1_000_000:  # lgtm[py/path-injection]
+    if path.stat().st_size > 1_000_000:
         return None
 
     try:
-        return path.read_text(  # lgtm[py/path-injection]
-            encoding="utf-8", errors="replace"
-        )
+        return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
 
@@ -70,12 +67,12 @@ def read_file(
 def delete_path(user_id: str, workspace_id: str, relative_path: str) -> str:
     """Delete a file or directory. Returns the relative path deleted."""
     path = resolve_path(user_id, workspace_id, relative_path)
-    if not path.exists():  # lgtm[py/path-injection]
+    if not path.exists():
         raise FileNotFoundError("Path not found")
-    if path.is_dir():  # lgtm[py/path-injection]
-        shutil.rmtree(path)  # lgtm[py/path-injection]
+    if path.is_dir():
+        shutil.rmtree(path)
     else:
-        path.unlink()  # lgtm[py/path-injection]
+        path.unlink()
     return str(
         path.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
     )
@@ -87,12 +84,12 @@ def rename_path(
     """Rename/move a file or directory. Returns the new relative path."""
     src = resolve_path(user_id, workspace_id, old_path)
     dst = resolve_path(user_id, workspace_id, new_path)
-    if not src.exists():  # lgtm[py/path-injection]
+    if not src.exists():
         raise FileNotFoundError("Source path not found")
-    if dst.exists():  # lgtm[py/path-injection]
+    if dst.exists():
         raise FileExistsError("Destination already exists")
-    dst.parent.mkdir(parents=True, exist_ok=True)  # lgtm[py/path-injection]
-    src.rename(dst)  # lgtm[py/path-injection]
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)
     return str(
         dst.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
     )
@@ -103,8 +100,8 @@ def write_file(
 ) -> str:
     """Write file contents. Returns the resolved relative path."""
     path = resolve_path(user_id, workspace_id, relative_path)
-    path.parent.mkdir(parents=True, exist_ok=True)  # lgtm[py/path-injection]
-    path.write_bytes(content)  # lgtm[py/path-injection]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
     return str(
         path.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
     )
@@ -119,5 +116,5 @@ def write_file_path(
     Callers are responsible for writing data to the returned path.
     """
     path = resolve_path(user_id, workspace_id, relative_path)
-    path.parent.mkdir(parents=True, exist_ok=True)  # lgtm[py/path-injection]
+    path.parent.mkdir(parents=True, exist_ok=True)
     return path
