@@ -3,6 +3,10 @@
 Per-workspace chat panel with real-time messaging. All workspace members
 see messages instantly via WebSocket. Click the **Chat** tab to open.
 
+!!! note
+Chat is per-workspace only — there are no direct messages (DMs)
+between users. Use separate workspaces for private conversations.
+
 [![Empty chat panel](../assets/chat/01-chat-panel.png)](../assets/chat/01-chat-panel.png)
 
 [![Chat with agent response](../assets/chat/03-agent-response.png)](../assets/chat/03-agent-response.png)

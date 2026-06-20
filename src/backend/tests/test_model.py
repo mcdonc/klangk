@@ -819,7 +819,7 @@ class TestChatMessagesPagination:
             user_id=target["id"],
         )
         await model.add_chat_message(
-            workspace["id"], "uid", "u@test.com", f"hey @{target['email']}"
+            workspace["id"], "uid", "u@test.com", f"hey @{target['handle']}"
         )
         anchor = await model.add_chat_message(
             workspace["id"], "uid", "u@test.com", "anchor"
@@ -838,7 +838,7 @@ class TestChatMentions:
             workspace["id"],
             user["id"],
             user["email"],
-            f"hello @{user['email']}",
+            f"hello @{user['handle']}",
         )
         assert msg["mentions"] == [user["id"]]
 
@@ -859,7 +859,7 @@ class TestChatMentions:
             workspace["id"],
             user["id"],
             user["email"],
-            "hey @member@test.com check this",
+            f"hey @{member['handle']} check this",
         )
         assert msg["mentions"] == [member["id"]]
 
@@ -870,7 +870,7 @@ class TestChatMentions:
             workspace["id"],
             user["id"],
             user["email"],
-            "hey @outsider@test.com",
+            "hey @outsider",
         )
         assert msg["mentions"] == []
 
@@ -889,7 +889,7 @@ class TestChatMentions:
             workspace["id"],
             user["id"],
             user["email"],
-            f"@{user['email']} and @m@test.com",
+            f"@{user['handle']} and @{member['handle']}",
         )
         assert set(msg["mentions"]) == {user["id"], member["id"]}
 
@@ -899,7 +899,7 @@ class TestChatMentions:
             workspace["id"],
             user["id"],
             user["email"],
-            f"@{user['email']} @{user['email']}",
+            f"@{user['handle']} @{user['handle']}",
         )
         assert msg["mentions"] == [user["id"]]
 
@@ -909,7 +909,7 @@ class TestChatMentions:
             workspace["id"],
             user["id"],
             user["email"],
-            f"hello @{user['email']}",
+            f"hello @{user['handle']}",
         )
         msgs = await model.get_chat_messages(workspace["id"])
         assert len(msgs) == 1
