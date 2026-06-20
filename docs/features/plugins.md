@@ -50,5 +50,5 @@ plugins:
 - Local plugin development: drop a directory into
   `$KLANGK_PLUGINS_DIR` directly — the build system treats it the
   same as a fetched plugin
-- `execIfModified` watches `$KLANGK_PLUGINS_DIR` to trigger rebuilds
-  when plugin content or the lockfile changes
+- If you are running devenv, it watches `$KLANGK_PLUGINS_DIR` to
+  trigger rebuilds when plugin content or the lockfile changes
