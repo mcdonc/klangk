@@ -1,6 +1,4 @@
-# Klangk
-
-Multi-User AI Sandboxing, Collaboration and Coding Platform
+# Klangk: Multi-User AI Sandboxing, Collaboration and Coding Platform
 
 ![Klangk workspace with terminal and chat](assets/screenshot.png)
 
