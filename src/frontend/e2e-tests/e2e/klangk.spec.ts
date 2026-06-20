@@ -1471,10 +1471,11 @@ test.describe("Klangk E2E", () => {
     expect(joinMsgs.length).toBeGreaterThan(0);
     expect(joinMsgs[0].message).toBe(`${memberHandle} joined`);
 
-    // Member leaves — owner should see a "left" system message
+    // Member leaves — owner should see a "left" system message after the
+    // backend's 10-second presence debounce window expires.
     const beforeLeave = systemMessages.length;
     await ctx2.close();
-    await page1.waitForTimeout(2000);
+    await page1.waitForTimeout(12000);
 
     const leaveMsgs = systemMessages.filter(
       (m) => m.message.includes("left") && m.message.includes(memberHandle),

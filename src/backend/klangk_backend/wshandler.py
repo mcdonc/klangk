@@ -404,6 +404,12 @@ class WorkspaceSession:
 class WebSocketState:
     """Module-level singleton holding mutable WebSocket handler state."""
 
+    # Delay before broadcasting presence_leave after a user disconnects.
+    # If the same user reconnects within this window the leave (and the
+    # subsequent re-join) are suppressed, avoiding flicker during
+    # WebSocket reconnection with backoff.
+    PRESENCE_LEAVE_DELAY = 10.0  # seconds
+
     def __init__(self) -> None:
         # Active connections: SafeWebSocket -> Connection
         self.connections: dict[SafeWebSocket, "Connection"] = {}
@@ -421,6 +427,10 @@ class WebSocketState:
         self.streaming_browser_requests: dict[
             str, tuple[asyncio.Queue, SafeWebSocket | None]
         ] = {}
+        # Pending presence leave tasks: (workspace_id, user_id) → Task.
+        # When a user's last connection drops we schedule a delayed
+        # broadcast; if they reconnect before it fires we cancel it.
+        self._pending_leaves: dict[tuple[str, str], asyncio.Task] = {}
 
     def get_session(self, workspace_id: str) -> WorkspaceSession | None:
         return self.sessions.get(workspace_id)
@@ -450,6 +460,79 @@ class WebSocketState:
         """Remove session when caller already holds ``session.lock``."""
         self.sessions.pop(session.workspace_id, None)
         await session.reset()
+
+    def cancel_pending_leave(self, workspace_id: str, user_id: str) -> bool:
+        """Cancel a pending presence_leave for *user_id* in *workspace_id*.
+
+        Returns True if a pending leave was cancelled (meaning the
+        subsequent join broadcast should also be suppressed).
+        """
+        key = (workspace_id, user_id)
+        task = self._pending_leaves.pop(key, None)
+        if task and not task.done():
+            task.cancel()
+            logger.info(
+                "Cancelled pending presence_leave for user %s in %s",
+                user_id,
+                workspace_id,
+            )
+            return True
+        return False
+
+    def schedule_pending_leave(
+        self,
+        workspace_id: str,
+        user: dict,
+        session: "WorkspaceSession",
+    ) -> None:
+        """Schedule a delayed presence_leave broadcast.
+
+        If the user reconnects before the delay expires the task is
+        cancelled via ``cancel_pending_leave``.
+        """
+        user_id = user["id"]
+        key = (workspace_id, user_id)
+        # Cancel any already-pending leave (shouldn't happen, but be safe).
+        old = self._pending_leaves.pop(key, None)
+        if old and not old.done():  # pragma: no cover
+            old.cancel()
+
+        async def _fire() -> None:
+            try:
+                await asyncio.sleep(self.PRESENCE_LEAVE_DELAY)
+            except asyncio.CancelledError:
+                return
+            finally:
+                self._pending_leaves.pop(key, None)
+
+            # Still no connection for this user in the workspace?
+            cur_session = self.get_session(workspace_id)
+            if cur_session:
+                still_connected = any(
+                    self.connections.get(s) is not None
+                    and self.connections[s].user["id"] == user_id
+                    for s in cur_session.subscribers
+                )
+                if still_connected:  # pragma: no cover
+                    return
+
+                sys_msg = await model.add_chat_message(
+                    workspace_id,
+                    user_id,
+                    user["email"],
+                    f"{user.get('handle') or user['email']} left",
+                    message_type=model.MSG_SYSTEM,
+                )
+                cur_session.broadcast({"type": "chat_message", **sys_msg})
+                cur_session.broadcast(
+                    {
+                        "type": "presence_leave",
+                        "user_id": user_id,
+                        "user_email": user["email"],
+                    }
+                )
+
+        self._pending_leaves[key] = asyncio.create_task(_fire())
 
     async def reset_workspace(self, workspace_id: str) -> None:
         """Clean up shared state for a workspace.
@@ -841,11 +924,16 @@ class Connection:
         if self.container_id:
             asyncio.create_task(self._start_agent_if_needed(self.container_id))
 
+        # If this user had a pending leave (reconnecting after a brief
+        # disconnect), cancel it and suppress the join broadcast — other
+        # users never saw them leave so there's nothing to announce.
+        rejoining = state.cancel_pending_leave(workspace_id, self.user["id"])
+
         # Send presence list to joining user and broadcast join to others
         presence = await _get_presence_list(workspace_id)
         self.sock.send_json({"type": "presence_list", "users": presence})
         session = state.get_session(workspace_id)
-        if session:
+        if session and not rejoining:
             join_msg = {
                 "type": "presence_join",
                 "user_id": self.user["id"],
@@ -2205,28 +2293,17 @@ class Connection:
         if session:
             empty = await session.remove_subscriber(self.sock)
             if not empty:
-                # Broadcast presence_leave if user has no other connections
+                # Schedule a debounced presence_leave if user has no
+                # other connections.  If they reconnect within the delay
+                # window the leave (and re-join) are suppressed.
                 still_connected = any(
                     state.connections.get(s) is not None
                     and state.connections[s].user["id"] == self.user["id"]
                     for s in session.subscribers
                 )
                 if not still_connected:
-                    # Broadcast a system chat message for the leave
-                    sys_msg = await model.add_chat_message(
-                        workspace_id,
-                        self.user["id"],
-                        self.user["email"],
-                        f"{self.user.get('handle') or self.user['email']} left",
-                        message_type=model.MSG_SYSTEM,
-                    )
-                    session.broadcast({"type": "chat_message", **sys_msg})
-                    session.broadcast(
-                        {
-                            "type": "presence_leave",
-                            "user_id": self.user["id"],
-                            "user_email": self.user["email"],
-                        }
+                    state.schedule_pending_leave(
+                        workspace_id, self.user, session
                     )
             else:
                 # Lock is released by remove_subscriber, so use the

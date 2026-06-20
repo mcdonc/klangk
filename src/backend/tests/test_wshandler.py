@@ -5421,7 +5421,7 @@ class TestPresence:
             wshandler.state.connections.pop(sock2, None)
 
     async def test_presence_leave_broadcast(self, user):
-        """Remaining subscribers receive presence_leave on disconnect."""
+        """Remaining subscribers receive presence_leave after debounce."""
         from klangk_backend import model
 
         workspace = await _create_workspace_with_acl(user["id"], "pres-lv-ws")
@@ -5443,18 +5443,128 @@ class TestPresence:
         wshandler.state.connections[sock1] = conn1
         wshandler.state.connections[sock2] = conn2
 
+        saved_delay = wshandler.state.PRESENCE_LEAVE_DELAY
         try:
-            # conn2 disconnects
+            # Use a tiny delay so the test completes quickly
+            wshandler.state.PRESENCE_LEAVE_DELAY = 0.05
+
+            # conn2 disconnects — leave is debounced, not immediate
             await conn2.cleanup()
+            calls1 = [c[0][0] for c in sock1.send_json.call_args_list]
+            leaves = [c for c in calls1 if c.get("type") == "presence_leave"]
+            assert len(leaves) == 0  # not yet
+
+            # Wait for the debounce to fire
+            await asyncio.sleep(0.1)
 
             calls1 = [c[0][0] for c in sock1.send_json.call_args_list]
             leaves = [c for c in calls1 if c.get("type") == "presence_leave"]
             assert len(leaves) == 1
             assert leaves[0]["user_id"] == other["id"]
         finally:
+            wshandler.state.PRESENCE_LEAVE_DELAY = saved_delay
+            wshandler.state._pending_leaves.clear()
             wshandler.state.sessions.pop(workspace["id"], None)
             wshandler.state.connections.pop(sock1, None)
             wshandler.state.connections.pop(sock2, None)
+
+    async def test_presence_leave_suppressed_on_reconnect(self, user):
+        """Reconnecting within debounce window suppresses leave and join."""
+        from klangk_backend import model
+
+        workspace = await _create_workspace_with_acl(
+            user["id"], "pres-debounce-ws"
+        )
+
+        sock1 = _mock_sock()  # observer
+        other = await model.create_user("flap@test.com", "hash", verified=True)
+        await model.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            1,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        other_user = {
+            "id": other["id"],
+            "email": "flap@test.com",
+            "handle": other.get("handle", ""),
+        }
+        sock2 = _mock_sock()  # flapping user
+        conn1 = _base_conn(user=user, ws=sock1)
+        conn2 = _base_conn(user=other_user, ws=sock2)
+        conn1.workspace_id = workspace["id"]
+        conn2.workspace_id = workspace["id"]
+
+        session = WorkspaceSession(workspace["id"])
+        session.subscribers.add(sock1)
+        session.subscribers.add(sock2)
+        wshandler.state.sessions[workspace["id"]] = session
+        wshandler.state.connections[sock1] = conn1
+        wshandler.state.connections[sock2] = conn2
+
+        saved_delay = wshandler.state.PRESENCE_LEAVE_DELAY
+        try:
+            wshandler.state.PRESENCE_LEAVE_DELAY = 5.0  # long enough to cancel
+
+            # conn2 disconnects — pending leave scheduled
+            await conn2.cleanup()
+            key = (workspace["id"], other["id"])
+            assert key in wshandler.state._pending_leaves
+
+            # conn2 reconnects — cancel pending leave
+            sock3 = _mock_sock()
+            conn3 = _base_conn(user=other_user, ws=sock3)
+            wshandler.state.connections[sock3] = conn3
+
+            async def fake_start(wid, ws_obj):
+                conn3.container_id = "cid"
+                s = wshandler.state.get_or_create_session(wid)
+                await s.add_subscriber(sock3, "cid")
+
+            with (
+                patch.object(
+                    Connection,
+                    "start_workspace_container",
+                    side_effect=fake_start,
+                ),
+                patch.object(
+                    container.registry,
+                    "get_workspace_ports",
+                    return_value=[],
+                ),
+            ):
+                await conn3.handle_workspace_connect(
+                    {"workspaceId": workspace["id"]}
+                )
+
+            # Pending leave should be cancelled
+            assert key not in wshandler.state._pending_leaves
+
+            # Observer should NOT have received presence_leave or
+            # presence_join (the user never visibly left)
+            calls1 = [c[0][0] for c in sock1.send_json.call_args_list]
+            leaves = [c for c in calls1 if c.get("type") == "presence_leave"]
+            joins = [c for c in calls1 if c.get("type") == "presence_join"]
+            assert len(leaves) == 0
+            assert len(joins) == 0
+
+            # No system chat messages about join/leave
+            chats = [
+                c
+                for c in calls1
+                if c.get("type") == "chat_message"
+                and c.get("message_type") == model.MSG_SYSTEM
+            ]
+            assert len(chats) == 0
+        finally:
+            wshandler.state.PRESENCE_LEAVE_DELAY = saved_delay
+            wshandler.state._pending_leaves.clear()
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock1, None)
+            wshandler.state.connections.pop(sock2, None)
+            wshandler.state.connections.pop(sock3, None)
 
     async def test_presence_leave_multi_tab(self, user):
         """No presence_leave if user has another connection in workspace."""
