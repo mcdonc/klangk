@@ -50,6 +50,26 @@ Each shared user gets a role that controls what they can do — see
 Shared member avatars appear on workspace cards so you can see who
 has access at a glance.
 
+## Mount security
+
+Workspace bind mounts are validated at create and edit time. Two
+protections apply regardless of `KLANGK_ALLOWED_MOUNT_ROOTS`:
+
+**Protected paths** — the following host paths are always blocked,
+even if they fall under an allowed root:
+
+- `/var/run/docker.sock`, `/run/docker.sock`,
+  `/run/podman/podman.sock` — mounting a container engine socket
+  grants full host control
+- `KLANGK_DATA_DIR` (and anything beneath it) — contains every
+  user's workspace home and the database
+
+**Volume isolation** — named volumes (e.g., `nix-store:/nix`) are
+labelled with `klangk.instance` and `klangk.user-id` at creation
+time. A workspace cannot mount a volume created by a different
+`KLANGK_INSTANCE_ID` or a different user. This prevents both
+cross-tenant and cross-user data access on shared hosts.
+
 ## Idle timeout
 
 Containers stop automatically after 30 minutes of inactivity
