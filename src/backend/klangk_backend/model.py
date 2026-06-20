@@ -24,6 +24,27 @@ _data_dir = Path(
 DB_PATH = _data_dir / "klangk.db"
 
 # ---------------------------------------------------------------------------
+# Database URL and dialect detection
+# ---------------------------------------------------------------------------
+
+_configured_url: str | None = resolve_env_secret("KLANGK_SQLA_DB_URL")
+_is_sqlite: bool = _configured_url is None or _configured_url.startswith(
+    "sqlite"
+)
+
+
+def is_sqlite() -> bool:
+    """Return True when the active database backend is SQLite."""
+    return _is_sqlite
+
+
+def _get_db_url() -> str:
+    if _configured_url is not None:  # pragma: no cover
+        return _configured_url
+    return f"sqlite+aiosqlite:///{DB_PATH}"
+
+
+# ---------------------------------------------------------------------------
 # SQLAlchemy async engine + compatibility wrappers
 # ---------------------------------------------------------------------------
 
@@ -66,9 +87,52 @@ class _CursorResult:
     def rowcount(self):
         return self._result.rowcount
 
-    @property
-    def lastrowid(self):
-        return self._result.lastrowid
+
+_OR_IGNORE_RE = re.compile(r"\bINSERT\s+OR\s+IGNORE\b", re.IGNORECASE)
+_OR_REPLACE_RE = re.compile(r"\bINSERT\s+OR\s+REPLACE\b", re.IGNORECASE)
+_AUTOINCREMENT_RE = re.compile(
+    r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b", re.IGNORECASE
+)
+
+
+def _sqlite_to_pg(sql: str) -> str:  # pragma: no cover
+    """Translate SQLite SQL idioms to PostgreSQL equivalents.
+
+    Handles placeholder conversion (? → $N) and common syntax
+    differences so callers can write SQLite-style SQL everywhere.
+    """
+    # INSERT OR IGNORE → INSERT ... ON CONFLICT DO NOTHING
+    had_or_ignore = bool(_OR_IGNORE_RE.search(sql))
+    if had_or_ignore:
+        sql = _OR_IGNORE_RE.sub("INSERT", sql)
+
+    # INSERT OR REPLACE → handled per-callsite with explicit
+    # ON CONFLICT ... DO UPDATE (which works on both backends).
+    if _OR_REPLACE_RE.search(sql):
+        sql = _OR_REPLACE_RE.sub("INSERT", sql)
+
+    # Append ON CONFLICT DO NOTHING for former INSERT OR IGNORE
+    if had_or_ignore and "ON CONFLICT" not in sql.upper():
+        sql = sql.rstrip().rstrip(";")
+        sql += " ON CONFLICT DO NOTHING"
+
+    # datetime('now') → NOW()  (used in DEFAULT clauses)
+    sql = sql.replace("datetime('now')", "NOW()")
+
+    # INTEGER PRIMARY KEY AUTOINCREMENT → SERIAL PRIMARY KEY
+    sql = _AUTOINCREMENT_RE.sub("SERIAL PRIMARY KEY", sql)
+
+    # ? → $1, $2, ... (positional placeholders)
+    counter = 0
+
+    def _replace_placeholder(m):
+        nonlocal counter
+        counter += 1
+        return f"${counter}"
+
+    sql = re.sub(r"\?", _replace_placeholder, sql)
+
+    return sql
 
 
 class _Connection:
@@ -76,6 +140,9 @@ class _Connection:
 
     Callers keep using ``db.execute(sql, params)``, ``db.commit()``,
     ``db.rollback()``, and ``db.close()`` exactly as before.
+
+    When PostgreSQL is the backend, SQL is automatically translated
+    from SQLite dialect (``?`` placeholders, etc.) to PostgreSQL.
     """
 
     __slots__ = ("_conn",)
@@ -84,6 +151,8 @@ class _Connection:
         self._conn = conn
 
     async def execute(self, sql, params=None):
+        if not _is_sqlite:  # pragma: no cover
+            sql = _sqlite_to_pg(sql)
         if params is not None:
             if isinstance(params, list):
                 params = tuple(params)
@@ -102,9 +171,11 @@ class _Connection:
         await self._conn.close()
 
 
-def _make_engine(db_path: Path | str, **kwargs):
-    """Create a new async engine with PRAGMA listeners."""
-    url = f"sqlite+aiosqlite:///{db_path}"
+def _make_engine(url: str, **kwargs):
+    """Create a new async engine.
+
+    SQLite-specific PRAGMAs are applied only when the URL targets SQLite.
+    """
     engine = create_async_engine(
         url,
         pool_size=5,
@@ -112,13 +183,15 @@ def _make_engine(db_path: Path | str, **kwargs):
         **kwargs,
     )
 
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_pragmas(dbapi_conn, connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode = WAL")
-        cursor.execute("PRAGMA foreign_keys = ON")
-        cursor.execute("PRAGMA busy_timeout = 15000")
-        cursor.close()
+    if _is_sqlite:
+
+        @event.listens_for(engine.sync_engine, "connect")
+        def _set_pragmas(dbapi_conn, connection_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute("PRAGMA busy_timeout = 15000")
+            cursor.close()
 
     return engine
 
@@ -126,8 +199,10 @@ def _make_engine(db_path: Path | str, **kwargs):
 def _ensure_engine():
     global _engine
     if _engine is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _engine = _make_engine(DB_PATH)
+        url = _get_db_url()
+        if _is_sqlite:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _engine = _make_engine(url)
     return _engine
 
 
@@ -210,6 +285,26 @@ async def agent_handle() -> str:
     return (await get_agent_user())["handle"]
 
 
+async def _table_columns(db, table: str) -> dict[str, object]:
+    """Return column info for *table*.
+
+    On SQLite, uses ``PRAGMA table_info``; on PostgreSQL, queries
+    ``information_schema.columns``.  Returns a dict mapping column
+    names to row objects.
+    """
+    if _is_sqlite:
+        cursor = await db.execute(f"PRAGMA table_info({table})")
+        return {row[1]: row for row in await cursor.fetchall()}
+    # PostgreSQL: query information_schema instead of PRAGMA
+    cursor = await db.execute(  # pragma: no cover
+        "SELECT column_name, is_nullable"
+        " FROM information_schema.columns"
+        " WHERE table_name = ?",
+        (table,),
+    )
+    return {row[0]: row for row in await cursor.fetchall()}  # pragma: no cover
+
+
 async def init_db() -> None:
     db = await get_db()
     try:
@@ -225,53 +320,72 @@ async def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
-        # Migration: make password_hash nullable, add OIDC columns, add handle.
-        # SQLite can't ALTER COLUMN, so we recreate the table if needed.
-        cursor = await db.execute("PRAGMA table_info(users)")
-        columns = {row[1]: row for row in await cursor.fetchall()}
-        needs_recreate = False
-        if "password_hash" in columns and columns["password_hash"][3]:
-            # password_hash has NOT NULL — need to drop it for OIDC users
-            needs_recreate = True
-        if "provider" not in columns:
-            needs_recreate = True
-        if "handle" not in columns:
-            needs_recreate = True
-        if needs_recreate:
-            await db.execute("""
-                CREATE TABLE users_new (
-                    id TEXT PRIMARY KEY,
-                    email TEXT UNIQUE NOT NULL,
-                    password_hash TEXT,
-                    verified INTEGER NOT NULL DEFAULT 0,
-                    provider TEXT NOT NULL DEFAULT 'local',
-                    external_id TEXT,
-                    handle TEXT UNIQUE,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        # Migration: make password_hash nullable, add OIDC columns, add
+        # handle.  SQLite can't ALTER COLUMN, so we recreate the table.
+        # PostgreSQL can ALTER COLUMN, so we do that instead.
+        columns = await _table_columns(db, "users")
+        if _is_sqlite:
+            needs_recreate = False
+            if "password_hash" in columns and columns["password_hash"][3]:
+                needs_recreate = True
+            if "provider" not in columns:
+                needs_recreate = True
+            if "handle" not in columns:
+                needs_recreate = True
+            if needs_recreate:
+                await db.execute("""
+                    CREATE TABLE users_new (
+                        id TEXT PRIMARY KEY,
+                        email TEXT UNIQUE NOT NULL,
+                        password_hash TEXT,
+                        verified INTEGER NOT NULL DEFAULT 0,
+                        provider TEXT NOT NULL DEFAULT 'local',
+                        external_id TEXT,
+                        handle TEXT UNIQUE,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                """)
+                old_cols = list(columns.keys())
+                shared = [
+                    c
+                    for c in old_cols
+                    if c
+                    in (
+                        "id",
+                        "email",
+                        "password_hash",
+                        "verified",
+                        "created_at",
+                        "handle",
+                    )
+                ]
+                cols_str = ", ".join(shared)
+                await db.execute(
+                    f"INSERT INTO users_new ({cols_str})"  # noqa: S608
+                    f" SELECT {cols_str} FROM users"
                 )
-            """)
-            # Copy existing data — old tables may lack some columns
-            old_cols = list(columns.keys())
-            shared = [
-                c
-                for c in old_cols
-                if c
-                in (
-                    "id",
-                    "email",
-                    "password_hash",
-                    "verified",
-                    "created_at",
-                    "handle",
+                await db.execute("DROP TABLE users")
+                await db.execute("ALTER TABLE users_new RENAME TO users")
+        else:  # pragma: no cover
+            # PostgreSQL migrations
+            if "provider" not in columns:
+                await db.execute(
+                    "ALTER TABLE users"
+                    " ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'"
                 )
-            ]
-            cols_str = ", ".join(shared)
-            await db.execute(
-                f"INSERT INTO users_new ({cols_str})"  # noqa: S608
-                f" SELECT {cols_str} FROM users"
-            )
-            await db.execute("DROP TABLE users")
-            await db.execute("ALTER TABLE users_new RENAME TO users")
+            if "external_id" not in columns:
+                await db.execute(
+                    "ALTER TABLE users ADD COLUMN external_id TEXT"
+                )
+            if "handle" not in columns:
+                await db.execute(
+                    "ALTER TABLE users ADD COLUMN handle TEXT UNIQUE"
+                )
+            if "password_hash" in columns:
+                await db.execute(
+                    "ALTER TABLE users"
+                    " ALTER COLUMN password_hash DROP NOT NULL"
+                )
         # Backfill handles for existing users that don't have one.
         await _backfill_handles(db)
         await db.execute("""
@@ -281,10 +395,10 @@ async def init_db() -> None:
                 name TEXT NOT NULL,
                 container_id TEXT,
                 num_ports INTEGER NOT NULL DEFAULT 5,
-                image TEXT,  -- custom container image; NULL means use default
-                default_command TEXT,  -- auto-run in terminal on connect
-                mounts TEXT,  -- JSON array of host:container mount specs
-                env TEXT,  -- JSON dict of custom environment variables
+                image TEXT,
+                default_command TEXT,
+                mounts TEXT,
+                env TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(user_id, name)
             )
@@ -320,7 +434,7 @@ async def init_db() -> None:
                 principal_type INTEGER NOT NULL,
                 user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
                 group_id TEXT REFERENCES groups(id) ON DELETE CASCADE,
-                system_principal INTEGER,  -- 0 = Everyone, 1 = Authenticated
+                system_principal INTEGER,
                 permission TEXT NOT NULL,
                 UNIQUE(resource, position)
             )
@@ -342,13 +456,20 @@ async def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
-        # Migration: add message_type column to existing chat_messages tables
-        cursor = await db.execute("PRAGMA table_info(chat_messages)")
-        chat_cols = {row[1] for row in await cursor.fetchall()}
-        if "message_type" not in chat_cols:
+        # Migration: add message_type column to existing tables
+        chat_cols = await _table_columns(db, "chat_messages")
+        if chat_cols and "message_type" not in chat_cols:
             await db.execute(
                 "ALTER TABLE chat_messages"
                 " ADD COLUMN message_type INTEGER NOT NULL DEFAULT 0"
+            )
+        # On PostgreSQL, add a rowid column (SERIAL) for insertion-order
+        # tie-breaking.  SQLite provides an implicit rowid automatically.
+        if (
+            not _is_sqlite and chat_cols and "rowid" not in chat_cols
+        ):  # pragma: no cover
+            await db.execute(
+                "ALTER TABLE chat_messages ADD COLUMN rowid SERIAL"
             )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS chat_mentions (
@@ -797,7 +918,8 @@ async def add_acl_entry(
             "INSERT INTO acl_entries"
             " (resource, position, action, principal_type,"
             "  user_id, group_id, system_principal, permission)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            " RETURNING id",
             (
                 resource,
                 position,
@@ -809,7 +931,8 @@ async def add_acl_entry(
                 permission,
             ),
         )
-        return cursor.lastrowid
+        row = await cursor.fetchone()
+        return row["id"]
 
 
 async def get_acl_entries(resource: str) -> list[dict]:

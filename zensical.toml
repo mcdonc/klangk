@@ -36,6 +36,7 @@ nav = [
   { "Deployment" = [
     { "Running with Docker" = "deployment/docker.md" },
     { "Hosting & Nginx" = "deployment/hosting.md" },
+    { "PostgreSQL" = "deployment/postgresql.md" },
     { "Customizing" = "deployment/customizing.md" },
     { "Podman" = "reference/podman.md" },
     { "OIDC" = "reference/oidc.md" },

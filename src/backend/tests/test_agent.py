@@ -31,10 +31,18 @@ async def _seed_agent_db(db):
 
     async with model.transaction() as agent_db:
         await agent_db.execute(
-            "INSERT OR REPLACE INTO users"
+            "INSERT INTO users"
             " (id, email, password_hash, verified, provider, handle)"
-            " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (model.AGENT_USER_ID, "MrBoops@example.com", "MrBoops"),
+            " VALUES (?, ?, NULL, 1, 'system', ?)"
+            " ON CONFLICT(id) DO UPDATE"
+            " SET email = ?, handle = ?",
+            (
+                model.AGENT_USER_ID,
+                "MrBoops@example.com",
+                "MrBoops",
+                "MrBoops@example.com",
+                "MrBoops",
+            ),
         )
     model.clear_agent_cache()
 

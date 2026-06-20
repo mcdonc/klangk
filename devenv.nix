@@ -393,5 +393,13 @@ in
     MDLINT
   '';
 
+  # --- PostgreSQL (uncomment to use PostgreSQL instead of SQLite) ---
+  # services.postgres = {
+  #   enable = true;
+  #   listen_addresses = "127.0.0.1";
+  #   port = 5432;
+  #   initialDatabases = [ { name = "klangk"; } ];
+  # };
+
   claude.code.mcpServers = { };
 }

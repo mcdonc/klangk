@@ -7,6 +7,9 @@ from klangk_backend import model
 
 
 class TestMigration:
+    @pytest.mark.skipif(
+        not model.is_sqlite(), reason="SQLite-specific migration test"
+    )
     async def test_migrate_old_schema(self, temp_data_dir):
         """Migrates a pre-OIDC database: password_hash NOT NULL, no
         provider/external_id columns."""
@@ -628,6 +631,9 @@ class TestLoginAttempts:
 
 
 class TestChatMessagesMigration:
+    @pytest.mark.skipif(
+        not model.is_sqlite(), reason="SQLite-specific migration test"
+    )
     async def test_migrate_adds_message_type_column(self, db):
         """init_db adds message_type column to existing tables that lack it."""
         async with model.transaction() as raw_db:
@@ -649,10 +655,7 @@ class TestChatMessagesMigration:
         await model.init_db()
 
         async with model.transaction() as migrated_db:
-            cursor = await migrated_db.execute(
-                "PRAGMA table_info(chat_messages)"
-            )
-            cols = {row[1] for row in await cursor.fetchall()}
+            cols = await model._table_columns(migrated_db, "chat_messages")
             assert "message_type" in cols
 
 

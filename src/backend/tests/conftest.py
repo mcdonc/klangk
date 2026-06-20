@@ -65,10 +65,18 @@ async def agent_user(db):
 
     async with us.transaction() as agent_db:
         await agent_db.execute(
-            "INSERT OR REPLACE INTO users"
+            "INSERT INTO users"
             " (id, email, password_hash, verified, provider, handle)"
-            " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (us.AGENT_USER_ID, "MrBoops@example.com", "MrBoops"),
+            " VALUES (?, ?, NULL, 1, 'system', ?)"
+            " ON CONFLICT(id) DO UPDATE"
+            " SET email = ?, handle = ?",
+            (
+                us.AGENT_USER_ID,
+                "MrBoops@example.com",
+                "MrBoops",
+                "MrBoops@example.com",
+                "MrBoops",
+            ),
         )
     us.clear_agent_cache()
 
