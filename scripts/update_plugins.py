@@ -50,9 +50,9 @@ plugins:
     git: git@github.com:mcdonc/klangk.git
     path: plugins/browser-fetch
     ref: main
-  - name: marquee
+  - name: boingball
     git: git@github.com:mcdonc/klangk.git
-    path: plugins/marquee
+    path: plugins/boingball
     ref: main
   - name: git-credential
     git: git@github.com:mcdonc/klangk.git

@@ -128,5 +128,5 @@ def get_browser_id():
 - **beep** (`plugins/beep/`): Plays a beep sound in the browser
 - **bobdobbs** (`plugins/bobdobbs/`): Bob "J.R." Dobbs quote generator
 - **browser-fetch** (`plugins/browser-fetch/`): HTTP fetch using the browser's cookies/session
-- **marquee** (`plugins/marquee/`): Scrolling marquee text in the browser
+- **boingball** (`plugins/boingball/`): Bouncing Boing Ball animation overlay
 - **git-credential** (`plugins/git-credential/`): Git credential helper that prompts for PAT in the browser
