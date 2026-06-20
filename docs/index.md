@@ -1,11 +1,8 @@
-# Klangk
+# Klangk: Multi-User AI Sandboxing, Collaboration and Coding Platform
 
-Multi-User AI Sandboxing, Collaboration and Coding Platform
+![Klangk workspace with terminal and chat](assets/screenshot.png)
 
-![Klangk Web Coding Agent](assets/screenshot.png)
-
-Klangk is a container orchestration system that specializes in
-sandboxing AI coding tasks.
+## Why Klangk?
 
 **For solo developers:** AI agents like Pi and Claude Code are powerful
 but intentionally given wide permissions — they read, write, and
@@ -16,28 +13,84 @@ risking your host system or other projects.
 **For teams:** Klangk adds multi-user collaboration on top of
 sandboxing. Share workspaces with teammates, pair-program through
 shared terminals, chat alongside your AI agent, and control access
-with per-user roles and permissions — all within the same isolated
+with per-user roles and permissions within the same isolated
 containers.
 
-## What You Can Do
+## Core Features
 
-1. **Sandbox a project** — [`klangkc sandbox`](features/sandbox.md) creates an isolated workspace from a `.klangk/sandbox.yaml` config, mounts your source code, and runs a setup script
-2. **Run AI agents safely** — Pi and Claude Code run inside containers, isolated from your host
-3. **Use the terminal** — access your container shell from the web browser or from your local terminal via [`klangkc shell`](reference/cli.md)
-4. **View files** in the file viewer panel, drag-and-drop files or folders to upload, right-click to download, rename, or delete. Preview markdown, images, code (with syntax highlighting and editing), PDFs, video, and spreadsheets
-5. **Chat with other workspace users** in shared workspaces
-6. **Share workspaces** with other users or groups, controlling access per-permission (terminal, files, chat, etc.)
-7. **Monitor activity** in the debug panel
-8. **Manage users and groups** (admin only) — add users, create groups, manage membership
+### Sandboxed Workspaces
+
+Every workspace is a rootless Podman container with its own filesystem,
+terminal sessions, and network ports. Mount your source code in,
+run agents, and tear it down when you're done.
+
+- Create from the web UI, the [CLI](reference/cli.md), or a
+  [sandbox config](features/sandbox.md) file
+- Bind-mount host directories or use named volumes for persistent data
+- Run any container image — bring your own toolchains
+- [Hosted apps](features/hosted-apps.md) map container ports to
+  public URLs for web dev previews
+
+### AI Agent Integration
+
+Harnesses like Pi and Claude Code can run inside workspace containers
+with full terminal access. The built-in chat agent ([MrBoops](features/chat.md)) can
+answer questions, run commands, and edit files, confined to the workspace.
+
+- Any OpenAI-compatible LLM provider (Ollama, cloud APIs, self-hosted)
+- Agent responses stream into chat alongside human conversation
+- [Pi extensions](features/ai-coding-harnesses.md) for browser
+  automation, MCP tools, and more
+
+### Multi-User Collaboration
+
+Share workspaces with teammates. Everyone gets their own home directory
+inside the container, and shared terminals let you pair-program in
+real time.
+
+- [Role-based access](features/authorization.md): owners, coders,
+  collaborators, spectators
+- [Shared terminals](features/terminal.md) with live input for
+  pair programming
+- [Chat](features/chat.md) with @mentions and message history
+- [File viewer](features/file-viewer.md) with drag-and-drop upload,
+  preview for code, markdown, images, PDFs, video, and spreadsheets
+
+### Terminal
+
+Terminals run inside [tmux](features/the-shell.md) for session
+persistence and window management. Access them from the web UI or
+connect from your local terminal with
+[`klangkc shell`](reference/cli.md).
+
+### Administration
+
+- [User and group management](features/admin-management.md)
+- [Per-resource ACLs](features/authorization.md)
+- [OIDC single sign-on](reference/oidc.md) (Google, GitHub, etc.)
+- [Email invitations](features/invitations.md)
+
+## Quick Start
+
+```bash
+git clone https://github.com/mcdonc/klangk.git
+cd klangk
+devenv up
+```
+
+Then open <http://localhost:8995> in your browser.
+
+Install the [CLI](reference/cli.md) (optional):
+
+```bash
+pip install klangkc
+```
 
 ## Architecture
 
 ![Architecture Overview](assets/architecture-overview.svg)
 
-## Key Technologies
-
-- **Pi Coding Agent**: Minimal terminal coding harness (pi.dev) running in interactive terminal mode with native session persistence and extension tools
-- **LLM Provider**: Any OpenAI-compatible LLM provider (Ollama Cloud, self-hosted Ollama, etc.), configurable via env vars (`KLANGK_LLM_BASE_URL`, `KLANGK_LLM_MODEL`, `KLANGK_LLM_API_KEY`). The model must support tool/function calling — Pi uses tools (bash, edit, write, read) to interact with the workspace.
-- **Pydantic Logfire**: AI observability — FastAPI auto-instrumentation via Logfire Python SDK (`LOGFIRE_TOKEN`). Pi agent tracing via [pi-otel-telemetry](https://github.com/mprokopov/pi-otel-telemetry) extension (OTLP export to Logfire) — requires `LOGFIRE_TOKEN` as a workspace env var and sourcing `. /opt/klangk/otel.sh` in the container shell (or `.bashrc`) to set the standard `OTEL_*` env vars.
-- **Podman**: Rootless container engine — each workspace runs in its own container with user namespace isolation, bind mounts, and named volumes. See [Podman](reference/podman.md) for details.
-- **devenv**: Nix-based development environment with auto-setup, conditional build tasks (`execIfModified`), auto-reload disabled
+Klangk is a FastAPI backend serving a Flutter Web frontend, with
+rootless Podman managing workspace containers. An nginx reverse proxy
+ties it together. See the [architecture docs](architecture/index.md)
+for details.

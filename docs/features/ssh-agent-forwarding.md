@@ -19,8 +19,7 @@ WebSocket tunnel:
 
 When something inside the container (e.g., `ssh` or `git`) connects
 to the agent socket, the request is relayed to your local SSH agent
-and the response is sent back — all over the existing WebSocket
-connection.
+and the response is sent back over the existing WebSocket connection.
 
 ## Usage Inside the Klangk Container
 
@@ -69,6 +68,7 @@ push`, `ssh` commands) but may not work correctly with parallel
   SSH operations like `git clone --recurse-submodules -j4`.
 - **Web frontend**: Agent forwarding is only available via `klangkc
 shell`, not from the browser-based terminal.
+
 ## Session persistence
 
 The agent socket path is set when the terminal starts. If you
