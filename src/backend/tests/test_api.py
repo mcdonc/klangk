@@ -2734,6 +2734,23 @@ class TestFileRoutes:
         assert "b.txt" in names
         assert zf.read("a.txt") == b"aaa"
 
+    async def test_download_directory_zip_error_cleans_up(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+
+        await client.post(
+            f"/workspaces/{ws_id}/files/upload?path=mydir/a.txt",
+            headers=headers,
+            files={"file": ("a.txt", b"aaa", "text/plain")},
+        )
+        with patch("klangk_backend.api.zipfile.ZipFile") as mock_zf:
+            mock_zf.side_effect = OSError("disk full")
+            with pytest.raises(OSError, match="disk full"):
+                await client.get(
+                    f"/workspaces/{ws_id}/files/download?path=mydir",
+                    headers=headers,
+                )
+
     async def test_download_nonexistent(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)

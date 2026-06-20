@@ -1,7 +1,6 @@
 """API route handlers for Klangk backend."""
 
 import asyncio
-import io
 import json
 import logging
 import os
@@ -18,6 +17,7 @@ import zipfile
 import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from starlette.background import BackgroundTask
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -1900,19 +1900,23 @@ async def download_file(
         raise HTTPException(status_code=404, detail="Path not found")
     if resolved.is_file():
         return FileResponse(resolved, filename=resolved.name)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_path in resolved.rglob("*"):
-            if file_path.is_file():
-                zf.write(file_path, file_path.relative_to(resolved))
-    buf.seek(0)
-    return StreamingResponse(
-        buf,
-        media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{resolved.name}.zip"'
-        },
-    )
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file_path in resolved.rglob("*"):
+                if file_path.is_file():
+                    zf.write(file_path, file_path.relative_to(resolved))
+        tmp.close()
+        return FileResponse(
+            tmp.name,
+            media_type="application/zip",
+            filename=f"{resolved.name}.zip",
+            background=BackgroundTask(os.unlink, tmp.name),
+        )
+    except BaseException:
+        tmp.close()
+        os.unlink(tmp.name)
+        raise
 
 
 @router.post("/workspaces/{workspace_id}/files/upload")
