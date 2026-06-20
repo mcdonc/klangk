@@ -23,9 +23,12 @@ from .model import AGENT_USER_ID
 from .util import resolve_env_secret
 from .wshandler import handle_websocket
 
+_LIGHT_BLUE = "\033[94m"
+_RESET = "\033[0m"
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+    format=f"{_LIGHT_BLUE}%(asctime)s %(levelname)s:%(name)s:%(message)s{_RESET}",
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
