@@ -145,6 +145,11 @@ if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
             container.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
         return {"idle_timeout_seconds": seconds}
 
+    @router.get("/api/test/workspace-token/{workspace_id}")
+    async def get_workspace_token(workspace_id: str):
+        """Return a workspace JWT for testing (test only)."""
+        return {"token": auth.create_workspace_token(workspace_id)}
+
     @router.get("/api/test/browsers/{workspace_id}")
     async def get_browsers(workspace_id: str):
         """Return all active browser registrations for a workspace (test only)."""
@@ -1919,6 +1924,24 @@ async def upload_file(
 # --- Browser bridge endpoint ---
 
 
+async def _require_workspace_token(request: Request) -> str:
+    """FastAPI dependency: validate workspace JWT from Authorization header.
+
+    Returns the workspace_id. Raises 401 if missing, expired, or invalid.
+    This duplicates the nginx auth_request check as defense-in-depth.
+    """
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing workspace token")
+    token = authorization[7:]
+    result = auth.decode_workspace_token(token)
+    if result is auth.WORKSPACE_TOKEN_EXPIRED:
+        raise HTTPException(status_code=401, detail="Workspace token expired")
+    if result is None:
+        raise HTTPException(status_code=401, detail="Invalid workspace token")
+    return result
+
+
 class BrowserDelegateRequest(BaseModel):
     model_config = {"extra": "allow"}
     action: str
@@ -1952,7 +1975,10 @@ def _resolve_bridge_target(body: BrowserDelegateRequest):
 
 
 @router.post("/api/browser-delegate")
-async def browser_delegate(body: BrowserDelegateRequest):
+async def browser_delegate(
+    body: BrowserDelegateRequest,
+    workspace_id: str = Depends(_require_workspace_token),
+):
     """Bridge endpoint for container processes to delegate actions to the browser.
 
     The container reads the current browser ID via ``klangk-browser-id``
@@ -1978,7 +2004,10 @@ async def browser_delegate(body: BrowserDelegateRequest):
 
 
 @router.post("/api/browser-delegate/stream")
-async def browser_delegate_stream(body: BrowserDelegateRequest):
+async def browser_delegate_stream(
+    body: BrowserDelegateRequest,
+    workspace_id: str = Depends(_require_workspace_token),
+):
     """Streaming bridge: relay browser output chunks back as NDJSON.
 
     For long-running actions (RAG + LLM), the browser pushes incremental
@@ -2003,20 +2032,15 @@ class WorkspaceChatRequest(BaseModel):
 
 
 @router.post("/api/workspace/post-chat-message")
-async def workspace_chat(body: WorkspaceChatRequest, request: Request):
+async def workspace_chat(
+    body: WorkspaceChatRequest,
+    workspace_id: str = Depends(_require_workspace_token),
+):
     """Post a chat message from a container using a workspace JWT.
 
     The message is stored as MSG_AGENT and broadcast to all connected
     WebSocket subscribers in the workspace.
     """
-    authorization = request.headers.get("authorization", "")
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    token = authorization[7:]
-    workspace_id = auth.decode_workspace_token(token)
-    if workspace_id is None:
-        raise HTTPException(status_code=401, detail="Invalid workspace token")
-
     workspace = await model.get_workspace_by_id(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")

@@ -2021,13 +2021,39 @@ class TestUserSearch:
 
 
 class TestBrowserBridge:
-    async def test_unknown_browser_id_returns_403(self, client, user):
+    def _ws_token_headers(self, workspace_id="ws-test"):
+        token = auth.create_workspace_token(workspace_id)
+        return {"Authorization": f"Bearer {token}"}
+
+    async def test_missing_token_returns_401(self, client, user):
         resp = await client.post(
             "/api/browser-delegate",
             json={"action": "fetch", "browser_id": "bad-id"},
         )
+        assert resp.status_code == 401
+
+    async def test_unknown_browser_id_returns_403(self, client, user):
+        resp = await client.post(
+            "/api/browser-delegate",
+            json={"action": "fetch", "browser_id": "bad-id"},
+            headers=self._ws_token_headers(),
+        )
         assert resp.status_code == 403
         assert "Unknown browser ID" in resp.json()["detail"]
+
+    async def test_expired_token_returns_401(self, client, user):
+        with patch.object(
+            auth,
+            "decode_workspace_token",
+            return_value=auth.WORKSPACE_TOKEN_EXPIRED,
+        ):
+            resp = await client.post(
+                "/api/browser-delegate",
+                json={"action": "fetch", "browser_id": "x"},
+                headers={"Authorization": "Bearer some-expired-token"},
+            )
+        assert resp.status_code == 401
+        assert "expired" in resp.json()["detail"].lower()
 
     async def test_browser_id_routes_to_correct_tab(self, client, user):
         """Browser ID routes to the specific browser tab."""
@@ -2047,6 +2073,7 @@ class TestBrowserBridge:
                 resp = await client.post(
                     "/api/browser-delegate",
                     json={"action": "fetch", "browser_id": "bid-conn"},
+                    headers=self._ws_token_headers("ws-conn"),
                 )
             assert resp.status_code == 200
             assert resp.json()["body"] == "targeted"
@@ -2071,6 +2098,7 @@ class TestBrowserBridge:
                 resp = await client.post(
                     "/api/browser-delegate",
                     json={"action": "fetch", "browser_id": "bid-nosub"},
+                    headers=self._ws_token_headers("ws-nosub"),
                 )
             assert resp.status_code == 502
             assert "Browser connection not available" in resp.json()["detail"]
@@ -2086,6 +2114,7 @@ class TestBrowserBridge:
             resp = await client.post(
                 "/api/browser-delegate",
                 json={"action": "fetch", "browser_id": "bid-nosess"},
+                headers=self._ws_token_headers("ws-nosess"),
             )
             assert resp.status_code == 502
             assert "No browser client" in resp.json()["detail"]
@@ -2109,6 +2138,7 @@ class TestBrowserBridge:
                 resp = await client.post(
                     "/api/browser-delegate",
                     json={"action": "fetch", "browser_id": "bid-err"},
+                    headers=self._ws_token_headers("ws-err"),
                 )
             assert resp.status_code == 502
             assert "timeout" in resp.json()["detail"].lower()
@@ -2143,6 +2173,7 @@ class TestBrowserBridge:
                         "action": "soliplex_query",
                         "browser_id": "bid-stream",
                     },
+                    headers=self._ws_token_headers("ws-stream"),
                 )
             assert resp.status_code == 200
             assert '"chunk"' in resp.text
