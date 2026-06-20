@@ -1,9 +1,15 @@
 # Terminal
 
-Every workspace terminal runs inside [tmux](https://github.com/tmux/tmux),
-a terminal multiplexer. You never interact with tmux directly — Klangk's
-web UI and CLI manage everything for you — but understanding the basics
-helps explain how terminal features work.
+Klangk terminals give you shell access to a Linux container. Each
+workspace runs its own isolated Linux environment — when you open a
+terminal, you get a bash shell running on Linux regardless of
+whether your local machine is Linux, macOS, or Windows.
+
+Under the hood, every terminal runs inside
+[tmux](https://github.com/tmux/tmux), a terminal multiplexer. You
+never interact with tmux directly — Klangk's web UI and CLI manage
+everything for you — but understanding the basics helps explain how
+terminal features work.
 
 ## Why tmux?
 
