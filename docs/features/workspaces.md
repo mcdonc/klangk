@@ -15,7 +15,10 @@ optionally configure:
   `klangk-workspace`)
 - **Default command** — a command to run when you open the terminal
   (e.g., `pi` to start the AI agent automatically)
-- **Bind mounts** — mount host directories into the container
+- **Bind mounts** — mount host directories into the container.
+  If `KLANGK_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
+  paths), only directories under those roots can be bind-mounted.
+  Protected paths like the Docker/Podman socket are always blocked.
 - **Environment variables** — set custom env vars for the container
 
 You can change all of these later from the workspace Settings tab.
