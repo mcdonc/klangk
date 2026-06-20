@@ -34,6 +34,7 @@ nav = [
     { "Debug Panel" = "features/debug-panel.md" },
   ]},
   { "Deployment" = [
+    { "Running with Docker" = "deployment/docker.md" },
     { "Host Container" = "deployment/index.md" },
     { "Hosting & Nginx" = "deployment/hosting.md" },
     { "Customizing" = "deployment/customizing.md" },
