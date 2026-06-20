@@ -2540,12 +2540,11 @@ async def refresh_user_handle(user_id: str, new_handle: str) -> None:
         if session:
             presence = await _get_presence_list(ws_id)
             session.broadcast({"type": "presence_list", "users": presence})
-            old_display = old_handle or user_email
             sys_msg = await model.add_chat_message(
                 ws_id,
                 user_id,
                 user_email,
-                f"{old_display} is now known as {new_handle}",
+                f"{old_handle} is now known as {new_handle}",
                 message_type=model.MSG_SYSTEM,
             )
             session.broadcast({"type": "chat_message", **sys_msg})
