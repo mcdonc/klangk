@@ -75,7 +75,7 @@ connect from your local terminal with
 ```bash
 git clone https://github.com/mcdonc/klangk.git
 cd klangk
-devenv up
+devenv processes up --no-tui
 ```
 
 Then open <http://localhost:8995> in your browser.
