@@ -50,10 +50,15 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
 
 void _playBoingSound({required double panX, bool isFloor = true}) {
   final freq = isFloor ? 120.0 : 180.0;
+  // Reuse a single AudioContext to avoid exhausting browser resources.
   final code =
       '''
     (function() {
-      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!window._boingCtx) {
+        window._boingCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      var ctx = window._boingCtx;
+      if (ctx.state === 'suspended') ctx.resume();
       var osc = ctx.createOscillator();
       var gain = ctx.createGain();
       osc.type = 'sine';
