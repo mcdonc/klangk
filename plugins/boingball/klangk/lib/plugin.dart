@@ -48,66 +48,41 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
 
 // ---------- Sound ----------
 
-/// Synthesize a metallic boing via Web Audio API eval (same pattern as beep plugin).
 void _playBoingSound({required double panX, bool isFloor = true}) {
   final pan = (panX * 2 - 1).clamp(-1.0, 1.0);
-  final vol = isFloor ? 0.7 : 0.4;
-  // Boomy metal impact: low fundamental + resonant harmonics + noise burst
+  final vol = isFloor ? 0.6 : 0.35;
+  final baseF = isFloor ? 80 : 120;
+  final endF = isFloor ? 35 : 50;
   final code =
       '''
     (function() {
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
-      if (ctx.state === 'suspended') ctx.resume();
       var now = ctx.currentTime;
+      var dest = ctx.destination;
       var pan = ctx.createStereoPanner();
       pan.pan.value = $pan;
-      pan.connect(ctx.destination);
-      var master = ctx.createGain();
-      master.gain.setValueAtTime($vol, now);
-      master.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-      master.connect(pan);
-
-      // Low boom fundamental (descending pitch)
-      var boom = ctx.createOscillator();
-      boom.type = 'sine';
-      boom.frequency.setValueAtTime(${isFloor ? 80 : 120}, now);
-      boom.frequency.exponentialRampToValueAtTime(${isFloor ? 35 : 50}, now + 0.3);
-      var boomG = ctx.createGain();
-      boomG.gain.setValueAtTime(0.6, now);
-      boomG.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-      boom.connect(boomG);
-      boomG.connect(master);
-      boom.start(now);
-      boom.stop(now + 0.4);
-
-      // Metallic resonance (detuned harmonics)
-      [${isFloor ? 150 : 200}, ${isFloor ? 290 : 380}, ${isFloor ? 520 : 680}].forEach(function(f) {
-        var osc = ctx.createOscillator();
-        osc.type = 'triangle';
-        var g = ctx.createGain();
-        osc.frequency.setValueAtTime(f, now);
-        osc.frequency.exponentialRampToValueAtTime(f * 0.5, now + 0.2);
-        g.gain.setValueAtTime(0.15, now);
-        g.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-        osc.connect(g);
-        g.connect(master);
-        osc.start(now);
-        osc.stop(now + 0.3);
-      });
-
-      // Impact noise burst (short white noise for transient attack)
-      var bufSize = ctx.sampleRate * 0.03;
-      var noiseBuf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
-      var data = noiseBuf.getChannelData(0);
-      for (var i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
-      var noise = ctx.createBufferSource();
-      noise.buffer = noiseBuf;
-      var noiseG = ctx.createGain();
-      noiseG.gain.setValueAtTime(0.3, now);
-      noiseG.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
-      noise.connect(noiseG);
-      noiseG.connect(master);
-      noise.start(now);
+      pan.connect(dest);
+      var g = ctx.createGain();
+      g.gain.setValueAtTime($vol, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      g.connect(pan);
+      var o = ctx.createOscillator();
+      o.frequency.setValueAtTime($baseF, now);
+      o.frequency.exponentialRampToValueAtTime($endF, now + 0.25);
+      o.connect(g);
+      o.start(now);
+      o.stop(now + 0.4);
+      var o2 = ctx.createOscillator();
+      o2.type = 'triangle';
+      o2.frequency.setValueAtTime(${baseF * 3}, now);
+      o2.frequency.exponentialRampToValueAtTime(${endF * 2}, now + 0.15);
+      var g2 = ctx.createGain();
+      g2.gain.setValueAtTime(0.15, now);
+      g2.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      o2.connect(g2);
+      g2.connect(g);
+      o2.start(now);
+      o2.stop(now + 0.25);
     })()
   ''';
   _eval(code.toJS);
@@ -134,14 +109,14 @@ class _BoingOverlayState extends State<_BoingOverlay>
   double _vy = 0.0;
   double _phase = 0;
   int _spinDir = 1;
-  double _aspectRatio = 1.5; // updated each build
-  int _lastBounceFrame = -100; // throttle bounce sound
+  double _aspectRatio = 1.5;
+  int _lastBounceFrame = -100;
   static const double _gravity = 0.00015;
   static const double _damping = 0.92;
-  static const double _maxVy = 0.012; // cap vertical velocity
+  static const double _maxVy = 0.012;
   static const double _ballFrac = 0.33;
-  static const int _minBounceInterval = 8; // min frames between sounds
-  static const _durationSec = 20;
+  static const int _minBounceInterval = 8;
+  static const _durationSec = 24;
   int _frame = 0;
 
   @override
@@ -176,7 +151,7 @@ class _BoingOverlayState extends State<_BoingOverlay>
   void _startAnimation() {
     setState(() => _visible = true);
     _x = 0.15;
-    _y = _ballFrac + 0.02; // start near top
+    _y = _ballFrac + 0.02;
     _vx = 0.004 * widget.plugin._speed;
     _vy = 0.0;
     _phase = 0;
@@ -210,16 +185,12 @@ class _BoingOverlayState extends State<_BoingOverlay>
     _frame++;
     setState(() {
       _vy += _gravity * speed;
-      // Cap vertical velocity to prevent frantic bouncing
       _vy = _vy.clamp(-_maxVy, _maxVy);
       _x += _vx * speed;
       _y += _vy * speed;
 
-      // Ball bounces at scene edges (ball edge touches wall/floor).
-      // Y: bottom of scene minus ball radius, top plus ball radius.
       const yMin = _ballFrac;
       const yMax = 1.0 - _ballFrac;
-      // X: use actual aspect ratio to compute ball width in normalised X
       final xPad = _ballFrac / _aspectRatio;
       final xMin = xPad;
       final xMax = 1.0 - xPad;
@@ -258,8 +229,8 @@ class _BoingOverlayState extends State<_BoingOverlay>
       }
 
       _phase += 0.09 * _spinDir * speed;
-      if (_phase < 0) _phase += 16;
-      if (_phase >= 16) _phase -= 16;
+      if (_phase < 0) _phase += 14;
+      if (_phase >= 14) _phase -= 14;
     });
   }
 
@@ -281,8 +252,8 @@ class _BoingOverlayState extends State<_BoingOverlay>
             Positioned(
               left: insetX,
               top: insetY,
-              width: size.width - insetX * 2,
-              height: size.height - insetY * 2,
+              width: overlayW,
+              height: overlayH,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: CustomPaint(
@@ -326,7 +297,6 @@ class _BoingScenePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
-    // Use height so the ball is always proportional to the scene
     final radius = h * ballFrac;
 
     canvas.drawRect(Offset.zero & size, Paint()..color = _bgColor);
@@ -391,9 +361,12 @@ class _BoingScenePainter extends CustomPainter {
   }
 
   void _drawBall(Canvas canvas, double cx, double cy, double radius) {
-    // Draw checker sphere using longitude strips as curved paths.
-    // 7 red + 7 white vertical stripes with half-stripe offset every
-    // other latitude row — matches the original Boing Ball pattern.
+    // Boing Ball: 7 red vertical stripes on a white sphere.
+    // Each stripe is a continuous curved band from pole to pole.
+    // The rotation shifts the stripes around the Y axis.
+    // The diagonal appearance comes from the stripes curving
+    // around the sphere — no latitude row offset needed.
+
     canvas.save();
     canvas.clipPath(
       Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: radius)),
@@ -402,52 +375,51 @@ class _BoingScenePainter extends CustomPainter {
     // White base
     canvas.drawCircle(Offset(cx, cy), radius, Paint()..color = _ballWhite);
 
-    // Red stripes as curved vertical bands
-    const nStripes = 14; // 7 red + 7 white
-    const nLatRows = 9; // latitude divisions
+    // Draw 7 red stripes as continuous curved bands
+    const nStripes = 14; // total stripe slots (7 red + 7 white)
+    const nSegments = 24; // vertical subdivisions for smooth curves
     final rotAngle = phase / nStripes * 2 * pi;
     final redPaint = Paint()..color = _ballRed;
 
-    for (int row = 0; row < nLatRows; row++) {
-      final theta0 = pi * row / nLatRows;
-      final theta1 = pi * (row + 1) / nLatRows;
-      final y0 = cy - cos(theta0) * radius;
-      final y1 = cy - cos(theta1) * radius;
-      final rSlice0 = sin(theta0) * radius;
-      final rSlice1 = sin(theta1) * radius;
-      // Half-stripe offset on odd rows creates the diagonal pattern
-      final offset = (row % 2 == 0) ? 0.0 : 0.5;
+    for (int s = 0; s < nStripes; s += 2) {
+      // Only draw even-numbered stripes (red)
+      final phi0base = 2 * pi * s / nStripes + rotAngle;
+      final phi1base = 2 * pi * (s + 1) / nStripes + rotAngle;
 
-      for (int s = 0; s < nStripes; s += 2) {
-        // Only draw even-numbered stripes (red)
-        final phi0 = 2 * pi * (s + offset) / nStripes + rotAngle;
-        final phi1 = 2 * pi * (s + 1 + offset) / nStripes + rotAngle;
-        final midPhi = (phi0 + phi1) / 2;
+      // Check if this stripe faces us at all
+      final midPhi = (phi0base + phi1base) / 2;
+      if (cos(midPhi) < -0.3) continue;
 
-        // Skip back-facing stripes
-        if (cos(midPhi) < -0.15) continue;
+      // Build path: left edge top-to-bottom, right edge bottom-to-top
+      final path = Path();
+      bool started = false;
+      final rightEdge = <Offset>[];
 
-        // Build a curved path with subdivisions for smooth edges
-        const sub = 8;
-        final path = Path();
-        // Top edge
-        for (int i = 0; i <= sub; i++) {
-          final phi = phi0 + (phi1 - phi0) * i / sub;
-          final x = cx + sin(phi) * rSlice0;
-          if (i == 0) {
-            path.moveTo(x, y0);
-          } else {
-            path.lineTo(x, y0);
-          }
+      for (int seg = 0; seg <= nSegments; seg++) {
+        final theta = pi * seg / nSegments;
+        final sinTheta = sin(theta);
+        final cosTheta = cos(theta);
+        final r = sinTheta * radius; // radius of latitude circle
+
+        final x0 = cx + sin(phi0base) * r;
+        final x1 = cx + sin(phi1base) * r;
+        final y = cy - cosTheta * radius;
+
+        if (!started) {
+          path.moveTo(x0, y);
+          started = true;
+        } else {
+          path.lineTo(x0, y);
         }
-        // Bottom edge (reverse)
-        for (int i = sub; i >= 0; i--) {
-          final phi = phi0 + (phi1 - phi0) * i / sub;
-          path.lineTo(cx + sin(phi) * rSlice1, y1);
-        }
-        path.close();
-        canvas.drawPath(path, redPaint);
+        rightEdge.add(Offset(x1, y));
       }
+
+      // Right edge in reverse
+      for (int i = rightEdge.length - 1; i >= 0; i--) {
+        path.lineTo(rightEdge[i].dx, rightEdge[i].dy);
+      }
+      path.close();
+      canvas.drawPath(path, redPaint);
     }
 
     canvas.restore();
