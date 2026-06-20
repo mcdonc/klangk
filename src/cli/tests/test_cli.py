@@ -1492,3 +1492,153 @@ class TestExportImportClient:
         # Verify no name param was sent
         call_kwargs = mock_post.call_args
         assert call_kwargs.kwargs.get("params") == {}
+
+
+class TestHTTPMethodWrappers:
+    """Test the get/post/put/patch/delete method wrappers on KlangkClient."""
+
+    def _make_client(self):
+        cfg = CLIConfig()
+        cfg.server.url = "http://test:8995"
+        cfg.auth.token = "tok"
+        return KlangkClient(cfg)
+
+    def test_get_calls_request_with_retry(self):
+        client = self._make_client()
+        mock_resp = MagicMock()
+        with patch(
+            "klangkc.client._request_with_retry", return_value=mock_resp
+        ) as mock_req:
+            result = client.get("/foo")
+        assert result is mock_resp
+        mock_req.assert_called_once_with(
+            "GET",
+            "http://test:8995/foo",
+            headers={"Authorization": "Bearer tok"},
+        )
+
+    def test_post_calls_request_with_retry(self):
+        client = self._make_client()
+        mock_resp = MagicMock()
+        with patch(
+            "klangkc.client._request_with_retry", return_value=mock_resp
+        ) as mock_req:
+            result = client.post("/bar", json={"a": 1})
+        assert result is mock_resp
+        mock_req.assert_called_once_with(
+            "POST",
+            "http://test:8995/bar",
+            headers={"Authorization": "Bearer tok"},
+            json={"a": 1},
+        )
+
+    def test_put_calls_request_with_retry(self):
+        client = self._make_client()
+        mock_resp = MagicMock()
+        with patch(
+            "klangkc.client._request_with_retry", return_value=mock_resp
+        ) as mock_req:
+            result = client.put("/baz")
+        assert result is mock_resp
+        mock_req.assert_called_once_with(
+            "PUT",
+            "http://test:8995/baz",
+            headers={"Authorization": "Bearer tok"},
+        )
+
+    def test_patch_calls_request_with_retry(self):
+        client = self._make_client()
+        mock_resp = MagicMock()
+        with patch(
+            "klangkc.client._request_with_retry", return_value=mock_resp
+        ) as mock_req:
+            result = client.patch("/qux", json={"b": 2})
+        assert result is mock_resp
+        mock_req.assert_called_once_with(
+            "PATCH",
+            "http://test:8995/qux",
+            headers={"Authorization": "Bearer tok"},
+            json={"b": 2},
+        )
+
+    def test_delete_calls_request_with_retry(self):
+        client = self._make_client()
+        mock_resp = MagicMock()
+        with patch(
+            "klangkc.client._request_with_retry", return_value=mock_resp
+        ) as mock_req:
+            result = client.delete("/del")
+        assert result is mock_resp
+        mock_req.assert_called_once_with(
+            "DELETE",
+            "http://test:8995/del",
+            headers={"Authorization": "Bearer tok"},
+        )
+
+
+class TestCreateWorkspaceClient:
+    def test_create_workspace_with_all_options(self):
+        cfg = CLIConfig()
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "ws-new",
+            "name": "my-ws",
+            "created_at": "2025-01-01",
+        }
+        with patch.object(client, "post", return_value=mock_resp) as mock_post:
+            ws = client.create_workspace(
+                "my-ws",
+                image="ubuntu:latest",
+                mounts=["/data:/data"],
+                env={"FOO": "bar"},
+            )
+        assert ws.name == "my-ws"
+        call_kwargs = mock_post.call_args
+        body = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert body["image"] == "ubuntu:latest"
+        assert body["mounts"] == ["/data:/data"]
+        assert body["env"] == {"FOO": "bar"}
+
+
+class TestListImagesClient:
+    def test_list_images(self):
+        cfg = CLIConfig()
+        cfg.auth.token = "token"
+        client = KlangkClient(cfg)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"images": ["ubuntu", "alpine"]}
+        with patch.object(client, "get", return_value=mock_resp):
+            result = client.list_images()
+        assert result == {"images": ["ubuntu", "alpine"]}
+
+
+class TestSendIgnoreClosed:
+    async def test_sends_message(self):
+        from klangkc.client import _send_ignore_closed
+
+        ws = AsyncMock()
+        await _send_ignore_closed(ws, "hello")
+        ws.send.assert_awaited_once_with("hello")
+
+    async def test_ignores_connection_closed(self):
+        import websockets
+        from klangkc.client import _send_ignore_closed
+
+        ws = AsyncMock()
+        ws.send = AsyncMock(
+            side_effect=websockets.ConnectionClosed(None, None)
+        )
+        # Should not raise
+        await _send_ignore_closed(ws, "hello")
+
+    async def test_ignores_oserror(self):
+        from klangkc.client import _send_ignore_closed
+
+        ws = AsyncMock()
+        ws.send = AsyncMock(side_effect=OSError("broken"))
+        # Should not raise
+        await _send_ignore_closed(ws, "hello")

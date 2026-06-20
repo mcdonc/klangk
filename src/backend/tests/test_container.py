@@ -1823,3 +1823,30 @@ class TestBrowserRegistry:
         container.registry.register_browser("bid-2", "ws-1", sock2)
         assert container.registry.resolve_browser("bid-1") == ("ws-1", sock1)
         assert container.registry.resolve_browser("bid-2") == ("ws-1", sock2)
+
+
+class TestWorkspaceIdFor:
+    def test_returns_workspace_id(self):
+        container.registry.track_activity("cid-lookup", "ws-lookup")
+        try:
+            assert (
+                container.registry.workspace_id_for("cid-lookup")
+                == "ws-lookup"
+            )
+        finally:
+            container.registry.states.pop("ws-lookup", None)
+            container.registry._cid_to_wsid.pop("cid-lookup", None)
+
+    def test_returns_none_for_unknown(self):
+        assert container.registry.workspace_id_for("nonexistent") is None
+
+
+class TestTrackActivityContainerChanged:
+    def test_updates_reverse_mapping_on_container_change(self):
+        container.registry.track_activity("old-cid", "ws-chg")
+        assert container.registry._cid_to_wsid.get("old-cid") == "ws-chg"
+        container.registry.track_activity("new-cid", "ws-chg")
+        assert container.registry._cid_to_wsid.get("new-cid") == "ws-chg"
+        assert "old-cid" not in container.registry._cid_to_wsid
+        container.registry.states.pop("ws-chg", None)
+        container.registry._cid_to_wsid.pop("new-cid", None)

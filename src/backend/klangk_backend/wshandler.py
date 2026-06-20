@@ -251,7 +251,7 @@ class WorkspaceSession:
                     message_type=model.MSG_SYSTEM,
                 )
                 self.broadcast({"type": "chat_message", **sys_msg})
-            except Exception:  # pragma: no cover
+            except Exception:
                 logger.warning(
                     "Failed to broadcast token expiry warning",
                     exc_info=True,
@@ -669,7 +669,7 @@ async def _get_presence_list(workspace_id: str) -> list[dict]:
             )
     # Include agent only if its RPC process is alive.
 
-    if agent.any_running():  # pragma: no cover
+    if agent.any_running():
         agent_user = await model.get_agent_user()
         users.append(
             {
@@ -2067,9 +2067,7 @@ class Connection:
             }
         )
 
-    async def _start_agent_if_needed(  # pragma: no cover
-        self, container_id: str
-    ) -> None:
+    async def _start_agent_if_needed(self, container_id: str) -> None:
         """Start the Pi RPC agent so it shows in presence."""
         try:
             session = await agent.get_session(self.workspace_id, container_id)
@@ -2085,7 +2083,7 @@ class Connection:
         except Exception:
             logger.debug("Failed to start agent eagerly", exc_info=True)
 
-    async def handle_chat_agent_abort(self) -> None:  # pragma: no cover
+    async def handle_chat_agent_abort(self) -> None:
         workspace_id = self.workspace_id
         if not workspace_id:
             return
@@ -2376,7 +2374,7 @@ async def _handle_agent_mention(
     # Pi hasn't seen (since Pi's multi-turn history only has the
     # conversation between the mentioning user and itself).
     recent = await model.get_chat_messages(workspace_id, limit=50)
-    chronological = list(reversed(recent))
+    chronological = recent
     last_agent_idx = -1
     for i, m in enumerate(chronological):
         if m.get("message_type", 0) == model.MSG_AGENT:
@@ -2388,7 +2386,7 @@ async def _handle_agent_mention(
         if m.get("message_type", 0) == model.MSG_USER
         and m.get("message", "").strip() != user_text.strip()
     ]
-    if other_msgs:  # pragma: no cover
+    if other_msgs:
         context_lines = [
             f"{m.get('user_email', 'unknown')}: {m.get('message', '')}"
             for m in other_msgs
@@ -2513,17 +2511,17 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_terminal_rename_window(msg)
             elif cmd == "terminal_list_windows":
                 await conn.handle_terminal_list_windows()
-            elif cmd == "share_window":  # pragma: no cover
+            elif cmd == "share_window":
                 await conn.handle_share_window(msg)
-            elif cmd == "unshare_window":  # pragma: no cover
+            elif cmd == "unshare_window":
                 await conn.handle_unshare_window(msg)
-            elif cmd == "create_shared_terminal":  # pragma: no cover
+            elif cmd == "create_shared_terminal":
                 await conn.handle_create_shared_terminal(msg)
-            elif cmd == "join_shared_terminal":  # pragma: no cover
+            elif cmd == "join_shared_terminal":
                 await conn.handle_join_shared_terminal(msg)
-            elif cmd == "delete_shared_terminal":  # pragma: no cover
+            elif cmd == "delete_shared_terminal":
                 await conn.handle_delete_shared_terminal(msg)
-            elif cmd == "list_shared_terminals":  # pragma: no cover
+            elif cmd == "list_shared_terminals":
                 await conn.handle_list_shared_terminals()
             elif cmd == "restart_container":
                 await conn.handle_restart_container()
@@ -2551,7 +2549,7 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 await conn.handle_chat_delete(msg)
             elif cmd == "chat_load_more":
                 await conn.handle_chat_load_more(msg)
-            elif cmd == "chat_agent_abort":  # pragma: no cover
+            elif cmd == "chat_agent_abort":
                 await conn.handle_chat_agent_abort()
             elif cmd == "browser_response":
                 state.handle_browser_response(msg, safe_ws)
