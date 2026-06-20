@@ -1,16 +1,48 @@
 # Getting Started
 
-This guide covers setting up Klangk for local, single-user development
-on your own machine. For multi-user or team deployments, see
-[Deployment](deployment/index.md).
+## Run Using Docker
 
-## Prerequisites
+The fastest way to evaluate or deploy Klangk. No build tools needed.
+The published image may lag behind the latest development on main —
+use devenv if you want the most up-to-date version.
 
-- Linux or macOS
-- [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/) installed (run `./bootstrap` to install both)
-- An OpenAI-compatible LLM provider (e.g., [Ollama Cloud](https://ollama.com) or self-hosted Ollama or LiteLLM instance)
+You need Docker (or Podman) and an OpenAI-compatible LLM API key.
 
-## Setup
+```bash
+docker run -d \
+  --name klangk \
+  -p 8995:8995 \
+  -v klangk-data:/home/klangk/data \
+  --cap-add SYS_ADMIN \
+  --device /dev/fuse \
+  --device /dev/net/tun \
+  --security-opt seccomp=unconfined \
+  --security-opt systempaths=unconfined \
+  -e KLANGK_DEFAULT_USER=you@example.com \
+  -e KLANGK_DEFAULT_PASSWORD=changeme \
+  -e KLANGK_JWT_SECRET=$(openssl rand -hex 32) \
+  -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
+  -e KLANGK_LLM_API_KEY=your-api-key \
+  -e KLANGK_LLM_MODEL=gemma4:31b \
+  ghcr.io/mcdonc/klangk/klangk-host:v2026.06.10
+```
+
+Open <http://localhost:8995> and log in with the email and password
+you set above.
+
+See [Running with Docker](deployment/docker.md) for details on the
+Docker flags, docker-compose, persistence, and updating.
+
+## Run Using devenv
+
+For developing or modifying Klangk itself.
+
+You need Linux or macOS,
+[Nix](https://nixos.org/download/) with
+[devenv](https://devenv.sh/) (run `./bootstrap` to install both),
+and an OpenAI-compatible LLM API key.
+
+### Setup
 
 ```bash
 git clone git@github.com:mcdonc/klangk.git
@@ -22,9 +54,7 @@ cp -n .env.example .env
 # Edit .env with your credentials
 cat > .env << 'EOF'
 KLANGK_LLM_API_KEY=your-api-key-here
-# Any OpenAI-compatible provider (or http://localhost:11434/v1 for self-hosted)
 KLANGK_LLM_BASE_URL=https://ollama.com/v1
-# Any model available on your provider
 KLANGK_LLM_MODEL=gemma4:31b
 KLANGK_JWT_SECRET=change-this-to-a-random-secret
 KLANGK_DEFAULT_USER=admin@example.com
@@ -36,20 +66,20 @@ EOF
 ./bootstrap
 ```
 
-## Starting the Dev Environment
+### Starting the Dev Environment
 
 ```bash
 devenv processes up --no-tui
 ```
 
-This sets up the dev shell (Python, Flutter, Dart, Node, podman, etc.),
-builds the workspace image and Flutter web app on first run, starts
-nginx and the FastAPI backend, and watches for file changes. Open
-[http://localhost:8995](http://localhost:8995).
+This sets up the dev shell (Python, Flutter, Dart, Node, podman,
+etc.), builds the workspace image and Flutter web app on first run,
+starts nginx and the FastAPI backend, and watches for file changes.
+Open <http://localhost:8995>.
 
-To run project commands like `test-backend` or `build-workspace-image`
-in a separate terminal, use `devenv shell` to enter the same
-environment.
+To run project commands like `test-backend` or
+`build-workspace-image` in a separate terminal, use `devenv shell`
+to enter the same environment.
 
 !!! note "Podman policy errors"
 If you see errors about missing container signatures or policies,
@@ -59,10 +89,9 @@ instructions.
 
 ## Logging In
 
-Log in with `admin@example.com` (or whatever you set
-`KLANGK_DEFAULT_USER` to). If you set `KLANGK_DEFAULT_PASSWORD` in
-`.env`, use that password. Otherwise, check the server log output for
-the generated password.
+Log in with the email you configured (`KLANGK_DEFAULT_USER`). If you
+set `KLANGK_DEFAULT_PASSWORD`, use that password. Otherwise, check
+the server log output for the generated password.
 
 The default user is in the `admin` group and can manage other users
 and groups via the Admin page.

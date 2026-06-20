@@ -34,7 +34,7 @@ nav = [
     { "Debug Panel" = "features/debug-panel.md" },
   ]},
   { "Deployment" = [
-    { "Host Container" = "deployment/index.md" },
+    { "Running with Docker" = "deployment/docker.md" },
     { "Hosting & Nginx" = "deployment/hosting.md" },
     { "Customizing" = "deployment/customizing.md" },
     { "Podman" = "reference/podman.md" },
@@ -49,6 +49,7 @@ nav = [
     { "CI" = "development/ci.md" },
     { "Pre-commit Hooks" = "development/pre-commit.md" },
     { "Releasing" = "development/releasing.md" },
+    { "Building Images" = "development/building-images.md" },
     { "Creating Plugins" = "development/creating-plugins.md" },
     { "Stable Branches" = "development/stable-branches.md" },
   ]},
