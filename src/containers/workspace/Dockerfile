@@ -5,9 +5,7 @@ FROM $WORKSPACE_BASE_IMAGE
 # This layer is expensive (~30s) and rarely changes, so it goes first.
 # Records packages in settings.json for Pi to discover at runtime.
 RUN mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills \
-    && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:@demigodmode/pi-web-agent \
-    && cd /opt/klangk/pi-agent/npm \
-    && npm update undici ws protobufjs 2>/dev/null; true
+    && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:@demigodmode/pi-web-agent
 
 # Plugin tools: flat directory, all on PATH via /opt/klangk/bin/
 ENV PATH="/opt/klangk/bin:${PATH}"
