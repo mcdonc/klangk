@@ -68,6 +68,15 @@ class TestCLIConfig:
         cfg.save()
         assert config_path.exists()
 
+    def test_save_sets_restrictive_permissions(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "klangk" / "cli.toml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        cfg = CLIConfig()
+        cfg.auth.token = "secret"
+        cfg.save()
+        assert oct(config_path.stat().st_mode & 0o777) == oct(0o600)
+        assert oct(config_path.parent.stat().st_mode & 0o777) == oct(0o700)
+
     def test_load_token_only(self, tmp_path, monkeypatch):
         config_path = tmp_path / "cli.toml"
         config_path.write_text('[auth]\ntoken = "tok"\n')

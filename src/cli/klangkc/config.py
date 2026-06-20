@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import os
 import tomllib
 import tomli_w
 from dataclasses import dataclass, field
@@ -44,7 +45,7 @@ class CLIConfig:
         )
 
     def save(self) -> None:
-        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         data = {
             "server": {"url": self.server.url},
             "auth": {
@@ -58,3 +59,4 @@ class CLIConfig:
         }
         content = tomli_w.dumps(data)
         _CONFIG_PATH.write_text(content)
+        os.chmod(_CONFIG_PATH, 0o600)
