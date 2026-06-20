@@ -42,7 +42,7 @@ plugins:
 
 ## Default plugins
 
-[![Boing Ball plugin triggered from chat](../assets/boing-ball.png)](../assets/boing-ball.png)
+[![Boing Ball plugin triggered from Pi](../assets/boing-ball.png)](../assets/boing-ball.png)
 
 These plugins are included in the default `plugins.yaml`:
 
