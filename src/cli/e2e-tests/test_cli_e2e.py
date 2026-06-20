@@ -1576,7 +1576,7 @@ class TestTerminalSharing:
         )
 
         result = _run(
-            ["klangkc", "share", "e2e-share", terminal_name],
+            ["klangkc", "share-terminal", "e2e-share", terminal_name],
             env=env,
             timeout=120,
         )
@@ -1584,7 +1584,7 @@ class TestTerminalSharing:
         assert "shared" in result.stderr.lower()
 
         result = _run(
-            ["klangkc", "unshare", "e2e-share", terminal_name],
+            ["klangkc", "unshare-terminal", "e2e-share", terminal_name],
             env=env,
             timeout=120,
         )
@@ -1593,7 +1593,7 @@ class TestTerminalSharing:
 
     def test_share_nonexistent_terminal(self):
         result = _run(
-            ["klangkc", "share", "e2e-share", "nonexistent"],
+            ["klangkc", "share-terminal", "e2e-share", "nonexistent"],
             env=self._env,
             timeout=120,
         )
