@@ -380,7 +380,7 @@ class _BoingScenePainter extends CustomPainter {
     final diam = (radius * 2).toInt();
     if (diam <= 0) return;
 
-    final res = max(60, diam ~/ 3);
+    final res = max(40, diam ~/ 5);
     final step = diam / res;
     const cols = 14;
     const rows = 8;
