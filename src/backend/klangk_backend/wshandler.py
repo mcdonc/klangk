@@ -2251,7 +2251,7 @@ def _get_agent_mention_re(handle: str) -> re.Pattern:
     global _agent_mention_re
     if _agent_mention_re is None:
         _agent_mention_re = re.compile(
-            r"(?:^|(?<=\s))@" + re.escape(handle) + r"(?:@\S+)?(?:\s|$)",
+            r"(?:^|(?<=\s))@" + re.escape(handle) + r"(?:\s|$)",
             re.IGNORECASE,
         )
     return _agent_mention_re
@@ -2273,7 +2273,7 @@ async def _addresses_other_user(text: str) -> bool:
     m = _ANY_MENTION_RE.match(text.lstrip())
     if not m:
         return False
-    mention = m.group().lstrip("@").split("@")[0].lower()
+    mention = m.group().lstrip("@").lower()
     handle = await model.agent_handle()
     return mention != handle.lower()
 

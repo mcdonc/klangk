@@ -1530,15 +1530,15 @@ async def clear_login_attempts(email: str) -> None:
 
 # Chat messages
 
-_MENTION_RE = re.compile(r"@(\S+)")
+_MENTION_RE = re.compile(r"@([a-zA-Z0-9._-]+)")
 
 
 async def parse_mentions(
     db: _Connection, message: str, workspace_id: str
 ) -> list[str]:
-    """Extract @email mentions from message text and resolve to user IDs.
+    """Extract @handle mentions from message text and resolve to user IDs.
 
-    Returns a deduplicated list of user IDs for emails that belong to
+    Returns a deduplicated list of user IDs for handles that belong to
     workspace members (including the owner).
     """
     candidates = _MENTION_RE.findall(message)
@@ -1555,15 +1555,15 @@ async def parse_mentions(
 
     placeholders = ",".join("?" for _ in unique)
     cursor = await db.execute(
-        "SELECT DISTINCT u.id, LOWER(u.email) AS email FROM users u"
+        "SELECT DISTINCT u.id FROM users u"
         " JOIN acl_entries ae ON ae.user_id = u.id"
-        " WHERE LOWER(u.email) IN (" + placeholders + ")"
+        " WHERE LOWER(u.handle) IN (" + placeholders + ")"
         "   AND ae.resource = ?"
         "   AND ae.principal_type = ? AND ae.action = ?"
         " UNION"
-        " SELECT w.user_id AS id, LOWER(u2.email) AS email"
+        " SELECT w.user_id AS id"
         " FROM workspaces w JOIN users u2 ON u2.id = w.user_id"
-        " WHERE w.id = ? AND LOWER(u2.email) IN (" + placeholders + ")",
+        " WHERE w.id = ? AND LOWER(u2.handle) IN (" + placeholders + ")",
         (
             *unique,
             f"/workspaces/{workspace_id}",

@@ -4762,8 +4762,6 @@ class TestMentionsAgent:
         assert await _mentions_agent("@MrBoops hello")
         assert await _mentions_agent("hey @MrBoops what's up")
         assert await _mentions_agent("@MRBOOPS help")
-        assert await _mentions_agent("@MrBoops@klangk.local hello")
-        assert await _mentions_agent("hey @MrBoops@klangk.local")
 
     async def test_no_false_positives(self, agent_user):
         from klangk_backend.wshandler import _mentions_agent
