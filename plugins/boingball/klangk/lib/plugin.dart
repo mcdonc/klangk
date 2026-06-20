@@ -261,31 +261,27 @@ class _BoingOverlayState extends State<_BoingOverlay>
     final overlayH = size.height - insetY * 2;
     if (overlayH > 0) _aspectRatio = overlayW / overlayH;
     return Positioned.fill(
-      child: GestureDetector(
-        onTap: _dismiss,
-        behavior: HitTestBehavior.opaque,
-        child: Stack(
-          children: [
-            Positioned(
-              left: insetX,
-              top: insetY,
-              width: overlayW,
-              height: overlayH,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: CustomPaint(
-                  painter: _BoingScenePainter(
-                    ballX: _x,
-                    ballY: _y,
-                    phase: _phase,
-                    ballFrac: _ballFrac,
-                  ),
-                  child: const SizedBox.expand(),
+      child: Stack(
+        children: [
+          Positioned(
+            left: insetX,
+            top: insetY,
+            width: overlayW,
+            height: overlayH,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: CustomPaint(
+                painter: _BoingScenePainter(
+                  ballX: _x,
+                  ballY: _y,
+                  phase: _phase,
+                  ballFrac: _ballFrac,
                 ),
+                child: const SizedBox.expand(),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
