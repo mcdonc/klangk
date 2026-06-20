@@ -53,4 +53,4 @@ These plugins are included in the default `plugins.yaml`:
 | `celebrate`      | Triggers confetti animation in the browser via Pi         |
 | `beep`           | Plays an audible beep via Web Audio API                   |
 | `browser-fetch`  | HTTP fetch using browser session cookies via Pi           |
-| `marquee`        | Scrolling marquee text display in the browser via Pi      |
+| `boingball`      | Bouncing Boing Ball animation overlay via Pi              |

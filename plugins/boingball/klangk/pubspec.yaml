@@ -1,5 +1,5 @@
-name: klangk_plugin_marquee
-description: Scrolling marquee banner overlay with rainbow animations
+name: klangk_plugin_boingball
+description: Boing Ball demo with bouncing checkered ball and wrapped text
 publish_to: none
 version: 0.1.0
 

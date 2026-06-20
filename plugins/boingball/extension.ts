@@ -17,16 +17,14 @@ export default function (pi: any) {
   if (!BRIDGE_URL) return;
 
   pi.registerTool({
-    name: "marquee",
+    name: "boing",
     description:
-      "Display a flashy scrolling marquee banner with rainbow animations. " +
-      "Only use this when the user explicitly asks for a marquee or banner. " +
-      "Never use this for greetings or unprompted messages.",
+      "Display an Amiga-style bouncing ball animation overlay. " +
+      "Only use this when the user explicitly asks for it.",
     parameters: Type.Object({
       text: Type.Optional(
         Type.String({
-          description:
-            "Text to display (uses configured default if not provided)",
+          description: "Text to display wrapped around the ball",
         }),
       ),
     }),
@@ -38,7 +36,7 @@ export default function (pi: any) {
       _ctx: any,
     ) {
       const payload: Record<string, string> = {
-        action: "marquee",
+        action: "boing",
         browser_id: getBrowserId(),
       };
       if (params.text) {
@@ -62,7 +60,7 @@ export default function (pi: any) {
             content: [
               {
                 type: "text",
-                text: `Marquee displayed: "${params.text || "(default)"}"`,
+                text: `Boing ball displayed with text: "${params.text || "(default)"}"`,
               },
             ],
             details: {},
@@ -72,23 +70,11 @@ export default function (pi: any) {
         // Bridge unreachable — fall through to terminal
       }
 
-      // Terminal fallback: print with some ANSI flair
-      const text = params.text || "Hello from Klangk!";
-      const colors = [
-        "\x1b[91m",
-        "\x1b[93m",
-        "\x1b[92m",
-        "\x1b[96m",
-        "\x1b[95m",
-        "\x1b[94m",
-      ];
-      const rainbow = text
-        .split("")
-        .map((ch, i) => `${colors[i % colors.length]}${ch}`)
-        .join("");
-      process.stdout.write(`\n  ${rainbow}\x1b[0m\n\n`);
+      // Terminal fallback
+      const text = params.text || "Klangk";
+      process.stdout.write(`\n  \x1b[91m●\x1b[0m ${text}\n\n`);
       return {
-        content: [{ type: "text", text: `Marquee displayed: "${text}"` }],
+        content: [{ type: "text", text: `Boing ball: "${text}"` }],
         details: {},
       };
     },
