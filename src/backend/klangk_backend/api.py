@@ -481,6 +481,7 @@ async def change_handle(
         await model.set_user_handle(user["id"], req.handle)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    await wshandler.refresh_user_handle(user["id"], req.handle)
     return {"status": "updated", "handle": req.handle}
 
 
@@ -2101,6 +2102,7 @@ async def update_user(
             await model.set_user_handle(user_id, req.handle)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        await wshandler.refresh_user_handle(user_id, req.handle)
     return {"status": "updated"}
 
 
