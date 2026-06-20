@@ -271,6 +271,37 @@ class KlangkClient:
         self._check_auth(resp)
         resp.raise_for_status()
 
+    def list_workspace_members(self, name: str) -> list[dict]:
+        ws = self.resolve_workspace(name)
+        resp = self.get(f"/workspaces/{ws.id}/members")
+        self._check_auth(resp)
+        resp.raise_for_status()
+        return resp.json()
+
+    def add_workspace_member(self, name: str, email: str) -> dict:
+        ws = self.resolve_workspace(name)
+        resp = self.post(
+            f"/workspaces/{ws.id}/members",
+            json={"email": email},
+        )
+        self._check_auth(resp)
+        resp.raise_for_status()
+        return resp.json()
+
+    def remove_workspace_member(self, name: str, email: str) -> None:
+        ws = self.resolve_workspace(name)
+        members = self.get(f"/workspaces/{ws.id}/members")
+        self._check_auth(members)
+        members.raise_for_status()
+        target = next((m for m in members.json() if m["email"] == email), None)
+        if target is None:
+            raise WorkspaceNotFoundError(
+                f"User '{email}' is not a member of '{name}'"
+            )
+        resp = self.delete(f"/workspaces/{ws.id}/members/{target['id']}")
+        self._check_auth(resp)
+        resp.raise_for_status()
+
     def restart_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
         resp = self.post(f"/workspaces/{ws.id}/restart")

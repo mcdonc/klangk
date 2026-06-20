@@ -255,6 +255,27 @@ def rm(
     typer.echo(f"Deleted workspace {name}")
 
 
+@app.command("members")
+def members(
+    workspace: str = typer.Argument(..., help="Workspace name"),
+) -> None:
+    """List members of a workspace."""
+    _require_auth()
+    try:
+        result = _client().list_workspace_members(workspace)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{workspace}'")
+        raise typer.Exit(code=1) from None
+    if not result:
+        typer.echo("No shared members")
+        return
+    for m in result:
+        handle = m.get("handle", "")
+        email = m.get("email", "")
+        display = f"{handle} ({email})" if handle else email
+        typer.echo(f"  {display}")
+
+
 @app.command("restart")
 def restart(
     name: str = typer.Argument(..., help="Workspace name"),
@@ -1030,7 +1051,37 @@ def terminals(
 
 
 @app.command("share")
-def share(
+def share_workspace(
+    workspace: str = typer.Argument(help="Workspace name"),
+    email: str = typer.Argument(help="Email of user to add"),
+) -> None:
+    """Share a workspace with a user."""
+    _require_auth()
+    try:
+        result = _client().add_workspace_member(workspace, email)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{workspace}'")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Shared workspace {workspace} with {result['email']}")
+
+
+@app.command("unshare")
+def unshare_workspace(
+    workspace: str = typer.Argument(help="Workspace name"),
+    email: str = typer.Argument(help="Email of user to remove"),
+) -> None:
+    """Remove a user's access to a workspace."""
+    _require_auth()
+    try:
+        _client().remove_workspace_member(workspace, email)
+    except WorkspaceNotFoundError as e:
+        _err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Removed {email} from workspace {workspace}")
+
+
+@app.command("share-terminal")
+def share_terminal(
     workspace: str = typer.Argument(help="Workspace name"),
     terminal: str = typer.Argument(help="Terminal name to share"),
 ) -> None:
@@ -1109,8 +1160,8 @@ def share(
     asyncio.run(_share())
 
 
-@app.command("unshare")
-def unshare(
+@app.command("unshare-terminal")
+def unshare_terminal(
     workspace: str = typer.Argument(help="Workspace name"),
     terminal: str = typer.Argument(help="Terminal name to unshare"),
 ) -> None:
