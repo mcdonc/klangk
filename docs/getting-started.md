@@ -1,14 +1,12 @@
 # Getting Started
 
-## Using Docker
+## Run Using Docker
 
 The fastest way to evaluate or deploy Klangk. No build tools needed.
 The published image may lag behind the latest development on main —
 use devenv if you want the most up-to-date version.
 
 You need Docker (or Podman) and an OpenAI-compatible LLM API key.
-
-### Run
 
 ```bash
 docker run -d \
@@ -35,7 +33,7 @@ you set above.
 See [Running with Docker](deployment/docker.md) for details on the
 Docker flags, docker-compose, persistence, and updating.
 
-## Using devenv
+## Run Using devenv
 
 For developing or modifying Klangk itself.
 
