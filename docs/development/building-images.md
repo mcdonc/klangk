@@ -15,11 +15,8 @@ served at `GET /version`.
 
 ## Custom Image with Plugins
 
-To build a host image with plugins baked in, see
-[klangk-host-with-plugins](https://github.com/mcdonc/klangk-host-with-plugins)
-for an example. It clones klangk at a given ref, fetches plugins,
-rebuilds the Flutter web frontend and workspace image with plugin
-support, then layers the results on top of the released host image.
+To build a host image with plugins, CA certificates, or OIDC hooks
+baked in, see [Customizing a Deployment](../deployment/customizing.md).
 
 ## Scanning
 
