@@ -73,14 +73,6 @@ connect from your local terminal with
 
 ## Quick Start
 
-Install the CLI:
-
-```bash
-pip install klangkc
-```
-
-Or run from the dev environment:
-
 ```bash
 git clone https://github.com/mcdonc/klangk.git
 cd klangk
@@ -88,6 +80,12 @@ devenv up
 ```
 
 Then open <http://localhost:8995> in your browser.
+
+Install the CLI (optional):
+
+```bash
+pip install klangkc
+```
 
 ## Architecture
 
