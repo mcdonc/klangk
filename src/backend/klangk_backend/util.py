@@ -58,21 +58,31 @@ def resolve_file_secret(value: str) -> str:
     return value
 
 
+_REJECT_PROXY = resolve_env_bool("KLANGK_REJECT_PROXY_HEADERS")
+
+
 def derive_hosting_info(headers) -> tuple[str, str, str]:
     """Derive hosting hostname, proto, and base path from env vars or request headers.
 
     Returns (hostname, proto, base_path). Env vars take precedence over headers.
     Works with both Request.headers and WebSocket.headers.
+
+    Forwarded headers (``X-Forwarded-Host``, ``X-Forwarded-Proto``,
+    ``X-Forwarded-Prefix``) are trusted by default since klangk's own
+    nginx sets them.  Set ``KLANGK_REJECT_PROXY_HEADERS=1`` to ignore
+    them in hardened deployments where the backend port is exposed
+    directly.
     """
     hostname = resolve_env_secret("KLANGK_HOSTING_HOSTNAME")
     proto = resolve_env_secret("KLANGK_HOSTING_PROTO")
     base_path = resolve_env_secret("KLANGK_HOSTING_BASE_PATH")
+    trust = not _REJECT_PROXY
     if not hostname:
-        forwarded_host = headers.get("x-forwarded-host")
-        if forwarded_host:
-            # Behind an external reverse proxy — trust its hostname as-is
-            hostname = forwarded_host
-        else:
+        if trust:
+            forwarded_host = headers.get("x-forwarded-host")
+            if forwarded_host:
+                hostname = forwarded_host
+        if not hostname:
             # Direct access (local dev) — use nginx port for hosted app URLs
             nginx_port = resolve_env_secret("KLANGK_NGINX_PORT")
             host = headers.get("host") or "localhost"
@@ -82,9 +92,15 @@ def derive_hosting_info(headers) -> tuple[str, str, str]:
             else:
                 hostname = host
     if not proto:
-        proto = headers.get("x-forwarded-proto") or "http"
+        if trust:
+            proto = headers.get("x-forwarded-proto") or "http"
+        else:
+            proto = "http"
     if base_path is None:
-        base_path = headers.get("x-forwarded-prefix") or ""
+        if trust:
+            base_path = headers.get("x-forwarded-prefix") or ""
+        else:
+            base_path = ""
     return hostname, proto, base_path
 
 
