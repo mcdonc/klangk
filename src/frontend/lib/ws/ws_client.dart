@@ -54,11 +54,6 @@ class WsClient extends ChangeNotifier {
   /// Set to false during intentional disconnects.
   bool _autoReconnect = false;
 
-  /// Whether the last WebSocket close was unclean (not code 1000).
-  /// Firefox's FailDelayManager throttles reconnections after unclean
-  /// closes, so we pre-check via HTTP before reconnecting.
-  bool _lastCloseUnclean = false;
-
   /// Max backoff duration in seconds.
   static const int _maxBackoffSeconds = 30;
 
@@ -188,17 +183,14 @@ class WsClient extends ChangeNotifier {
     _reconnectTimer = null;
     if (_connected || _auth?.token == null) return;
 
-    // After an unclean WebSocket close, Firefox's FailDelayManager throttles
-    // new WebSocket connections by up to 60s. HTTP requests are not affected,
-    // so we pre-check via HTTP to confirm the server is reachable before
-    // opening a new WebSocket. This avoids hanging on `channel.ready`.
-    if (_lastCloseUnclean) {
-      final serverUp = await _waitForServer();
-      if (!serverUp) {
-        _scheduleReconnect();
-        return;
-      }
-      _lastCloseUnclean = false;
+    // Firefox's FailDelayManager throttles WebSocket connections by up to
+    // 60s after an unclean close, and persists this across page reloads.
+    // HTTP is not affected, so we always pre-check server reachability
+    // before opening a WebSocket to avoid hanging on `channel.ready`.
+    final serverUp = await _waitForServer();
+    if (!serverUp) {
+      _scheduleReconnect();
+      return;
     }
 
     if (testChannelFactory != null) {
@@ -339,7 +331,6 @@ class WsClient extends ChangeNotifier {
         _currentWorkspaceId = null;
         _defaultCommand = null;
         final code = _channel?.closeCode;
-        _lastCloseUnclean = code != 1000;
         notifyListeners();
         if (code == 4001 || code == 4002) {
           _errorController.add('Session expired, please log in again');

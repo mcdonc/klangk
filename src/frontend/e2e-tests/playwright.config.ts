@@ -77,12 +77,17 @@ export default defineConfig({
         "shared-terminals.spec.ts",
         "tab-speed.spec.ts",
         "sudo.spec.ts",
+        "ws-connect-speed.spec.ts",
       ],
       use: chromiumUse,
     },
     {
       name: "firefox",
-      testMatch: ["klangk.spec.ts", "terminal-keymap.spec.ts"],
+      testMatch: [
+        "klangk.spec.ts",
+        "terminal-keymap.spec.ts",
+        "ws-connect-speed.spec.ts",
+      ],
       use: firefoxUse,
     },
     {
