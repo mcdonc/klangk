@@ -40,15 +40,21 @@ class TestSeedDefaultUser:
         group_ids = await model.get_user_group_ids(user["id"])
         assert admin_group["id"] in group_ids
 
-    async def test_generated_password_is_logged(self, db, monkeypatch, caplog):
+    async def test_generated_password_printed_to_stderr(
+        self, db, monkeypatch, caplog, capsys
+    ):
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "log-test")
         monkeypatch.delenv("KLANGK_DEFAULT_PASSWORD", raising=False)
         import logging
 
         with caplog.at_level(logging.INFO):
             await main.seed_default_user()
-        assert "generated password:" in caplog.text
+        # Password must NOT appear in log output (security)
+        assert "password printed to stderr" in caplog.text
         assert "log-test" in caplog.text
+        # Password appears on stderr only
+        captured = capsys.readouterr()
+        assert "Default admin password for" in captured.err
 
 
 # --- Seed agent user ---

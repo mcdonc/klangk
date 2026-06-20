@@ -1898,13 +1898,11 @@ async def download_file(
         raise HTTPException(status_code=400, detail=str(e))
     if not resolved.exists():
         raise HTTPException(status_code=404, detail="Path not found")
-    if resolved.is_file():  # lgtm[py/path-injection]
-        return FileResponse(  # lgtm[py/path-injection]
-            resolved, filename=resolved.name
-        )
+    if resolved.is_file():
+        return FileResponse(resolved, filename=resolved.name)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_path in resolved.rglob("*"):  # lgtm[py/path-injection]
+        for file_path in resolved.rglob("*"):
             if file_path.is_file():
                 zf.write(file_path, file_path.relative_to(resolved))
     buf.seek(0)
@@ -1945,12 +1943,12 @@ async def upload_file(
     max_upload = FILE_UPLOAD_SIZE_MAX
     total = 0
     try:
-        with open(dest, "wb") as fp:  # lgtm[py/path-injection]
+        with open(dest, "wb") as fp:
             while chunk := await file.read(1024 * 1024):
                 total += len(chunk)
                 if total > max_upload:
                     fp.close()
-                    dest.unlink(missing_ok=True)  # lgtm[py/path-injection]
+                    dest.unlink(missing_ok=True)
                     raise HTTPException(
                         status_code=413,
                         detail=f"File exceeds {max_upload // (1024 * 1024)} MB limit",
@@ -1959,7 +1957,7 @@ async def upload_file(
     except HTTPException:
         raise
     except Exception as e:  # pragma: no cover
-        dest.unlink(missing_ok=True)  # lgtm[py/path-injection]
+        dest.unlink(missing_ok=True)
         raise HTTPException(
             status_code=500, detail=f"Upload failed: {e}"
         ) from e

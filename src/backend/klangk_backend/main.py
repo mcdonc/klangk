@@ -131,12 +131,17 @@ async def seed_default_user() -> None:
         await model.add_user_to_group(user["id"], admin_group_id)
         if generated:
             logger.info(
-                "%sCreated default admin user '%s' with generated"
-                " password: %s%s",
-                _GREEN,
+                "Created default admin user '%s' (password printed to stderr)",
                 email,
-                password,
-                _RESET,
+            )
+            # Print password to stderr only — keep it out of structured
+            # logs where it could be shipped to a log aggregator.
+            import sys
+
+            print(
+                f"{_GREEN}Default admin password for"
+                f" '{email}': {password}{_RESET}",
+                file=sys.stderr,
             )
         else:
             logger.info("Created default user '%s' in admin group", email)
