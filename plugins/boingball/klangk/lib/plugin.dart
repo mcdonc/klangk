@@ -48,6 +48,22 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
 
 // ---------- Sound ----------
 
+/// Pre-initialize the AudioContext on the first user interaction
+/// so Chrome's autoplay policy is satisfied before any bounces.
+void _ensureAudioContext() {
+  final code = '''
+    (function() {
+      if (!window._boingCtx) {
+        window._boingCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (window._boingCtx.state === 'suspended') {
+        window._boingCtx.resume();
+      }
+    })()
+  ''';
+  _eval(code.toJS);
+}
+
 void _playBoingSound({required double panX, bool isFloor = true}) {
   final freq = isFloor ? 120.0 : 180.0;
   // Reuse a single AudioContext to avoid exhausting browser resources.
@@ -58,7 +74,7 @@ void _playBoingSound({required double panX, bool isFloor = true}) {
         window._boingCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
       var ctx = window._boingCtx;
-      if (ctx.state === 'suspended') ctx.resume();
+      ctx.resume();
       var osc = ctx.createOscillator();
       var gain = ctx.createGain();
       osc.type = 'sine';
@@ -117,6 +133,19 @@ class _BoingOverlayState extends State<_BoingOverlay>
     _ctrl.addListener(_tick);
     widget.plugin.addListener(_onUpdate);
     HardwareKeyboard.instance.addHandler(_onKey);
+    // Pre-create AudioContext on first user click so Chrome allows audio.
+    _eval(
+      '''
+      if (!window._boingCtxReady) {
+        window._boingCtxReady = true;
+        document.addEventListener('click', function _initBoing() {
+          window._boingCtx = new (window.AudioContext || window.webkitAudioContext)();
+          document.removeEventListener('click', _initBoing);
+        }, {once: true});
+      }
+    '''
+          .toJS,
+    );
   }
 
   @override
