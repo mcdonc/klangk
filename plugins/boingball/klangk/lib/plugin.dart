@@ -49,40 +49,23 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
 // ---------- Sound ----------
 
 void _playBoingSound({required double panX, bool isFloor = true}) {
-  final pan = (panX * 2 - 1).clamp(-1.0, 1.0);
-  final vol = isFloor ? 0.6 : 0.35;
-  final baseF = isFloor ? 80 : 120;
-  final endF = isFloor ? 35 : 50;
+  final freq = isFloor ? 120.0 : 180.0;
   final code =
       '''
     (function() {
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
-      var now = ctx.currentTime;
-      var dest = ctx.destination;
-      var pan = ctx.createStereoPanner();
-      pan.pan.value = $pan;
-      pan.connect(dest);
-      var g = ctx.createGain();
-      g.gain.setValueAtTime($vol, now);
-      g.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-      g.connect(pan);
-      var o = ctx.createOscillator();
-      o.frequency.setValueAtTime($baseF, now);
-      o.frequency.exponentialRampToValueAtTime($endF, now + 0.25);
-      o.connect(g);
-      o.start(now);
-      o.stop(now + 0.4);
-      var o2 = ctx.createOscillator();
-      o2.type = 'triangle';
-      o2.frequency.setValueAtTime(${baseF * 3}, now);
-      o2.frequency.exponentialRampToValueAtTime(${endF * 2}, now + 0.15);
-      var g2 = ctx.createGain();
-      g2.gain.setValueAtTime(0.15, now);
-      g2.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-      o2.connect(g2);
-      g2.connect(g);
-      o2.start(now);
-      o2.stop(now + 0.25);
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = $freq;
+      gain.gain.value = 0.4;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      var end = ctx.currentTime + 0.3;
+      osc.frequency.exponentialRampToValueAtTime(${freq * 0.3}, end);
+      gain.gain.exponentialRampToValueAtTime(0.001, end);
+      osc.stop(end + 0.05);
     })()
   ''';
   _eval(code.toJS);
@@ -373,7 +356,7 @@ class _BoingScenePainter extends CustomPainter {
     // White base
     canvas.drawCircle(Offset(cx, cy), radius, Paint()..color = _ballWhite);
 
-    const latRows = 8;
+    const latRows = 7;
     const lonStripes = 14;
     const subDiv = 6; // subdivisions per edge for smooth curvature
     final rotAngle = phase / lonStripes * 2 * pi;
