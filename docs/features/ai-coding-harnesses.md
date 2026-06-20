@@ -96,10 +96,10 @@ Open a terminal tab and run:
 claude
 ```
 
-Claude Code uses its own API key (`ANTHROPIC_API_KEY`) and connects
-directly to the Anthropic API — it does not use the LLM proxy. The
-`claude-code` plugin injects the API key into the container
-environment.
+Claude Code connects directly to the Anthropic API — it does not use
+the LLM proxy. On first run, Claude Code prompts you to authenticate
+via a browser-based flow: it displays a URL, you open it in your
+browser, and paste the resulting API key back into the terminal.
 
 ## System prompt
 
