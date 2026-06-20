@@ -51,9 +51,8 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
 /// Synthesize a metallic boing via Web Audio API eval (same pattern as beep plugin).
 void _playBoingSound({required double panX, bool isFloor = true}) {
   final pan = (panX * 2 - 1).clamp(-1.0, 1.0);
-  final vol = isFloor ? 0.5 : 0.3;
-  final rate = isFloor ? 1.0 : 1.3;
-  // Three detuned oscillators for metallic character + stereo pan
+  final vol = isFloor ? 0.7 : 0.4;
+  // Boomy metal impact: low fundamental + resonant harmonics + noise burst
   final code =
       '''
     (function() {
@@ -64,20 +63,50 @@ void _playBoingSound({required double panX, bool isFloor = true}) {
       pan.connect(ctx.destination);
       var master = ctx.createGain();
       master.gain.setValueAtTime($vol, now);
-      master.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      master.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
       master.connect(pan);
-      [${180 * rate}, ${340 * rate}, ${720 * rate}].forEach(function(f) {
+
+      // Low boom fundamental (descending pitch)
+      var boom = ctx.createOscillator();
+      boom.type = 'sine';
+      boom.frequency.setValueAtTime(${isFloor ? 80 : 120}, now);
+      boom.frequency.exponentialRampToValueAtTime(${isFloor ? 35 : 50}, now + 0.3);
+      var boomG = ctx.createGain();
+      boomG.gain.setValueAtTime(0.6, now);
+      boomG.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      boom.connect(boomG);
+      boomG.connect(master);
+      boom.start(now);
+      boom.stop(now + 0.4);
+
+      // Metallic resonance (detuned harmonics)
+      [${isFloor ? 150 : 200}, ${isFloor ? 290 : 380}, ${isFloor ? 520 : 680}].forEach(function(f) {
         var osc = ctx.createOscillator();
+        osc.type = 'triangle';
         var g = ctx.createGain();
         osc.frequency.setValueAtTime(f, now);
-        osc.frequency.exponentialRampToValueAtTime(f * 0.35, now + 0.15);
-        g.gain.setValueAtTime(0.3, now);
-        g.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.frequency.exponentialRampToValueAtTime(f * 0.5, now + 0.2);
+        g.gain.setValueAtTime(0.15, now);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
         osc.connect(g);
         g.connect(master);
         osc.start(now);
-        osc.stop(now + 0.25);
+        osc.stop(now + 0.3);
       });
+
+      // Impact noise burst (short white noise for transient attack)
+      var bufSize = ctx.sampleRate * 0.03;
+      var noiseBuf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      var data = noiseBuf.getChannelData(0);
+      for (var i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+      var noise = ctx.createBufferSource();
+      noise.buffer = noiseBuf;
+      var noiseG = ctx.createGain();
+      noiseG.gain.setValueAtTime(0.3, now);
+      noiseG.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+      noise.connect(noiseG);
+      noiseG.connect(master);
+      noise.start(now);
     })()
   ''';
   _eval(code.toJS);
