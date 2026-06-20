@@ -3,6 +3,8 @@ site_name = "Klangk"
 site_description = "Multi-User AI Sandboxing, Collaboration and Coding Platform"
 site_author = "Chris McDonough"
 site_url = "https://mcdonc.github.io/klangk/"
+repo_url = "https://github.com/mcdonc/klangk"
+repo_name = "mcdonc/klangk"
 copyright = "Copyright &copy; 2026 Chris McDonough"
 extra_css = ["stylesheets/extra.css"]
 
