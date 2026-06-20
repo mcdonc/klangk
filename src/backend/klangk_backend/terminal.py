@@ -593,8 +593,8 @@ class ShellProcess:
         if self._master_fd is not None:
             try:
                 asyncio.get_running_loop().remove_reader(self._master_fd)
-            except Exception:
-                pass
+            except (ValueError, RuntimeError):
+                pass  # loop already closed or fd not registered
             if self._read_event is not None:
                 self._read_event.set()  # unblock any pending read
             try:
