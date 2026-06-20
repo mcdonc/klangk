@@ -98,10 +98,14 @@ docker rm klangk
 # Run the same docker run command with the new version tag
 ```
 
+## Adding plugins
+
+The published host image includes the default plugins only. To add
+custom plugins, you need to build a custom image — see
+[Customizing a Deployment](customizing.md) for instructions.
+
 ## Next steps
 
 - [Environment Variables](../reference/environment.md) — all
   configuration options
-- [Plugins](../features/plugins.md) — extend with additional tools
-- [Customizing](customizing.md) — build a custom image with plugins
-  and CA certificates baked in
+- [Using Plugins](../features/plugins.md) — what the default plugins do
