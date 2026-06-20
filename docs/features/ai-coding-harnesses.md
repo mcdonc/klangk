@@ -94,16 +94,10 @@ Open a terminal tab and run:
 claude
 ```
 
-Claude Code connects to the LLM proxy automatically — the workspace
-JWT is used as the API key, and the proxy forwards requests to your
-configured `KLANGK_LLM_BASE_URL` with the real API key injected by
-nginx.
-
-!!! note
-Claude Code requires an Anthropic-compatible API endpoint. If your
-`KLANGK_LLM_BASE_URL` points to a non-Anthropic provider (e.g.
-Ollama, OpenAI), Claude Code will not work. Use Pi instead, which
-supports any OpenAI-compatible endpoint.
+Claude Code uses its own API key (`ANTHROPIC_API_KEY`) and connects
+directly to the Anthropic API — it does not use the LLM proxy. The
+`claude-code` plugin injects the API key into the container
+environment.
 
 ## System prompt
 
