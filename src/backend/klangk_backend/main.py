@@ -24,6 +24,7 @@ from .util import resolve_env_secret
 from .wshandler import handle_websocket
 
 _LIGHT_BLUE = "\033[94m"
+_GREEN = "\033[32m"
 _RESET = "\033[0m"
 
 logging.basicConfig(
@@ -130,9 +131,12 @@ async def seed_default_user() -> None:
         await model.add_user_to_group(user["id"], admin_group_id)
         if generated:
             logger.info(
-                "Created default admin user '%s' with generated password: %s",
+                "%sCreated default admin user '%s' with generated"
+                " password: %s%s",
+                _GREEN,
                 email,
                 password,
+                _RESET,
             )
         else:
             logger.info("Created default user '%s' in admin group", email)
