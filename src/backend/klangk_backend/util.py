@@ -53,7 +53,7 @@ def resolve_file_secret(value: str) -> str:
         try:
             return open(path).read().strip()
         except OSError as e:
-            logger.error("Cannot read secret from %s: %s", path, e)
+            logger.error("Cannot read secret file: %s", e)
             return ""
     return value
 

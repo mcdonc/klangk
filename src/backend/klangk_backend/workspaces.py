@@ -165,7 +165,7 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
     After successful archival the user's data directory is removed.
     """
     user_workspaces = await model.list_workspaces(user_id)
-    user_dir = WORKSPACES_ROOT / user_id
+    user_dir = _safe_path(user_id)  # lgtm[py/path-injection]
     if not user_dir.exists():
         return []
 
@@ -175,10 +175,9 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
     for ws in user_workspaces:
         ws_name = _sanitize_filename(ws["name"])
         archive_name = f"{user_id}-{safe_email}-{ws_name}.tar.gz"
-        archive_path = WORKSPACES_ROOT / archive_name
-        if not archive_path.resolve().is_relative_to(
-            WORKSPACES_ROOT.resolve()
-        ):
+        try:
+            archive_path = _safe_path(archive_name)  # lgtm[py/path-injection]
+        except ValueError:
             logger.error(
                 "Archive path traversal blocked for workspace %s", ws["name"]
             )
