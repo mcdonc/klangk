@@ -258,8 +258,8 @@ class AgentSession:
             try:
                 cmd = json.dumps({"type": "abort"})
                 proc.stdin.write((cmd + "\n").encode())
-            except Exception:  # pragma: no cover
-                pass
+            except (OSError, RuntimeError):  # pragma: no cover
+                pass  # process stdin already closed
 
     async def _wait_for_ack(self, stdout: asyncio.StreamReader) -> None:
         """Read lines until the Pi RPC command acknowledgement.

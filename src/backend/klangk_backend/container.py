@@ -632,7 +632,7 @@ class ContainerRegistry:
                                 bound & wanted_ports,
                             )
                         except podman.PodmanError as del_exc:
-                            logger.info(
+                            logger.warning(
                                 "Could not remove stale container %s: %s",
                                 stale_id[:12],
                                 del_exc,
