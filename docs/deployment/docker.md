@@ -1,7 +1,9 @@
 # Running with Docker
 
-Run Klangk from the published container image with no source checkout
-or build tools required.
+The Klangk host container packages the backend, nginx proxy, Flutter
+web UI, and workspace image into a single Docker image. Workspace
+containers run inside it via rootless podman. No source checkout or
+build tools required.
 
 ## Prerequisites
 
