@@ -361,11 +361,9 @@ class _BoingScenePainter extends CustomPainter {
   }
 
   void _drawBall(Canvas canvas, double cx, double cy, double radius) {
-    // Boing Ball: 7 red vertical stripes on a white sphere.
-    // Each stripe is a continuous curved band from pole to pole.
-    // The rotation shifts the stripes around the Y axis.
-    // The diagonal appearance comes from the stripes curving
-    // around the sphere — no latitude row offset needed.
+    // Boing Ball checkerboard: 8 latitude rows x 14 longitude stripes.
+    // Odd rows are offset by half a stripe width so red corners touch
+    // red corners diagonally (and same for white).
 
     canvas.save();
     canvas.clipPath(
@@ -375,51 +373,56 @@ class _BoingScenePainter extends CustomPainter {
     // White base
     canvas.drawCircle(Offset(cx, cy), radius, Paint()..color = _ballWhite);
 
-    // Draw 7 red stripes as continuous curved bands
-    const nStripes = 14; // total stripe slots (7 red + 7 white)
-    const nSegments = 24; // vertical subdivisions for smooth curves
-    final rotAngle = phase / nStripes * 2 * pi;
+    const latRows = 8;
+    const lonStripes = 14;
+    const subDiv = 6; // subdivisions per edge for smooth curvature
+    final rotAngle = phase / lonStripes * 2 * pi;
     final redPaint = Paint()..color = _ballRed;
 
-    for (int s = 0; s < nStripes; s += 2) {
-      // Only draw even-numbered stripes (red)
-      final phi0base = 2 * pi * s / nStripes + rotAngle;
-      final phi1base = 2 * pi * (s + 1) / nStripes + rotAngle;
+    for (int row = 0; row < latRows; row++) {
+      final theta0 = pi * row / latRows;
+      final theta1 = pi * (row + 1) / latRows;
+      final y0 = cy - cos(theta0) * radius;
+      final y1 = cy - cos(theta1) * radius;
+      final rSlice0 = sin(theta0) * radius;
+      final rSlice1 = sin(theta1) * radius;
 
-      // Check if this stripe faces us at all
-      final midPhi = (phi0base + phi1base) / 2;
-      if (cos(midPhi) < -0.3) continue;
+      // Half-stripe offset on odd rows creates the diagonal pattern
+      final offset = (row % 2 == 0) ? 0.0 : 0.5;
 
-      // Build path: left edge top-to-bottom, right edge bottom-to-top
-      final path = Path();
-      bool started = false;
-      final rightEdge = <Offset>[];
+      for (int col = 0; col < lonStripes; col++) {
+        // Only draw red squares (checkerboard)
+        if (col % 2 != 0) continue;
 
-      for (int seg = 0; seg <= nSegments; seg++) {
-        final theta = pi * seg / nSegments;
-        final sinTheta = sin(theta);
-        final cosTheta = cos(theta);
-        final r = sinTheta * radius; // radius of latitude circle
+        final phi0 = 2 * pi * (col + offset) / lonStripes + rotAngle;
+        final phi1 = 2 * pi * (col + 1 + offset) / lonStripes + rotAngle;
 
-        final x0 = cx + sin(phi0base) * r;
-        final x1 = cx + sin(phi1base) * r;
-        final y = cy - cosTheta * radius;
+        // Skip back-facing
+        if (cos((phi0 + phi1) / 2) < -0.2) continue;
 
-        if (!started) {
-          path.moveTo(x0, y);
-          started = true;
-        } else {
-          path.lineTo(x0, y);
+        // Build curved quad: top edge L→R, bottom edge R→L
+        final path = Path();
+
+        // Top edge with subdivisions
+        for (int s = 0; s <= subDiv; s++) {
+          final t = s / subDiv;
+          final phi = phi0 + (phi1 - phi0) * t;
+          final x = cx + sin(phi) * rSlice0;
+          if (s == 0) {
+            path.moveTo(x, y0);
+          } else {
+            path.lineTo(x, y0);
+          }
         }
-        rightEdge.add(Offset(x1, y));
+        // Bottom edge with subdivisions (reverse)
+        for (int s = subDiv; s >= 0; s--) {
+          final t = s / subDiv;
+          final phi = phi0 + (phi1 - phi0) * t;
+          path.lineTo(cx + sin(phi) * rSlice1, y1);
+        }
+        path.close();
+        canvas.drawPath(path, redPaint);
       }
-
-      // Right edge in reverse
-      for (int i = rightEdge.length - 1; i >= 0; i--) {
-        path.lineTo(rightEdge[i].dx, rightEdge[i].dy);
-      }
-      path.close();
-      canvas.drawPath(path, redPaint);
     }
 
     canvas.restore();
