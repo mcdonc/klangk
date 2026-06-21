@@ -80,6 +80,7 @@ in
     };
     "klangk:build-workspace-image" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh"'';
+      after = [ "klangk:update-plugins" ];
       showOutput = true;
     };
     "klangk:kill-containers" = {
@@ -98,6 +99,28 @@ in
           done
         fi
       '';
+    };
+    "klangk:init-plugins" = {
+      exec = ''
+        if [ ! -f "${config.env.KLANGK_PLUGINS_DIR}/plugins.yaml" ]; then
+          cd $DEVENV_ROOT
+          python3 scripts/update_plugins.py
+        fi
+      '';
+      before = [ "klangk:update-plugins" ];
+      showOutput = true;
+    };
+    "klangk:update-plugins" = {
+      exec = ''
+        cd $DEVENV_ROOT
+        bash scripts/stub_dart_plugins.sh
+        exec python3 scripts/update_plugins.py
+      '';
+      before = [ "klangk:flutter-build" ];
+      showOutput = true;
+      execIfModified = [
+        "${config.env.KLANGK_PLUGINS_DIR}/plugins.yaml"
+      ];
     };
   };
 
@@ -173,22 +196,6 @@ in
     ''${KLANGK_PODMAN_BIN:-podman} ps -a \
       --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" \
       -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-  '';
-
-  scripts.restart.exec = ''
-    echo "Stopping devenv processes..."
-    devenv processes down --no-tui 2>/dev/null || true
-    sleep 1
-    echo "Starting..."
-    exec devenv up --no-tui "$@"
-  '';
-
-  scripts.rebuild.exec = ''
-    echo "Rebuilding backend image..."
-    build-workspace-image
-    echo "Rebuilding Flutter..."
-    flutterbuildweb
-    echo "==> Done"
   '';
 
   scripts.update-plugins.exec = ''
@@ -366,9 +373,6 @@ in
       fi
     fi
 
-    # Ensure klangk_plugins stub exists so flutter pub get works
-    # before plugins are fetched (first-time checkout / CI)
-    bash "$DEVENV_ROOT/scripts/stub_dart_plugins.sh"
 
     # Generate prettierignore (not committed)
     cat > "$DEVENV_ROOT/.prettierignore" <<'PRETTIER'
