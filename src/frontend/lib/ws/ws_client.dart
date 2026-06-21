@@ -198,7 +198,6 @@ class WsClient extends ChangeNotifier {
       debugPrint(
           '[WsClient] _waitForServer() done: serverUp=$serverUp ${DateTime.now()}');
       if (!serverUp) {
-        _scheduleReconnect();
         return;
       }
 
