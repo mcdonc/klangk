@@ -646,18 +646,21 @@ class TestRefreshToken:
         result = await auth.refresh_token(expired)
         assert result.access_token == "cached-new-token"
 
-    async def test_refresh_expired_cached_token_returns_401(self, db):
-        """Expired token with expired blocklist entry returns 401."""
+    async def test_refresh_expired_returns_cached_regardless_of_blocklist_expiry(
+        self, db
+    ):
+        """Cached replacement is returned even when the old token's
+        blocklist expires_at has passed — the new token's own exp
+        governs its validity."""
         await model.create_user(
             "a@b.com", auth.hash_password("pw"), verified=True
         )
         user = await model.get_user_by_email("a@b.com")
-        # Blocklist entry also expired
         expires_at = (
             datetime.now(timezone.utc) - timedelta(hours=1)
         ).isoformat()
         await model.blocklist_token(
-            "old-jti", expires_at, new_token="stale-token"
+            "old-jti", expires_at, new_token="cached-replacement"
         )
         expired = jwt.encode(
             {
@@ -669,9 +672,8 @@ class TestRefreshToken:
             auth.SECRET_KEY,
             algorithm=auth.ALGORITHM,
         )
-        with pytest.raises(HTTPException) as exc_info:
-            await auth.refresh_token(expired)
-        assert exc_info.value.status_code == 401
+        result = await auth.refresh_token(expired)
+        assert result.access_token == "cached-replacement"
 
     async def test_refresh_deleted_user_returns_401(self, db):
         """Refreshing a token for a deleted user returns 401."""
