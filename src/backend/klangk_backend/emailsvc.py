@@ -115,11 +115,6 @@ async def send_verification_email(to: str, verification_url: str) -> None:
     Sends as multipart/alternative with both plain text and HTML
     so the link is clickable regardless of mail client.
     """
-    logger.info(
-        "Sending verification email to %s with URL: %s",
-        to,
-        verification_url,
-    )
     text_body = (
         "Click the link below to verify your email address and "
         "activate your Klangk account:\n\n"
@@ -155,15 +150,11 @@ async def send_verification_email(to: str, verification_url: str) -> None:
         await send_via_smtp(msg)
     else:
         await send_via_sendmail(msg)
+    logger.info("Verification email sent to %s", to)
 
 
 async def send_password_reset_email(to: str, reset_url: str) -> None:
     """Send a password reset email with the given callback URL."""
-    logger.info(
-        "Sending password reset email to %s with URL: %s",
-        to,
-        reset_url,
-    )
     text_body = (
         "Click the link below to reset your Klangk password:\n\n"
         f"<{reset_url}>\n\n"
@@ -198,18 +189,13 @@ async def send_password_reset_email(to: str, reset_url: str) -> None:
         await send_via_smtp(msg)
     else:
         await send_via_sendmail(msg)
+    logger.info("Password reset email sent to %s", to)
 
 
 async def send_invitation_email(
     to: str, invite_url: str, invited_by_email: str
 ) -> None:
     """Send an invitation email with the given registration URL."""
-    logger.info(
-        "Sending invitation email to %s (invited by %s) with URL: %s",
-        to,
-        invited_by_email,
-        invite_url,
-    )
     text_body = (
         f"{invited_by_email} has invited you to join Klangk.\n\n"
         "Click the link below to set your password and activate "
@@ -248,3 +234,6 @@ async def send_invitation_email(
         await send_via_smtp(msg)
     else:
         await send_via_sendmail(msg)
+    logger.info(
+        "Invitation email sent to %s (invited by %s)", to, invited_by_email
+    )
