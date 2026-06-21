@@ -197,124 +197,286 @@ def fuzz_query(rng: random.Random, params: dict[str, str]) -> dict:
 # Each entry: (method, path_template, body_schema_or_None, query_params_or_None)
 # path_template can contain {workspace_id}, {member_id}, etc.
 
+P = "/api/v1"  # all routes except /health are under this prefix
+
 ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
-    # Public
+    # Public (root_router — no prefix)
     ("GET", "/health", None, None),
-    ("GET", "/version", None, None),
-    ("GET", "/api/config", None, None),
+    # Public (router — /api/v1 prefix)
+    ("GET", f"{P}/version", None, None),
+    ("GET", f"{P}/config", None, None),
     # Auth — no token
-    ("POST", "/auth/register", {"email": "email", "password": "password"}, None),
-    ("POST", "/auth/login", {"email": "email", "password": "password"}, None),
-    ("GET", "/auth/verify", None, {"token": "string"}),
+    ("POST", f"{P}/auth/register", {"email": "email", "password": "password"}, None),
+    ("POST", f"{P}/auth/login", {"email": "email", "password": "password"}, None),
+    ("GET", f"{P}/auth/verify", None, {"token": "string"}),
     (
         "POST",
-        "/auth/resend-verification",
+        f"{P}/auth/resend-verification",
         {"email": "email", "password": "password"},
         None,
     ),
-    ("POST", "/auth/forgot-password", {"email": "email"}, None),
-    ("POST", "/auth/reset-password", {"token": "string", "password": "password"}, None),
-    ("POST", "/auth/accept-invite", {"token": "string", "password": "password"}, None),
-    # Auth — with token
-    ("POST", "/auth/refresh", None, None),
+    ("POST", f"{P}/auth/forgot-password", {"email": "email"}, None),
     (
         "POST",
-        "/auth/change-password",
+        f"{P}/auth/reset-password",
+        {"token": "string", "password": "password"},
+        None,
+    ),
+    (
+        "POST",
+        f"{P}/auth/accept-invite",
+        {"token": "string", "password": "password"},
+        None,
+    ),
+    # Auth — with token
+    ("POST", f"{P}/auth/refresh", None, None),
+    (
+        "POST",
+        f"{P}/auth/change-password",
         {"current_password": "password", "new_password": "password"},
         None,
     ),
-    ("POST", "/auth/change-email", {"email": "email", "password": "password"}, None),
-    ("POST", "/auth/change-handle", {"handle": "string", "password": "password"}, None),
-    ("GET", "/auth/me", None, None),
-    ("POST", "/auth/logout", None, None),
-    # Workspaces
-    ("GET", "/workspaces", None, None),
-    ("GET", "/workspaces/shared", None, None),
     (
         "POST",
-        "/workspaces",
+        f"{P}/auth/change-email",
+        {"email": "email", "password": "password"},
+        None,
+    ),
+    (
+        "POST",
+        f"{P}/auth/change-handle",
+        {"handle": "string", "password": "password"},
+        None,
+    ),
+    ("GET", f"{P}/auth/me", None, None),
+    ("POST", f"{P}/auth/logout", None, None),
+    # OIDC
+    ("GET", f"{P}/auth/oidc/{{provider_id}}/login", None, None),
+    (
+        "GET",
+        f"{P}/auth/oidc/{{provider_id}}/callback",
+        None,
+        {"code": "string", "state": "string"},
+    ),
+    # Auth — workspace token
+    ("GET", f"{P}/auth/verify-workspace-token", None, {"token": "string"}),
+    # Workspaces
+    ("GET", f"{P}/workspaces", None, None),
+    ("GET", f"{P}/workspaces/shared", None, None),
+    (
+        "POST",
+        f"{P}/workspaces",
         {"name": "string", "image": "string", "default_command": "string"},
         None,
     ),
-    ("PUT", "/workspaces/{workspace_id}", {"name": "string", "image": "string"}, None),
-    ("DELETE", "/workspaces/{workspace_id}", None, None),
-    ("POST", "/workspaces/{workspace_id}/duplicate", {"name": "string"}, None),
-    ("POST", "/workspaces/{workspace_id}/restart", None, None),
-    ("GET", "/workspaces/{workspace_id}/export", None, None),
+    (
+        "PUT",
+        f"{P}/workspaces/{{workspace_id}}",
+        {"name": "string", "image": "string"},
+        None,
+    ),
+    ("DELETE", f"{P}/workspaces/{{workspace_id}}", None, None),
+    (
+        "POST",
+        f"{P}/workspaces/{{workspace_id}}/duplicate",
+        {"name": "string"},
+        None,
+    ),
+    ("POST", f"{P}/workspaces/{{workspace_id}}/restart", None, None),
+    ("GET", f"{P}/workspaces/{{workspace_id}}/export", None, None),
+    ("POST", f"{P}/workspaces/import", None, None),  # multipart upload
     # Workspace members
-    ("GET", "/workspaces/{workspace_id}/members", None, None),
-    ("POST", "/workspaces/{workspace_id}/members", {"email": "email"}, None),
-    ("DELETE", "/workspaces/{workspace_id}/members/{member_id}", None, None),
-    ("GET", "/workspaces/{workspace_id}/roles", None, None),
-    ("POST", "/workspaces/{workspace_id}/roles/{role}", {"email": "email"}, None),
-    ("DELETE", "/workspaces/{workspace_id}/roles/{role}/{member_id}", None, None),
+    ("GET", f"{P}/workspaces/{{workspace_id}}/members", None, None),
+    (
+        "POST",
+        f"{P}/workspaces/{{workspace_id}}/members",
+        {"email": "email"},
+        None,
+    ),
+    (
+        "DELETE",
+        f"{P}/workspaces/{{workspace_id}}/members/{{member_id}}",
+        None,
+        None,
+    ),
+    ("GET", f"{P}/workspaces/{{workspace_id}}/roles", None, None),
+    (
+        "POST",
+        f"{P}/workspaces/{{workspace_id}}/roles/{{role}}",
+        {"email": "email"},
+        None,
+    ),
+    (
+        "DELETE",
+        f"{P}/workspaces/{{workspace_id}}/roles/{{role}}/{{member_id}}",
+        None,
+        None,
+    ),
     (
         "PATCH",
-        "/workspaces/{workspace_id}/roles",
+        f"{P}/workspaces/{{workspace_id}}/roles",
         {"email": "email", "role": "string"},
         None,
     ),
-    ("GET", "/workspaces/{workspace_id}/groups", None, None),
-    ("POST", "/workspaces/{workspace_id}/groups", {"group_id": "uuid"}, None),
-    ("DELETE", "/workspaces/{workspace_id}/groups/{group_id}", None, None),
-    ("GET", "/workspaces/{workspace_id}/acl", None, None),
-    # Files
-    ("GET", "/workspaces/{workspace_id}/files", None, {"path": "string"}),
-    ("GET", "/workspaces/{workspace_id}/files/content", None, {"path": "string"}),
-    ("DELETE", "/workspaces/{workspace_id}/files", None, {"path": "string"}),
+    ("GET", f"{P}/workspaces/{{workspace_id}}/groups", None, None),
     (
         "POST",
-        "/workspaces/{workspace_id}/files/rename",
+        f"{P}/workspaces/{{workspace_id}}/groups",
+        {"group_id": "uuid"},
+        None,
+    ),
+    (
+        "DELETE",
+        f"{P}/workspaces/{{workspace_id}}/groups/{{group_id}}",
+        None,
+        None,
+    ),
+    ("GET", f"{P}/workspaces/{{workspace_id}}/acl", None, None),
+    (
+        "PUT",
+        f"{P}/workspaces/{{workspace_id}}/acl",
+        {"entries": "value"},
+        None,
+    ),
+    # Files
+    (
+        "GET",
+        f"{P}/workspaces/{{workspace_id}}/files",
+        None,
+        {"path": "string"},
+    ),
+    (
+        "GET",
+        f"{P}/workspaces/{{workspace_id}}/files/content",
+        None,
+        {"path": "string"},
+    ),
+    (
+        "DELETE",
+        f"{P}/workspaces/{{workspace_id}}/files",
+        None,
+        {"path": "string"},
+    ),
+    (
+        "POST",
+        f"{P}/workspaces/{{workspace_id}}/files/rename",
         {"old_path": "string", "new_path": "string"},
         None,
     ),
-    ("GET", "/workspaces/{workspace_id}/files/download", None, {"path": "string"}),
-    # Images and volumes
-    ("GET", "/images", None, None),
-    ("GET", "/volumes", None, None),
-    ("POST", "/volumes", {"name": "string"}, None),
-    ("DELETE", "/volumes/{name}", None, None),
-    # Users
-    ("GET", "/users/search", None, {"q": "string"}),
-    ("GET", "/api/my-permissions", None, {"resource": "string"}),
-    # Groups
-    ("GET", "/groups", None, None),
-    ("POST", "/groups", {"name": "string", "description": "string"}, None),
-    ("PATCH", "/groups/{group_id}", {"name": "string", "description": "string"}, None),
-    ("DELETE", "/groups/{group_id}", None, None),
-    ("GET", "/groups/{group_id}/members", None, None),
-    ("POST", "/groups/{group_id}/members", {"user_id": "uuid"}, None),
-    ("DELETE", "/groups/{group_id}/members/{user_id}", None, None),
-    # Admin
-    ("GET", "/admin/users", None, None),
-    ("POST", "/admin/users", {"email": "email", "password": "password"}, None),
-    ("DELETE", "/admin/users/{user_id}", None, None),
     (
-        "PATCH",
-        "/admin/users/{user_id}",
-        {"email": "email", "password": "password", "handle": "string"},
+        "GET",
+        f"{P}/workspaces/{{workspace_id}}/files/download",
         None,
+        {"path": "string"},
     ),
-    ("GET", "/admin/groups", None, None),
-    ("POST", "/admin/groups", {"name": "string", "description": "string"}, None),
     (
-        "PATCH",
-        "/admin/groups/{group_id}",
+        "POST",
+        f"{P}/workspaces/{{workspace_id}}/files/upload",
+        None,
+        {"path": "string"},
+    ),  # multipart upload
+    # Images and volumes
+    ("GET", f"{P}/images", None, None),
+    ("GET", f"{P}/volumes", None, None),
+    ("POST", f"{P}/volumes", {"name": "string"}, None),
+    ("DELETE", f"{P}/volumes/{{name}}", None, None),
+    # Users
+    ("GET", f"{P}/users/search", None, {"q": "string"}),
+    ("GET", f"{P}/my-permissions", None, {"resource": "string"}),
+    # Groups
+    ("GET", f"{P}/groups", None, None),
+    (
+        "POST",
+        f"{P}/groups",
         {"name": "string", "description": "string"},
         None,
     ),
-    ("DELETE", "/admin/groups/{group_id}", None, None),
-    ("GET", "/admin/groups/{group_id}/members", None, None),
-    ("POST", "/admin/groups/{group_id}/members", {"user_id": "uuid"}, None),
-    ("DELETE", "/admin/groups/{group_id}/members/{user_id}", None, None),
-    ("GET", "/admin/invitations", None, None),
-    ("POST", "/admin/invitations", {"email": "email"}, None),
-    ("DELETE", "/admin/invitations/{invitation_id}", None, None),
-    ("POST", "/admin/invitations/{invitation_id}/resend", None, None),
-    ("GET", "/admin/acl/tree", None, None),
-    ("GET", "/admin/acl/by-principal/user/{user_id}", None, None),
-    ("GET", "/admin/acl/by-principal/group/{group_id}", None, None),
-    ("GET", "/admin/acl/resource", None, {"resource": "string"}),
+    (
+        "PATCH",
+        f"{P}/groups/{{group_id}}",
+        {"name": "string", "description": "string"},
+        None,
+    ),
+    ("DELETE", f"{P}/groups/{{group_id}}", None, None),
+    ("GET", f"{P}/groups/{{group_id}}/members", None, None),
+    ("POST", f"{P}/groups/{{group_id}}/members", {"user_id": "uuid"}, None),
+    (
+        "DELETE",
+        f"{P}/groups/{{group_id}}/members/{{user_id}}",
+        None,
+        None,
+    ),
+    # Admin
+    ("GET", f"{P}/admin/users", None, None),
+    (
+        "POST",
+        f"{P}/admin/users",
+        {"email": "email", "password": "password"},
+        None,
+    ),
+    ("DELETE", f"{P}/admin/users/{{user_id}}", None, None),
+    (
+        "PATCH",
+        f"{P}/admin/users/{{user_id}}",
+        {"email": "email", "password": "password", "handle": "string"},
+        None,
+    ),
+    ("GET", f"{P}/admin/groups", None, None),
+    (
+        "POST",
+        f"{P}/admin/groups",
+        {"name": "string", "description": "string"},
+        None,
+    ),
+    (
+        "PATCH",
+        f"{P}/admin/groups/{{group_id}}",
+        {"name": "string", "description": "string"},
+        None,
+    ),
+    ("DELETE", f"{P}/admin/groups/{{group_id}}", None, None),
+    ("GET", f"{P}/admin/groups/{{group_id}}/members", None, None),
+    (
+        "POST",
+        f"{P}/admin/groups/{{group_id}}/members",
+        {"user_id": "uuid"},
+        None,
+    ),
+    (
+        "DELETE",
+        f"{P}/admin/groups/{{group_id}}/members/{{user_id}}",
+        None,
+        None,
+    ),
+    ("GET", f"{P}/admin/invitations", None, None),
+    ("POST", f"{P}/admin/invitations", {"email": "email"}, None),
+    ("DELETE", f"{P}/admin/invitations/{{invitation_id}}", None, None),
+    ("POST", f"{P}/admin/invitations/{{invitation_id}}/resend", None, None),
+    ("GET", f"{P}/admin/acl/tree", None, None),
+    ("GET", f"{P}/admin/acl/by-principal/user/{{user_id}}", None, None),
+    ("GET", f"{P}/admin/acl/by-principal/group/{{group_id}}", None, None),
+    ("GET", f"{P}/admin/acl/resource", None, {"resource": "string"}),
+    ("PUT", f"{P}/admin/acl/resource", {"entries": "value"}, None),
+    # Browser delegate
+    ("POST", f"{P}/browser-delegate", {"action": "string", "data": "value"}, None),
+    (
+        "POST",
+        f"{P}/browser-delegate/stream",
+        {"action": "string", "data": "value"},
+        None,
+    ),
+    # Chat
+    (
+        "POST",
+        f"{P}/workspaces/post-chat-message",
+        {"workspace_id": "uuid", "message": "string"},
+        None,
+    ),
+    # Test endpoints
+    ("GET", f"{P}/test/idle-timeout", None, None),
+    ("POST", f"{P}/test/set-idle-timeout", {"seconds": "int"}, None),
+    ("GET", f"{P}/test/workspace-token/{{workspace_id}}", None, None),
+    ("GET", f"{P}/test/browsers/{{workspace_id}}", None, None),
     # Misc: send garbage to random paths
     ("GET", "/{random_path}", None, None),
     ("POST", "/{random_path}", {"data": "value"}, None),
@@ -407,7 +569,7 @@ def wait_for_server(base_url: str, timeout: float = 30) -> None:
 def login(base_url: str) -> str:
     """Log in as admin and return the access token."""
     r = httpx.post(
-        f"{base_url}/auth/login",
+        f"{base_url}/api/v1/auth/login",
         json={"email": "admin@example.com", "password": "admin"},
         timeout=10,
     )
@@ -564,7 +726,7 @@ async def run_fuzz(
     for i in range(2):
         try:
             r = httpx.post(
-                f"{base_url}/workspaces",
+                f"{base_url}/api/v1/workspaces",
                 json={"name": f"fuzz-ws-{i}"},
                 headers=headers,
                 timeout=10,
@@ -580,7 +742,7 @@ async def run_fuzz(
     for i in range(3):
         try:
             r = httpx.post(
-                f"{base_url}/admin/users",
+                f"{base_url}/api/v1/admin/users",
                 json={"email": f"fuzzuser{i}@example.com", "password": "fuzzpass"},
                 headers=headers,
                 timeout=10,
@@ -592,7 +754,7 @@ async def run_fuzz(
     for i in range(2):
         try:
             r = httpx.post(
-                f"{base_url}/admin/groups",
+                f"{base_url}/api/v1/admin/groups",
                 json={"name": f"fuzz-group-{i}"},
                 headers=headers,
                 timeout=10,
