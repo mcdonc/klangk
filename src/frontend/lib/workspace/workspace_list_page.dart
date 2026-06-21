@@ -83,7 +83,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   jsonDecode(resp.body) as List,
                 );
               }
-            } catch (_) {} // coverage:ignore-line
+            } catch (e) {
+              // coverage:ignore-start
+              debugPrint('[WorkspaceListPage] fetch members failed: $e');
+            } // coverage:ignore-end
           }),
         );
         // Fetch shared workspaces
@@ -95,7 +98,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
               jsonDecode(sharedResp.body) as List,
             );
           }
-        } catch (_) {} // coverage:ignore-line
+        } catch (e) {
+          // coverage:ignore-start
+          debugPrint('[WorkspaceListPage] fetch shared workspaces failed: $e');
+        } // coverage:ignore-end
         setState(() {
           _workspaces = workspaces;
           _sharedWorkspaces = shared;
@@ -124,7 +130,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
-    } catch (_) {}
+    } catch (e) {
+      // coverage:ignore-start
+      debugPrint('[WorkspaceListPage] fetch images failed: $e');
+    } // coverage:ignore-end
     return null;
   }
 
@@ -293,27 +302,27 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     Text('Mounts', style: labelStyle),
                     const SizedBox(height: 8),
                     ...mounts.asMap().entries.map(
-                      (e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                e.value,
-                                style: const TextStyle(fontSize: 13),
-                              ),
+                          (e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    e.value,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: () => setDialogState(
+                                      () => mounts.removeAt(e.key)),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () =>
-                                  setDialogState(() => mounts.removeAt(e.key)),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
                     if (mountError != null) ...[
                       Text(
                         mountError!,
@@ -349,28 +358,28 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     Text('Environment Variables', style: labelStyle),
                     const SizedBox(height: 8),
                     ...envVars.entries.toList().asMap().entries.map(
-                      (e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '${e.value.key}=${e.value.value}',
-                                style: const TextStyle(fontSize: 13),
-                              ),
+                          (e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '${e.value.key}=${e.value.value}',
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: () => setDialogState(
+                                    () => envVars.remove(e.value.key),
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () => setDialogState(
-                                () => envVars.remove(e.value.key),
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
                     if (envError != null) ...[
                       Text(
                         envError!,
@@ -498,7 +507,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       final min = local.minute.toString().padLeft(2, '0');
       return '${months[local.month - 1]} ${local.day}, ${local.year}'
           ' at $h:$min $ampm';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[WorkspaceListPage] format date failed: $e');
       return raw;
     }
   }
@@ -644,26 +654,27 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   ),
                 ),
                 ..._sharedWorkspaces.asMap().entries.map(
-                  (e) => Material(
-                    color: e.key.isEven
-                        ? Colors.white.withValues(alpha: 0.03)
-                        : Colors.transparent,
-                    child: ListTile(
-                      leading: const Icon(
-                        Icons.terminal,
-                        size: 20,
-                        color: KColors.accentBlue,
+                      (e) => Material(
+                        color: e.key.isEven
+                            ? Colors.white.withValues(alpha: 0.03)
+                            : Colors.transparent,
+                        child: ListTile(
+                          leading: const Icon(
+                            Icons.terminal,
+                            size: 20,
+                            color: KColors.accentBlue,
+                          ),
+                          title: Text(e.value['name'] as String),
+                          subtitle: Text(
+                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
+                          ),
+                          // coverage:ignore-start
+                          onTap: () =>
+                              context.go('/workspace/${e.value['id']}'),
+                          // coverage:ignore-end
+                        ),
                       ),
-                      title: Text(e.value['name'] as String),
-                      subtitle: Text(
-                        '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
-                      ),
-                      // coverage:ignore-start
-                      onTap: () => context.go('/workspace/${e.value['id']}'),
-                      // coverage:ignore-end
                     ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -680,11 +691,11 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       ),
       floatingActionButton:
           context.watch<AuthService>().hasPermission('/workspaces', 'create')
-          ? FloatingActionButton(
-              onPressed: _createWorkspace,
-              child: const Icon(Icons.add),
-            )
-          : null,
+              ? FloatingActionButton(
+                  onPressed: _createWorkspace,
+                  child: const Icon(Icons.add),
+                )
+              : null,
       body: _buildWorkspacesList(),
     );
   }

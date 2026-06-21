@@ -144,7 +144,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
           }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[WorkspacePage] fetch workspace name failed: $e');
+    }
     // Fetch per-resource permissions for tab visibility
     debugPrint('[WorkspacePage] fetching workspace permissions');
     try {
@@ -160,7 +162,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
           _workspacePermissions = List<String>.from(perms);
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[WorkspacePage] fetch permissions failed: $e');
+    }
   }
 
   bool _hasPerm(String perm) =>

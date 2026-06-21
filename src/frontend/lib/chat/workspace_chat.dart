@@ -581,9 +581,11 @@ class WorkspaceChatState extends State<WorkspaceChat> {
         return '${days[local.weekday - 1]} $time'; // this week: "Mon 14:30"
       }
       return '${local.month}/${local.day} $time'; // older: "6/3 14:30"
-    } catch (_) {
+    } catch (e) {
+      // coverage:ignore-start
+      debugPrint('[WorkspaceChat] format time failed: $e');
       return raw;
-    }
+    } // coverage:ignore-end
   }
 
   static Color _colorForEmail(String email) => KColors.colorForString(email);

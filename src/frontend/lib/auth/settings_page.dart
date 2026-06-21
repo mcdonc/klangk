@@ -62,8 +62,8 @@ class _SettingsPageState extends State<SettingsPage> {
           _currentHandle = data['handle'] as String?;
         });
       }
-    } catch (_) {
-      // best-effort
+    } catch (e) {
+      debugPrint('[SettingsPage] fetch current handle failed: $e');
     }
   }
 

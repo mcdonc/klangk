@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../terminal/terminal_link.dart' show PathKind;
@@ -39,7 +40,8 @@ Future<PathKind> statWorkspacePath({
       }
     }
     return PathKind.none;
-  } catch (_) {
+  } catch (e) {
+    debugPrint('[WorkspaceFileApi] file kind check failed: $e');
     return PathKind.none;
   }
 }
