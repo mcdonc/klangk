@@ -3,18 +3,18 @@
 For deployments that need a fixed release with cherry-picked hotfixes (rather than upgrading to the latest), create a stable branch:
 
 ```bash
-git checkout -b stable/2026.06.10 v2026.06.10
+git checkout -b stable/0.1 v0.1.0
 git cherry-pick <hotfix-commit>
 ```
 
-Tag backport releases with a `-N` suffix to distinguish them from same-day mainline releases:
+Tag patch releases on the stable branch:
 
 ```bash
-git tag v2026.06.10-1
-git push origin v2026.06.10-1
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-This triggers the release workflow, which builds and pushes versioned images. The deployment repo (e.g. `klangk-host-with-plugins`) references the tag via `KLANGK_REF=v2026.06.10-1`.
+This triggers the release workflow, which builds and pushes versioned images. The deployment repo (e.g. `klangk-host-with-plugins`) references the tag via `KLANGK_REF=v0.1.1`.
 
 Note: do not use `+` in tags — Docker image tags don't allow the `+` character.
 
