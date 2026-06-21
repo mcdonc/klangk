@@ -10,7 +10,7 @@ import json
 import logging
 import re
 
-from . import model, podman, workspaces
+from . import container, model, podman, workspaces
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
@@ -57,17 +57,33 @@ _get_workspace_session = None
 class AgentSession:
     """Wraps a ``pi --mode rpc`` subprocess inside a container."""
 
-    def __init__(self, workspace_id: str, container_id: str) -> None:
+    def __init__(self, workspace_id: str) -> None:
         self.workspace_id = workspace_id
-        self.container_id = container_id
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._home_ready = False
         self._monitor_task: asyncio.Task | None = None
         self._restart_attempts = 0
         self._gave_up = False
+        self._last_container_id: str | None = None
 
-    async def _ensure_home(self) -> str:
+    def _resolve_container_id(self) -> str:
+        """Look up the current container ID for this workspace."""
+        state = container.registry.get_state(self.workspace_id)
+        if state is None:
+            raise AgentError(
+                f"No container running for workspace {self.workspace_id}"
+            )
+        cid = state.container_id
+        if cid != self._last_container_id:
+            # Container changed — reset state for the new container.
+            self._home_ready = False
+            self._restart_attempts = 0
+            self._gave_up = False
+            self._last_container_id = cid
+        return cid
+
+    async def _ensure_home(self, container_id: str) -> str:
         """Ensure the agent has a home directory with Pi config.
 
         Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount
@@ -93,7 +109,7 @@ class AgentSession:
         )
         if created:
             await workspaces.populate_home_skel(
-                self.container_id, model.AGENT_USER_ID
+                container_id, model.AGENT_USER_ID
             )
 
         # Run setup-clankers to populate ~/.pi/agent/ with models.json,
@@ -107,7 +123,7 @@ class AgentSession:
             "klangk",
             "-e",
             f"HOME={container_home}",
-            self.container_id,
+            container_id,
             "bash",
             "-c",
             "rm -f $HOME/.pi/agent/settings.json"
@@ -122,7 +138,7 @@ class AgentSession:
         logger.info(
             "Agent home ready at %s for container %s",
             container_home,
-            self.container_id,
+            container_id,
         )
         return container_home
 
@@ -134,7 +150,8 @@ class AgentSession:
                 "Agent gave up restarting for workspace %s" % self.workspace_id
             )
 
-        container_home = await self._ensure_home()
+        container_id = self._resolve_container_id()
+        container_home = await self._ensure_home(container_id)
         agent_handle = await model.agent_handle()
         system_prompt = _CHAT_SYSTEM_PROMPT.format(name=agent_handle)
         argv = [
@@ -146,14 +163,18 @@ class AgentSession:
             f"HOME={container_home}",
             "-w",
             container_home,
-            self.container_id,
+            container_id,
             "pi",
             "--mode",
             "rpc",
             "--append-system-prompt",
             system_prompt,
         ]
-        logger.info("Starting Pi RPC for container %s", self.container_id)
+        logger.info(
+            "Starting Pi RPC for workspace %s (container %s)",
+            self.workspace_id,
+            container_id,
+        )
         self._proc = await asyncio.create_subprocess_exec(
             podman.PODMAN_BIN,
             *argv,
@@ -187,9 +208,9 @@ class AgentSession:
             except (asyncio.TimeoutError, OSError):
                 pass
         logger.warning(
-            "Agent process died (rc=%s) for container %s%s",
+            "Agent process died (rc=%s) for workspace %s%s",
             proc.returncode,
-            self.container_id,
+            self.workspace_id,
             f": {stderr_text}" if stderr_text else "",
         )
 
@@ -212,8 +233,8 @@ class AgentSession:
             await _broadcast_agent_reconnect(self.workspace_id)
         except Exception:
             logger.exception(
-                "Failed to auto-restart agent for container %s",
-                self.container_id,
+                "Failed to auto-restart agent for workspace %s",
+                self.workspace_id,
             )
 
     async def send_prompt(self, message: str, timeout: float = 120) -> str:
@@ -237,7 +258,8 @@ class AgentSession:
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "Pi RPC ack timed out for %s", self.container_id
+                    "Pi RPC ack timed out for workspace %s",
+                    self.workspace_id,
                 )
 
             # Skip past any leftover events to the current turn's
@@ -264,9 +286,9 @@ class AgentSession:
             except asyncio.TimeoutError:
                 self._send_abort(proc)
                 logger.warning(
-                    "Pi RPC timed out after %.0fs for container %s",
+                    "Pi RPC timed out after %.0fs for workspace %s",
                     timeout,
-                    self.container_id,
+                    self.workspace_id,
                 )
                 return "Sorry, I timed out processing your request."
 
@@ -319,10 +341,10 @@ class AgentSession:
                 return
             if etype == "auto_retry_start":
                 logger.info(
-                    "Pi auto-retry %d/%d for %s: %s",
+                    "Pi auto-retry %d/%d for workspace %s: %s",
                     event.get("attempt", "?"),
                     event.get("maxAttempts", "?"),
-                    self.container_id,
+                    self.workspace_id,
                     str(event.get("errorMessage", ""))[:100],
                 )
 
@@ -408,24 +430,17 @@ class AgentSession:
         self._proc = None
 
 
-async def get_session(workspace_id: str, container_id: str) -> AgentSession:
+async def get_session(workspace_id: str) -> AgentSession:
     """Get or create an AgentSession for the given workspace.
 
-    If the session already exists but the container ID changed (e.g.
-    after a container restart), the old process is stopped and the
-    session is updated to use the new container.
+    The session resolves the current container ID from the container
+    registry on each startup, so it automatically picks up container
+    restarts without needing to be told the new ID.
     """
     session = _agents.get(workspace_id)
     if session is None:
-        session = AgentSession(workspace_id, container_id)
+        session = AgentSession(workspace_id)
         _agents[workspace_id] = session
-    elif session.container_id != container_id:
-        # Container restarted — stop the old process and update.
-        await session.stop()
-        session.container_id = container_id
-        session._home_ready = False
-        session._restart_attempts = 0
-        session._gave_up = False
     return session
 
 

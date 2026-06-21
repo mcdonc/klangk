@@ -914,7 +914,7 @@ class Connection:
 
         # Start the agent eagerly so it shows as present immediately.
         if self.container_id:
-            asyncio.create_task(self._start_agent_if_needed(self.container_id))
+            asyncio.create_task(self._start_agent_if_needed())
 
         # If this user had a pending leave (reconnecting after a brief
         # disconnect), cancel it and suppress the join broadcast — other
@@ -2059,10 +2059,10 @@ class Connection:
             }
         )
 
-    async def _start_agent_if_needed(self, container_id: str) -> None:
+    async def _start_agent_if_needed(self) -> None:
         """Start the Pi RPC agent so it shows in presence."""
         try:
-            session = await agent.get_session(self.workspace_id, container_id)
+            session = await agent.get_session(self.workspace_id)
             await session._ensure_started()
             # Broadcast updated presence now that agent is alive
             if self.workspace_id:
@@ -2400,7 +2400,7 @@ async def _handle_agent_mention(
         )
 
     try:
-        pi = await agent.get_session(workspace_id, container_id)
+        pi = await agent.get_session(workspace_id)
         response_text = await pi.send_prompt(prompt)
     except asyncio.CancelledError:  # pragma: no cover
         response_text = "Stopped."
