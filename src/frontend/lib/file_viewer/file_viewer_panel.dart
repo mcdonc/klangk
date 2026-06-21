@@ -69,9 +69,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// bar's up/breadcrumbs work — and shows its content via the existing viewer.
   /// Used by deep-links and terminal path-clicks.
   void openFile(String path) {
-    final dir = path.contains('/')
-        ? path.substring(0, path.lastIndexOf('/'))
-        : '.';
+    final dir =
+        path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
     setState(() {
       _currentPath = dir;
       _selectedFile = path;
@@ -92,15 +91,15 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   @override
   void initState() {
     super.initState();
-    _registry =
-        widget.registry ??
+    _registry = widget.registry ??
         (FileRendererRegistry()..registerAll(builtinFileRenderers()));
     _loadFiles();
   }
 
   Map<String, String> get _headers => {
-    if (widget.authToken != null) 'Authorization': 'Bearer ${widget.authToken}',
-  };
+        if (widget.authToken != null)
+          'Authorization': 'Bearer ${widget.authToken}',
+      };
 
   Future<void> _loadFiles() async {
     if (!mounted) return;
@@ -108,7 +107,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     try {
       final response = await _client.get(
         Uri.parse(
-          '$_baseUrl/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(_currentPath)}',
+          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(_currentPath)}',
         ),
         headers: _headers,
       );
@@ -131,7 +130,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Future<String> _readFileText(String path) async {
     final response = await _client.get(
       Uri.parse(
-        '$_baseUrl/workspaces/${widget.workspaceId}/files/content?path=${Uri.encodeComponent(path)}',
+        '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/content?path=${Uri.encodeComponent(path)}',
       ),
       headers: _headers,
     );
@@ -147,7 +146,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Future<Uint8List> _readFileBytes(String path) async {
     final response = await _client.get(
       Uri.parse(
-        '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
+        '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
       ),
       headers: _headers,
     );
@@ -161,11 +160,10 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// overwrites). Injected into [RenderableFile.saveText] so editor renderers
   /// can save edits.
   Future<void> _saveFileText(String path, String content) async {
-    final name = path.contains('/')
-        ? path.substring(path.lastIndexOf('/') + 1)
-        : path;
+    final name =
+        path.contains('/') ? path.substring(path.lastIndexOf('/') + 1) : path;
     final uri = Uri.parse(
-      '$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(path)}',
+      '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(path)}',
     );
     final request = http.MultipartRequest('POST', uri)
       ..headers.addAll(_headers)
@@ -181,9 +179,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// Builds the registry's view of [path] with loaders bound to this panel's
   /// http client.
   RenderableFile _renderableFor(String path) {
-    final name = path.contains('/')
-        ? path.substring(path.lastIndexOf('/') + 1)
-        : path;
+    final name =
+        path.contains('/') ? path.substring(path.lastIndexOf('/') + 1) : path;
     final dot = name.lastIndexOf('.');
     final extension = dot > 0 ? name.substring(dot + 1).toLowerCase() : '';
     return RenderableFile(
@@ -193,7 +190,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       readText: () => _readFileText(path),
       readBytes: () => _readFileBytes(path),
       downloadUrl:
-          '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
+          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
       saveText: (content) => _saveFileText(path, content),
     );
   }
@@ -233,7 +230,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     try {
       final response = await _client.delete(
         Uri.parse(
-          '$_baseUrl/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(path)}',
+          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(path)}',
         ),
         headers: _headers,
       );
@@ -290,7 +287,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
     try {
       final response = await _client.post(
-        Uri.parse('$_baseUrl/workspaces/${widget.workspaceId}/files/rename'),
+        Uri.parse(
+            '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/rename'),
         headers: _headers,
         body: jsonEncode({'old_path': path, 'new_path': newPath}),
       );
@@ -319,7 +317,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   Future<void> _downloadPath(String path, String name, bool isDir) async {
     final url =
-        '$_baseUrl/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}';
+        '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}';
     try {
       final response = await _client.get(Uri.parse(url), headers: _headers);
       if (response.statusCode != 200) {

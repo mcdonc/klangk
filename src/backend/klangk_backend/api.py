@@ -57,10 +57,11 @@ FILE_UPLOAD_SIZE_MAX = int(
     resolve_env_secret("KLANGK_FILE_UPLOAD_SIZE_MAX", str(500 * 1024 * 1024))
 )
 
+root_router = APIRouter()
 router = APIRouter()
 
 
-@router.get("/health")
+@root_router.get("/health")
 async def health():
     return {"status": "ok"}
 
@@ -114,7 +115,7 @@ async def version():
 
 if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
 
-    @router.get("/api/test/idle-timeout")
+    @router.get("/test/idle-timeout")
     async def get_idle_timeout(workspace_id: str | None = None):
         """Get the idle timeout (per-workspace or global default)."""
         if workspace_id:
@@ -129,7 +130,7 @@ if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
         seconds: int
         workspace_id: str | None = None
 
-    @router.post("/api/test/set-idle-timeout")
+    @router.post("/test/set-idle-timeout")
     async def set_idle_timeout(body: SetIdleTimeoutRequest):
         """Set the idle timeout. Per-workspace if workspace_id given, else global."""
         seconds = body.seconds
@@ -143,12 +144,12 @@ if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
             container.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
         return {"idle_timeout_seconds": seconds}
 
-    @router.get("/api/test/workspace-token/{workspace_id}")
+    @router.get("/test/workspace-token/{workspace_id}")
     async def get_workspace_token(workspace_id: str):
         """Return a workspace JWT for testing (test only)."""
         return {"token": auth.create_workspace_token(workspace_id)}
 
-    @router.get("/api/test/browsers/{workspace_id}")
+    @router.get("/test/browsers/{workspace_id}")
     async def get_browsers(workspace_id: str):
         """Return all active browser registrations for a workspace (test only)."""
         browsers = []
@@ -181,7 +182,7 @@ LOGIN_BANNER_TITLE = resolve_env_secret("KLANGK_LOGIN_BANNER_TITLE", "")
 LOGIN_BANNER = resolve_env_secret("KLANGK_LOGIN_BANNER", "")
 
 
-@router.get("/api/config")
+@router.get("/config")
 async def get_config():
     config = {
         "registration_enabled": auth.registration_enabled(),
@@ -2032,7 +2033,7 @@ def _resolve_bridge_target(body: BrowserDelegateRequest):
     return session, target_sock, body.model_dump(exclude={"browser_id"})
 
 
-@router.post("/api/browser-delegate")
+@router.post("/browser-delegate")
 async def browser_delegate(
     body: BrowserDelegateRequest,
     workspace_id: str = Depends(_require_workspace_token),
@@ -2061,7 +2062,7 @@ async def browser_delegate(
     return result
 
 
-@router.post("/api/browser-delegate/stream")
+@router.post("/browser-delegate/stream")
 async def browser_delegate_stream(
     body: BrowserDelegateRequest,
     workspace_id: str = Depends(_require_workspace_token),
@@ -2089,7 +2090,7 @@ class WorkspaceChatRequest(BaseModel):
     message: str
 
 
-@router.post("/api/workspace/post-chat-message")
+@router.post("/workspaces/post-chat-message")
 async def workspace_chat(
     body: WorkspaceChatRequest,
     workspace_id: str = Depends(_require_workspace_token),
@@ -2564,7 +2565,7 @@ ALL_PERMISSIONS = [
 ]
 
 
-@router.get("/api/my-permissions")
+@router.get("/my-permissions")
 async def my_permissions(
     request: Request,
     resource: str | None = None,

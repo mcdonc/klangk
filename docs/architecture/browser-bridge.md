@@ -4,14 +4,14 @@ Pi extensions and tools inside the container can delegate actions to the browser
 
 ## How It Works
 
-Extensions POST to `http://host.containers.internal:<nginx_port>/api/browser-delegate` with a browser ID. Each browser tab generates a UUID stored in `sessionStorage` (survives refresh, unique per tab). When a terminal starts, the frontend sends this ID with the `terminal_start` WebSocket message. The backend maps the ID to the tab's WebSocket. The container reads the current browser ID dynamically via `klangk-browser-id` (which reads from tmux's global environment, updated on every attach/reattach).
+Extensions POST to `http://host.containers.internal:<nginx_port>/api/v1/browser-delegate` with a browser ID. Each browser tab generates a UUID stored in `sessionStorage` (survives refresh, unique per tab). When a terminal starts, the frontend sends this ID with the `terminal_start` WebSocket message. The backend maps the ID to the tab's WebSocket. The container reads the current browser ID dynamically via `klangk-browser-id` (which reads from tmux's global environment, updated on every attach/reattach).
 
 ## Flow
 
 ```text
 LLM calls tool → Pi extension execute()
   → shell out to klangk-browser-id to get current browser ID
-  → HTTP POST to /api/browser-delegate {action, browser_id, ...}
+  → HTTP POST to /api/v1/browser-delegate {action, browser_id, ...}
   → Backend resolves browser_id → (workspace_id, target_connection)
   → WebSocket message to target only: {"type":"browser_request","id":"...","action":"..."}
   → Flutter BrowserDelegate handles action (fetch, celebrate, etc.)
@@ -76,7 +76,7 @@ export default function (pi: any) {
       }
 
       const token = getWorkspaceToken();
-      const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate`, {
+      const resp = await fetch(`${BRIDGE_URL}/api/v1/browser-delegate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -134,10 +134,10 @@ class TestNginxAclConfig:
             str(tmp_path),
         )
         # Find the browser-delegate location block and check it has the ACL.
-        # Prefix match (no "=") covers both /api/browser-delegate and
-        # /api/browser-delegate/stream.
+        # Prefix match (no "=") covers both /api/v1/browser-delegate and
+        # /api/v1/browser-delegate/stream.
         bd_match = re.search(
-            r"location /api/browser-delegate \{(.*?)\}",
+            r"location /api/v1/browser-delegate \{(.*?)\}",
             conf,
             re.DOTALL,
         )
@@ -157,7 +157,7 @@ class TestNginxAclEnforcement:
         KLANGK_CONTAINER_SUBNETS=192.0.2.0/24 (TEST-NET-1). With an
         explicit override, 127.0.0.1 is NOT implicitly added, so
         requests from localhost are denied on ACL-gated endpoints
-        (/llm-proxy, /api/browser-delegate). Regular endpoints (/)
+        (/llm-proxy, /api/v1/browser-delegate). Regular endpoints (/)
         should still work.
         """
         tmpdir = str(tmp_path_factory.mktemp("nginx-acl"))
@@ -282,7 +282,7 @@ class TestNginxAclEnforcement:
     def test_browser_delegate_denied(self, nginx_stack):
         """browser-delegate returns 403 from non-container IP."""
         r = httpx.post(
-            f"http://127.0.0.1:{nginx_stack['nginx_port']}/api/browser-delegate",
+            f"http://127.0.0.1:{nginx_stack['nginx_port']}/api/v1/browser-delegate",
             timeout=5,
         )
         assert r.status_code == 403

@@ -95,7 +95,7 @@ class FileDropZoneState extends State<FileDropZone> {
         final uploadPath =
             widget.currentPath == '.' ? path : '${widget.currentPath}/$path';
         final url =
-            '$_baseUrl/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(uploadPath)}';
+            '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(uploadPath)}';
         final headers = <String, String>{};
         if (widget.authToken != null) {
           headers['Authorization'] = 'Bearer ${widget.authToken}';

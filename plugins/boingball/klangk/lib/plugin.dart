@@ -30,7 +30,7 @@ class BoingBallPlugin extends ToolPlugin with ChangeNotifier {
   Future<void> _loadConfig() async {
     _configLoaded = true;
     try {
-      final resp = await http.get(Uri.parse('$baseUrl/api/config'));
+      final resp = await http.get(Uri.parse('$baseUrl/api/v1/config'));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         final speed = data['klangk_boing_speed'] as String?;

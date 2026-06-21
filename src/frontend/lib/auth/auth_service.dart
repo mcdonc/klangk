@@ -58,7 +58,7 @@ class AuthService extends ChangeNotifier {
   String? get userId => _payload?['sub'] as String?;
   String? get email => _payload?['email'] as String?;
 
-  /// Permissions fetched from /api/my-permissions.
+  /// Permissions fetched from /api/v1/my-permissions.
   Map<String, List<String>> _permissions = {};
   List<Map<String, dynamic>> _groups = [];
 
@@ -84,7 +84,7 @@ class AuthService extends ChangeNotifier {
 
     try {
       final client = testAuthHttpClientOverride ?? http.Client();
-      final resp = await client.get(Uri.parse('$_baseUrl/api/config'));
+      final resp = await client.get(Uri.parse('$_baseUrl/api/v1/config'));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         _bannerTitle = (data['login_banner_title'] as String?) ?? '';
@@ -112,10 +112,10 @@ class AuthService extends ChangeNotifier {
 
   /// Fetch permissions from the server.
   Future<void> _fetchPermissions() async {
-    debugPrint('[AuthService] fetching /api/my-permissions');
+    debugPrint('[AuthService] fetching /api/v1/my-permissions');
     try {
       final resp = await _client.get(
-        Uri.parse('$_baseUrl/api/my-permissions'),
+        Uri.parse('$_baseUrl/api/v1/my-permissions'),
         headers: _authHeaders,
       );
       if (resp.statusCode == 200) {
@@ -192,7 +192,7 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
     try {
       final response = await _client.post(
-        Uri.parse('$_baseUrl/auth/register'),
+        Uri.parse('$_baseUrl/api/v1/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email, 'password': password}),
       );
@@ -221,7 +221,7 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
     try {
       final response = await _client.post(
-        Uri.parse('$_baseUrl/auth/login'),
+        Uri.parse('$_baseUrl/api/v1/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email, 'password': password}),
       );
@@ -243,7 +243,7 @@ class AuthService extends ChangeNotifier {
   Future<String?> resendVerification(String email, String password) async {
     try {
       final response = await _client.post(
-        Uri.parse('$_baseUrl/auth/resend-verification'),
+        Uri.parse('$_baseUrl/api/v1/auth/resend-verification'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email, 'password': password}),
       );
@@ -330,13 +330,13 @@ class AuthService extends ChangeNotifier {
     );
   }
 
-  /// Call POST /auth/refresh to get a new token.
+  /// Call POST /api/v1/auth/refresh to get a new token.
   Future<void> _refreshToken() async {
     if (_token == null) return;
     debugPrint('[AuthService] refreshing token');
     try {
       final response = await _client.post(
-        Uri.parse('$_baseUrl/auth/refresh'),
+        Uri.parse('$_baseUrl/api/v1/auth/refresh'),
         headers: _authHeaders,
       );
       if (response.statusCode == 200) {
@@ -365,7 +365,7 @@ class AuthService extends ChangeNotifier {
     String? oidcLogoutUrl;
     try {
       final resp = await _client.post(
-        Uri.parse('$_baseUrl/auth/logout'),
+        Uri.parse('$_baseUrl/api/v1/auth/logout'),
         headers: _authHeaders,
       );
       if (resp.statusCode == 200) {

@@ -45,7 +45,7 @@ class _AcceptInvitePageState extends State<AcceptInvitePage> {
     final auth = context.read<AuthService>();
     try {
       final resp = await auth.authPost(
-        '/auth/accept-invite',
+        '/api/v1/auth/accept-invite',
         body: jsonEncode({
           'token': widget.token,
           'password': _passwordController.text,

@@ -240,7 +240,7 @@ def dup(
         _err.print(f"[red]No workspace named[/red] '{source}'")
         raise typer.Exit(code=1) from None
     resp = client.post(
-        f"/workspaces/{ws.id}/duplicate", json={"name": new_name}
+        f"/api/v1/workspaces/{ws.id}/duplicate", json={"name": new_name}
     )
     if resp.status_code == 409:
         _err.print(
@@ -284,7 +284,7 @@ def members(
     except WorkspaceNotFoundError:
         _err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
-    resp = client.get(f"/workspaces/{ws.id}/roles")
+    resp = client.get(f"/api/v1/workspaces/{ws.id}/roles")
     client._check_auth(resp)
     resp.raise_for_status()
     roles = resp.json()
@@ -623,7 +623,7 @@ def edit(
         typer.echo("No changes.")
         return
 
-    resp = client.put(f"/workspaces/{ws.id}", json=body)
+    resp = client.put(f"/api/v1/workspaces/{ws.id}", json=body)
     if resp.status_code == 404:
         _err.print("[red]Workspace not found[/red]")
         raise typer.Exit(code=1)
@@ -1390,7 +1390,7 @@ def invite(
     """Send an invitation email (admin only)."""
     _require_auth()
     client = _client()
-    resp = client.post("/admin/invitations", json={"email": email})
+    resp = client.post("/api/v1/admin/invitations", json={"email": email})
     client._check_auth(resp)
     if resp.status_code in (400, 403):
         detail = resp.json().get("detail", resp.text)
@@ -1405,7 +1405,7 @@ def list_invitations() -> None:
     """List all invitations (admin only)."""
     _require_auth()
     client = _client()
-    resp = client.get("/admin/invitations")
+    resp = client.get("/api/v1/admin/invitations")
     client._check_auth(resp)
     resp.raise_for_status()
     data = resp.json()
@@ -1435,7 +1435,7 @@ def volumes_list(
     """List klangk-managed container volumes."""
     _require_auth()
     client = _client()
-    resp = client.get("/volumes")
+    resp = client.get("/api/v1/volumes")
     client._check_auth(resp)
     resp.raise_for_status()
     volumes = resp.json()
@@ -1462,7 +1462,7 @@ def volumes_create(
     """Create a named container volume."""
     _require_auth()
     client = _client()
-    resp = client.post("/volumes", json={"name": name})
+    resp = client.post("/api/v1/volumes", json={"name": name})
     client._check_auth(resp)
     if resp.status_code == 409:
         _err.print(f"[red]Volume already exists:[/red] {name}")
@@ -1478,7 +1478,7 @@ def volumes_rm(
     """Delete a named container volume."""
     _require_auth()
     client = _client()
-    resp = client.delete(f"/volumes/{name}")
+    resp = client.delete(f"/api/v1/volumes/{name}")
     client._check_auth(resp)
     if resp.status_code == 403:
         _err.print(f"[red]Permission denied:[/red] {name}")

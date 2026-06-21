@@ -54,7 +54,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _fetchCurrentHandle() async {
     final auth = context.read<AuthService>();
     try {
-      final resp = await auth.authGet('/auth/me');
+      final resp = await auth.authGet('/api/v1/auth/me');
       if (!mounted) return;
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
@@ -89,7 +89,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final auth = context.read<AuthService>();
     try {
       final resp = await auth.authPost(
-        '/auth/change-password',
+        '/api/v1/auth/change-password',
         body: jsonEncode({
           'current_password': _currentPasswordController.text,
           'new_password': _newPasswordController.text,
@@ -155,7 +155,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final auth = context.read<AuthService>();
     try {
       final resp = await auth.authPost(
-        '/auth/change-handle',
+        '/api/v1/auth/change-handle',
         body: jsonEncode({
           'handle': _newHandleController.text.trim(),
           'password': _handlePasswordController.text,
@@ -200,7 +200,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final auth = context.read<AuthService>();
     try {
       final resp = await auth.authPost(
-        '/auth/change-email',
+        '/api/v1/auth/change-email',
         body: jsonEncode({
           'email': _newEmailController.text.trim(),
           'password': _emailPasswordController.text,

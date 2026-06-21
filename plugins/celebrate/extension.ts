@@ -104,7 +104,7 @@ export default function (pi: any) {
       // through the browser bridge.
       try {
         const token = getWorkspaceToken();
-        const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate`, {
+        const resp = await fetch(`${BRIDGE_URL}/api/v1/browser-delegate`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

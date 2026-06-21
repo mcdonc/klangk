@@ -46,7 +46,7 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _loadConfig() async {
     try {
       final client = testConfigHttpClientOverride ?? http.Client();
-      final response = await client.get(Uri.parse('${baseUrl}/api/config'));
+      final response = await client.get(Uri.parse('${baseUrl}/api/v1/config'));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (mounted) {
@@ -150,7 +150,8 @@ class _LoginPageState extends State<LoginPage> {
                                   'Log in with ${provider['display_name']}'),
                               onPressed: () {
                                 final id = provider['id'];
-                                final url = '${baseUrl}/auth/oidc/$id/login';
+                                final url =
+                                    '${baseUrl}/api/v1/auth/oidc/$id/login';
                                 navigateTo(url);
                               },
                             ),

@@ -22,9 +22,9 @@ _out = Console()
 
 
 def _fetch_config(server_url: str) -> dict | None:
-    """Fetch /api/config from the server. Returns None on failure."""
+    """Fetch /api/v1/config from the server. Returns None on failure."""
     try:
-        resp = httpx.get(f"{server_url}/api/config", timeout=5.0)
+        resp = httpx.get(f"{server_url}/api/v1/config", timeout=5.0)
         if resp.status_code == 200:
             return resp.json()
     except httpx.HTTPError:
@@ -46,7 +46,7 @@ def _oidc_browser_login(  # pragma: no cover
 
     callback_url = f"http://localhost:{port}/callback"
     login_url = (
-        f"{server_url}/auth/oidc/{provider_id}/login"
+        f"{server_url}/api/v1/auth/oidc/{provider_id}/login"
         f"?cli_redirect={callback_url}"
     )
 
@@ -151,7 +151,7 @@ def login(
     if cfg.auth.token and cfg.server.url == server_url:
         try:
             resp = httpx.get(
-                f"{server_url}/workspaces",
+                f"{server_url}/api/v1/workspaces",
                 headers={"Authorization": f"Bearer {cfg.auth.token}"},
                 timeout=5.0,
             )
@@ -202,7 +202,7 @@ def login(
     password = password or Prompt.ask("[bold]Password[/bold]", password=True)
 
     resp = httpx.post(
-        f"{server_url}/auth/login",
+        f"{server_url}/api/v1/auth/login",
         json={"email": email, "password": password},
         timeout=15.0,
     )
@@ -244,7 +244,7 @@ def logout() -> None:
         cfg.save()
         try:
             httpx.post(
-                f"{cfg.server.url}/auth/logout",
+                f"{cfg.server.url}/api/v1/auth/logout",
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=5.0,
             )

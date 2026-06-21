@@ -66,7 +66,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     setState(() => _loading = true);
     final auth = context.read<AuthService>();
     final resp = await auth.authGet(
-      '/workspaces/${widget.workspaceId}/roles',
+      '/api/v1/workspaces/${widget.workspaceId}/roles',
     );
     if (!mounted) return;
     if (resp.statusCode == 200) {
@@ -78,7 +78,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   Future<void> _addToRole(String role, String email) async {
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/workspaces/${widget.workspaceId}/roles/$role',
+      '/api/v1/workspaces/${widget.workspaceId}/roles/$role',
       body: jsonEncode({'email': email}),
     );
     if (!mounted) return;
@@ -104,7 +104,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   Future<void> _removeFromRole(String role, String memberId) async {
     final auth = context.read<AuthService>();
     await auth.authDelete(
-      '/workspaces/${widget.workspaceId}/roles/$role/$memberId',
+      '/api/v1/workspaces/${widget.workspaceId}/roles/$role/$memberId',
     );
     if (mounted) {
       _loadRoles();
@@ -146,7 +146,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                       final auth = context.read<AuthService>();
                       try {
                         final resp = await auth.authGet(
-                          '/users/search?q=${Uri.encodeQueryComponent(q.trim())}',
+                          '/api/v1/users/search?q=${Uri.encodeQueryComponent(q.trim())}',
                         );
                         if (resp.statusCode == 200) {
                           searchResults.value = List<Map<String, dynamic>>.from(

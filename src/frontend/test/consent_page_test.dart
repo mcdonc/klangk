@@ -14,7 +14,7 @@ http.Client _mockClient({
   String bannerText = '',
 }) {
   return MockClient((request) async {
-    if (request.url.path.contains('/api/config')) {
+    if (request.url.path.contains('/api/v1/config')) {
       return http.Response(
         jsonEncode({
           'registration_enabled': true,

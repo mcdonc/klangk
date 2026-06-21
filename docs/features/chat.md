@@ -97,7 +97,7 @@ message entry remains in the history.
 Processes inside the workspace container can post messages to chat via:
 
 ```text
-POST /api/workspace/post-chat-message
+POST /api/v1/workspaces/post-chat-message
 ```
 
 This is how the AI agent sends its responses. The endpoint is authenticated

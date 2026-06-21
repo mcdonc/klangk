@@ -38,7 +38,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 
 | Field                  | Required | Description                                                                                                                 |
 | ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `id`                   | Yes      | URL-safe slug, used in endpoint paths (`/auth/oidc/{id}/login`) and stored as `provider` on users                           |
+| `id`                   | Yes      | URL-safe slug, used in endpoint paths (`/api/v1/auth/oidc/{id}/login`) and stored as `provider` on users                    |
 | `display_name`         | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                                                |
 | `issuer`               | Yes      | OIDC issuer URL. Discovery via `{issuer}/.well-known/openid-configuration`                                                  |
 | `client_id`            | Yes      | OIDC client ID registered with the IdP                                                                                      |
@@ -62,7 +62,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 1. Create a client in your Keycloak realm:
    - Client ID: `klangk`
    - Client authentication: On (confidential)
-   - Valid redirect URIs: `https://your-klangk-host/auth/oidc/cac/callback` (one per provider ID)
+   - Valid redirect URIs: `https://your-klangk-host/api/v1/auth/oidc/cac/callback` (one per provider ID)
    - Web origins: `https://your-klangk-host`
 2. Copy the client secret to a file or set it directly in the OIDC config
 3. For CAC: configure the X.509 client certificate authenticator in the Keycloak authentication flow

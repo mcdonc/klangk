@@ -119,7 +119,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 600));
 
-        expect(capturedUrl, contains('/workspaces/my-ws/files/upload'));
+        expect(capturedUrl, contains('/api/v1/workspaces/my-ws/files/upload'));
         expect(capturedUrl, contains('path=src%2Flib%2Fhello.dart'));
       });
 

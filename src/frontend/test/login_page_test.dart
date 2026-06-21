@@ -34,7 +34,7 @@ void main() {
     String authModes = 'password',
   }) {
     return MockClient((request) async {
-      if (request.url.path.contains('/api/config')) {
+      if (request.url.path.contains('/api/v1/config')) {
         return http.Response(
           jsonEncode({
             'registration_enabled': registrationEnabled,
