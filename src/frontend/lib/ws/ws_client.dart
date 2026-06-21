@@ -55,8 +55,9 @@ class WsClient extends ChangeNotifier {
   /// Set to false during intentional disconnects.
   bool _autoReconnect = false;
 
-  /// Max backoff duration in seconds.
-  static const int _maxBackoffSeconds = 30;
+  /// Max backoff duration in seconds.  Kept low because the HTTP pre-check
+  /// is cheap and fast — we just need to detect when the server is back.
+  static const int _maxBackoffSeconds = 5;
 
   /// Give up auto-reconnecting after this duration.
   static const Duration _reconnectTimeout = Duration(minutes: 5);
@@ -83,7 +84,7 @@ class WsClient extends ChangeNotifier {
   /// `ready` hangs (Firefox FailDelayManager throttle), close and retry.
   /// Normal WebSocket handshake takes <100ms; this just needs to be long
   /// enough to avoid false positives on slow networks.
-  static const Duration _readyTimeout = Duration(seconds: 2);
+  static const Duration _readyTimeout = Duration(seconds: 1);
 
   /// Override for testing to control the ready timeout.
   @visibleForTesting
@@ -191,7 +192,7 @@ class WsClient extends ChangeNotifier {
   }
 
   Future<void> connect() async {
-    debugPrint('[WsClient v3] connect() enter: ${DateTime.now()}');
+    debugPrint('[WsClient v4] connect() enter: ${DateTime.now()}');
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     if (_connected || _connecting || _auth?.token == null) {
@@ -240,7 +241,7 @@ class WsClient extends ChangeNotifier {
       await _channel!.ready.timeout(timeout);
       debugPrint('[WsClient] await channel.ready done: ${DateTime.now()}');
     } on TimeoutException {
-      debugPrint('[WsClient v3] channel.ready timed out (Firefox throttle), '
+      debugPrint('[WsClient v4] channel.ready timed out (Firefox throttle), '
           'retrying (attempt ${attempt + 1}): ${DateTime.now()}');
       // Fire-and-forget the close — don't await it because Firefox's
       // FailDelayManager blocks the close handshake too.  The channel is
