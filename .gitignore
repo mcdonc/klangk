@@ -70,3 +70,6 @@ oidc.tar.gz
 # Zensical docs build output
 site/
 output.log
+
+# Fuzz test output
+fuzz-server.log

@@ -238,6 +238,12 @@ in
     exec npx playwright test --reporter=list "$@"
   '';
 
+  # API fuzz test: start an isolated server, send random requests
+  scripts.test-fuzz-api.exec = ''
+    cd $DEVENV_ROOT
+    exec python scripts/fuzz-api.py "$@"
+  '';
+
   scripts.test-frontend.exec = ''
     cd $DEVENV_ROOT/src/frontend
     rm -rf coverage
