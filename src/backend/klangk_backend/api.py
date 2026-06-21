@@ -1975,11 +1975,10 @@ async def upload_file(
                 fp.write(chunk)
     except HTTPException:
         raise
-    except Exception as e:  # pragma: no cover
+    except Exception:  # pragma: no cover
+        logger.exception("Upload failed for workspace %s", workspace_id)
         dest.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=500, detail=f"Upload failed: {e}"
-        ) from e
+        raise HTTPException(status_code=500, detail="Upload failed")
     home = workspaces.get_home_host_path(workspace["user_id"], workspace_id)
     saved_path = str(dest.relative_to(home))
     return {"path": saved_path, "status": "uploaded"}
