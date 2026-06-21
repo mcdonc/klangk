@@ -240,7 +240,10 @@ class WsClient extends ChangeNotifier {
     } on TimeoutException {
       debugPrint('[WsClient] channel.ready timed out (Firefox throttle), '
           'retrying (attempt ${attempt + 1}): ${DateTime.now()}');
-      _channel?.sink.close(1000, 'ready timeout');
+      // Close and wait for it to complete before opening a new channel,
+      // otherwise Firefox queues multiple connections behind the
+      // FailDelayManager and they all arrive at once.
+      await _channel?.sink.close(1000, 'ready timeout');
       _channel = null;
       return _connectWs(attempt + 1);
     } catch (e) {
