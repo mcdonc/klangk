@@ -2123,18 +2123,64 @@ async def list_users(admin: dict = Depends(acl.has_permission("admin"))):
 
 class AdminCreateUserRequest(BaseModel):
     email: str
-    password: str
+    password: str | None = None
+    send_verification_email: bool = False
 
 
 @router.post("/admin/users")
 async def admin_create_user(
     req: AdminCreateUserRequest,
+    request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
 ):
-    """Create a verified user directly (admin only, no email verification)."""
+    """Create a user (admin only).
+
+    By default creates a verified user with the given password.  When
+    ``send_verification_email`` is true, the password field is ignored
+    and a verification email is sent so the user can set their own
+    password.
+    """
+    auth.validate_email(req.email)
     existing = await model.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    if req.send_verification_email:
+        user_id = str(uuid.uuid4())
+        # Use a random password hash — the user will set their own
+        # password via the verification link.
+        password_hash = auth.hash_password(uuid.uuid4().hex[:24])
+
+        hostname, proto, base_path = derive_hosting_info(request.headers)
+        verification_token = auth.create_verification_token(user_id)
+        verification_url = (
+            f"{proto}://{hostname}{base_path}"
+            f"/#/verify?token={verification_token}"
+        )
+
+        async with model.transaction() as db:
+            await db.execute(
+                "INSERT INTO users (id, email, password_hash, verified)"
+                " VALUES (?, ?, ?, 0)",
+                (user_id, req.email, password_hash),
+            )
+            await _send_email(
+                emailsvc.send_verification_email(req.email, verification_url),
+                req.email,
+                "verification email",
+            )
+
+        return {
+            "id": user_id,
+            "email": req.email,
+            "status": "pending_verification",
+        }
+
+    if not req.password:
+        raise HTTPException(
+            status_code=400,
+            detail="Password is required when not sending verification email",
+        )
     auth.validate_password_length(req.password)
     password_hash = auth.hash_password(req.password)
     user = await model.create_user(req.email, password_hash, verified=True)

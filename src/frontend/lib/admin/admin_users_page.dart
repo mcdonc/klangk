@@ -37,11 +37,14 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   void _resolvePermissions() {
     final auth = context.read<AuthService>();
-    _canUsers = auth.hasPermission('/admin', '*') ||
+    _canUsers =
+        auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/users', 'view');
-    _canGroups = auth.hasPermission('/admin', '*') ||
+    _canGroups =
+        auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/groups', 'view');
-    _canInvitations = auth.hasPermission('/admin', '*') ||
+    _canInvitations =
+        auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/invitations', 'view');
   }
 
@@ -203,8 +206,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final groupId = group['id'] as String;
     final groupName = group['name'] as String;
 
-    final membersResp =
-        await auth.authGet('/api/v1/admin/groups/$groupId/members');
+    final membersResp = await auth.authGet(
+      '/api/v1/admin/groups/$groupId/members',
+    );
     final usersResp = await auth.authGet('/api/v1/admin/users');
     if (!mounted) return;
     if (membersResp.statusCode != 200 || usersResp.statusCode != 200) return;
@@ -219,8 +223,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final memberIds = members.map((m) => m['id']).toSet();
-          final nonMembers =
-              allUsers.where((u) => !memberIds.contains(u['id'])).toList();
+          final nonMembers = allUsers
+              .where((u) => !memberIds.contains(u['id']))
+              .toList();
 
           return AlertDialog(
             title: Text('Members of "$groupName"'),
@@ -436,8 +441,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (confirm != true) return;
 
     final auth = context.read<AuthService>();
-    final resp =
-        await auth.authDelete('/api/v1/admin/invitations/$invitationId');
+    final resp = await auth.authDelete(
+      '/api/v1/admin/invitations/$invitationId',
+    );
     if (resp.statusCode == 200) {
       _loadInvitations();
     } else {
@@ -454,8 +460,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   Future<void> _resendInvitation(String invitationId, String email) async {
     final auth = context.read<AuthService>();
-    final resp =
-        await auth.authPost('/api/v1/admin/invitations/$invitationId/resend');
+    final resp = await auth.authPost(
+      '/api/v1/admin/invitations/$invitationId/resend',
+    );
     if (mounted) {
       if (resp.statusCode == 200) {
         ScaffoldMessenger.of(
@@ -473,17 +480,30 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   }
 
   Future<void> _addUser() async {
-    final result = await showDialog<Map<String, String>>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => _AddUserDialog(),
     );
     if (result == null) return;
 
     final auth = context.read<AuthService>();
-    final resp =
-        await auth.authPost('/api/v1/admin/users', body: jsonEncode(result));
+    final resp = await auth.authPost(
+      '/api/v1/admin/users',
+      body: jsonEncode(result),
+    );
     if (resp.statusCode == 200) {
       _loadUsers();
+      if (mounted) {
+        final body = jsonDecode(resp.body);
+        final status = body['status'] as String? ?? '';
+        if (status == 'pending_verification') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Verification email sent to ${result['email']}'),
+            ),
+          );
+        }
+      }
     } else {
       if (mounted) {
         final error = jsonDecode(resp.body);
@@ -655,8 +675,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               backgroundColor: isPending
                   ? KColors.accentAmber
                   : status == 'accepted'
-                      ? KColors.accentGreen
-                      : KColors.textMuted,
+                  ? KColors.accentGreen
+                  : KColors.textMuted,
               child: Text(
                 initial,
                 style: const TextStyle(
@@ -708,8 +728,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   @override
   Widget build(BuildContext context) {
-    final pendingCount =
-        _invitations.where((i) => i['status'] == 'pending').length;
+    final pendingCount = _invitations
+        .where((i) => i['status'] == 'pending')
+        .length;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
     final tabTypes = _tabTypes;
@@ -834,6 +855,7 @@ class _AddUserDialog extends StatefulWidget {
 class _AddUserDialogState extends State<_AddUserDialog> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  bool _sendVerificationEmail = false;
 
   @override
   void dispose() {
@@ -867,17 +889,31 @@ class _AddUserDialogState extends State<_AddUserDialog> {
               autofocus: true,
             ),
             const SizedBox(height: 16),
-            TextField(
-              controller: _passwordController,
-              decoration: InputDecoration(
-                labelText: 'Password',
-                labelStyle: labelStyle,
-                floatingLabelStyle: labelStyle,
-                floatingLabelBehavior: FloatingLabelBehavior.always,
-                border: const OutlineInputBorder(),
+            CheckboxListTile(
+              value: _sendVerificationEmail,
+              onChanged: (v) =>
+                  setState(() => _sendVerificationEmail = v ?? false),
+              title: const Text('Send verification email'),
+              subtitle: const Text(
+                'User sets their own password via email link',
               ),
-              obscureText: true,
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
             ),
+            if (!_sendVerificationEmail) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _passwordController,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  labelStyle: labelStyle,
+                  floatingLabelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                ),
+                obscureText: true,
+              ),
+            ],
           ],
         ),
       ),
@@ -890,9 +926,20 @@ class _AddUserDialogState extends State<_AddUserDialog> {
         FilledButton(
           onPressed: () {
             final email = _emailController.text.trim();
-            final password = _passwordController.text;
-            if (email.isEmpty || password.isEmpty) return;
-            Navigator.pop(context, {'email': email, 'password': password});
+            if (email.isEmpty) return;
+            if (_sendVerificationEmail) {
+              Navigator.pop(context, <String, dynamic>{
+                'email': email,
+                'send_verification_email': true,
+              });
+            } else {
+              final password = _passwordController.text;
+              if (password.isEmpty) return;
+              Navigator.pop(context, <String, dynamic>{
+                'email': email,
+                'password': password,
+              });
+            }
           },
           child: const Text('Add'),
         ),
