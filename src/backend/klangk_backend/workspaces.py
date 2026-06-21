@@ -340,6 +340,12 @@ def ensure_home_symlink(
             entry.unlink()
             break
 
+    # The handle path may already exist — e.g., a symlink pointing to a
+    # different user from a workspace import.  Remove it so we can create
+    # the correct symlink.
+    if symlink.is_symlink():
+        symlink.unlink()
+
     symlink.symlink_to(target)
     return f"/home/{handle}", created
 
