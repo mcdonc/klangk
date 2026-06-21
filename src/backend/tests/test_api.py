@@ -219,6 +219,7 @@ class TestConfig:
         data = resp.json()
         assert "login_banner_title" in data
         assert "login_banner" in data
+        assert "instance_id" in data
 
     async def test_get_config_includes_plugins(self, client, monkeypatch):
         monkeypatch.setattr(

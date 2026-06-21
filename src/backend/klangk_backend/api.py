@@ -183,6 +183,7 @@ async def get_config():
         "login_banner": LOGIN_BANNER,
         "oidc_providers": oidc.list_providers(),
         "auth_modes": oidc.auth_modes(),
+        "instance_id": container.INSTANCE_ID,
     }
     config.update(plugins.frontend_config())
     return config

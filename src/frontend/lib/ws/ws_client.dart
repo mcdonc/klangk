@@ -427,13 +427,13 @@ class WsClient extends ChangeNotifier {
     final msg = <String, dynamic>{'cmd': 'terminal_start'};
     if (cols != null) msg['cols'] = cols;
     if (rows != null) msg['rows'] = rows;
-    final bid = getBrowserId();
+    final bid = getBrowserId(_auth?.instanceId ?? 'default');
     if (bid.isNotEmpty) msg['browser_id'] = bid;
     _send(msg);
   }
 
   void sendBrowserReattach() {
-    final bid = getBrowserId();
+    final bid = getBrowserId(_auth?.instanceId ?? 'default');
     if (bid.isNotEmpty) {
       debugPrint('[WsClient] browser_reattach: $bid'); // coverage:ignore-start
       _send({

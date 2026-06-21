@@ -173,6 +173,22 @@ def user_b(api):
     return {"headers": headers, "email": email}
 
 
+# --- Config ---
+
+
+class TestConfig:
+    def test_config_returns_instance_id(self, api):
+        resp = api.get("/api/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["instance_id"] == "acl-e2e"
+
+    def test_config_instance_id_stable_across_requests(self, api):
+        resp1 = api.get("/api/config")
+        resp2 = api.get("/api/config")
+        assert resp1.json()["instance_id"] == resp2.json()["instance_id"]
+
+
 # --- Group management ---
 
 

@@ -21,6 +21,7 @@ class AuthService extends ChangeNotifier {
   String _bannerTitle = '';
   String _bannerText = '';
   bool _bannerAccepted = false;
+  String _instanceId = 'default';
   Timer? _permissionTimer;
   Timer? _refreshTimer;
 
@@ -32,6 +33,7 @@ class AuthService extends ChangeNotifier {
   String get bannerText => _bannerText;
   bool get bannerAccepted => _bannerAccepted;
   bool get bannerRequired => _bannerText.isNotEmpty && !_bannerAccepted;
+  String get instanceId => _instanceId;
 
   /// Decode the JWT payload.
   Map<String, dynamic>? get _payload {
@@ -87,6 +89,7 @@ class AuthService extends ChangeNotifier {
         final data = jsonDecode(resp.body);
         _bannerTitle = (data['login_banner_title'] as String?) ?? '';
         _bannerText = (data['login_banner'] as String?) ?? '';
+        _instanceId = (data['instance_id'] as String?) ?? 'default';
       }
     } catch (e) {
       // coverage:ignore-start
