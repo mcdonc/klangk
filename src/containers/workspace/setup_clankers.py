@@ -2,9 +2,8 @@
 """Set up per-user Pi agent config at login time.
 
 Called from bash.bashrc on each shell.  Creates $HOME/.pi/agent/ with
-all the files Pi needs: settings.json, models.json, keybindings.json,
-extensions (rsynced from image), npm/git packages, bin tools, and
-AGENTS.md.
+all the files Pi needs: settings.json, models.json, npm packages
+(rsynced from image), and AGENTS.md.
 
 Skips setup if $HOME/.pi/agent/settings.json already exists.
 """
@@ -27,34 +26,23 @@ def _agent_dir():
 def setup_dirs():
     """Create agent directories."""
     agent = _agent_dir()
-    for d in ("bin", "npm", "git", "extensions"):
+    for d in ("npm", "extensions"):
         (agent / d).mkdir(parents=True, exist_ok=True)
 
 
 def sync_image_packages():
-    """Rsync image npm and git packages into the user's agent dir.
+    """Rsync image npm packages into the user's agent dir.
 
     Pi resolves these by path (npm/node_modules/<pkg>).  Extensions
     are NOT copied — settings.json points directly at the image dir.
     """
     agent = _agent_dir()
-    for subdir in ("npm", "git"):
-        src = IMAGE_DIR / subdir
-        if src.is_dir():
-            subprocess.run(
-                ["rsync", "-a", f"{src}/", f"{agent / subdir}/"],
-                check=True,
-            )
-
-
-def setup_bin():
-    """Symlink system fd/rg into Pi's bin dir."""
-    agent = _agent_dir()
-    for tool in ("fd", "rg"):
-        link = agent / "bin" / tool
-        target = Path(f"/usr/bin/{tool}")
-        if target.exists() and not link.exists():
-            link.symlink_to(target)
+    src = IMAGE_DIR / "npm"
+    if src.is_dir():
+        subprocess.run(
+            ["rsync", "-a", f"{src}/", f"{agent / 'npm'}/"],
+            check=True,
+        )
 
 
 def write_settings():
@@ -100,20 +88,6 @@ def write_models():
     (agent / "models.json").write_text(json.dumps(models, indent=2))
 
 
-def write_keybindings():
-    """Write default keybindings.json if not present."""
-    agent = _agent_dir()
-    kb_path = agent / "keybindings.json"
-    if kb_path.exists():
-        return  # don't overwrite user's keybindings
-
-    keybindings = {
-        "tui.editor.cursorLeft": ["left"],
-        "tui.editor.cursorRight": ["right"],
-    }
-    kb_path.write_text(json.dumps(keybindings, indent=2))
-
-
 def build_system_prompt():
     """Write AGENTS.md to $HOME if not present."""
     home = Path(os.environ.get("HOME", ""))
@@ -149,10 +123,8 @@ def main():
 
     _run_step("setup_dirs", setup_dirs)
     _run_step("sync_image_packages", sync_image_packages)
-    _run_step("setup_bin", setup_bin)
     _run_step("write_settings", write_settings)
     _run_step("write_models", write_models)
-    _run_step("write_keybindings", write_keybindings)
     _run_step("build_system_prompt", build_system_prompt)
 
     if ERROR_LOG.exists():
