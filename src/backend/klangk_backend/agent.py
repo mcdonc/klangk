@@ -65,6 +65,7 @@ class AgentSession:
         self._home_ready = False
         self._monitor_task: asyncio.Task | None = None
         self._restart_attempts = 0
+        self._gave_up = False
 
     async def _ensure_home(self) -> str:
         """Ensure the agent has a home directory with Pi config.
@@ -128,6 +129,10 @@ class AgentSession:
     async def _ensure_started(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:
             return self._proc
+        if self._gave_up:
+            raise AgentError(
+                "Agent gave up restarting for workspace %s" % self.workspace_id
+            )
 
         container_home = await self._ensure_home()
         agent_handle = await model.agent_handle()
@@ -155,6 +160,7 @@ class AgentSession:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
             env=podman.subprocess_env(),
         )
         self._monitor_task = asyncio.create_task(
@@ -169,15 +175,29 @@ class AgentSession:
         if self._proc is not proc:
             return
         self._proc = None
+
+        # Drain stderr for diagnostics (limit to 1 KiB to avoid memory issues).
+        stderr_text = ""
+        if proc.stderr is not None:
+            try:
+                stderr_bytes = await asyncio.wait_for(
+                    proc.stderr.read(1024), timeout=2
+                )
+                stderr_text = stderr_bytes.decode(errors="replace").strip()
+            except (asyncio.TimeoutError, OSError):
+                pass
         logger.warning(
-            "Agent process died (rc=%s) for container %s",
+            "Agent process died (rc=%s) for container %s%s",
             proc.returncode,
             self.container_id,
+            f": {stderr_text}" if stderr_text else "",
         )
+
         await _broadcast_agent_disconnect(self.workspace_id)
         # Auto-restart after a brief delay to avoid tight loops
         self._restart_attempts += 1
         if self._restart_attempts > 2:
+            self._gave_up = True
             logger.error(
                 "Agent exceeded 3 restart attempts for workspace %s, giving up",
                 self.workspace_id,
@@ -405,6 +425,7 @@ async def get_session(workspace_id: str, container_id: str) -> AgentSession:
         session.container_id = container_id
         session._home_ready = False
         session._restart_attempts = 0
+        session._gave_up = False
     return session
 
 
