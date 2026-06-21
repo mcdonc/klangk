@@ -171,6 +171,7 @@ in
       config.devenv.state + "/klangk/podman/policy.json"
   );
   env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
+  env.KLANGK_VERSION_FILE = config.devenv.state + "/klangk/version.json";
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
   # emulation. The published GHCR base (klangk-workspace-base:latest) is
@@ -350,6 +351,10 @@ in
 
   enterShell = ''
     mkdir -p "$KLANGK_DATA_DIR"
+
+    # Generate version file (used by update_plugins.py and /version endpoint)
+    mkdir -p "$(dirname "$KLANGK_VERSION_FILE")"
+    bash "$DEVENV_ROOT/scripts/generate-version.sh" > "$KLANGK_VERSION_FILE"
 
     # Podman uses its default storage (~/.local/share/containers/).
     # To customize, create ~/.config/containers/storage.conf.

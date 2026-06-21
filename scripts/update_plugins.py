@@ -5,6 +5,7 @@ If plugins/ doesn't exist, creates it with a template plugins.yaml.
 If plugins/plugins.yaml exists, fetches listed plugins and writes plugins.lock.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -24,58 +25,65 @@ PLUGINS_DIR = os.environ.get("KLANGK_PLUGINS_DIR") or os.path.join(
 YAML_PATH = os.path.join(PLUGINS_DIR, "plugins.yaml")
 LOCK_PATH = os.path.join(PLUGINS_DIR, "plugins.lock")
 
-DEFAULT_TEMPLATE = """\
-# Klangk plugins configuration
-# Run 'update-plugins' to fetch plugins listed here.
-# Each entry requires: name, git. Optional: path, ref.
-plugins:
-  # Default plugins (from the Klangk repo)
-  - name: celebrate
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/celebrate
-    ref: main
-  - name: beep
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/beep
-    ref: main
-  - name: pig-latin
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/pig-latin
-    ref: main
-  - name: word-count
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/word-count
-    ref: main
-  - name: browser-fetch
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/browser-fetch
-    ref: main
-  - name: boingball
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/boingball
-    ref: main
-  - name: git-credential
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/git-credential
-    ref: main
-  - name: claude-code
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/claude-code
-    ref: main
-  # Add more plugins:
-  # - name: my-plugin
-  #   git: git@github.com:user/repo.git
-  #   path: subdir              # optional: subdirectory within the repo
-  #   ref: worktree-411-connection-id  # branch, tag, or commit SHA
-  #
-  # Plugin structure:
-  #   extension.ts              # required: Pi extension (TypeScript)
-  #   klangk/                     # optional: Dart package for client-side tools
-  #     pubspec.yaml            #   depends on klangk_plugin_api
-  #     lib/
-  #       plugin.dart           #   class extending ToolPlugin
-  #   tools/                    # optional: server-side scripts
-"""
+_DEFAULT_PLUGINS = [
+    "celebrate",
+    "beep",
+    "pig-latin",
+    "word-count",
+    "browser-fetch",
+    "boingball",
+    "git-credential",
+    "claude-code",
+]
+
+
+def _detect_ref():
+    """Determine the plugin ref from KLANGK_VERSION_FILE, falling back to main."""
+    version_file = os.environ.get("KLANGK_VERSION_FILE", "")
+    if version_file and os.path.isfile(version_file):
+        try:
+            with open(version_file) as f:
+                data = json.load(f)
+            version = data.get("version", "")
+            if version:
+                return version
+        except (json.JSONDecodeError, OSError):
+            pass
+    return "main"
+
+
+def _default_template(ref):
+    """Generate the default plugins.yaml template with the given ref."""
+    lines = [
+        "# Klangk plugins configuration",
+        "# Run 'update-plugins' to fetch plugins listed here.",
+        "# Each entry requires: name, git. Optional: path, ref.",
+        "plugins:",
+        "  # Default plugins (from the Klangk repo)",
+    ]
+    for name in _DEFAULT_PLUGINS:
+        lines.append(f"  - name: {name}")
+        lines.append("    git: git@github.com:mcdonc/klangk.git")
+        lines.append(f"    path: plugins/{name}")
+        lines.append(f"    ref: {ref}")
+    lines.extend(
+        [
+            "  # Add more plugins:",
+            "  # - name: my-plugin",
+            "  #   git: git@github.com:user/repo.git",
+            "  #   path: subdir              # optional: subdirectory within the repo",
+            "  #   ref: main                 # branch, tag, or commit SHA",
+            "  #",
+            "  # Plugin structure:",
+            "  #   extension.ts              # required: Pi extension (TypeScript)",
+            "  #   klangk/                     # optional: Dart package for client-side tools",
+            "  #     pubspec.yaml            #   depends on klangk_plugin_api",
+            "  #     lib/",
+            "  #       plugin.dart           #   class extending ToolPlugin",
+            "  #   tools/                    # optional: server-side scripts",
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
 def resolve_ref(git_url, ref):
@@ -100,7 +108,7 @@ def resolve_ref(git_url, ref):
 def fetch_plugin(plugin, plugins_dir):
     """Fetch a single plugin from a git repo into plugins_dir."""
     git_url = plugin["git"]
-    ref = plugin.get("ref", "worktree-411-connection-id")
+    ref = plugin.get("ref", "main")
     subpath = plugin.get("path", "")
 
     name = plugin["name"]
@@ -193,8 +201,10 @@ def main():
     # Create plugins/ with template if it doesn't exist
     if not os.path.exists(YAML_PATH):
         os.makedirs(PLUGINS_DIR, exist_ok=True)
+        ref = _detect_ref()
         with open(YAML_PATH, "w") as f:
-            f.write(DEFAULT_TEMPLATE)
+            f.write(_default_template(ref))
+        print(f"Using plugin ref: {ref}")
         print(f"Created template {YAML_PATH}")
         print("Edit it to add plugins, then run 'update-plugins' again.")
         return
