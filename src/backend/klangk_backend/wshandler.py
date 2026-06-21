@@ -16,7 +16,7 @@ from . import acl as _acl
 from . import agent, auth, container, model, podman, terminal, workspaces
 from .exceptions import TerminalError
 from .util import derive_hosting_info, resolve_env_secret
-from .dockerexec import ExecSession
+from .podman import ExecSession
 from .terminal import TerminalSession, attach_browser
 
 logger = logging.getLogger(__name__)
