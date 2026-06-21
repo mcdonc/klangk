@@ -12,7 +12,8 @@ let
        --no-access-log \
        --ws-max-size ''${KLANGK_WS_MSG_SIZE_MAX:-16777216} \
        --ws-ping-interval 20 \
-       --ws-ping-timeout 20'';
+       --ws-ping-timeout 20 \
+       --timeout-graceful-shutdown 3'';
 in
 {
   languages.javascript = {
