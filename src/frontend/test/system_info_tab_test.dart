@@ -99,4 +99,88 @@ void main() {
 
     expect(find.text('HTTP 500'), findsOneWidget);
   });
+
+  testWidgets('shows connection error on exception', (tester) async {
+    testAuthHttpClientOverride = MockClient((request) async {
+      if (request.url.path == '/version') {
+        throw Exception('connection refused');
+      }
+      if (request.url.path.contains('/api/config')) {
+        return http.Response(
+          jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+          200,
+        );
+      }
+      if (request.url.path.contains('/api/my-permissions')) {
+        return http.Response(
+          jsonEncode({
+            'user_id': 'test',
+            'email': 'test@example.com',
+            'permissions': <String, dynamic>{},
+            'groups': <dynamic>[],
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+    final auth = AuthService();
+
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: SystemInfoTab(auth: auth))),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Failed to connect'), findsOneWidget);
+  });
+
+  testWidgets('shows no plugins loaded when list is empty', (tester) async {
+    testAuthHttpClientOverride = MockClient((request) async {
+      if (request.url.path == '/version') {
+        return http.Response(
+          jsonEncode({
+            'version': 'dev',
+            'commit': 'unknown',
+            'built_at': null,
+            'plugins': <dynamic>[],
+          }),
+          200,
+        );
+      }
+      if (request.url.path.contains('/api/config')) {
+        return http.Response(
+          jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+          200,
+        );
+      }
+      if (request.url.path.contains('/api/my-permissions')) {
+        return http.Response(
+          jsonEncode({
+            'user_id': 'test',
+            'email': 'test@example.com',
+            'permissions': <String, dynamic>{},
+            'groups': <dynamic>[],
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+    final auth = AuthService();
+
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: SystemInfoTab(auth: auth))),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('No plugins loaded'), findsOneWidget);
+  });
 }
