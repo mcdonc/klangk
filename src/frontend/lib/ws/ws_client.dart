@@ -81,7 +81,9 @@ class WsClient extends ChangeNotifier {
 
   /// Timeout for `channel.ready` — if the server is confirmed up via HTTP but
   /// `ready` hangs (Firefox FailDelayManager throttle), close and retry.
-  static const Duration _readyTimeout = Duration(seconds: 5);
+  /// Normal WebSocket handshake takes <100ms; this just needs to be long
+  /// enough to avoid false positives on slow networks.
+  static const Duration _readyTimeout = Duration(seconds: 2);
 
   /// Override for testing to control the ready timeout.
   @visibleForTesting
@@ -189,7 +191,7 @@ class WsClient extends ChangeNotifier {
   }
 
   Future<void> connect() async {
-    debugPrint('[WsClient v2] connect() enter: ${DateTime.now()}');
+    debugPrint('[WsClient v3] connect() enter: ${DateTime.now()}');
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     if (_connected || _connecting || _auth?.token == null) {
@@ -238,7 +240,7 @@ class WsClient extends ChangeNotifier {
       await _channel!.ready.timeout(timeout);
       debugPrint('[WsClient] await channel.ready done: ${DateTime.now()}');
     } on TimeoutException {
-      debugPrint('[WsClient v2] channel.ready timed out (Firefox throttle), '
+      debugPrint('[WsClient v3] channel.ready timed out (Firefox throttle), '
           'retrying (attempt ${attempt + 1}): ${DateTime.now()}');
       // Fire-and-forget the close — don't await it because Firefox's
       // FailDelayManager blocks the close handshake too.  The channel is
