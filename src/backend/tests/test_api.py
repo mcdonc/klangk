@@ -2745,6 +2745,28 @@ class TestFileRoutes:
         )
         assert resp.status_code in (400, 422)
 
+    async def test_upload_filename_too_long(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        long_name = "a" * 256 + ".txt"
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/files/upload",
+            headers=headers,
+            files={"file": (long_name, b"data", "application/octet-stream")},
+        )
+        assert resp.status_code == 400
+        assert "limit" in resp.json()["detail"]
+
+    async def test_list_files_path_too_long(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        long_path = "a" * 256
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/files?path={long_path}",
+            headers=headers,
+        )
+        assert resp.status_code == 400
+
     async def test_delete_file(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)

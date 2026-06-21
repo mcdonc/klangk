@@ -29,6 +29,24 @@ class TestResolvePathTraversal:
         resolved = files.resolve_path(uid, wid, ".")
         assert resolved == path
 
+    async def test_filename_too_long_rejected(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        long_name = "a" * 256
+        with pytest.raises(ValueError, match="limit"):
+            files.resolve_path(uid, wid, long_name)
+
+    async def test_nested_component_too_long_rejected(self, workspace_dir):
+        uid, wid, _ = workspace_dir
+        long_name = "a" * 256
+        with pytest.raises(ValueError, match="limit"):
+            files.resolve_path(uid, wid, f"subdir/{long_name}")
+
+    async def test_255_byte_filename_accepted(self, workspace_dir):
+        uid, wid, path = workspace_dir
+        name = "a" * 255
+        resolved = files.resolve_path(uid, wid, name)
+        assert str(resolved).endswith(name)
+
 
 class TestWriteAndRead:
     async def test_write_and_read_file(self, workspace_dir):
