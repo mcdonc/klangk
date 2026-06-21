@@ -1,0 +1,3 @@
+#!/bin/sh
+mkdir -p /run/klangk
+printf '%s' "$1" >/run/klangk/workspace-token

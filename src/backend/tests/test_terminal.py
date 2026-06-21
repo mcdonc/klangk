@@ -13,6 +13,7 @@ import pytest
 from klangk_backend.exceptions import TerminalError
 from klangk_backend.terminal import (
     TerminalSession,
+    set_workspace_token,
     _build_environment,
     _build_shell_command,
     _make_shell_process,
@@ -299,6 +300,31 @@ class TestAttachBrowser:
         ):
             # Should not raise
             await attach_browser("cid-123", "bid-abc")
+
+
+class TestSetWorkspaceToken:
+    async def test_runs_klangk_set_workspace_token(self):
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"", b"")
+        mock_proc.returncode = 0
+        with patch(
+            "klangk_backend.terminal.asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ) as mock_exec:
+            await set_workspace_token("cid-123", "jwt-token-xyz")
+        args = mock_exec.call_args[0]
+        assert "klangk-set-workspace-token" in args
+        assert "jwt-token-xyz" in args
+
+    async def test_logs_warning_on_failure(self):
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"", b"set failed")
+        mock_proc.returncode = 1
+        with patch(
+            "klangk_backend.terminal.asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ):
+            await set_workspace_token("cid-123", "jwt-token-xyz")
 
 
 class TestReadLoop:

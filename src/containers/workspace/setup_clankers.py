@@ -83,7 +83,7 @@ def write_models():
     agent = _agent_dir()
     proxy_url = os.environ.get("KLANGK_LLM_PROXY_URL", "")
     model = os.environ.get("KLANGK_LLM_MODEL", "")
-    workspace_token = os.environ.get("KLANGK_WORKSPACE_TOKEN", "proxy")
+    workspace_token = "!klangk-workspace-token"
 
     models = {
         "providers": {

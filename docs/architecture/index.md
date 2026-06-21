@@ -22,7 +22,7 @@ Python/FastAPI backend (port 8997, serves API + frontend static files)
 Pi container per workspace (interactive terminal mode)
     ├── Pi extensions (from $KLANGK_PLUGINS_DIR/*/extension.ts)
     ├── AGENTS.md (dynamically generated on container start)
-    ├── KLANGK_WORKSPACE_TOKEN (per-workspace JWT for authenticated host requests)
+    ├── /run/klangk/workspace-token (per-workspace JWT, auto-renewed)
     ↕ bind mount
 $KLANGK_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 ```

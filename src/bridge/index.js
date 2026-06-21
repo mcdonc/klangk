@@ -23,9 +23,21 @@ function getBrowserId() {
   }
 }
 
+/**
+ * Read the current workspace token from klangk-workspace-token.
+ * Returns empty string if unavailable.
+ */
+function getWorkspaceToken() {
+  try {
+    return execSync("klangk-workspace-token", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
 function getConfig() {
   const bridgeUrl = process.env.KLANGK_BRIDGE_URL;
-  const workspaceToken = process.env.KLANGK_WORKSPACE_TOKEN;
+  const workspaceToken = getWorkspaceToken();
   if (!bridgeUrl) {
     throw new Error(
       "@klangk/bridge: KLANGK_BRIDGE_URL is not set. " +

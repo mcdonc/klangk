@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from . import auth, model, plugins, podman, util
+from . import auth, model, plugins, podman, terminal, util
 
 logger = logging.getLogger(__name__)
 
@@ -488,8 +488,6 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_HOSTING_HOSTNAME={hosting_hostname}")
         env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
-        workspace_token = auth.create_workspace_token(workspace_id)
-        env_vars.append(f"KLANGK_WORKSPACE_TOKEN={workspace_token}")
         allow_sudo = util.resolve_env_bool("KLANGK_ALLOW_SUDO")
 
         for k, v in plugins.container_env().items():
@@ -661,6 +659,13 @@ class ContainerRegistry:
                 ],
                 user="root",
             )
+
+            # Write the workspace token to /run/klangk/workspace-token
+            # inside the container. Consumers read from this file
+            # rather than an environment variable so the token can be
+            # renewed without restarting the container.
+            workspace_token = auth.create_workspace_token(workspace_id)
+            await terminal.set_workspace_token(cid, workspace_token)
 
             return cid
 
