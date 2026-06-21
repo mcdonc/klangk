@@ -446,6 +446,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     List<int>? selectedBytes;
     String? fileName;
     String? errorMessage;
+    bool importing = false;
 
     final imported = await showDialog<bool>(
       context: context,
@@ -471,15 +472,18 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   const SizedBox(height: 12),
                 ],
                 OutlinedButton.icon(
-                  onPressed: () async {
-                    final bytes = await pickFileBytes(accept: '.tar.gz,.tgz');
-                    if (bytes != null) {
-                      setDialogState(() {
-                        selectedBytes = bytes;
-                        fileName = 'workspace.tar.gz';
-                      });
-                    }
-                  },
+                  onPressed: importing
+                      ? null
+                      : () async {
+                          final bytes =
+                              await pickFileBytes(accept: '.tar.gz,.tgz');
+                          if (bytes != null) {
+                            setDialogState(() {
+                              selectedBytes = bytes;
+                              fileName = 'workspace.tar.gz';
+                            });
+                          }
+                        },
                   icon: const Icon(Icons.file_open, size: 18),
                   label: Text(fileName ?? 'Select .tar.gz file'),
                 ),
@@ -507,14 +511,18 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: importing ? null : () => Navigator.pop(context),
               style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: selectedBytes == null
+              onPressed: selectedBytes == null || importing
                   ? null
                   : () async {
+                      setDialogState(() {
+                        importing = true;
+                        errorMessage = null;
+                      });
                       final name = nameController.text.trim();
                       var url = '$baseUrl/api/v1/workspaces/import';
                       if (name.isNotEmpty) {
@@ -545,14 +553,25 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                           } catch (_) {
                             detail = '${resp.statusCode}';
                           }
-                          setDialogState(
-                              () => errorMessage = 'Import failed: $detail');
+                          setDialogState(() {
+                            importing = false;
+                            errorMessage = 'Import failed: $detail';
+                          });
                         }
                       } catch (_) {
-                        setDialogState(() => errorMessage = 'Import failed');
+                        setDialogState(() {
+                          importing = false;
+                          errorMessage = 'Import failed';
+                        });
                       }
                     },
-              child: const Text('Import'),
+              child: importing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Import'),
             ),
           ],
         ),
