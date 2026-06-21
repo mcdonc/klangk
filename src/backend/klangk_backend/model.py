@@ -1484,20 +1484,19 @@ async def is_token_blocklisted(jti: str) -> bool:
 
 
 async def get_refreshed_token(jti: str) -> str | None:
-    """Return the replacement token for a refreshed JTI, if still valid."""
+    """Return the replacement token for a refreshed JTI.
+
+    The returned token is a full JWT whose own ``exp`` claim governs
+    its validity — no additional expiry check is needed here.
+    """
     async with transaction() as db:
         cursor = await db.execute(
-            "SELECT new_token, expires_at FROM token_blocklist"
+            "SELECT new_token FROM token_blocklist"
             " WHERE jti = ? AND new_token IS NOT NULL",
             (jti,),
         )
         row = await cursor.fetchone()
-        if row is None:
-            return None
-        expires_at = datetime.fromisoformat(row[1])
-        if expires_at < datetime.now(timezone.utc):
-            return None
-        return row[0]
+        return row[0] if row else None
 
 
 # Message history
