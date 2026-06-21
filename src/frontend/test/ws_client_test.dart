@@ -12,6 +12,11 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
   final _incoming = StreamController<dynamic>.broadcast();
   final _sink = _FakeSink();
   bool failReady = false;
+
+  /// If set, `ready` waits on this completer instead of resolving immediately.
+  /// Used to simulate Firefox FailDelayManager throttling.
+  Completer<void>? readyCompleter;
+
   int? _closeCode;
 
   @override
@@ -24,8 +29,11 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
   int? get closeCode => _closeCode;
 
   @override
-  Future<void> get ready =>
-      failReady ? Future.error('Connection refused') : Future.value();
+  Future<void> get ready {
+    if (failReady) return Future.error('Connection refused');
+    if (readyCompleter != null) return readyCompleter!.future;
+    return Future.value();
+  }
 
   void serverSend(Map<String, dynamic> msg) => _incoming.add(jsonEncode(msg));
 
@@ -43,12 +51,17 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
 
 class _FakeSink extends Fake implements WebSocketSink {
   final List<dynamic> sent = [];
+  bool closeCalled = false;
+  int? lastCloseCode;
 
   @override
   void add(dynamic data) => sent.add(data);
 
   @override
-  Future close([int? closeCode, String? closeReason]) async {}
+  Future close([int? closeCode, String? closeReason]) async {
+    closeCalled = true;
+    lastCloseCode = closeCode;
+  }
 }
 
 void main() {
@@ -358,6 +371,8 @@ void main() {
     tearDown(() {
       WsClient.testChannelFactory = null;
       WsClient.testBackoffOverride = null;
+      WsClient.testReadyTimeout = null;
+      WsClient.testReconnectTimeout = null;
     });
 
     test('server close triggers auto-reconnect when workspace was connected',
@@ -763,6 +778,82 @@ void main() {
       expect(client.reconnecting, isFalse);
       expect(client.reconnectAttempt, 0);
       expect(errors, contains('Session expired, please log in again'));
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('channel.ready timeout closes channel and retries', () async {
+      // Use a channel whose ready never completes to simulate Firefox throttle.
+      final throttledChannel = _FakeWebSocketChannel()
+        ..readyCompleter = Completer<void>();
+      var channelIndex = 0;
+      WsClient.testChannelFactory = (_) {
+        channelIndex++;
+        if (channelIndex == 1) {
+          channels.add(throttledChannel);
+          return throttledChannel;
+        }
+        final ch = _FakeWebSocketChannel();
+        channels.add(ch);
+        return ch;
+      };
+      WsClient.testReadyTimeout = Duration.zero;
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+
+      // First connect: channel.ready times out, connect() returns without
+      // setting _connected.
+      await client.connect();
+      expect(client.connected, isFalse);
+
+      // The throttled channel should have been closed with code 1000.
+      final sink = throttledChannel.sink as _FakeSink;
+      expect(sink.closeCalled, isTrue);
+      expect(sink.lastCloseCode, 1000);
+
+      client.dispose();
+    });
+
+    test('ready timeout during auto-reconnect schedules next attempt',
+        () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      // First channel connects normally.
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // Now make subsequent channels' ready hang (simulating Firefox throttle).
+      WsClient.testChannelFactory = (_) {
+        final ch = _FakeWebSocketChannel()..readyCompleter = Completer<void>();
+        channels.add(ch);
+        return ch;
+      };
+      WsClient.testReadyTimeout = Duration.zero;
+
+      // Server crashes — triggers auto-reconnect.
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.reconnecting, isTrue);
+      expect(client.reconnectAttempt, 1);
+
+      // Let the reconnect timer fire — the ready timeout should cause a retry.
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      // Should have attempted more than one reconnect.
+      expect(client.reconnectAttempt, greaterThan(1));
 
       client.disconnect();
       client.dispose();

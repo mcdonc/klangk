@@ -78,6 +78,14 @@ class WsClient extends ChangeNotifier {
   @visibleForTesting
   static Duration? testReconnectTimeout;
 
+  /// Timeout for `channel.ready` — if the server is confirmed up via HTTP but
+  /// `ready` hangs (Firefox FailDelayManager throttle), close and retry.
+  static const Duration _readyTimeout = Duration(seconds: 5);
+
+  /// Override for testing to control the ready timeout.
+  @visibleForTesting
+  static Duration? testReadyTimeout;
+
   /// Inject a pre-connected channel for testing.
   @visibleForTesting
   void connectForTest(WebSocketChannel channel) {
@@ -213,8 +221,20 @@ class WsClient extends ChangeNotifier {
 
     try {
       debugPrint('[WsClient] await channel.ready start: ${DateTime.now()}');
-      await _channel!.ready;
+      final timeout = testReadyTimeout ?? _readyTimeout;
+      await _channel!.ready.timeout(timeout);
       debugPrint('[WsClient] await channel.ready done: ${DateTime.now()}');
+    } on TimeoutException {
+      // Firefox's FailDelayManager is throttling the WebSocket connection.
+      // The server is confirmed up (HTTP pre-check passed), so close this
+      // throttled connection and retry — each attempt consumes part of the
+      // throttle window.  Don't call _scheduleReconnect() here; the caller
+      // (_attemptReconnect) handles rescheduling when _connected is false.
+      debugPrint('[WsClient] channel.ready timed out (Firefox throttle), '
+          'closing and retrying: ${DateTime.now()}');
+      _channel?.sink.close(1000, 'ready timeout');
+      _channel = null;
+      return;
     } catch (e) {
       debugPrint('[WsClient] channel.ready failed: $e ${DateTime.now()}');
       final code = _channel?.closeCode;
