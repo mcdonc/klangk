@@ -681,7 +681,9 @@ class TestKlangkClient:
                 client, "delete", return_value=del_resp
             ) as mock_del:
                 client.delete_workspace("gone")
-                mock_del.assert_called_once_with("/workspaces/ws-to-delete")
+                mock_del.assert_called_once_with(
+                    "/api/v1/workspaces/ws-to-delete"
+                )
 
     def _ws_and_shared_resp(self):
         """Return (owned_resp, shared_resp) mocks for resolve_workspace."""
