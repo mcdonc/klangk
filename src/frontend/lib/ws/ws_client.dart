@@ -38,6 +38,7 @@ class WsClient extends ChangeNotifier {
   String? _currentUserId;
   String? _defaultCommand;
   bool _connected = false;
+  bool _connecting = false;
   Timer? _heartbeatTimer;
 
   /// Whether an automatic reconnection is in progress.
@@ -191,22 +192,27 @@ class WsClient extends ChangeNotifier {
     debugPrint('[WsClient] connect() enter: ${DateTime.now()}');
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    if (_connected || _auth?.token == null) {
+    if (_connected || _connecting || _auth?.token == null) {
+      debugPrint('[WsClient] connect() early return: connected=$_connected '
+          'connecting=$_connecting token=${_auth?.token != null}');
+      return;
+    }
+
+    _connecting = true;
+    try {
+      debugPrint('[WsClient] _waitForServer() start: ${DateTime.now()}');
+      final serverUp = await _waitForServer();
       debugPrint(
-          '[WsClient] connect() early return: connected=$_connected token=${_auth?.token != null}');
-      return;
-    }
+          '[WsClient] _waitForServer() done: serverUp=$serverUp ${DateTime.now()}');
+      if (!serverUp) {
+        _scheduleReconnect();
+        return;
+      }
 
-    debugPrint('[WsClient] _waitForServer() start: ${DateTime.now()}');
-    final serverUp = await _waitForServer();
-    debugPrint(
-        '[WsClient] _waitForServer() done: serverUp=$serverUp ${DateTime.now()}');
-    if (!serverUp) {
-      _scheduleReconnect();
-      return;
+      return await _connectWs();
+    } finally {
+      _connecting = false;
     }
-
-    return _connectWs();
   }
 
   /// Open a WebSocket and wait for it to be ready.  If `channel.ready` times
@@ -404,6 +410,7 @@ class WsClient extends ChangeNotifier {
     _channel?.sink.close(1000, 'client disconnect');
     _channel = null;
     _connected = false;
+    _connecting = false;
     _currentWorkspaceId = null;
     notifyListeners();
   }
