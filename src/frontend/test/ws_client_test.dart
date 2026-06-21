@@ -783,118 +783,72 @@ void main() {
       client.dispose();
     });
 
-    test('ready timeout only applies during reconnect, not initial connect',
-        () async {
-      // A channel whose ready never completes on its own.
-      final slowChannel = _FakeWebSocketChannel()
-        ..readyCompleter = Completer<void>();
+    test('channel.ready timeout retries and eventually connects', () async {
+      // First two channels hang (simulating Firefox throttle), third succeeds.
+      var channelIndex = 0;
       WsClient.testChannelFactory = (_) {
-        channels.add(slowChannel);
-        return slowChannel;
-      };
-      WsClient.testReadyTimeout = Duration.zero;
-
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      final client = WsClient();
-      client.updateAuth(auth);
-
-      // Initial connect — timeout should NOT apply, so connect() will hang
-      // on channel.ready.  Complete it manually to prove it waited.
-      final connectFuture = client.connect();
-      await Future.delayed(Duration.zero);
-
-      // Still not connected (ready hasn't completed) but also not timed out.
-      expect(client.connected, isFalse);
-      final sink = slowChannel.sink as _FakeSink;
-      expect(sink.closeCalled, isFalse); // not closed by timeout
-
-      // Now complete ready — connect should finish.
-      slowChannel.readyCompleter!.complete();
-      await connectFuture;
-      expect(client.connected, isTrue);
-
-      client.disconnect();
-      client.dispose();
-    });
-
-    test('channel.ready timeout closes channel during reconnect', () async {
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      // First channel connects normally.
-      final client = WsClient();
-      client.updateAuth(auth);
-      await client.connect();
-      client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
-      await Future.delayed(Duration.zero);
-
-      // Make the next channel's ready hang.
-      final throttledChannel = _FakeWebSocketChannel()
-        ..readyCompleter = Completer<void>();
-      WsClient.testChannelFactory = (_) {
-        channels.add(throttledChannel);
-        return throttledChannel;
-      };
-      WsClient.testReadyTimeout = Duration.zero;
-
-      // Server crashes — triggers auto-reconnect.
-      channels[0].serverClose();
-      await Future.delayed(Duration.zero);
-      expect(client.reconnecting, isTrue);
-
-      // Let the reconnect timer fire — ready times out.
-      await Future.delayed(Duration.zero);
-      await Future.delayed(Duration.zero);
-
-      // The throttled channel should have been closed with code 1000.
-      final sink = throttledChannel.sink as _FakeSink;
-      expect(sink.closeCalled, isTrue);
-      expect(sink.lastCloseCode, 1000);
-
-      client.disconnect();
-      client.dispose();
-    });
-
-    test('ready timeout during auto-reconnect schedules next attempt',
-        () async {
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      // First channel connects normally.
-      final client = WsClient();
-      client.updateAuth(auth);
-      await client.connect();
-      client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
-      await Future.delayed(Duration.zero);
-
-      // Now make subsequent channels' ready hang (simulating Firefox throttle).
-      WsClient.testChannelFactory = (_) {
-        final ch = _FakeWebSocketChannel()..readyCompleter = Completer<void>();
+        channelIndex++;
+        final ch = channelIndex <= 2
+            ? (_FakeWebSocketChannel()..readyCompleter = Completer<void>())
+            : _FakeWebSocketChannel();
         channels.add(ch);
         return ch;
       };
       WsClient.testReadyTimeout = Duration.zero;
 
-      // Server crashes — triggers auto-reconnect.
-      channels[0].serverClose();
-      await Future.delayed(Duration.zero);
-      expect(client.reconnecting, isTrue);
-      expect(client.reconnectAttempt, 1);
-
-      // Let the reconnect timer fire — the ready timeout should cause a retry.
-      await Future.delayed(Duration.zero);
-      await Future.delayed(Duration.zero);
+      final auth = AuthService();
       await Future.delayed(Duration.zero);
 
-      // Should have attempted more than one reconnect.
-      expect(client.reconnectAttempt, greaterThan(1));
+      final client = WsClient();
+      client.updateAuth(auth);
 
+      await client.connect();
+      // Should have retried through the two hanging channels and connected
+      // on the third.
+      expect(client.connected, isTrue);
+      expect(channels.length, 3);
+
+      // First two channels should have been closed with code 1000.
+      for (var i = 0; i < 2; i++) {
+        final sink = channels[i].sink as _FakeSink;
+        expect(sink.closeCalled, isTrue);
+        expect(sink.lastCloseCode, 1000);
+      }
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('channel.ready timeout skips HTTP pre-check on retries', () async {
+      var httpCheckCount = 0;
+      WsClient.testHttpPreCheck = () async {
+        httpCheckCount++;
+        return true;
+      };
+      // First two channels hang, third succeeds.
+      var channelIndex = 0;
+      WsClient.testChannelFactory = (_) {
+        channelIndex++;
+        final ch = channelIndex <= 2
+            ? (_FakeWebSocketChannel()..readyCompleter = Completer<void>())
+            : _FakeWebSocketChannel();
+        channels.add(ch);
+        return ch;
+      };
+      WsClient.testReadyTimeout = Duration.zero;
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+
+      await client.connect();
+      expect(client.connected, isTrue);
+      // HTTP pre-check should only be called once (on the first attempt).
+      expect(httpCheckCount, 1);
+
+      WsClient.testHttpPreCheck = null;
       client.disconnect();
       client.dispose();
     });

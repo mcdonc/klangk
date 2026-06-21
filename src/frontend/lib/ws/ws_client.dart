@@ -206,6 +206,13 @@ class WsClient extends ChangeNotifier {
       return;
     }
 
+    return _connectWs();
+  }
+
+  /// Open a WebSocket and wait for it to be ready.  If `channel.ready` times
+  /// out (Firefox FailDelayManager throttle), close and retry — each attempt
+  /// consumes part of the throttle window until the delay expires.
+  Future<void> _connectWs([int attempt = 0]) async {
     if (testChannelFactory != null) {
       _channel = testChannelFactory!(Uri());
     } else {
@@ -221,27 +228,15 @@ class WsClient extends ChangeNotifier {
 
     try {
       debugPrint('[WsClient] await channel.ready start: ${DateTime.now()}');
-      if (_reconnecting) {
-        // During reconnect, apply a timeout so Firefox's FailDelayManager
-        // throttle doesn't block us for up to 60s.  The HTTP pre-check already
-        // confirmed the server is up, so normal establishment takes <1s.
-        final timeout = testReadyTimeout ?? _readyTimeout;
-        await _channel!.ready.timeout(timeout);
-      } else {
-        // First connection — let it take as long as it needs.
-        await _channel!.ready;
-      }
+      final timeout = testReadyTimeout ?? _readyTimeout;
+      await _channel!.ready.timeout(timeout);
       debugPrint('[WsClient] await channel.ready done: ${DateTime.now()}');
     } on TimeoutException {
-      // Firefox's FailDelayManager is throttling the WebSocket connection.
-      // Close this throttled connection and retry — each attempt consumes
-      // part of the throttle window.  Don't call _scheduleReconnect() here;
-      // the caller (_attemptReconnect) handles rescheduling.
       debugPrint('[WsClient] channel.ready timed out (Firefox throttle), '
-          'closing and retrying: ${DateTime.now()}');
+          'retrying (attempt ${attempt + 1}): ${DateTime.now()}');
       _channel?.sink.close(1000, 'ready timeout');
       _channel = null;
-      return;
+      return _connectWs(attempt + 1);
     } catch (e) {
       debugPrint('[WsClient] channel.ready failed: $e ${DateTime.now()}');
       final code = _channel?.closeCode;
@@ -255,6 +250,10 @@ class WsClient extends ChangeNotifier {
     }
 
     _connected = true;
+    if (attempt > 0) {
+      debugPrint(
+          '[WsClient] connected after $attempt throttle retry(ies): ${DateTime.now()}');
+    }
     // Close cleanly on page unload so Firefox's FailDelayManager doesn't
     // treat it as a failure and throttle the next connection by up to 60s.
     _removeBeforeUnload?.call();
