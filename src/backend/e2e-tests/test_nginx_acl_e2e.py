@@ -134,8 +134,10 @@ class TestNginxAclConfig:
             str(tmp_path),
         )
         # Find the browser-delegate location block and check it has the ACL.
+        # Prefix match (no "=") covers both /api/browser-delegate and
+        # /api/browser-delegate/stream.
         bd_match = re.search(
-            r"location = /api/browser-delegate \{(.*?)\}",
+            r"location /api/browser-delegate \{(.*?)\}",
             conf,
             re.DOTALL,
         )
