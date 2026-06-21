@@ -909,3 +909,44 @@ class TestMonitorProcess:
         ):
             await session._monitor_process(dead_proc)
             mock_start.assert_not_awaited()
+
+
+class TestSendAbort:
+    def test_sends_abort_json_to_stdin(self):
+        session = _make_session()
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdin.is_closing.return_value = False
+        proc.stdin.write = MagicMock()
+
+        session._send_abort(proc)
+
+        proc.stdin.write.assert_called_once()
+        written = proc.stdin.write.call_args[0][0]
+        parsed = json.loads(written.decode().strip())
+        assert parsed == {"type": "abort"}
+
+    def test_send_abort_no_stdin(self):
+        session = _make_session()
+        proc = MagicMock()
+        proc.stdin = None
+        # Should not raise
+        session._send_abort(proc)
+
+    def test_send_abort_stdin_closing(self):
+        session = _make_session()
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdin.is_closing.return_value = True
+        # Should not raise or write
+        session._send_abort(proc)
+        proc.stdin.write.assert_not_called()
+
+    def test_send_abort_write_oserror(self):
+        session = _make_session()
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdin.is_closing.return_value = False
+        proc.stdin.write.side_effect = OSError("broken")
+        # Should not raise
+        session._send_abort(proc)

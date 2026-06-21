@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
@@ -30,6 +31,7 @@ from klangk_backend.wshandler import (
     reset_workspace_state,
     _log_ws_msg,
     _SEND_QUEUE_SIZE,
+    _get_presence_list,
 )
 
 
@@ -6057,3 +6059,319 @@ class TestSSHAgentDispatch:
         ) as mock:
             await handle_websocket(websocket)
         mock.assert_awaited_once()
+
+    async def test_dispatch_share_window(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "share_window", "window_id": "w1"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_share_window", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+    async def test_dispatch_unshare_window(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "unshare_window", "window_id": "w1"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_unshare_window", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+    async def test_dispatch_create_shared_terminal(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "create_shared_terminal"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_create_shared_terminal", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+    async def test_dispatch_join_shared_terminal(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "cmd": "join_shared_terminal",
+                        "user_id": "u1",
+                        "window_id": "w1",
+                    }
+                ),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_join_shared_terminal", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+    async def test_dispatch_delete_shared_terminal(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "delete_shared_terminal"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection,
+            "handle_delete_shared_terminal",
+            new_callable=AsyncMock,
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+    async def test_dispatch_list_shared_terminals(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "list_shared_terminals"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection,
+            "handle_list_shared_terminals",
+            new_callable=AsyncMock,
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+    async def test_dispatch_chat_agent_abort(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "chat_agent_abort"}),
+                WebSocketDisconnect(),
+            ]
+        )
+        with patch.object(
+            Connection, "handle_chat_agent_abort", new_callable=AsyncMock
+        ) as mock:
+            await handle_websocket(websocket)
+        mock.assert_awaited_once()
+
+
+class TestStartAgentIfNeeded:
+    async def test_starts_agent_and_broadcasts_presence(self, user, db):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(user["id"], "agent-ws")
+        conn.workspace_id = workspace["id"]
+
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+
+        mock_agent_session = AsyncMock()
+        mock_agent_session._ensure_started = AsyncMock()
+
+        try:
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_agent_session,
+            ):
+                await conn._start_agent_if_needed("cid")
+            mock_agent_session._ensure_started.assert_awaited_once()
+        finally:
+            await session.remove_subscriber(sock)
+            state.sessions.pop(workspace["id"], None)
+
+    async def test_start_agent_logs_on_failure(self, user, db):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-fail"
+
+        with patch(
+            "klangk_backend.agent.get_session",
+            side_effect=RuntimeError("nope"),
+        ):
+            # Should not raise
+            await conn._start_agent_if_needed("cid")
+
+
+class TestHandleChatAgentAbort:
+    async def test_cancels_running_task(self, user, db):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(user["id"], "abort-ws")
+        conn.workspace_id = workspace["id"]
+
+        async def slow():
+            await asyncio.sleep(999)
+
+        task = asyncio.create_task(slow())
+        wshandler._agent_tasks[workspace["id"]] = task
+        try:
+            await conn.handle_chat_agent_abort()
+            # Let cancellation propagate
+            await asyncio.sleep(0)
+            assert workspace["id"] not in wshandler._agent_tasks
+            assert task.cancelled() or task.done()
+        finally:
+            wshandler._agent_tasks.pop(workspace["id"], None)
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    async def test_abort_no_workspace(self, user, db):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = None
+        await conn.handle_chat_agent_abort()
+
+    async def test_abort_no_task(self, user, db):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(user["id"], "abort-none")
+        conn.workspace_id = workspace["id"]
+        wshandler._agent_tasks.pop(workspace["id"], None)
+        await conn.handle_chat_agent_abort()
+
+
+class TestPresenceIncludesAgent:
+    async def test_agent_in_presence_when_running(self, user, agent_user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(user["id"], "pres-ws")
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        state.connections[sock] = conn
+
+        try:
+            with patch("klangk_backend.agent.any_running", return_value=True):
+                users = await _get_presence_list(workspace["id"])
+            ids = [u["user_id"] for u in users]
+            assert model.AGENT_USER_ID in ids
+        finally:
+            await session.remove_subscriber(sock)
+            state.connections.pop(sock, None)
+            state.sessions.pop(workspace["id"], None)
+
+
+class TestAgentMentionOtherMsgsContext:
+    async def test_other_user_messages_prepended_to_prompt(
+        self, user, agent_user
+    ):
+        """When other users have spoken since the agent's last response,
+        their messages are prepended to the prompt."""
+        from klangk_backend.wshandler import _handle_agent_mention
+
+        workspace = await model.create_workspace(user["id"], "ctx-ws")
+        ws_id = workspace["id"]
+
+        # Create a user2 whose message should appear in context
+        user2 = await model.create_user(
+            "user2@example.com", "hash", verified=True
+        )
+        agent_email = (await model.get_agent_user())["email"]
+
+        # Simulate conversation: agent response, then user2 message,
+        # then user1 mentions agent
+        await model.add_chat_message(
+            ws_id,
+            model.AGENT_USER_ID,
+            agent_email,
+            "I'm here",
+            message_type=model.MSG_AGENT,
+        )
+        await model.add_chat_message(
+            ws_id,
+            user2["id"],
+            user2["email"],
+            "interesting point",
+            message_type=model.MSG_USER,
+        )
+
+        captured_prompt = []
+        mock_session = AsyncMock()
+
+        async def capture_prompt(prompt):
+            captured_prompt.append(prompt)
+            return "response"
+
+        mock_session.send_prompt = capture_prompt
+
+        sock = _mock_sock()
+        session = state.get_or_create_session(ws_id)
+        await session.add_subscriber(sock, "cid")
+
+        try:
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_session,
+            ):
+                await _handle_agent_mention(ws_id, "cid", "@MrBoops what?")
+
+            assert len(captured_prompt) == 1
+            assert "user2@example.com" in captured_prompt[0]
+            assert "interesting point" in captured_prompt[0]
+        finally:
+            await session.remove_subscriber(sock)
+            state.sessions.pop(ws_id, None)
+            wshandler._agent_tasks.pop(ws_id, None)
+
+
+class TestTokenExpiryWarningBroadcastFailure:
+    async def test_exception_during_broadcast_is_logged(
+        self, user, agent_user
+    ):
+        """The except Exception branch in _token_warning_loop."""
+        ws_session = WorkspaceSession("ws-tok")
+        # Set expiry ~15 minutes from now so the 15-min threshold
+        # fires immediately (delay ~0) while the 1-hour one is skipped.
+        ws_session.workspace_token_expiry = datetime.now(
+            timezone.utc
+        ) + timedelta(minutes=15, seconds=0.05)
+        # Make model.get_agent_user raise so the inner try/except fires
+        with patch(
+            "klangk_backend.model.get_agent_user",
+            side_effect=RuntimeError("boom"),
+        ):
+            task = asyncio.create_task(ws_session._token_warning_loop())
+            await asyncio.sleep(0.3)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass

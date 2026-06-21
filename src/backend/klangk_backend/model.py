@@ -436,10 +436,10 @@ async def _unique_handle(db, base: str) -> str:
         )
         if await cursor.fetchone() is None:
             return candidate
-    return _hash_fallback_handle(base)  # pragma: no cover
+    return _hash_fallback_handle(base)
 
 
-def _hash_fallback_handle(base: str) -> str:  # pragma: no cover
+def _hash_fallback_handle(base: str) -> str:
     suffix = hashlib.sha256(base.encode()).hexdigest()[:8]
     return f"{base[: _MAX_HANDLE_LEN - 9]}-{suffix}"
 

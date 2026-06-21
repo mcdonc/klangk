@@ -250,15 +250,13 @@ class AgentSession:
                 )
                 return "Sorry, I timed out processing your request."
 
-    def _send_abort(
-        self, proc: asyncio.subprocess.Process
-    ) -> None:  # pragma: no cover
+    def _send_abort(self, proc: asyncio.subprocess.Process) -> None:
         """Send an abort command to Pi."""
         if proc.stdin and not proc.stdin.is_closing():
             try:
                 cmd = json.dumps({"type": "abort"})
                 proc.stdin.write((cmd + "\n").encode())
-            except (OSError, RuntimeError):  # pragma: no cover
+            except (OSError, RuntimeError):
                 pass  # process stdin already closed
 
     async def _wait_for_ack(self, stdout: asyncio.StreamReader) -> None:

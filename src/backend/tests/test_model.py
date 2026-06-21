@@ -1052,3 +1052,42 @@ class TestDeleteUserAgentGuard:
     async def test_delete_user_rejects_agent_user(self, db):
         with pytest.raises(ValueError, match="system agent"):
             await model.delete_user(model.AGENT_USER_ID)
+
+
+class TestHashFallbackHandle:
+    def test_returns_hash_based_handle(self):
+        from klangk_backend.model import _hash_fallback_handle
+
+        result = _hash_fallback_handle("testbase")
+        assert result.startswith("testbase-")
+        assert len(result) <= model._MAX_HANDLE_LEN
+
+    def test_truncates_long_base(self):
+        from klangk_backend.model import _hash_fallback_handle
+
+        long_base = "a" * 100
+        result = _hash_fallback_handle(long_base)
+        assert len(result) <= model._MAX_HANDLE_LEN
+        # Should end with a hex suffix
+        assert "-" in result
+
+
+class TestUniqueHandleFallback:
+    async def test_falls_back_to_hash_after_exhausting_suffixes(self, db):
+        from unittest.mock import AsyncMock
+
+        from klangk_backend.model import _unique_handle
+
+        # Mock a DB cursor that always finds a collision
+        mock_cursor = AsyncMock()
+        mock_cursor.fetchone = AsyncMock(return_value=(1,))
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_cursor)
+
+        result = await _unique_handle(mock_db, "taken")
+        # Should fall through to _hash_fallback_handle
+        assert "-" in result
+        assert len(result) <= model._MAX_HANDLE_LEN
+        # Should contain a hex suffix, not a numeric one
+        parts = result.rsplit("-", 1)
+        assert len(parts[1]) == 8  # sha256[:8]

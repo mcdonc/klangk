@@ -141,7 +141,7 @@ class KlangkClient:
         token = self.cfg.auth.token or ""
         return {"Authorization": f"Bearer {token}"}
 
-    def get(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
+    def get(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "GET",
             f"{self.cfg.server.url}{path}",
@@ -149,7 +149,7 @@ class KlangkClient:
             **kwargs,
         )
 
-    def post(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
+    def post(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "POST",
             f"{self.cfg.server.url}{path}",
@@ -157,7 +157,7 @@ class KlangkClient:
             **kwargs,
         )
 
-    def put(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
+    def put(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "PUT",
             f"{self.cfg.server.url}{path}",
@@ -165,7 +165,7 @@ class KlangkClient:
             **kwargs,
         )
 
-    def patch(self, path: str, **kwargs) -> httpx.Response:  # pragma: no cover
+    def patch(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "PATCH",
             f"{self.cfg.server.url}{path}",
@@ -173,9 +173,7 @@ class KlangkClient:
             **kwargs,
         )
 
-    def delete(
-        self, path: str, **kwargs
-    ) -> httpx.Response:  # pragma: no cover
+    def delete(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "DELETE",
             f"{self.cfg.server.url}{path}",
@@ -234,7 +232,7 @@ class KlangkClient:
             for w in raw
         ]
 
-    def create_workspace(  # pragma: no cover
+    def create_workspace(
         self,
         name: str,
         image: str | None = None,
@@ -256,7 +254,7 @@ class KlangkClient:
             id=w["id"], name=w["name"], created_at=w["created_at"]
         )
 
-    def list_images(self) -> dict:  # pragma: no cover
+    def list_images(self) -> dict:
         resp = self.get("/images")
         self._check_auth(resp)
         resp.raise_for_status()
@@ -418,7 +416,7 @@ class AuthError(Exception):
 # --- Shell session ---
 
 
-async def _send_ignore_closed(ws, msg: str) -> None:  # pragma: no cover
+async def _send_ignore_closed(ws, msg: str) -> None:
     """Send a WebSocket message, ignoring errors if the connection is closed."""
     try:
         await ws.send(msg)
@@ -912,7 +910,8 @@ async def _run_shell(
                         break
         except websockets.ConnectionClosed as exc:
             if not stop_event.is_set():
-                if exc.code in (4001, 4002):
+                _code = exc.rcvd.code if exc.rcvd else None
+                if _code in (4001, 4002):
                     stdout.write(
                         "\r\nSession expired. Run `klangkc login` to"
                         " re-authenticate.\r\n"

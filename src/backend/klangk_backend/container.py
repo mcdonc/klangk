@@ -218,9 +218,7 @@ class ContainerRegistry:
         self.on_workspace_killed = None
         self._cleanup_wake: asyncio.Event | None = None
 
-    def workspace_id_for(
-        self, container_id: str
-    ) -> str | None:  # pragma: no cover
+    def workspace_id_for(self, container_id: str) -> str | None:
         """Return the workspace_id for a container, or None."""
         return self._cid_to_wsid.get(container_id)
 
@@ -244,7 +242,7 @@ class ContainerRegistry:
             self.states[workspace_id] = state
         else:
             # Remove old reverse mapping if container changed
-            if state.container_id != container_id:  # pragma: no cover
+            if state.container_id != container_id:
                 self._cid_to_wsid.pop(state.container_id, None)
             state.container_id = container_id
         self._cid_to_wsid[container_id] = workspace_id

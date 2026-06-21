@@ -752,12 +752,12 @@ def shell(
                 forward_agent=forward_agent,
             )
         )
-    except websockets.exceptions.InvalidStatusCode as e:
+    except websockets.InvalidStatus as e:
         from .client import _drain_stdin, reset_terminal
 
         reset_terminal()
         _drain_stdin()
-        if e.status_code in (4001, 4002):
+        if e.response.status_code in (4001, 4002):
             _err.print(
                 "[red]Session expired. Run `klangkc login`"
                 " to re-authenticate.[/red]"
@@ -938,12 +938,12 @@ def sandbox(
                 forward_agent=forward_agent,
             )
         )
-    except websockets.exceptions.InvalidStatusCode as e:  # pragma: no cover
+    except websockets.InvalidStatus as e:  # pragma: no cover
         from .client import _drain_stdin, reset_terminal
 
         reset_terminal()
         _drain_stdin()
-        if e.status_code in (4001, 4002):
+        if e.response.status_code in (4001, 4002):
             _err.print(
                 "[red]Session expired.[/red] Run"
                 " [bold]klangkc login[/bold] to re-authenticate."
