@@ -96,6 +96,7 @@ def require_secure_jwt_secret() -> None:
 MIN_PASSWORD_LENGTH = int(
     resolve_env_secret("KLANGK_MIN_PASSWORD_LENGTH", "4")
 )
+MAX_PASSWORD_BYTES = 72  # bcrypt limit
 
 # Set KLANGK_LOGIN_LOCKOUT_FAILURES=0 to disable login lockout.
 LOGIN_LOCKOUT_FAILURES = int(
@@ -105,8 +106,27 @@ LOGIN_LOCKOUT_FAILURES = int(
 security = HTTPBearer(auto_error=False)
 
 
+def validate_password_length(password: str) -> None:
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+        )
+    if len(password.encode()) > MAX_PASSWORD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must not exceed {MAX_PASSWORD_BYTES} bytes",
+        )
+
+
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    encoded = password.encode()
+    if len(encoded) > MAX_PASSWORD_BYTES:
+        raise ValueError(
+            f"Password exceeds {MAX_PASSWORD_BYTES} bytes; "
+            "call validate_password_length first"
+        )
+    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, hashed: str) -> bool:
@@ -185,11 +205,7 @@ async def register(
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
     validate_email(req.email)
-    if len(req.password) < MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
-        )
+    validate_password_length(req.password)
 
     password_hash = hash_password(req.password)
     user = await model.create_user(req.email, password_hash, verified=verified)
