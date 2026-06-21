@@ -186,7 +186,6 @@ async def lifespan(app: FastAPI):
 
     logger.info("Klangk backend started")
     yield
-    await wshandler.state.close_all_connections()
     await container.registry.shutdown()
     await model.dispose_engine()
     logger.info("Klangk backend stopped")
