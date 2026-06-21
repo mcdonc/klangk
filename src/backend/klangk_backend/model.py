@@ -328,9 +328,17 @@ async def init_db() -> None:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS token_blocklist (
                 jti TEXT PRIMARY KEY,
-                expires_at TEXT NOT NULL
+                expires_at TEXT NOT NULL,
+                new_token TEXT
             )
         """)
+        # Migration: add new_token column to existing token_blocklist tables
+        cursor = await db.execute("PRAGMA table_info(token_blocklist)")
+        bl_cols = {row[1] for row in await cursor.fetchall()}
+        if "new_token" not in bl_cols:
+            await db.execute(
+                "ALTER TABLE token_blocklist ADD COLUMN new_token TEXT"
+            )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id TEXT PRIMARY KEY,
@@ -1454,11 +1462,14 @@ async def get_user_workspaces_with_containers(user_id: str) -> list[dict]:
 # Token blocklist
 
 
-async def blocklist_token(jti: str, expires_at: str) -> None:
+async def blocklist_token(
+    jti: str, expires_at: str, new_token: str | None = None
+) -> None:
     async with transaction() as db:
         await db.execute(
-            "INSERT OR IGNORE INTO token_blocklist (jti, expires_at) VALUES (?, ?)",
-            (jti, expires_at),
+            "INSERT OR IGNORE INTO token_blocklist"
+            " (jti, expires_at, new_token) VALUES (?, ?, ?)",
+            (jti, expires_at, new_token),
         )
 
 
@@ -1470,6 +1481,25 @@ async def is_token_blocklisted(jti: str) -> bool:
         )
         row = await cursor.fetchone()
         return row is not None
+
+
+async def get_refreshed_token(jti: str) -> str | None:
+    """Return the replacement token for a refreshed JTI, if still valid."""
+    from datetime import datetime, timezone
+
+    async with transaction() as db:
+        cursor = await db.execute(
+            "SELECT new_token, expires_at FROM token_blocklist"
+            " WHERE jti = ? AND new_token IS NOT NULL",
+            (jti,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        expires_at = datetime.fromisoformat(row[1])
+        if expires_at < datetime.now(timezone.utc):
+            return None
+        return row[0]
 
 
 # Message history

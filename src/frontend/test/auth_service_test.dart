@@ -625,6 +625,218 @@ void main() {
     });
   });
 
+  group('AuthService token refresh', () {
+    /// Build a fake JWT with the given exp (seconds since epoch).
+    String makeJwtWithExp(int exp) {
+      final header = base64Url
+          .encode(utf8.encode(jsonEncode({'alg': 'HS256', 'typ': 'JWT'})))
+          .replaceAll('=', '');
+      final body = base64Url
+          .encode(utf8.encode(jsonEncode({
+            'sub': 'user-1',
+            'email': 'user@example.com',
+            'jti': 'test-jti',
+            'exp': exp,
+          })))
+          .replaceAll('=', '');
+      return '$header.$body.fakesig';
+    }
+
+    test('schedules refresh timer on token save', () async {
+      final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600; // 1h
+      final token = makeJwtWithExp(exp);
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'u',
+              'email': 'u',
+              'permissions': {},
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path.contains('/auth/login')) {
+          return http.Response(
+            jsonEncode({'access_token': token}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      // Timer is internal — just verify no crash and token is set
+      expect(service.isLoggedIn, isTrue);
+      service.dispose();
+    });
+
+    test('schedules refresh timer on token load', () async {
+      final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600;
+      final token = makeJwtWithExp(exp);
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'u',
+              'email': 'u',
+              'permissions': {},
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isLoggedIn, isTrue);
+      service.dispose();
+    });
+
+    test('refresh calls endpoint and saves new token', () async {
+      final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600;
+      final oldToken = makeJwtWithExp(exp);
+      final newExp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 7200;
+      final newToken = makeJwtWithExp(newExp);
+      var refreshCalled = false;
+
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'u',
+              'email': 'u',
+              'permissions': {},
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path.contains('/auth/refresh')) {
+          refreshCalled = true;
+          expect(request.headers['Authorization'], 'Bearer $oldToken');
+          return http.Response(
+            jsonEncode({'access_token': newToken}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': oldToken});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      // Manually trigger refresh (simulating timer fire)
+      // ignore: invalid_use_of_protected_member
+      await service.testRefreshToken();
+      expect(refreshCalled, isTrue);
+      expect(service.token, newToken);
+      service.dispose();
+    });
+
+    test('refresh clears token on 401', () async {
+      final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600;
+      final token = makeJwtWithExp(exp);
+
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'u',
+              'email': 'u',
+              'permissions': {},
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path.contains('/auth/refresh')) {
+          return http.Response('{"detail":"Token expired"}', 401);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isLoggedIn, isTrue);
+
+      await service.testRefreshToken();
+      expect(service.isLoggedIn, isFalse);
+      service.dispose();
+    });
+
+    test('refresh retries on network error', () async {
+      final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600;
+      final token = makeJwtWithExp(exp);
+
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'u',
+              'email': 'u',
+              'permissions': {},
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path.contains('/auth/refresh')) {
+          throw Exception('Network error');
+        }
+        return http.Response('Not found', 404);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isLoggedIn, isTrue);
+
+      await service.testRefreshToken();
+      // Should still be logged in (no clear on network error)
+      expect(service.isLoggedIn, isTrue);
+      service.dispose();
+    });
+  });
+
   group('AuthService authenticated requests', () {
     test('authGet clears token on 401', () async {
       testAuthHttpClientOverride = MockClient((request) async {

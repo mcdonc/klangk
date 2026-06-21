@@ -22,6 +22,7 @@ class AuthService extends ChangeNotifier {
   String _bannerText = '';
   bool _bannerAccepted = false;
   Timer? _permissionTimer;
+  Timer? _refreshTimer;
 
   String? get token => _token;
   bool get isLoggedIn => _token != null;
@@ -94,6 +95,7 @@ class AuthService extends ChangeNotifier {
 
     if (_token != null) {
       await _fetchPermissions();
+      _scheduleTokenRefresh();
     }
 
     _initialized = true;
@@ -148,6 +150,7 @@ class AuthService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, token);
     await _fetchPermissions();
+    _scheduleTokenRefresh();
     notifyListeners();
   }
 
@@ -157,6 +160,8 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> _clearToken() async {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
     _token = null;
     _permissions = {};
     _groups = [];
@@ -294,6 +299,55 @@ class AuthService extends ChangeNotifier {
     return response;
   }
 
+  /// Schedule a token refresh at 80% of the token's remaining lifetime.
+  void _scheduleTokenRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    final exp = _payload?['exp'] as int?;
+    if (exp == null) return;
+    final expiryMs = exp * 1000;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final remainingMs = expiryMs - nowMs;
+    if (remainingMs <= 0) return;
+    final refreshInMs = (remainingMs * 0.8).round();
+    debugPrint(
+      '[AuthService] scheduling token refresh in ${refreshInMs ~/ 1000}s',
+    );
+    _refreshTimer = Timer(
+      Duration(milliseconds: refreshInMs),
+      _refreshToken,
+    );
+  }
+
+  /// Call POST /auth/refresh to get a new token.
+  Future<void> _refreshToken() async {
+    if (_token == null) return;
+    debugPrint('[AuthService] refreshing token');
+    try {
+      final response = await _client.post(
+        Uri.parse('$_baseUrl/auth/refresh'),
+        headers: _authHeaders,
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final newToken = data['access_token'] as String?;
+        if (newToken != null) {
+          await _saveToken(newToken);
+        }
+      } else if (response.statusCode == 401) {
+        await _clearToken();
+      }
+    } catch (_) {
+      // Network error — retry in 60 seconds
+      debugPrint('[AuthService] refresh failed, retrying in 60s');
+      _refreshTimer = Timer(const Duration(seconds: 60), _refreshToken);
+    }
+  }
+
+  /// Expose refresh for testing.
+  @visibleForTesting
+  Future<void> testRefreshToken() => _refreshToken();
+
   /// Log out. Returns the IdP logout URL if the provider requires
   /// a redirect, or null for local-only logout.
   Future<String?> logout() async {
@@ -316,6 +370,7 @@ class AuthService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _stopPermissionRefresh();
     super.dispose();
   }
