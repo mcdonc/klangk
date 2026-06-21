@@ -756,7 +756,10 @@ async def oidc_callback(
 ):
     """Handle the OIDC callback from the IdP."""
     if error:
-        raise HTTPException(status_code=400, detail=f"IdP error: {error}")
+        logger.warning(
+            "OIDC IdP error for provider %s: %s", provider_id, error
+        )
+        raise HTTPException(status_code=400, detail="Login failed")
 
     provider = oidc.get_provider(provider_id)
     if provider is None:
