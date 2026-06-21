@@ -197,16 +197,38 @@ class TestVersion:
         assert data["version"] == "2026.01.01+abc1234"
         assert data["commit"] == "abc1234"
         assert data["built_at"] == "2026-01-01T00:00:00Z"
+        assert "plugins" in data
 
     async def test_version_no_file(self, client, monkeypatch):
         monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
         resp = await client.get("/version")
         assert resp.status_code == 200
-        assert resp.json() == {
-            "version": "dev",
-            "commit": "unknown",
-            "built_at": None,
-        }
+        data = resp.json()
+        assert data["version"] == "dev"
+        assert data["commit"] == "unknown"
+        assert data["built_at"] is None
+        assert "plugins" in data
+
+    async def test_version_includes_plugins(
+        self, client, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
+        plugin_dir = tmp_path / "plugins" / "myplugin"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "package.json").write_text(
+            '{"name": "myplugin", "version": "1.2.3",'
+            ' "description": "A test plugin"}'
+        )
+        monkeypatch.setattr(
+            "klangk_backend.plugins._PLUGINS_DIR", str(tmp_path / "plugins")
+        )
+        resp = await client.get("/version")
+        assert resp.status_code == 200
+        plugins = resp.json()["plugins"]
+        assert len(plugins) == 1
+        assert plugins[0]["name"] == "myplugin"
+        assert plugins[0]["version"] == "1.2.3"
+        assert plugins[0]["description"] == "A test plugin"
 
 
 # --- Config ---

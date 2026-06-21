@@ -211,3 +211,69 @@ class TestPluginConfig:
         plugins.load()
         assert plugins.container_env() == {"X_KEY": "val"}
         assert plugins.frontend_config() == {}
+
+
+class TestPluginList:
+    def test_no_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            plugins, "_PLUGINS_DIR", str(tmp_path / "nonexistent")
+        )
+        assert plugins.plugin_list() == []
+
+    def test_empty_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        assert plugins.plugin_list() == []
+
+    def test_returns_metadata(self, tmp_path, monkeypatch):
+        plugin_dir = tmp_path / "my-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "my-plugin",
+                    "version": "1.0.0",
+                    "description": "A plugin",
+                }
+            )
+        )
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        result = plugins.plugin_list()
+        assert len(result) == 1
+        assert result[0] == {
+            "name": "my-plugin",
+            "version": "1.0.0",
+            "description": "A plugin",
+        }
+
+    def test_skips_invalid_json(self, tmp_path, monkeypatch):
+        plugin_dir = tmp_path / "bad"
+        plugin_dir.mkdir()
+        (plugin_dir / "package.json").write_text("not json")
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        assert plugins.plugin_list() == []
+
+    def test_missing_fields_default_empty(self, tmp_path, monkeypatch):
+        plugin_dir = tmp_path / "minimal"
+        plugin_dir.mkdir()
+        (plugin_dir / "package.json").write_text(json.dumps({"name": "m"}))
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        result = plugins.plugin_list()
+        assert result[0] == {
+            "name": "minimal",
+            "version": "",
+            "description": "",
+        }
+
+    def test_skips_dir_without_package_json(self, tmp_path, monkeypatch):
+        (tmp_path / "no-manifest").mkdir()
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        assert plugins.plugin_list() == []
+
+    def test_sorted_by_name(self, tmp_path, monkeypatch):
+        for name in ["zeta", "alpha", "mid"]:
+            d = tmp_path / name
+            d.mkdir()
+            (d / "package.json").write_text(json.dumps({"name": name}))
+        monkeypatch.setattr(plugins, "_PLUGINS_DIR", str(tmp_path))
+        names = [p["name"] for p in plugins.plugin_list()]
+        assert names == ["alpha", "mid", "zeta"]

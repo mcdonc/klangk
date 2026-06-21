@@ -73,6 +73,30 @@ def load() -> None:
         )
 
 
+def plugin_list() -> list[dict[str, str]]:
+    """Return metadata for each loaded plugin (name, version, description)."""
+    if not os.path.isdir(_PLUGINS_DIR):
+        return []
+    plugins = []
+    for name in sorted(os.listdir(_PLUGINS_DIR)):
+        pkg_json = os.path.join(_PLUGINS_DIR, name, "package.json")
+        if not os.path.isfile(pkg_json):
+            continue
+        try:
+            with open(pkg_json) as f:
+                manifest = json.load(f)
+        except (json.JSONDecodeError, ValueError, OSError):
+            continue
+        plugins.append(
+            {
+                "name": name,
+                "version": manifest.get("version", ""),
+                "description": manifest.get("description", ""),
+            }
+        )
+    return plugins
+
+
 def container_env() -> dict[str, str]:
     """Return env vars to inject into workspace containers."""
     result = {}
