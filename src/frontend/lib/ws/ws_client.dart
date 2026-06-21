@@ -179,15 +179,19 @@ class WsClient extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    debugPrint('[WsClient] connect() enter: ${DateTime.now()}');
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    if (_connected || _auth?.token == null) return;
+    if (_connected || _auth?.token == null) {
+      debugPrint(
+          '[WsClient] connect() early return: connected=$_connected token=${_auth?.token != null}');
+      return;
+    }
 
-    // Firefox's FailDelayManager throttles WebSocket connections by up to
-    // 60s after an unclean close, and persists this across page reloads.
-    // HTTP is not affected, so we always pre-check server reachability
-    // before opening a WebSocket to avoid hanging on `channel.ready`.
+    debugPrint('[WsClient] _waitForServer() start: ${DateTime.now()}');
     final serverUp = await _waitForServer();
+    debugPrint(
+        '[WsClient] _waitForServer() done: serverUp=$serverUp ${DateTime.now()}');
     if (!serverUp) {
       _scheduleReconnect();
       return;
@@ -198,13 +202,20 @@ class WsClient extends ChangeNotifier {
     } else {
       // coverage:ignore-start
       final uri = Uri.parse('$_wsBaseUrl?token=${_auth!.token}');
+      debugPrint(
+          '[WsClient] WebSocketChannel.connect() start: ${DateTime.now()}');
       _channel = WebSocketChannel.connect(uri);
+      debugPrint(
+          '[WsClient] WebSocketChannel.connect() returned: ${DateTime.now()}');
       // coverage:ignore-end
     }
 
     try {
+      debugPrint('[WsClient] await channel.ready start: ${DateTime.now()}');
       await _channel!.ready;
+      debugPrint('[WsClient] await channel.ready done: ${DateTime.now()}');
     } catch (e) {
+      debugPrint('[WsClient] channel.ready failed: $e ${DateTime.now()}');
       final code = _channel?.closeCode;
       if (code == 4001 || code == 4002) {
         _errorController.add('Session expired, please log in again');

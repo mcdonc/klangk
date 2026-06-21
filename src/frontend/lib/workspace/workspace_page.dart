@@ -168,10 +168,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
       _workspacePermissions.contains('*');
 
   Future<void> _connectToWorkspace() async {
+    debugPrint('[WorkspacePage] _connectToWorkspace called: ${DateTime.now()}');
     final wsClient = context.read<WsClient>();
 
     if (!wsClient.connected) {
+      debugPrint(
+          '[WorkspacePage] calling wsClient.connect(): ${DateTime.now()}');
       await wsClient.connect();
+      debugPrint(
+          '[WorkspacePage] wsClient.connect() returned: ${DateTime.now()}');
+    } else {
+      debugPrint('[WorkspacePage] already connected, skipping connect()');
     }
 
     if (!wsClient.connected) {
