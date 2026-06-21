@@ -7,7 +7,7 @@ import tempfile
 import zipfile
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
 import httpx
@@ -198,21 +198,8 @@ class TestVersion:
         assert data["commit"] == "abc1234"
         assert data["built_at"] == "2026-01-01T00:00:00Z"
 
-    async def test_version_git_fallback(self, client, monkeypatch):
+    async def test_version_no_file(self, client, monkeypatch):
         monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
-        resp = await client.get("/version")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["version"] == "dev"
-        assert "commit" in data
-        assert "built_at" in data
-
-    async def test_version_git_not_available(self, client, monkeypatch):
-        monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
-        monkeypatch.setattr(
-            "klangk_backend.api.subprocess.check_output",
-            Mock(side_effect=FileNotFoundError),
-        )
         resp = await client.get("/version")
         assert resp.status_code == 200
         assert resp.json() == {

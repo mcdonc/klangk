@@ -14,11 +14,11 @@ cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 bash "$SCRIPT_DIR/flutterbuildweb.sh"
 bash "$SCRIPT_DIR/build-workspace-image.sh"
 
-COMMIT="$(git rev-parse --short HEAD)"
-CALVER="$(date -u +%Y.%m.%d)"
-VERSION="${KLANGK_BUILD_VERSION:-${CALVER}-${COMMIT}}"
-TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+VERSION="$(jq -r .version "$KLANGK_VERSION_FILE")"
 IMAGE="${KLANGK_HOST_IMAGE:-klangk-host}"
+
+# Copy version file into build context for Dockerfile COPY
+cp "$KLANGK_VERSION_FILE" version.json
 
 WORKSPACE_IMAGE="${KLANGK_IMAGE_NAME:-klangk-workspace}"
 PODMAN="${KLANGK_PODMAN_BIN:-podman}"
@@ -44,9 +44,6 @@ echo "Building $IMAGE $VERSION ..."
 docker build \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   -f src/containers/host/Dockerfile \
-  --build-arg "KLANGK_BUILD_VERSION=$VERSION" \
-  --build-arg "KLANGK_BUILD_COMMIT=$COMMIT" \
-  --build-arg "KLANGK_BUILD_TIMESTAMP=$TIMESTAMP" \
   --build-context "hostvenv=$DEVENV_STATE/venv" \
   --build-context "workspace-image=$WORKSPACE_DIR" \
   --build-context "plugins=$PLUGINS_STAGING" \
