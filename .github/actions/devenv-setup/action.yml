@@ -9,7 +9,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: DeterminateSystems/determinate-nix-action@main
+    - uses: DeterminateSystems/determinate-nix-action@v3
 
     - name: Free disk space
       shell: bash

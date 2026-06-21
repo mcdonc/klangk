@@ -22,9 +22,9 @@ jobs:
       # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
       KLANGK_PODMAN_BIN: /usr/bin/podman
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
