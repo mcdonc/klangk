@@ -341,9 +341,18 @@ def ensure_home_symlink(
             break
 
     # The handle path may already exist — e.g., a symlink pointing to a
-    # different user from a workspace import.  Remove it so we can create
-    # the correct symlink.
+    # different user's directory from a workspace import.  Adopt the old
+    # user's files into the new user directory so the importer gets the
+    # exported content, then replace the symlink.
     if symlink.is_symlink():
+        old_target = symlink.resolve()
+        if old_target.is_dir() and old_target != user_dir:
+            # Move files from the old user dir into the new one.
+            for child in old_target.iterdir():
+                dest = user_dir / child.name
+                if not dest.exists():
+                    child.rename(dest)
+            created = False  # content adopted, no skel needed
         symlink.unlink()
 
     symlink.symlink_to(target)
