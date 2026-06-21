@@ -1,15 +1,18 @@
 """Klangk backend: FastAPI app with HTTP + WebSocket endpoints."""
 
 import logging
+import secrets
+import sys
 from contextlib import asynccontextmanager
 
 from pathlib import Path
 
+import bcrypt
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import container, model, oidc, plugins
+from . import auth, container, model, oidc, plugins, wshandler
 from .api import router
 from .model import (
     ACTION_ALLOW,
@@ -110,10 +113,6 @@ async def seed_default_user() -> None:
     If KLANGK_DEFAULT_PASSWORD is set, use it. Otherwise generate a random
     password and print it to the console (only on first creation).
     """
-    import secrets
-
-    import bcrypt
-
     admin_group_id = await ensure_admin_group()
     await seed_default_acls(admin_group_id)
 
@@ -136,8 +135,6 @@ async def seed_default_user() -> None:
             )
             # Print password to stderr only — keep it out of structured
             # logs where it could be shipped to a log aggregator.
-            import sys
-
             print(
                 f"{_GREEN}Default admin password for"
                 f" '{email}': {password}{_RESET}",
@@ -174,8 +171,6 @@ async def seed_agent_user() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from . import auth
-
     auth.require_secure_jwt_secret()
     plugins.load()
     await model.init_db()
@@ -183,8 +178,6 @@ async def lifespan(app: FastAPI):
     oidc.load_login_hook()
     await seed_default_user()
     await seed_agent_user()
-    from . import wshandler
-
     container.registry.set_on_workspace_killed(wshandler.reset_workspace_state)
     await container.registry.prewarm_podman()
     await container.registry.adopt_orphaned_containers()
@@ -203,7 +196,7 @@ def setup_logfire(app: FastAPI) -> bool:
     """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
     if not resolve_env_secret("LOGFIRE_TOKEN"):
         return False
-    import logfire
+    import logfire  # noqa: allow-deferred-import
 
     base_url = resolve_env_secret("LOGFIRE_BASE_URL")
     environment = resolve_env_secret("LOGFIRE_ENVIRONMENT")

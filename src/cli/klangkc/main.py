@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,25 +16,41 @@ import httpx
 import typer
 import websockets
 from rich.console import Console
+from rich.live import Live
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TransferSpeedColumn,
+)
+from rich.spinner import Spinner
 from rich.table import Table
+from rich.text import Text
 
 from .auth import login, logout as do_logout
-import json
-
 from .client import (
     AuthError,
     KlangkClient,
     WorkspaceNotFoundError,
     _WS_MAX_SIZE,
+    _drain_stdin,
     _get_terminal_size,
     _send_ignore_closed,
     _exec_on_ws,
     _wait_workspace_ready,
     _ws_exec,
     _ws_shell,
+    reset_terminal,
 )
 from .config import CLIConfig
 from .mount import validate_mount_spec
+from .sandbox import (
+    build_all_mounts,
+    build_copy_pairs,
+    expand_container_path,
+    load_sandbox_config,
+    resolve_setup_command,
+)
 
 app = typer.Typer(
     name="klangkc",
@@ -85,8 +104,6 @@ def login_cmd(
     password = None
     if password_file is not None:
         if password_file == "-":
-            import sys
-
             password = sys.stdin.readline().rstrip("\n")
         else:
             password = Path(password_file).read_text().strip()
@@ -322,16 +339,6 @@ def export_workspace(
             out_path = Path(f"{stem}-{n}.tar.gz")
             n += 1
     try:
-        from rich.live import Live
-        from rich.spinner import Spinner
-        from rich.progress import (
-            Progress,
-            BarColumn,
-            DownloadColumn,
-            TransferSpeedColumn,
-        )
-
-        from rich.text import Text
 
         class _EstDownloadColumn(DownloadColumn):
             def render(self, task):
@@ -394,13 +401,6 @@ def import_workspace(
         raise typer.Exit(code=1)
     client = _client()
     try:
-        from rich.progress import (
-            Progress,
-            BarColumn,
-            DownloadColumn,
-            TransferSpeedColumn,
-        )
-
         progress = Progress(
             "[progress.description]{task.description}",
             BarColumn(),
@@ -753,8 +753,6 @@ def shell(
             )
         )
     except websockets.InvalidStatus as e:
-        from .client import _drain_stdin, reset_terminal
-
         reset_terminal()
         _drain_stdin()
         if e.response.status_code in (4001, 4002):
@@ -766,8 +764,6 @@ def shell(
             _err.print(f"[red]Connection rejected: {e}[/red]")
         raise typer.Exit(code=1) from None
     except ConnectionError as e:
-        from .client import _drain_stdin, reset_terminal
-
         reset_terminal()
         _drain_stdin()
         _err.print(f"[red]{e}[/red]")
@@ -802,14 +798,6 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
     Called once after workspace creation, before the shell starts.
     The caller has already connected and called _wait_workspace_ready.
     """
-    from pathlib import Path
-
-    from .sandbox import (
-        build_copy_pairs,
-        expand_container_path,
-        resolve_setup_command,
-    )
-
     # Copy files into container home.
     for host_path, container_dest in build_copy_pairs(
         config, sandbox_root, handle
@@ -870,11 +858,6 @@ def sandbox(
     ),
 ) -> None:
     """Create or reconnect to a sandbox workspace."""
-    from pathlib import Path
-
-    from .client import WorkspaceNotFoundError
-    from .sandbox import build_all_mounts, load_sandbox_config
-
     cfg = _cfg()
     if not cfg.auth.token:  # pragma: no cover
         _err.print(
@@ -939,8 +922,6 @@ def sandbox(
             )
         )
     except websockets.InvalidStatus as e:  # pragma: no cover
-        from .client import _drain_stdin, reset_terminal
-
         reset_terminal()
         _drain_stdin()
         if e.response.status_code in (4001, 4002):
@@ -1351,9 +1332,6 @@ def sync(
 
         klangkc sync ~/src ws:/work/src --delete --exclude .git
     """
-    import shutil
-    import subprocess
-
     _require_auth()
 
     klangkc_bin = shutil.which("klangkc")

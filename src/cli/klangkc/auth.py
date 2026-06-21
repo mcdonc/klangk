@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import http.server
+import json
+import socket
 import threading
 import webbrowser
 from urllib.parse import parse_qs, urlparse
@@ -36,8 +39,6 @@ def _oidc_browser_login(  # pragma: no cover
 ) -> None:
     """Launch browser for OIDC login, receive token via localhost callback."""
     # Find a free port
-    import socket
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -117,9 +118,6 @@ margin:0;background:#1a1a2e;color:#e0e0e0">
         token = token_holder[0]
         # Decode the JWT to get the email
         try:
-            import base64
-            import json
-
             payload = token.split(".")[1]
             # Add padding
             payload += "=" * (4 - len(payload) % 4)

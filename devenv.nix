@@ -347,6 +347,15 @@ in
     };
     # YAML lint
     yamllint.enable = true;
+    # Deferred imports
+    deferred-imports = {
+      enable = true;
+      name = "deferred-imports";
+      entry = "python3 scripts/check_deferred_imports.py";
+      files = "\\.py$";
+      language = "system";
+      pass_filenames = true;
+    };
   };
 
   enterShell = ''
