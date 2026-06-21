@@ -176,12 +176,12 @@ class AgentSession:
             return
         self._proc = None
 
-        # Drain stderr for diagnostics (limit to 1 KiB to avoid memory issues).
+        # Drain stderr for diagnostics.
         stderr_text = ""
         if proc.stderr is not None:
             try:
                 stderr_bytes = await asyncio.wait_for(
-                    proc.stderr.read(1024), timeout=2
+                    proc.stderr.read(8192), timeout=2
                 )
                 stderr_text = stderr_bytes.decode(errors="replace").strip()
             except (asyncio.TimeoutError, OSError):
