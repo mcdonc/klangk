@@ -551,8 +551,8 @@ async def run_fuzz(
     token: str,
     duration_minutes: float,
     seed: int,
+    tracker: AnomalyTracker,
 ):
-    tracker = AnomalyTracker()
     rng = random.Random(seed)
     deadline = time.monotonic() + duration_minutes * 60
 
@@ -715,8 +715,6 @@ async def run_fuzz(
                 except Exception:
                     pass  # will continue with old or no token
 
-    return tracker
-
 
 # ---------------------------------------------------------------------------
 # Main
@@ -757,6 +755,8 @@ def main():
 
     base_url = f"http://127.0.0.1:{args.port}"
 
+    tracker = AnomalyTracker()
+
     with tempfile.TemporaryDirectory(prefix="klangk-fuzz-") as data_dir:
         logger.info("Starting server on port %d (data_dir=%s)", args.port, data_dir)
         proc, tee = start_server(args.port, data_dir)
@@ -773,13 +773,11 @@ def main():
                 args.duration,
                 seed,
             )
-            tracker = asyncio.run(run_fuzz(base_url, token, args.duration, seed))
+            asyncio.run(run_fuzz(base_url, token, args.duration, seed, tracker))
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
-            tracker = AnomalyTracker()
         except Exception:
             logger.exception("Fuzz runner error")
-            tracker = AnomalyTracker()
         finally:
             # Stop server
             proc.send_signal(signal.SIGTERM)
