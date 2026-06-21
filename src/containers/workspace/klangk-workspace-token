@@ -1,6 +1,6 @@
 #!/bin/sh
-if [ -f /run/klangk/workspace-token ]; then
-  cat /run/klangk/workspace-token
+if [ -f /tmp/klangk/workspace-token ]; then
+  cat /tmp/klangk/workspace-token
   exit 0
 fi
 exit 1

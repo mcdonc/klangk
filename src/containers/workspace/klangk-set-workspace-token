@@ -1,2 +1,2 @@
 #!/bin/sh
-printf '%s' "$1" >/run/klangk/workspace-token
+printf '%s' "$1" >/tmp/klangk/workspace-token
