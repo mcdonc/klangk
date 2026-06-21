@@ -399,6 +399,19 @@ class TestAuthRoutes:
         resp = await client.post("/auth/logout")
         assert resp.status_code == 401
 
+    async def test_refresh(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post("/auth/refresh", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "access_token" in data
+        # New token should differ from the original
+        assert data["access_token"] != headers["Authorization"].split(" ")[1]
+
+    async def test_refresh_no_auth(self, client):
+        resp = await client.post("/auth/refresh")
+        assert resp.status_code == 401
+
 
 # --- Resend verification ---
 

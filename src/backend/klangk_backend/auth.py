@@ -60,7 +60,7 @@ def _should_lockout(attempt_info: dict | None) -> bool:
 _INSECURE_DEFAULT_SECRET = "klangk-dev-secret-change-in-production"
 SECRET_KEY = resolve_env_secret("KLANGK_JWT_SECRET", _INSECURE_DEFAULT_SECRET)
 ALGORITHM = "HS256"
-TOKEN_EXPIRE_HOURS = 24
+TOKEN_EXPIRE_HOURS = int(resolve_env_secret("KLANGK_ACCESS_TOKEN_HOURS", "24"))
 
 
 def jwt_secret_is_secure() -> bool:
@@ -138,8 +138,11 @@ def create_token(user_id: str, email: str) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_token(token: str) -> dict:
-    return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+def decode_token(token: str, *, allow_expired: bool = False) -> dict:
+    options = {"verify_exp": False} if allow_expired else {}
+    return jwt.decode(
+        token, SECRET_KEY, algorithms=[ALGORITHM], options=options
+    )
 
 
 class RegisterResult(BaseModel):
@@ -233,6 +236,54 @@ async def login(req: LoginRequest) -> TokenResponse:
         await model.clear_login_attempts(req.email)
     token = create_token(user["id"], user["email"])
     return TokenResponse(access_token=token)
+
+
+async def refresh_token(token: str) -> TokenResponse:
+    """Exchange a valid access token for a new one.
+
+    The old token's JTI is blocklisted with the new token cached
+    alongside it, making the endpoint idempotent: repeated calls
+    with the same old token return the same new token.
+    """
+    jti = None
+    try:
+        payload = decode_token(token)
+        user_id = payload.get("sub")
+        email = payload.get("email")
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        if not all([user_id, email, jti, exp]):  # pragma: no cover
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        if await model.is_token_blocklisted(jti):
+            # Already refreshed — return the cached replacement
+            cached = await model.get_refreshed_token(jti)
+            if cached is not None:
+                return TokenResponse(access_token=cached)
+            raise HTTPException(
+                status_code=401, detail="Token has been revoked"
+            )
+
+        user = await model.get_user_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        new_token = create_token(user_id, email)
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+        await model.blocklist_token(jti, expires_at, new_token=new_token)
+        return TokenResponse(access_token=new_token)
+
+    except ExpiredSignatureError:
+        # Token expired — check if it was previously refreshed
+        payload = decode_token(token, allow_expired=True)
+        jti = payload.get("jti")
+        if jti:
+            cached = await model.get_refreshed_token(jti)
+            if cached is not None:
+                return TokenResponse(access_token=cached)
+        raise HTTPException(status_code=401, detail="Token expired")
+    except JWTError:  # pragma: no cover
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 VERIFY_TOKEN_EXPIRE_HOURS = 72

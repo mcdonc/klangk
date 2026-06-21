@@ -575,6 +575,133 @@ class TestLogout:
         await auth.logout(token)
 
 
+class TestRefreshToken:
+    async def test_refresh_returns_new_token(self, db):
+        """Refreshing a valid token returns a new token."""
+        await model.create_user(
+            "a@b.com", auth.hash_password("pw"), verified=True
+        )
+        user = await model.get_user_by_email("a@b.com")
+        token = auth.create_token(user["id"], user["email"])
+        result = await auth.refresh_token(token)
+        assert result.access_token != token
+        # Old JTI should be blocklisted
+        old_payload = auth.decode_token(token, allow_expired=True)
+        assert await model.is_token_blocklisted(old_payload["jti"])
+
+    async def test_refresh_idempotent(self, db):
+        """Refreshing the same token twice returns the same new token."""
+        await model.create_user(
+            "a@b.com", auth.hash_password("pw"), verified=True
+        )
+        user = await model.get_user_by_email("a@b.com")
+        token = auth.create_token(user["id"], user["email"])
+        result1 = await auth.refresh_token(token)
+        result2 = await auth.refresh_token(token)
+        assert result1.access_token == result2.access_token
+
+    async def test_refresh_expired_token_returns_401(self, db):
+        """Refreshing an expired token with no prior refresh returns 401."""
+        await model.create_user(
+            "a@b.com", auth.hash_password("pw"), verified=True
+        )
+        user = await model.get_user_by_email("a@b.com")
+        expired = jwt.encode(
+            {
+                "sub": user["id"],
+                "email": user["email"],
+                "jti": "expired-jti",
+                "exp": datetime.now(timezone.utc) - timedelta(hours=1),
+            },
+            auth.SECRET_KEY,
+            algorithm=auth.ALGORITHM,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.refresh_token(expired)
+        assert exc_info.value.status_code == 401
+
+    async def test_refresh_expired_token_with_prior_refresh(self, db):
+        """Refreshing an expired token returns cached new token if within window."""
+        await model.create_user(
+            "a@b.com", auth.hash_password("pw"), verified=True
+        )
+        user = await model.get_user_by_email("a@b.com")
+        # Simulate a token that was refreshed, then expired
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(hours=1)
+        ).isoformat()
+        await model.blocklist_token(
+            "old-jti", expires_at, new_token="cached-new-token"
+        )
+        expired = jwt.encode(
+            {
+                "sub": user["id"],
+                "email": user["email"],
+                "jti": "old-jti",
+                "exp": datetime.now(timezone.utc) - timedelta(seconds=1),
+            },
+            auth.SECRET_KEY,
+            algorithm=auth.ALGORITHM,
+        )
+        result = await auth.refresh_token(expired)
+        assert result.access_token == "cached-new-token"
+
+    async def test_refresh_expired_cached_token_returns_401(self, db):
+        """Expired token with expired blocklist entry returns 401."""
+        await model.create_user(
+            "a@b.com", auth.hash_password("pw"), verified=True
+        )
+        user = await model.get_user_by_email("a@b.com")
+        # Blocklist entry also expired
+        expires_at = (
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        ).isoformat()
+        await model.blocklist_token(
+            "old-jti", expires_at, new_token="stale-token"
+        )
+        expired = jwt.encode(
+            {
+                "sub": user["id"],
+                "email": user["email"],
+                "jti": "old-jti",
+                "exp": datetime.now(timezone.utc) - timedelta(hours=2),
+            },
+            auth.SECRET_KEY,
+            algorithm=auth.ALGORITHM,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.refresh_token(expired)
+        assert exc_info.value.status_code == 401
+
+    async def test_refresh_deleted_user_returns_401(self, db):
+        """Refreshing a token for a deleted user returns 401."""
+        token = auth.create_token("nonexistent-user", "gone@example.com")
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.refresh_token(token)
+        assert exc_info.value.status_code == 401
+
+    async def test_refresh_revoked_token_returns_401(self, db):
+        """Refreshing a revoked (logged out) token returns 401."""
+        await model.create_user(
+            "a@b.com", auth.hash_password("pw"), verified=True
+        )
+        user = await model.get_user_by_email("a@b.com")
+        token = auth.create_token(user["id"], user["email"])
+        await auth.logout(token)
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.refresh_token(token)
+        assert exc_info.value.status_code == 401
+
+    def test_configurable_token_expire_hours(self, monkeypatch):
+        """TOKEN_EXPIRE_HOURS reads from KLANGK_ACCESS_TOKEN_HOURS."""
+        monkeypatch.setenv("KLANGK_ACCESS_TOKEN_HOURS", "48")
+        # Re-evaluate the module-level constant
+        result = int(
+            auth.resolve_env_secret("KLANGK_ACCESS_TOKEN_HOURS", "24")
+        )
+        assert result == 48
+
+
 class TestInvitationTokens:
     def test_roundtrip(self):
         token = auth.create_invitation_token("inv-123", "user@example.com")

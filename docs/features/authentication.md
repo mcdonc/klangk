@@ -57,9 +57,11 @@ See [OIDC Configuration](../reference/oidc.md) for setup instructions.
 
 ## Sessions
 
-Klangk uses JWT tokens for sessions. Tokens expire after 24 hours
-(configurable via `KLANGK_JWT_SECRET`), after which you must log in
-again. Logging out blocklists the token immediately.
+Klangk uses JWT tokens for sessions. Token lifetime defaults to 24
+hours (configurable via `KLANGK_ACCESS_TOKEN_HOURS`). Tokens are
+automatically refreshed before they expire, so long-running sessions
+stay active without requiring re-login. Logging out blocklists the
+token immediately.
 
 Your session survives page refreshes. If you navigate to a workspace
 URL while logged out, you'll be redirected to the login page and

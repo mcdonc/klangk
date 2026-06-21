@@ -389,6 +389,16 @@ async def login(req: auth.LoginRequest):
     return await auth.login(req)
 
 
+@router.post("/auth/refresh", response_model=auth.TokenResponse)
+async def refresh_token(request: Request):
+    """Exchange a valid access token for a new one."""
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = authorization[7:]
+    return await auth.refresh_token(token)
+
+
 class ChangePasswordRequest(auth.BaseModel):
     current_password: str
     new_password: str
