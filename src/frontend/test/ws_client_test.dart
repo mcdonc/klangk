@@ -12,6 +12,11 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
   final _incoming = StreamController<dynamic>.broadcast();
   final _sink = _FakeSink();
   bool failReady = false;
+
+  /// If set, `ready` waits on this completer instead of resolving immediately.
+  /// Used to simulate Firefox FailDelayManager throttling.
+  Completer<void>? readyCompleter;
+
   int? _closeCode;
 
   @override
@@ -24,8 +29,11 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
   int? get closeCode => _closeCode;
 
   @override
-  Future<void> get ready =>
-      failReady ? Future.error('Connection refused') : Future.value();
+  Future<void> get ready {
+    if (failReady) return Future.error('Connection refused');
+    if (readyCompleter != null) return readyCompleter!.future;
+    return Future.value();
+  }
 
   void serverSend(Map<String, dynamic> msg) => _incoming.add(jsonEncode(msg));
 
@@ -43,12 +51,17 @@ class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
 
 class _FakeSink extends Fake implements WebSocketSink {
   final List<dynamic> sent = [];
+  bool closeCalled = false;
+  int? lastCloseCode;
 
   @override
   void add(dynamic data) => sent.add(data);
 
   @override
-  Future close([int? closeCode, String? closeReason]) async {}
+  Future close([int? closeCode, String? closeReason]) async {
+    closeCalled = true;
+    lastCloseCode = closeCode;
+  }
 }
 
 void main() {
@@ -358,6 +371,8 @@ void main() {
     tearDown(() {
       WsClient.testChannelFactory = null;
       WsClient.testBackoffOverride = null;
+      WsClient.testReadyTimeout = null;
+      WsClient.testReconnectTimeout = null;
     });
 
     test('server close triggers auto-reconnect when workspace was connected',
@@ -764,6 +779,76 @@ void main() {
       expect(client.reconnectAttempt, 0);
       expect(errors, contains('Session expired, please log in again'));
 
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('channel.ready timeout retries and eventually connects', () async {
+      // First two channels hang (simulating Firefox throttle), third succeeds.
+      var channelIndex = 0;
+      WsClient.testChannelFactory = (_) {
+        channelIndex++;
+        final ch = channelIndex <= 2
+            ? (_FakeWebSocketChannel()..readyCompleter = Completer<void>())
+            : _FakeWebSocketChannel();
+        channels.add(ch);
+        return ch;
+      };
+      WsClient.testReadyTimeout = Duration.zero;
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+
+      await client.connect();
+      // Should have retried through the two hanging channels and connected
+      // on the third.
+      expect(client.connected, isTrue);
+      expect(channels.length, 3);
+
+      // First two channels should have been closed with code 1000.
+      for (var i = 0; i < 2; i++) {
+        final sink = channels[i].sink as _FakeSink;
+        expect(sink.closeCalled, isTrue);
+        expect(sink.lastCloseCode, 1000);
+      }
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('channel.ready timeout skips HTTP pre-check on retries', () async {
+      var httpCheckCount = 0;
+      WsClient.testHttpPreCheck = () async {
+        httpCheckCount++;
+        return true;
+      };
+      // First two channels hang, third succeeds.
+      var channelIndex = 0;
+      WsClient.testChannelFactory = (_) {
+        channelIndex++;
+        final ch = channelIndex <= 2
+            ? (_FakeWebSocketChannel()..readyCompleter = Completer<void>())
+            : _FakeWebSocketChannel();
+        channels.add(ch);
+        return ch;
+      };
+      WsClient.testReadyTimeout = Duration.zero;
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+
+      await client.connect();
+      expect(client.connected, isTrue);
+      // HTTP pre-check should only be called once (on the first attempt).
+      expect(httpCheckCount, 1);
+
+      WsClient.testHttpPreCheck = null;
       client.disconnect();
       client.dispose();
     });
