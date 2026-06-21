@@ -35,7 +35,6 @@ def run_helper(operation, stdin_text="", env_override=None, extra_path=None):
         **os.environ,
         "KLANGK_BRIDGE_URL": "",
         "KLANGK_WORKSPACE_TOKEN": "",
-        "KLANGK_BRIDGE_TIMEOUT_SECONDS": "5",
     }
     # Remove stale env vars from the old bridge-token era
     env.pop("KLANGK_BRIDGE_TOKEN", None)
@@ -222,7 +221,6 @@ class TestGetOperation:
             "protocol=https\nhost=github.com\n\n",
             env_override={
                 "KLANGK_BRIDGE_URL": "http://127.0.0.1:1",
-                "KLANGK_BRIDGE_TIMEOUT_SECONDS": "1",
             },
             extra_path=str(fake_browser_id),
         )
