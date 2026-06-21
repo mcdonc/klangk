@@ -22,8 +22,8 @@ No single component is required — a plugin can be an extension + Dart UI, just
   - `plugin-tools` — flat directory of all `tools/*` files (installed to `/opt/klangk/bin/`)
   - `plugin-hooks` — per-plugin lifecycle hook directories (installed to `/opt/klangk/hooks/<name>/`)
 - `flutterbuildweb` runs the codegen before compiling
-- `stub_dart_plugins.sh` creates a minimal stub at `$KLANGK_PLUGINS_DIR/.dart/` so `flutter pub get` works before plugins are fetched (runs automatically at devenv shell startup via `enterShell`; skips if `pubspec_overrides.yaml` already exists)
-- Both build tasks are triggered automatically by `devenv up` via `execIfModified`
+- `stub_dart_plugins.sh` creates a minimal stub at `$KLANGK_PLUGINS_DIR/.dart/` so `flutter pub get` works before plugins are fetched (runs automatically as part of the `klangk:update-plugins` task; skips if `pubspec_overrides.yaml` already exists)
+- Plugins are fetched automatically on `devenv up`: `klangk:init-plugins` creates `plugins.yaml` on first run, then `klangk:update-plugins` fetches plugins when `plugins.yaml` changes
 
 ## Adding a Plugin
 
