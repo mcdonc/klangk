@@ -5580,7 +5580,7 @@ class TestOIDCCallback:
             params={"error": "access_denied"},
         )
         assert resp.status_code == 400
-        assert "access_denied" in resp.json()["detail"]
+        assert resp.json()["detail"] == "Login failed"
 
     async def test_callback_cli_redirect(self, client, monkeypatch, db):
         import json as json_mod
@@ -5796,7 +5796,7 @@ class TestOIDCCallback:
             follow_redirects=False,
         )
         assert resp.status_code == 403
-        assert "not verified" in resp.json()["detail"].lower()
+        assert resp.json()["detail"] == "Login denied by server policy"
         assert await model.get_user_by_email("oidcuser@example.com") is None
 
     async def test_callback_no_login_hook_allows_unverified(
