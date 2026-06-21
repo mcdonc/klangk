@@ -12,10 +12,13 @@ For details on creating plugins, see the
 
 [![Running update-plugins](../assets/update-plugins.png)](../assets/update-plugins.png)
 
-Run `update-plugins` to fetch plugins. On first run it creates a
-`plugins.yaml` template with the default plugins. Plugins are
-declared in `$KLANGK_PLUGINS_DIR/plugins.yaml`. Each entry requires
-`name` and `git`; `path` and `ref` are optional:
+Plugins are fetched automatically when you run `devenv up`. On first
+run, a `plugins.yaml` template with the default plugins is created
+and plugins are fetched. On subsequent runs, plugins are only
+re-fetched if `plugins.yaml` has changed. You can also run
+`update-plugins` manually at any time. Plugins are declared in
+`$KLANGK_PLUGINS_DIR/plugins.yaml`. Each entry requires `name` and
+`git`; `path` and `ref` are optional:
 
 ```yaml
 plugins:
