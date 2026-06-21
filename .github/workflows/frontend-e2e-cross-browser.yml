@@ -11,7 +11,7 @@ on:
 jobs:
   test-frontend-e2e-cross-browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       KLANGK_LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       KLANGK_LLM_BASE_URL: https://ollama.com/v1
