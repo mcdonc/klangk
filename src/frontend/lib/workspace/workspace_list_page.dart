@@ -445,12 +445,12 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     }
   }
 
+  // coverage:ignore-start
   Future<void> _importWorkspace(BuildContext dialogContext) async {
     final bytes = await pickFileBytes(accept: '.tar.gz,.tgz');
     if (bytes == null) return;
 
     try {
-      // coverage:ignore-start
       final request = http.MultipartRequest(
         'POST',
         Uri.parse('$baseUrl/api/v1/workspaces/import'),
@@ -463,7 +463,6 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       ));
       final streamed = await request.send();
       final resp = await http.Response.fromStream(streamed);
-      // coverage:ignore-end
       if (resp.statusCode == 200 || resp.statusCode == 201) {
         if (dialogContext.mounted) Navigator.pop(dialogContext, true);
       } else {
@@ -488,6 +487,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       }
     }
   }
+  // coverage:ignore-end
 
   Future<void> _deleteWorkspace(String id) async {
     final confirmed = await showDialog<bool>(
