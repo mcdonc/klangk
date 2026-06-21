@@ -68,9 +68,6 @@ RUN ssh-keyscan -t ed25519,ecdsa,rsa github.com >> /etc/ssh/ssh_known_hosts 2>/d
 # fd-find installs as fdfind on Debian — symlink to fd
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 
-# Node/npm already present from base image.
-RUN npm install -g @earendil-works/pi-coding-agent@0.79.9
-
 # Create klangk user with fixed UID/GID 1000. The container runs with
 # --userns=keep-id:uid=1000,gid=1000 which maps the host user to
 # this UID, so files on bind mounts are owned by the host user.
