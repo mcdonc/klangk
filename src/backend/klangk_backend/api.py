@@ -220,11 +220,7 @@ async def register(
     existing = await model.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
-    if len(req.password) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-        )
+    auth.validate_password_length(req.password)
 
     password_hash = auth.hash_password(req.password)
     user_id = str(uuid.uuid4())
@@ -374,11 +370,7 @@ async def reset_password(req: ResetPasswordRequest):
         raise HTTPException(
             status_code=400, detail="Invalid or expired reset token"
         )
-    if len(req.password) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-        )
+    auth.validate_password_length(req.password)
     if user_id == model.AGENT_USER_ID:
         raise HTTPException(
             status_code=400,
@@ -431,11 +423,7 @@ async def change_password(
         raise HTTPException(
             status_code=401, detail="Current password is incorrect"
         )
-    if len(req.new_password) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-        )
+    auth.validate_password_length(req.new_password)
     password_hash = auth.hash_password(req.new_password)
     await model.update_password(user["id"], password_hash)
     return {"status": "updated"}
@@ -564,11 +552,7 @@ async def accept_invite(req: AcceptInviteRequest):
             status_code=400, detail="Invitation is no longer valid"
         )
 
-    if len(req.password) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-        )
+    auth.validate_password_length(req.password)
 
     existing = await model.get_user_by_email(email)
     if existing is not None:
@@ -2151,11 +2135,7 @@ async def admin_create_user(
     existing = await model.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Email already registered")
-    if len(req.password) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-        )
+    auth.validate_password_length(req.password)
     password_hash = auth.hash_password(req.password)
     user = await model.create_user(req.email, password_hash, verified=True)
     return {"id": user["id"], "email": user["email"], "status": "created"}
@@ -2208,6 +2188,7 @@ async def update_user(
                 status_code=400,
                 detail="Cannot set a password on the system agent user",
             )
+        auth.validate_password_length(req.password)
         password_hash = auth.hash_password(req.password)
         await model.update_password(user_id, password_hash)
     if req.handle is not None:

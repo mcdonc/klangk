@@ -25,6 +25,39 @@ class TestPasswordHashing:
         h2 = auth.hash_password("same")
         assert h1 != h2  # bcrypt uses random salt
 
+    def test_hash_password_rejects_over_72_bytes(self):
+        long_pw = "a" * 73
+        with pytest.raises(ValueError, match="exceeds 72 bytes"):
+            auth.hash_password(long_pw)
+
+    def test_hash_password_accepts_exactly_72_bytes(self):
+        pw = "a" * 72
+        hashed = auth.hash_password(pw)
+        assert auth.verify_password(pw, hashed)
+
+
+class TestValidatePasswordLength:
+    def test_rejects_short_password(self):
+        with pytest.raises(HTTPException) as exc_info:
+            auth.validate_password_length("")
+        assert exc_info.value.status_code == 400
+        assert "at least" in exc_info.value.detail
+
+    def test_rejects_over_72_bytes(self):
+        with pytest.raises(HTTPException) as exc_info:
+            auth.validate_password_length("a" * 73)
+        assert exc_info.value.status_code == 400
+        assert "72 bytes" in exc_info.value.detail
+
+    def test_rejects_multibyte_over_72_bytes(self):
+        pw = "\u00e9" * 37  # 2 bytes each = 74 bytes
+        with pytest.raises(HTTPException) as exc_info:
+            auth.validate_password_length(pw)
+        assert exc_info.value.status_code == 400
+
+    def test_accepts_valid_password(self):
+        auth.validate_password_length("goodpass")
+
 
 class TestJWT:
     def test_create_and_decode_token(self):

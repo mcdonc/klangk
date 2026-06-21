@@ -350,6 +350,14 @@ class TestAuthRoutes:
         )
         assert resp.status_code == 400
 
+    async def test_register_password_exceeds_72_bytes(self, client, db):
+        resp = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "long@example.com", "password": "a" * 73},
+        )
+        assert resp.status_code == 400
+        assert "72 bytes" in resp.json()["detail"]
+
     async def test_register_duplicate(self, client, admin_user):
         login_resp = await client.post(
             "/api/v1/auth/login",
