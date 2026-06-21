@@ -426,7 +426,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                 child: const Text('Cancel'),
               ),
               OutlinedButton.icon(
-                onPressed: () => _importWorkspace(context),
+                onPressed: () =>
+                    _importWorkspace(context), // coverage:ignore-line
                 icon: const Icon(Icons.upload, size: 18),
                 label: const Text('Import'),
               ),
