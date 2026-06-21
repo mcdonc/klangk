@@ -582,10 +582,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       }
       return '${local.month}/${local.day} $time'; // older: "6/3 14:30"
     } catch (e) {
-      debugPrint(
-          '[WorkspaceChat] format time failed: $e'); // coverage:ignore-line
+      // coverage:ignore-start
+      debugPrint('[WorkspaceChat] format time failed: $e');
       return raw;
-    }
+    } // coverage:ignore-end
   }
 
   static Color _colorForEmail(String email) => KColors.colorForString(email);

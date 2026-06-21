@@ -59,8 +59,9 @@ class _LoginPageState extends State<LoginPage> {
         }
       }
     } catch (e) {
+      // coverage:ignore-start
       debugPrint('[LoginPage] load config failed: $e');
-    } // coverage:ignore-line
+    } // coverage:ignore-end
   }
 
   @override

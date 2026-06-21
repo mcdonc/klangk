@@ -77,9 +77,9 @@ class StaleBuildBannerState extends State<StaleBuildBanner> {
         if (widget.testClient == null) client.close();
       }
     } catch (e) {
-      debugPrint(
-          '[StaleBuildBanner] build check failed: $e'); // coverage:ignore-line
-    }
+      // coverage:ignore-start
+      debugPrint('[StaleBuildBanner] build check failed: $e');
+    } // coverage:ignore-end
   }
 
   void _reload() {

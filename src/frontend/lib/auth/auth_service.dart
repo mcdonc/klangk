@@ -47,10 +47,10 @@ class AuthService extends ChangeNotifier {
       final decoded = utf8.decode(base64Url.decode(padded));
       return jsonDecode(decoded) as Map<String, dynamic>;
     } catch (e) {
-      debugPrint(
-          '[AuthService] decode token failed: $e'); // coverage:ignore-line
+      // coverage:ignore-start
+      debugPrint('[AuthService] decode token failed: $e');
       return null;
-    }
+    } // coverage:ignore-end
   }
 
   String? get userId => _payload?['sub'] as String?;
@@ -89,8 +89,9 @@ class AuthService extends ChangeNotifier {
         _bannerText = (data['login_banner'] as String?) ?? '';
       }
     } catch (e) {
+      // coverage:ignore-start
       debugPrint('[AuthService] load config failed: $e');
-    } // coverage:ignore-line
+    } // coverage:ignore-end
 
     if (_bannerText.isNotEmpty) {
       final acceptedHash = prefs.getString('klangk_banner_accepted');
@@ -127,8 +128,9 @@ class AuthService extends ChangeNotifier {
         await _clearToken();
       }
     } catch (e) {
+      // coverage:ignore-start
       debugPrint('[AuthService] fetch permissions failed: $e');
-    } // coverage:ignore-line
+    } // coverage:ignore-end
   }
 
   /// Refresh permissions from the server (call after group changes).

@@ -82,10 +82,9 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
             (imgData['allowed'] as List?)?.cast<String>() ?? [_defaultImage];
       }
     } catch (e) {
-      // coverage:ignore-line
-      debugPrint(
-          '[WorkspaceSettingsPanel] load images failed: $e'); // coverage:ignore-line
-    } // coverage:ignore-line
+      // coverage:ignore-start
+      debugPrint('[WorkspaceSettingsPanel] load images failed: $e');
+    } // coverage:ignore-end
 
     if (mounted) setState(() => _loading = false);
   }

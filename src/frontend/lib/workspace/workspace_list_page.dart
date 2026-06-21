@@ -82,10 +82,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   jsonDecode(resp.body) as List);
             }
           } catch (e) {
-            // coverage:ignore-line
-            debugPrint(
-                '[WorkspaceListPage] fetch members failed: $e'); // coverage:ignore-line
-          } // coverage:ignore-line
+            // coverage:ignore-start
+            debugPrint('[WorkspaceListPage] fetch members failed: $e');
+          } // coverage:ignore-end
         }));
         // Fetch shared workspaces
         List<Map<String, dynamic>> shared = [];
@@ -96,10 +95,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                 jsonDecode(sharedResp.body) as List);
           }
         } catch (e) {
-          // coverage:ignore-line
-          debugPrint(
-              '[WorkspaceListPage] fetch shared workspaces failed: $e'); // coverage:ignore-line
-        } // coverage:ignore-line
+          // coverage:ignore-start
+          debugPrint('[WorkspaceListPage] fetch shared workspaces failed: $e');
+        } // coverage:ignore-end
         setState(() {
           _workspaces = workspaces;
           _sharedWorkspaces = shared;
@@ -127,9 +125,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
     } catch (e) {
-      debugPrint(
-          '[WorkspaceListPage] fetch images failed: $e'); // coverage:ignore-line
-    }
+      // coverage:ignore-start
+      debugPrint('[WorkspaceListPage] fetch images failed: $e');
+    } // coverage:ignore-end
     return null;
   }
 
