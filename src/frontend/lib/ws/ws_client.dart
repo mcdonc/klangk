@@ -189,7 +189,7 @@ class WsClient extends ChangeNotifier {
   }
 
   Future<void> connect() async {
-    debugPrint('[WsClient v1] connect() enter: ${DateTime.now()}');
+    debugPrint('[WsClient v2] connect() enter: ${DateTime.now()}');
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     if (_connected || _connecting || _auth?.token == null) {
@@ -238,13 +238,15 @@ class WsClient extends ChangeNotifier {
       await _channel!.ready.timeout(timeout);
       debugPrint('[WsClient] await channel.ready done: ${DateTime.now()}');
     } on TimeoutException {
-      debugPrint('[WsClient] channel.ready timed out (Firefox throttle), '
+      debugPrint('[WsClient v2] channel.ready timed out (Firefox throttle), '
           'retrying (attempt ${attempt + 1}): ${DateTime.now()}');
-      // Close and wait for it to complete before opening a new channel,
-      // otherwise Firefox queues multiple connections behind the
-      // FailDelayManager and they all arrive at once.
-      await _channel?.sink.close(1000, 'ready timeout');
+      // Fire-and-forget the close — don't await it because Firefox's
+      // FailDelayManager blocks the close handshake too.  The channel is
+      // abandoned; set _channel to null before closing so nothing else
+      // references it.
+      final old = _channel;
       _channel = null;
+      old?.sink.close(1000, 'ready timeout');
       return _connectWs(attempt + 1);
     } catch (e) {
       debugPrint('[WsClient] channel.ready failed: $e ${DateTime.now()}');
