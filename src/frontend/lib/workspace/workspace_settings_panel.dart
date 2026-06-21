@@ -1,8 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:js_interop';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart' show baseUrl;
+import 'package:web/web.dart' as web;
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../ws/ws_client.dart';
 
 /// Workspace settings panel: config editing only.
@@ -121,6 +129,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     if (_workspace == null) return const Center(child: Text('No data'));
 
     return _SettingsForm(
+      workspaceId: widget.workspaceId,
       workspace: _workspace!,
       allowedImages: _allowedImages,
       defaultImage: _defaultImage,
@@ -131,6 +140,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
 }
 
 class _SettingsForm extends StatefulWidget {
+  final String workspaceId;
   final Map<String, dynamic> workspace;
   final List<String> allowedImages;
   final String defaultImage;
@@ -138,6 +148,7 @@ class _SettingsForm extends StatefulWidget {
   final Future<void> Function(Map<String, dynamic>) onSave;
 
   const _SettingsForm({
+    required this.workspaceId,
     required this.workspace,
     required this.allowedImages,
     required this.defaultImage,
@@ -160,6 +171,8 @@ class _SettingsFormState extends State<_SettingsForm> {
   String? _mountError;
   String? _envError;
   bool _saving = false;
+  bool _exporting = false;
+  bool _importing = false;
 
   @override
   void initState() {
@@ -451,6 +464,27 @@ class _SettingsFormState extends State<_SettingsForm> {
                   const SizedBox(height: 32),
                   const Divider(),
                   const SizedBox(height: 16),
+                  const SizedBox(height: 32),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Export',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _exporting ? null : _exportWorkspace,
+                    icon: _exporting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.download, size: 18),
+                    label: const Text('Export Workspace'),
+                  ),
+                  const SizedBox(height: 32),
+                  const Divider(),
+                  const SizedBox(height: 16),
                   Text(
                     'Danger Zone',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -468,6 +502,22 @@ class _SettingsFormState extends State<_SettingsForm> {
                       side: const BorderSide(color: Colors.red),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _importing ? null : _importWorkspace,
+                    icon: _importing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.red))
+                        : const Icon(Icons.upload, size: 18, color: Colors.red),
+                    label: const Text('Import Workspace'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -475,6 +525,125 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
       ),
     );
+  }
+
+  Future<void> _exportWorkspace() async {
+    setState(() => _exporting = true);
+    try {
+      final auth = context.read<AuthService>();
+      final resp =
+          await auth.authGet('/api/v1/workspaces/${widget.workspaceId}/export');
+      if (resp.statusCode == 200) {
+        final name = widget.workspace['name'] as String? ?? 'workspace';
+        downloadBytes(resp.bodyBytes, '$name.tar.gz');
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Export failed: ${resp.statusCode}')),
+          );
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Export failed')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _importWorkspace() async {
+    // Use HTML file input to pick a .tar.gz file
+    final bytes = await _pickFile();
+    if (bytes == null) return;
+
+    setState(() => _importing = true);
+    try {
+      final auth = context.read<AuthService>();
+      // coverage:ignore-start
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/api/v1/workspaces/import'),
+      );
+      request.headers['Authorization'] = 'Bearer ${auth.token}';
+      request.files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: 'workspace.tar.gz',
+      ));
+      final streamed = await request.send();
+      final resp = await http.Response.fromStream(streamed);
+      // coverage:ignore-end
+      if (resp.statusCode == 200 || resp.statusCode == 201) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Workspace imported')),
+          );
+        }
+      } else {
+        final detail = _extractDetail(resp);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Import failed: $detail')),
+          );
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Import failed')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
+  String _extractDetail(http.Response resp) {
+    try {
+      final body = jsonDecode(resp.body);
+      return body['detail'] ?? '${resp.statusCode}';
+    } catch (_) {
+      return '${resp.statusCode}';
+    }
+  }
+
+  Future<Uint8List?> _pickFile() async {
+    // coverage:ignore-start
+    // Use web file input to select a file
+    final completer = Completer<Uint8List?>();
+    final input = web.HTMLInputElement()
+      ..type = 'file'
+      ..accept = '.tar.gz,.tgz';
+    input.addEventListener(
+      'change',
+      ((web.Event _) {
+        final files = input.files;
+        if (files == null || files.length == 0) {
+          completer.complete(null);
+          return;
+        }
+        final reader = web.FileReader();
+        reader.addEventListener(
+          'load',
+          ((web.Event _) {
+            final result = reader.result;
+            if (result != null) {
+              final arrayBuf = result as JSArrayBuffer;
+              completer.complete(arrayBuf.toDart.asUint8List());
+            } else {
+              completer.complete(null);
+            }
+          }).toJS,
+        );
+        reader.readAsArrayBuffer(files.item(0)!);
+      }).toJS,
+    );
+    input.click();
+    return completer.future;
+    // coverage:ignore-end
   }
 
   void _confirmShutdown(BuildContext context) {
