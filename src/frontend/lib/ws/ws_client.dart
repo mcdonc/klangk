@@ -55,8 +55,9 @@ class WsClient extends ChangeNotifier {
   /// Set to false during intentional disconnects.
   bool _autoReconnect = false;
 
-  /// Max backoff duration in seconds.
-  static const int _maxBackoffSeconds = 30;
+  /// Max backoff duration in seconds.  Kept low because the HTTP pre-check
+  /// is cheap and fast — we just need to detect when the server is back.
+  static const int _maxBackoffSeconds = 5;
 
   /// Give up auto-reconnecting after this duration.
   static const Duration _reconnectTimeout = Duration(minutes: 5);
@@ -78,16 +79,6 @@ class WsClient extends ChangeNotifier {
   /// Override for testing to shorten the reconnect timeout.
   @visibleForTesting
   static Duration? testReconnectTimeout;
-
-  /// Timeout for `channel.ready` — if the server is confirmed up via HTTP but
-  /// `ready` hangs (Firefox FailDelayManager throttle), close and retry.
-  /// Normal WebSocket handshake takes <100ms; this just needs to be long
-  /// enough to avoid false positives on slow networks.
-  static const Duration _readyTimeout = Duration(seconds: 2);
-
-  /// Override for testing to control the ready timeout.
-  @visibleForTesting
-  static Duration? testReadyTimeout;
 
   /// Inject a pre-connected channel for testing.
   @visibleForTesting
@@ -191,7 +182,7 @@ class WsClient extends ChangeNotifier {
   }
 
   Future<void> connect() async {
-    debugPrint('[WsClient v3] connect() enter: ${DateTime.now()}');
+    debugPrint('[WsClient] connect() enter: ${DateTime.now()}');
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     if (_connected || _connecting || _auth?.token == null) {
@@ -217,10 +208,10 @@ class WsClient extends ChangeNotifier {
     }
   }
 
-  /// Open a WebSocket and wait for it to be ready.  If `channel.ready` times
-  /// out (Firefox FailDelayManager throttle), close and retry — each attempt
-  /// consumes part of the throttle window until the delay expires.
-  Future<void> _connectWs([int attempt = 0]) async {
+  /// Open a WebSocket and wait for it to be ready.  Firefox's
+  /// FailDelayManager may delay the connection by up to 60s after an unclean
+  /// close — we just wait it out since retrying creates zombie connections.
+  Future<void> _connectWs() async {
     if (testChannelFactory != null) {
       _channel = testChannelFactory!(Uri());
     } else {
@@ -236,20 +227,8 @@ class WsClient extends ChangeNotifier {
 
     try {
       debugPrint('[WsClient] await channel.ready start: ${DateTime.now()}');
-      final timeout = testReadyTimeout ?? _readyTimeout;
-      await _channel!.ready.timeout(timeout);
+      await _channel!.ready;
       debugPrint('[WsClient] await channel.ready done: ${DateTime.now()}');
-    } on TimeoutException {
-      debugPrint('[WsClient v3] channel.ready timed out (Firefox throttle), '
-          'retrying (attempt ${attempt + 1}): ${DateTime.now()}');
-      // Fire-and-forget the close — don't await it because Firefox's
-      // FailDelayManager blocks the close handshake too.  The channel is
-      // abandoned; set _channel to null before closing so nothing else
-      // references it.
-      final old = _channel;
-      _channel = null;
-      old?.sink.close(1000, 'ready timeout');
-      return _connectWs(attempt + 1);
     } catch (e) {
       debugPrint('[WsClient] channel.ready failed: $e ${DateTime.now()}');
       final code = _channel?.closeCode;
@@ -263,10 +242,6 @@ class WsClient extends ChangeNotifier {
     }
 
     _connected = true;
-    if (attempt > 0) {
-      debugPrint(
-          '[WsClient] connected after $attempt throttle retry(ies): ${DateTime.now()}');
-    }
     // Close cleanly on page unload so Firefox's FailDelayManager doesn't
     // treat it as a failure and throttle the next connection by up to 60s.
     _removeBeforeUnload?.call();

@@ -371,7 +371,6 @@ void main() {
     tearDown(() {
       WsClient.testChannelFactory = null;
       WsClient.testBackoffOverride = null;
-      WsClient.testReadyTimeout = null;
       WsClient.testReconnectTimeout = null;
     });
 
@@ -779,76 +778,6 @@ void main() {
       expect(client.reconnectAttempt, 0);
       expect(errors, contains('Session expired, please log in again'));
 
-      client.disconnect();
-      client.dispose();
-    });
-
-    test('channel.ready timeout retries and eventually connects', () async {
-      // First two channels hang (simulating Firefox throttle), third succeeds.
-      var channelIndex = 0;
-      WsClient.testChannelFactory = (_) {
-        channelIndex++;
-        final ch = channelIndex <= 2
-            ? (_FakeWebSocketChannel()..readyCompleter = Completer<void>())
-            : _FakeWebSocketChannel();
-        channels.add(ch);
-        return ch;
-      };
-      WsClient.testReadyTimeout = Duration.zero;
-
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      final client = WsClient();
-      client.updateAuth(auth);
-
-      await client.connect();
-      // Should have retried through the two hanging channels and connected
-      // on the third.
-      expect(client.connected, isTrue);
-      expect(channels.length, 3);
-
-      // First two channels should have been closed with code 1000.
-      for (var i = 0; i < 2; i++) {
-        final sink = channels[i].sink as _FakeSink;
-        expect(sink.closeCalled, isTrue);
-        expect(sink.lastCloseCode, 1000);
-      }
-
-      client.disconnect();
-      client.dispose();
-    });
-
-    test('channel.ready timeout skips HTTP pre-check on retries', () async {
-      var httpCheckCount = 0;
-      WsClient.testHttpPreCheck = () async {
-        httpCheckCount++;
-        return true;
-      };
-      // First two channels hang, third succeeds.
-      var channelIndex = 0;
-      WsClient.testChannelFactory = (_) {
-        channelIndex++;
-        final ch = channelIndex <= 2
-            ? (_FakeWebSocketChannel()..readyCompleter = Completer<void>())
-            : _FakeWebSocketChannel();
-        channels.add(ch);
-        return ch;
-      };
-      WsClient.testReadyTimeout = Duration.zero;
-
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      final client = WsClient();
-      client.updateAuth(auth);
-
-      await client.connect();
-      expect(client.connected, isTrue);
-      // HTTP pre-check should only be called once (on the first attempt).
-      expect(httpCheckCount, 1);
-
-      WsClient.testHttpPreCheck = null;
       client.disconnect();
       client.dispose();
     });
