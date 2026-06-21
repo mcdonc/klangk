@@ -756,7 +756,10 @@ async def oidc_callback(
 ):
     """Handle the OIDC callback from the IdP."""
     if error:
-        raise HTTPException(status_code=400, detail=f"IdP error: {error}")
+        logger.warning(
+            "OIDC IdP error for provider %s: %s", provider_id, error
+        )
+        raise HTTPException(status_code=400, detail="Login failed")
 
     provider = oidc.get_provider(provider_id)
     if provider is None:
@@ -826,10 +829,11 @@ async def oidc_callback(
         hook_groups = await oidc.call_login_hook(
             provider, claims, email, tokens
         )
-    except Exception as exc:
+    except Exception:
+        logger.exception("OIDC login hook failed for provider %s", provider)
         raise HTTPException(
             status_code=403,
-            detail=str(exc),
+            detail="Login denied by server policy",
         ) from None
 
     # Find or create user
@@ -1975,11 +1979,10 @@ async def upload_file(
                 fp.write(chunk)
     except HTTPException:
         raise
-    except Exception as e:  # pragma: no cover
+    except Exception:  # pragma: no cover
+        logger.exception("Upload failed for workspace %s", workspace_id)
         dest.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=500, detail=f"Upload failed: {e}"
-        ) from e
+        raise HTTPException(status_code=500, detail="Upload failed")
     home = workspaces.get_home_host_path(workspace["user_id"], workspace_id)
     saved_path = str(dest.relative_to(home))
     return {"path": saved_path, "status": "uploaded"}
