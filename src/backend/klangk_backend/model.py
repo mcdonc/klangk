@@ -11,6 +11,7 @@ from pathlib import Path
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 from .util import resolve_env_secret
 
@@ -103,12 +104,18 @@ class _Connection:
 
 
 def _make_engine(db_path: Path | str, **kwargs):
-    """Create a new async engine with PRAGMA listeners."""
+    """Create a new async engine with PRAGMA listeners.
+
+    Uses NullPool so every ``transaction()`` gets a fresh connection and
+    returns it immediately on close.  SQLite connections are cheap (a
+    thread + file handle) and pooling them just creates artificial
+    contention — under concurrent load a bounded QueuePool exhausts its
+    slots and blocks the entire API with TimeoutError.
+    """
     url = f"sqlite+aiosqlite:///{db_path}"
     engine = create_async_engine(
         url,
-        pool_size=5,
-        max_overflow=5,
+        poolclass=NullPool,
         **kwargs,
     )
 
