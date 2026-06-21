@@ -8,10 +8,10 @@ build-host-image
 
 This builds everything from source: Flutter web, workspace image
 (podman), then the host image (Docker). Tagged locally with `latest`
-and a CalVer version (e.g., `2026.06.09-abc1234`). Only the CalVer
-version tag is pushed to GHCR — `:latest` is never pushed to the
-registry. The version is baked into `/home/klangk/version.json` and
-served at `GET /version`.
+and a version tag derived from git state (release tag, branch name,
+or commit). Only the version tag is pushed to GHCR — `:latest` is
+never pushed to the registry. The version is baked into
+`/home/klangk/version.json` and served at `GET /version`.
 
 ## Custom Image with Plugins
 
