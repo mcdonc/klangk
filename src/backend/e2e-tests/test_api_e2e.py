@@ -464,7 +464,7 @@ class TestACLIntrospection:
         )
         ws_id = resp.json()["id"]
         resp = api.get(
-            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            f"/api/v1/my-permissions?resource=/workspaces/{ws_id}",
             headers=user_a["headers"],
         )
         assert resp.status_code == 200
@@ -481,7 +481,7 @@ class TestACLIntrospection:
         )
         ws_id = resp.json()["id"]
         resp = api.get(
-            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            f"/api/v1/my-permissions?resource=/workspaces/{ws_id}",
             headers=user_a["headers"],
         )
         assert resp.status_code == 200
@@ -508,7 +508,7 @@ class TestACLIntrospection:
         )
         # Check B's permissions
         resp = api.get(
-            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            f"/api/v1/my-permissions?resource=/workspaces/{ws_id}",
             headers=user_b["headers"],
         )
         assert resp.status_code == 200
@@ -857,7 +857,7 @@ class TestSharedWorkspaceAccess:
 
         # B can see permissions
         resp = api.get(
-            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            f"/api/v1/my-permissions?resource=/workspaces/{ws_id}",
             headers=user_b["headers"],
         )
         perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
@@ -872,7 +872,7 @@ class TestSharedWorkspaceAccess:
         # B immediately loses workspace-specific permissions
         # (view and create are inherited from / and /workspaces)
         resp = api.get(
-            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            f"/api/v1/my-permissions?resource=/workspaces/{ws_id}",
             headers=user_b["headers"],
         )
         perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
