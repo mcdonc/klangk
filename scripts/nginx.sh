@@ -166,12 +166,12 @@ ${LLM_BLOCK}
     # (soliplex RAG + LLM) through here. The read timeout must accommodate
     # the git-credential device flow (up to 15 min) as well as streaming
     # RAG/LLM responses, so it exceeds the backend's max bridge timeout.
-    location = /api/browser-delegate {
+    location /api/browser-delegate {
 ${CONTAINER_ACL}
       auth_request /auth/verify-workspace-token;
       auth_request_set \$auth_token_error \$upstream_http_x_token_error;
       error_page 401 = @token_auth_failed;
-      proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/browser-delegate;
+      proxy_pass http://127.0.0.1:${KLANGK_PORT};
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
