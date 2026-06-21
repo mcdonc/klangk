@@ -183,7 +183,6 @@ async def lifespan(app: FastAPI):
     await container.registry.prewarm_podman()
     await container.registry.adopt_orphaned_containers()
     container.registry.start_cleanup_loop()
-
     logger.info("Klangk backend started")
     yield
     await container.registry.shutdown()

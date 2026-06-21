@@ -182,7 +182,7 @@ class WsClient extends ChangeNotifier {
   }
 
   Future<void> connect() async {
-    debugPrint('[WsClient v4] connect() enter: ${DateTime.now()}');
+    debugPrint('[WsClient] connect() enter: ${DateTime.now()}');
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     if (_connected || _connecting || _auth?.token == null) {
@@ -218,7 +218,7 @@ class WsClient extends ChangeNotifier {
       // coverage:ignore-start
       final uri = Uri.parse('$_wsBaseUrl?token=${_auth!.token}');
       debugPrint(
-          '[WsClient v5] WebSocketChannel.connect() start: ${DateTime.now()}');
+          '[WsClient] WebSocketChannel.connect() start: ${DateTime.now()}');
       _channel = WebSocketChannel.connect(uri);
       debugPrint(
           '[WsClient] WebSocketChannel.connect() returned: ${DateTime.now()}');
