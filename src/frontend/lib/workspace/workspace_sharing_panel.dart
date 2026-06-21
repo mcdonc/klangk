@@ -89,7 +89,8 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
       String detail;
       try {
         detail = (jsonDecode(resp.body) as Map)['detail'] ?? resp.body;
-      } catch (_) {
+      } catch (e) {
+        debugPrint('[WorkspaceSharingPanel] parse error detail failed: $e');
         detail = 'Error';
       }
       if (mounted) {
@@ -152,7 +153,10 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                             jsonDecode(resp.body) as List,
                           );
                         }
-                      } catch (_) {}
+                      } catch (e) {
+                        debugPrint(
+                            '[WorkspaceSharingPanel] user search failed: $e');
+                      }
                     },
                   );
                 },

@@ -172,7 +172,8 @@ class WsClient extends ChangeNotifier {
     try {
       final resp = await http.get(Uri.parse('$_httpBaseUrl/api/config'));
       return resp.statusCode == 200;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[WsClient] server health check failed: $e');
       return false;
     }
     // coverage:ignore-end

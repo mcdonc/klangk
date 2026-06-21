@@ -46,7 +46,9 @@ class AuthService extends ChangeNotifier {
       );
       final decoded = utf8.decode(base64Url.decode(padded));
       return jsonDecode(decoded) as Map<String, dynamic>;
-    } catch (_) {
+    } catch (e) {
+      debugPrint(
+          '[AuthService] decode token failed: $e'); // coverage:ignore-line
       return null;
     }
   }
@@ -86,7 +88,9 @@ class AuthService extends ChangeNotifier {
         _bannerTitle = (data['login_banner_title'] as String?) ?? '';
         _bannerText = (data['login_banner'] as String?) ?? '';
       }
-    } catch (_) {} // coverage:ignore-line
+    } catch (e) {
+      debugPrint('[AuthService] load config failed: $e');
+    } // coverage:ignore-line
 
     if (_bannerText.isNotEmpty) {
       final acceptedHash = prefs.getString('klangk_banner_accepted');
@@ -122,7 +126,9 @@ class AuthService extends ChangeNotifier {
       } else if (resp.statusCode == 401) {
         await _clearToken();
       }
-    } catch (_) {} // coverage:ignore-line
+    } catch (e) {
+      debugPrint('[AuthService] fetch permissions failed: $e');
+    } // coverage:ignore-line
   }
 
   /// Refresh permissions from the server (call after group changes).
@@ -337,9 +343,9 @@ class AuthService extends ChangeNotifier {
       } else if (response.statusCode == 401) {
         await _clearToken();
       }
-    } catch (_) {
+    } catch (e) {
       // Network error — retry in 60 seconds
-      debugPrint('[AuthService] refresh failed, retrying in 60s');
+      debugPrint('[AuthService] refresh token failed: $e, retrying in 60s');
       _refreshTimer = Timer(const Duration(seconds: 60), _refreshToken);
     }
   }
@@ -361,8 +367,8 @@ class AuthService extends ChangeNotifier {
         final data = jsonDecode(resp.body);
         oidcLogoutUrl = data['oidc_logout_url'] as String?;
       }
-    } catch (_) {
-      // Best effort — clear token regardless
+    } catch (e) {
+      debugPrint('[AuthService] logout request failed: $e');
     }
     await _clearToken();
     return oidcLogoutUrl;

@@ -89,8 +89,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           });
         }
       }
-    } catch (_) {
-      // Invitations tab is best-effort
+    } catch (e) {
+      debugPrint('[AdminUsersPage] load invitations failed: $e');
     }
   }
 
@@ -106,8 +106,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           });
         }
       }
-    } catch (_) {
-      // Groups tab is best-effort
+    } catch (e) {
+      debugPrint('[AdminUsersPage] load groups failed: $e');
     }
   }
 
@@ -323,7 +323,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     String msg;
     try {
       msg = jsonDecode(resp.body)['detail'] ?? 'Error';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[AdminUsersPage] parse error detail failed: $e');
       msg = 'Error: ${resp.statusCode}';
     }
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));

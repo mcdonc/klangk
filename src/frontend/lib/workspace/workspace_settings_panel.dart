@@ -81,7 +81,11 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
         _allowedImages =
             (imgData['allowed'] as List?)?.cast<String>() ?? [_defaultImage];
       }
-    } catch (_) {} // coverage:ignore-line
+    } catch (e) {
+      // coverage:ignore-line
+      debugPrint(
+          '[WorkspaceSettingsPanel] load images failed: $e'); // coverage:ignore-line
+    } // coverage:ignore-line
 
     if (mounted) setState(() => _loading = false);
   }
@@ -103,7 +107,8 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       String detail;
       try {
         detail = (jsonDecode(resp.body) as Map)['detail'] ?? resp.body;
-      } catch (_) {
+      } catch (e) {
+        debugPrint('[WorkspaceSettingsPanel] parse error detail failed: $e');
         detail = 'Error: ${resp.statusCode}';
       }
       setState(() => _saveMessage = 'Failed: $detail');

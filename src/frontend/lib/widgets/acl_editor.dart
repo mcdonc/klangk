@@ -108,13 +108,17 @@ class AclEditorState extends State<AclEditor> {
       if (uResp.statusCode == 200) {
         users = List<Map<String, dynamic>>.from(jsonDecode(uResp.body));
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[AclEditor] fetch users failed: $e');
+    }
     try {
       final gResp = await auth.authGet('/admin/groups');
       if (gResp.statusCode == 200) {
         groups = List<Map<String, dynamic>>.from(jsonDecode(gResp.body));
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[AclEditor] fetch groups failed: $e');
+    }
 
     if (!mounted) return;
 
@@ -307,7 +311,8 @@ class AclEditorState extends State<AclEditor> {
       String detail;
       try {
         detail = (jsonDecode(resp.body) as Map)['detail'] ?? resp.body;
-      } catch (_) {
+      } catch (e) {
+        debugPrint('[AclEditor] parse error detail failed: $e');
         detail = 'Error';
       }
       setState(() {

@@ -81,7 +81,11 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
               members[id] = List<Map<String, dynamic>>.from(
                   jsonDecode(resp.body) as List);
             }
-          } catch (_) {} // coverage:ignore-line
+          } catch (e) {
+            // coverage:ignore-line
+            debugPrint(
+                '[WorkspaceListPage] fetch members failed: $e'); // coverage:ignore-line
+          } // coverage:ignore-line
         }));
         // Fetch shared workspaces
         List<Map<String, dynamic>> shared = [];
@@ -91,7 +95,11 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
             shared = List<Map<String, dynamic>>.from(
                 jsonDecode(sharedResp.body) as List);
           }
-        } catch (_) {} // coverage:ignore-line
+        } catch (e) {
+          // coverage:ignore-line
+          debugPrint(
+              '[WorkspaceListPage] fetch shared workspaces failed: $e'); // coverage:ignore-line
+        } // coverage:ignore-line
         setState(() {
           _workspaces = workspaces;
           _sharedWorkspaces = shared;
@@ -118,7 +126,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+          '[WorkspaceListPage] fetch images failed: $e'); // coverage:ignore-line
+    }
     return null;
   }
 
@@ -469,7 +480,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       final min = local.minute.toString().padLeft(2, '0');
       return '${months[local.month - 1]} ${local.day}, ${local.year}'
           ' at $h:$min $ampm';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[WorkspaceListPage] format date failed: $e');
       return raw;
     }
   }

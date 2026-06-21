@@ -581,7 +581,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
         return '${days[local.weekday - 1]} $time'; // this week: "Mon 14:30"
       }
       return '${local.month}/${local.day} $time'; // older: "6/3 14:30"
-    } catch (_) {
+    } catch (e) {
+      debugPrint(
+          '[WorkspaceChat] format time failed: $e'); // coverage:ignore-line
       return raw;
     }
   }

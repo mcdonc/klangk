@@ -113,7 +113,8 @@ Future<String?> readClipboardText() async {
   try {
     final text = await web.window.navigator.clipboard.readText().toDart;
     return text.toDart;
-  } catch (_) {
+  } catch (e) {
+    debugPrint('[WebHelpers] clipboard read failed: $e');
     return null;
   }
 }
