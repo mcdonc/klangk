@@ -826,10 +826,11 @@ async def oidc_callback(
         hook_groups = await oidc.call_login_hook(
             provider, claims, email, tokens
         )
-    except Exception as exc:
+    except Exception:
+        logger.exception("OIDC login hook failed for provider %s", provider)
         raise HTTPException(
             status_code=403,
-            detail=str(exc),
+            detail="Login denied by server policy",
         ) from None
 
     # Find or create user
