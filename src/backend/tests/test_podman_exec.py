@@ -1,4 +1,4 @@
-"""Tests for dockerexec: raw podman exec without PTY."""
+"""Tests for podman ExecSession: raw podman exec without PTY."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-from klangk_backend.dockerexec import ExecSession
+from klangk_backend.podman import ExecSession
 
 
 def _mock_proc(stdout_data=b"", returncode=None):

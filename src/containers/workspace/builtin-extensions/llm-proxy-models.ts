@@ -11,6 +11,7 @@
  * finishes, so discovered models are available immediately.
  */
 
+import { execSync } from "child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 interface OpenAIModel {
@@ -59,7 +60,14 @@ async function fetchModels(
 
 export default async function (pi: ExtensionAPI) {
   const proxyUrl = process.env.KLANGK_LLM_PROXY_URL;
-  const apiKey = process.env.KLANGK_WORKSPACE_TOKEN || "proxy";
+  let apiKey = "proxy";
+  try {
+    apiKey =
+      execSync("klangk-workspace-token", { encoding: "utf-8" }).trim() ||
+      "proxy";
+  } catch {
+    // klangk-workspace-token not available
+  }
 
   if (!proxyUrl) {
     return; // No LLM proxy configured
@@ -87,7 +95,7 @@ export default async function (pi: ExtensionAPI) {
 
   pi.registerProvider("llm-proxy", {
     baseUrl,
-    apiKey: "$KLANGK_WORKSPACE_TOKEN",
+    apiKey: "!klangk-workspace-token",
     api: "openai-completions",
     models: chatModels.map((m) => ({
       id: m.id,

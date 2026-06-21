@@ -22,7 +22,21 @@ import urllib.error
 import urllib.request
 
 BRIDGE_URL = os.environ.get("KLANGK_BRIDGE_URL", "")
-WORKSPACE_TOKEN = os.environ.get("KLANGK_WORKSPACE_TOKEN", "")
+
+
+def _get_workspace_token():
+    try:
+        result = subprocess.run(
+            ["klangk-workspace-token"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
 
 
 def _get_browser_id():
@@ -52,8 +66,9 @@ def _try_bridge(text, browser_id):
     }).encode()
 
     headers = {"Content-Type": "application/json"}
-    if WORKSPACE_TOKEN:
-        headers["Authorization"] = f"Bearer {WORKSPACE_TOKEN}"
+    workspace_token = _get_workspace_token()
+    if workspace_token:
+        headers["Authorization"] = f"Bearer {workspace_token}"
 
     req = urllib.request.Request(
         f"{BRIDGE_URL}/api/browser-delegate",

@@ -214,6 +214,34 @@ async def attach_browser(container_id: str, browser_id: str) -> None:
         )
 
 
+async def set_workspace_token(container_id: str, token: str) -> None:
+    """Write a workspace token to ``/run/klangk/workspace-token`` inside
+    the container via ``klangk-set-workspace-token``.
+    """
+    argv = [
+        "exec",
+        "-u",
+        CONTAINER_USER,
+        container_id,
+        "klangk-set-workspace-token",
+        token,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
+    )
+    _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    if proc.returncode != 0:
+        logger.warning(
+            "klangk-set-workspace-token failed (rc=%d): %s",
+            proc.returncode,
+            stderr.decode(errors="replace").strip(),
+        )
+
+
 async def tmux_command(
     container_id: str, session_name: str, args: list[str]
 ) -> str:

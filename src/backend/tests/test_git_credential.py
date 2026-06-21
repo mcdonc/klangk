@@ -22,10 +22,14 @@ SCRIPT = (
 
 @pytest.fixture()
 def fake_browser_id(tmp_path):
-    """Create a fake klangk-browser-id script that prints a test ID."""
+    """Create fake klangk-browser-id and klangk-workspace-token scripts."""
     script = tmp_path / "klangk-browser-id"
     script.write_text("#!/bin/sh\necho test-browser-id\n")
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    # Default workspace token script returns empty (override per-test)
+    token_script = tmp_path / "klangk-workspace-token"
+    token_script.write_text("#!/bin/sh\nexit 1\n")
+    token_script.chmod(token_script.stat().st_mode | stat.S_IEXEC)
     return tmp_path
 
 
@@ -34,7 +38,6 @@ def run_helper(operation, stdin_text="", env_override=None, extra_path=None):
     env = {
         **os.environ,
         "KLANGK_BRIDGE_URL": "",
-        "KLANGK_WORKSPACE_TOKEN": "",
     }
     # Remove stale env vars from the old bridge-token era
     env.pop("KLANGK_BRIDGE_TOKEN", None)
@@ -260,13 +263,16 @@ class TestGetOperation:
             orig_do_post(self)
 
         _BridgeHandler.do_POST = capturing_post
+        # Write a fake klangk-workspace-token that returns the test JWT
+        token_script = fake_browser_id / "klangk-workspace-token"
+        token_script.write_text("#!/bin/sh\necho ws-jwt-123\n")
+        token_script.chmod(token_script.stat().st_mode | stat.S_IEXEC)
         try:
             run_helper(
                 "get",
                 "protocol=https\nhost=github.com\n\n",
                 env_override={
                     "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
-                    "KLANGK_WORKSPACE_TOKEN": "ws-jwt-123",
                 },
                 extra_path=str(fake_browser_id),
             )

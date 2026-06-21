@@ -9,7 +9,13 @@ function getBrowserId(): string {
 }
 
 const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
-const WORKSPACE_TOKEN = process.env.KLANGK_WORKSPACE_TOKEN;
+function getWorkspaceToken(): string {
+  try {
+    return execSync("klangk-workspace-token", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
 
 const CONFETTI_CHARS = [
   "\x1b[91m*\x1b[0m",
@@ -97,13 +103,12 @@ export default function (pi: any) {
       // Primary path: the Flutter ConfettiOverlay in the Klangk UI, triggered
       // through the browser bridge.
       try {
+        const token = getWorkspaceToken();
         const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(WORKSPACE_TOKEN
-              ? { Authorization: `Bearer ${WORKSPACE_TOKEN}` }
-              : {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
             action: "celebrate",

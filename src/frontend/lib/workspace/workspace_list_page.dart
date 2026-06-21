@@ -18,7 +18,7 @@ const _validMountOptions = {
   'nocopy',
   'consistent',
   'cached',
-  'delegated'
+  'delegated',
 };
 
 String? validateMountSpec(String spec) {
@@ -73,26 +73,30 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         final workspaces = data.cast<Map<String, dynamic>>();
         // Fetch members for each workspace in parallel
         final members = <String, List<Map<String, dynamic>>>{};
-        await Future.wait(workspaces.map((ws) async {
-          final id = ws['id'] as String;
-          try {
-            final resp = await _auth.authGet('/workspaces/$id/members');
-            if (resp.statusCode == 200) {
-              members[id] = List<Map<String, dynamic>>.from(
-                  jsonDecode(resp.body) as List);
-            }
-          } catch (e) {
-            // coverage:ignore-start
-            debugPrint('[WorkspaceListPage] fetch members failed: $e');
-          } // coverage:ignore-end
-        }));
+        await Future.wait(
+          workspaces.map((ws) async {
+            final id = ws['id'] as String;
+            try {
+              final resp = await _auth.authGet('/workspaces/$id/members');
+              if (resp.statusCode == 200) {
+                members[id] = List<Map<String, dynamic>>.from(
+                  jsonDecode(resp.body) as List,
+                );
+              }
+            } catch (e) {
+              // coverage:ignore-start
+              debugPrint('[WorkspaceListPage] fetch members failed: $e');
+            } // coverage:ignore-end
+          }),
+        );
         // Fetch shared workspaces
         List<Map<String, dynamic>> shared = [];
         try {
           final sharedResp = await _auth.authGet('/workspaces/shared');
           if (sharedResp.statusCode == 200) {
             shared = List<Map<String, dynamic>>.from(
-                jsonDecode(sharedResp.body) as List);
+              jsonDecode(sharedResp.body) as List,
+            );
           }
         } catch (e) {
           // coverage:ignore-start
@@ -105,12 +109,14 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         });
       }
     } catch (e) {
+      debugPrint('Failed to load workspaces: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              duration: const Duration(days: 1),
-              showCloseIcon: true,
-              content: Text('Failed to load workspaces: $e')),
+          const SnackBar(
+            duration: Duration(days: 1),
+            showCloseIcon: true,
+            content: Text('Failed to load workspaces'),
+          ),
         );
       }
     } finally {
@@ -194,7 +200,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         }
 
         Future<void> submit(
-            BuildContext ctx, void Function(void Function()) setState) async {
+          BuildContext ctx,
+          void Function(void Function()) setState,
+        ) async {
           final name = nameController.text.trim();
           if (name.isEmpty) return;
           final command = cmdController.text.trim();
@@ -226,8 +234,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
 
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: Text('New Workspace',
-                style: TextStyle(color: KColors.textPrimary)),
+            title: Text(
+              'New Workspace',
+              style: TextStyle(color: KColors.textPrimary),
+            ),
             content: SizedBox(
               width: 400,
               child: SingleChildScrollView(
@@ -236,9 +246,12 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (errorMessage != null) ...[
-                      Text(errorMessage!,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error)),
+                      Text(
+                        errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
                       const SizedBox(height: 12),
                     ],
                     TextField(
@@ -264,13 +277,14 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                         border: const OutlineInputBorder(),
                       ),
                       items: allowedImages
-                          .map((img) => DropdownMenuItem(
-                                value: img,
-                                child: Text(img),
-                              ))
+                          .map(
+                            (img) =>
+                                DropdownMenuItem(value: img, child: Text(img)),
+                          )
                           .toList(),
                       onChanged: (v) => setDialogState(
-                          () => selectedImage = v ?? defaultImage),
+                        () => selectedImage = v ?? defaultImage,
+                      ),
                     ),
                     const SizedBox(height: 16),
                     TextField(
@@ -287,28 +301,36 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     const SizedBox(height: 16),
                     Text('Mounts', style: labelStyle),
                     const SizedBox(height: 8),
-                    ...mounts.asMap().entries.map((e) => Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                  child: Text(e.value,
-                                      style: const TextStyle(fontSize: 13))),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () => setDialogState(
-                                    () => mounts.removeAt(e.key)),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                              ),
-                            ],
+                    ...mounts.asMap().entries.map(
+                          (e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    e.value,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: () => setDialogState(
+                                      () => mounts.removeAt(e.key)),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
+                            ),
                           ),
-                        )),
+                        ),
                     if (mountError != null) ...[
-                      Text(mountError!,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error,
-                              fontSize: 12)),
+                      Text(
+                        mountError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 12,
+                        ),
+                      ),
                       const SizedBox(height: 4),
                     ],
                     Row(
@@ -335,34 +357,37 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     const SizedBox(height: 16),
                     Text('Environment Variables', style: labelStyle),
                     const SizedBox(height: 8),
-                    ...envVars.entries
-                        .toList()
-                        .asMap()
-                        .entries
-                        .map((e) => Padding(
-                              padding: const EdgeInsets.only(bottom: 4),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                      child: Text(
-                                          '${e.value.key}=${e.value.value}',
-                                          style:
-                                              const TextStyle(fontSize: 13))),
-                                  IconButton(
-                                    icon: const Icon(Icons.close, size: 18),
-                                    onPressed: () => setDialogState(
-                                        () => envVars.remove(e.value.key)),
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(),
+                    ...envVars.entries.toList().asMap().entries.map(
+                          (e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '${e.value.key}=${e.value.value}',
+                                    style: const TextStyle(fontSize: 13),
                                   ),
-                                ],
-                              ),
-                            )),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: () => setDialogState(
+                                    () => envVars.remove(e.value.key),
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                     if (envError != null) ...[
-                      Text(envError!,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error,
-                              fontSize: 12)),
+                      Text(
+                        envError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 12,
+                        ),
+                      ),
                       const SizedBox(height: 4),
                     ],
                     Row(
@@ -417,17 +442,20 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       builder: (context) => AlertDialog(
         title: const Text('Delete Workspace'),
         content: const Text(
-            'This will delete the workspace and all its files. Continue?'),
+          'This will delete the workspace and all its files. Continue?',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             style: FilledButton.styleFrom(
-                backgroundColor: KColors.accentRed,
-                foregroundColor: Colors.white),
+              backgroundColor: KColors.accentRed,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Delete'),
           ),
         ],
@@ -443,9 +471,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              duration: const Duration(days: 1),
-              showCloseIcon: true,
-              content: Text('Error: $e')),
+            duration: const Duration(days: 1),
+            showCloseIcon: true,
+            content: Text('Error: $e'),
+          ),
         );
       }
     }
@@ -511,8 +540,11 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                   child: Row(
                     children: [
-                      const Icon(Icons.folder,
-                          size: 18, color: KColors.textSecondary),
+                      const Icon(
+                        Icons.folder,
+                        size: 18,
+                        color: KColors.textSecondary,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         'Owned by Me',
@@ -538,8 +570,11 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                         ? Colors.white.withValues(alpha: 0.03)
                         : Colors.transparent,
                     child: ListTile(
-                      leading: const Icon(Icons.terminal,
-                          size: 20, color: KColors.accentGreen),
+                      leading: const Icon(
+                        Icons.terminal,
+                        size: 20,
+                        color: KColors.accentGreen,
+                      ),
                       title: Text(ws['name'] as String),
                       subtitle: Row(
                         children: [
@@ -557,8 +592,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                                   message: email,
                                   child: CircleAvatar(
                                     radius: 10,
-                                    backgroundColor:
-                                        KColors.colorForString(email),
+                                    backgroundColor: KColors.colorForString(
+                                      email,
+                                    ),
                                     child: Text(
                                       letter,
                                       style: const TextStyle(
@@ -600,8 +636,11 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                   child: Row(
                     children: [
-                      const Icon(Icons.folder_shared,
-                          size: 18, color: KColors.textSecondary),
+                      const Icon(
+                        Icons.folder_shared,
+                        size: 18,
+                        color: KColors.textSecondary,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         'Shared with Me',
@@ -614,21 +653,28 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     ],
                   ),
                 ),
-                ..._sharedWorkspaces.asMap().entries.map((e) => Material(
-                      color: e.key.isEven
-                          ? Colors.white.withValues(alpha: 0.03)
-                          : Colors.transparent,
-                      child: ListTile(
-                        leading: const Icon(Icons.terminal,
-                            size: 20, color: KColors.accentBlue),
-                        title: Text(e.value['name'] as String),
-                        subtitle: Text(
-                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}'),
-                        // coverage:ignore-start
-                        onTap: () => context.go('/workspace/${e.value['id']}'),
-                        // coverage:ignore-end
+                ..._sharedWorkspaces.asMap().entries.map(
+                      (e) => Material(
+                        color: e.key.isEven
+                            ? Colors.white.withValues(alpha: 0.03)
+                            : Colors.transparent,
+                        child: ListTile(
+                          leading: const Icon(
+                            Icons.terminal,
+                            size: 20,
+                            color: KColors.accentBlue,
+                          ),
+                          title: Text(e.value['name'] as String),
+                          subtitle: Text(
+                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
+                          ),
+                          // coverage:ignore-start
+                          onTap: () =>
+                              context.go('/workspace/${e.value['id']}'),
+                          // coverage:ignore-end
+                        ),
                       ),
-                    )),
+                    ),
               ],
             ),
           ),
@@ -641,9 +687,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     return Scaffold(
       appBar: AppBar(
         title: const AppBarTitle(title: 'Workspaces'),
-        actions: const [
-          AppBarActions(),
-        ],
+        actions: const [AppBarActions()],
       ),
       floatingActionButton:
           context.watch<AuthService>().hasPermission('/workspaces', 'create')
