@@ -221,15 +221,22 @@ class WsClient extends ChangeNotifier {
 
     try {
       debugPrint('[WsClient] await channel.ready start: ${DateTime.now()}');
-      final timeout = testReadyTimeout ?? _readyTimeout;
-      await _channel!.ready.timeout(timeout);
+      if (_reconnecting) {
+        // During reconnect, apply a timeout so Firefox's FailDelayManager
+        // throttle doesn't block us for up to 60s.  The HTTP pre-check already
+        // confirmed the server is up, so normal establishment takes <1s.
+        final timeout = testReadyTimeout ?? _readyTimeout;
+        await _channel!.ready.timeout(timeout);
+      } else {
+        // First connection — let it take as long as it needs.
+        await _channel!.ready;
+      }
       debugPrint('[WsClient] await channel.ready done: ${DateTime.now()}');
     } on TimeoutException {
       // Firefox's FailDelayManager is throttling the WebSocket connection.
-      // The server is confirmed up (HTTP pre-check passed), so close this
-      // throttled connection and retry — each attempt consumes part of the
-      // throttle window.  Don't call _scheduleReconnect() here; the caller
-      // (_attemptReconnect) handles rescheduling when _connected is false.
+      // Close this throttled connection and retry — each attempt consumes
+      // part of the throttle window.  Don't call _scheduleReconnect() here;
+      // the caller (_attemptReconnect) handles rescheduling.
       debugPrint('[WsClient] channel.ready timed out (Firefox throttle), '
           'closing and retrying: ${DateTime.now()}');
       _channel?.sink.close(1000, 'ready timeout');

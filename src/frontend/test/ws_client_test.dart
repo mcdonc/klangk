@@ -783,20 +783,14 @@ void main() {
       client.dispose();
     });
 
-    test('channel.ready timeout closes channel and retries', () async {
-      // Use a channel whose ready never completes to simulate Firefox throttle.
-      final throttledChannel = _FakeWebSocketChannel()
+    test('ready timeout only applies during reconnect, not initial connect',
+        () async {
+      // A channel whose ready never completes on its own.
+      final slowChannel = _FakeWebSocketChannel()
         ..readyCompleter = Completer<void>();
-      var channelIndex = 0;
       WsClient.testChannelFactory = (_) {
-        channelIndex++;
-        if (channelIndex == 1) {
-          channels.add(throttledChannel);
-          return throttledChannel;
-        }
-        final ch = _FakeWebSocketChannel();
-        channels.add(ch);
-        return ch;
+        channels.add(slowChannel);
+        return slowChannel;
       };
       WsClient.testReadyTimeout = Duration.zero;
 
@@ -806,16 +800,62 @@ void main() {
       final client = WsClient();
       client.updateAuth(auth);
 
-      // First connect: channel.ready times out, connect() returns without
-      // setting _connected.
-      await client.connect();
+      // Initial connect — timeout should NOT apply, so connect() will hang
+      // on channel.ready.  Complete it manually to prove it waited.
+      final connectFuture = client.connect();
+      await Future.delayed(Duration.zero);
+
+      // Still not connected (ready hasn't completed) but also not timed out.
       expect(client.connected, isFalse);
+      final sink = slowChannel.sink as _FakeSink;
+      expect(sink.closeCalled, isFalse); // not closed by timeout
+
+      // Now complete ready — connect should finish.
+      slowChannel.readyCompleter!.complete();
+      await connectFuture;
+      expect(client.connected, isTrue);
+
+      client.disconnect();
+      client.dispose();
+    });
+
+    test('channel.ready timeout closes channel during reconnect', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      // First channel connects normally.
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // Make the next channel's ready hang.
+      final throttledChannel = _FakeWebSocketChannel()
+        ..readyCompleter = Completer<void>();
+      WsClient.testChannelFactory = (_) {
+        channels.add(throttledChannel);
+        return throttledChannel;
+      };
+      WsClient.testReadyTimeout = Duration.zero;
+
+      // Server crashes — triggers auto-reconnect.
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.reconnecting, isTrue);
+
+      // Let the reconnect timer fire — ready times out.
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
 
       // The throttled channel should have been closed with code 1000.
       final sink = throttledChannel.sink as _FakeSink;
       expect(sink.closeCalled, isTrue);
       expect(sink.lastCloseCode, 1000);
 
+      client.disconnect();
       client.dispose();
     });
 
