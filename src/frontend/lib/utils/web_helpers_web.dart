@@ -49,8 +49,10 @@ String getLocationHash() => web.window.location.hash;
 ///
 /// Survives page refresh (same tab) but is unique per tab.
 /// Used to route bridge requests to the correct browser tab.
-String getBrowserId() {
-  const key = 'klangk.browser_id';
+/// The key is scoped by [instanceId] so multiple Klangk instances
+/// on the same domain don't collide.
+String getBrowserId(String instanceId) {
+  final key = 'klangk.$instanceId.browser_id';
   var id = web.window.sessionStorage.getItem(key);
   if (id == null || id.isEmpty) {
     id = web.window.crypto.randomUUID();

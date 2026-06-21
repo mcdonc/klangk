@@ -81,6 +81,7 @@ void main() {
     http.Client _bannerClient({
       String bannerTitle = '',
       String bannerText = '',
+      String instanceId = 'default',
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/config')) {
@@ -88,6 +89,7 @@ void main() {
             jsonEncode({
               'login_banner_title': bannerTitle,
               'login_banner': bannerText,
+              'instance_id': instanceId,
             }),
             200,
           );
@@ -109,6 +111,15 @@ void main() {
       expect(service.bannerText, 'You must accept.');
       expect(service.bannerRequired, isTrue);
       expect(service.bannerAccepted, isFalse);
+    });
+
+    test('loads instance_id from /api/config', () async {
+      testAuthHttpClientOverride = _bannerClient(instanceId: 'prod');
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(service.instanceId, 'prod');
     });
 
     test('bannerRequired is false when no banner text', () async {
