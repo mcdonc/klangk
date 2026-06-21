@@ -116,8 +116,8 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      expect(find.byType(FloatingActionButton), findsOneWidget);
-      expect(find.byIcon(Icons.add), findsOneWidget);
+      expect(find.byTooltip('New Workspace'), findsOneWidget);
+      expect(find.byTooltip('Import Workspace'), findsOneWidget);
     });
 
     testWidgets('no FAB when user lacks create permission', (tester) async {
@@ -138,7 +138,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      expect(find.byType(FloatingActionButton), findsNothing);
+      expect(find.byTooltip('New Workspace'), findsNothing);
     });
 
     testWidgets('has logout button', (tester) async {
@@ -460,7 +460,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       expect(find.text('New Workspace'), findsOneWidget);
@@ -480,7 +480,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       expect(find.byType(TextField), findsNWidgets(4));
@@ -499,7 +499,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Cancel'));
@@ -653,7 +653,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Open dialog
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       // Type workspace name and tap Create
@@ -684,7 +684,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField).first, 'Duplicate');
@@ -887,7 +887,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       // Type and submit via keyboard (onSubmitted)
@@ -934,7 +934,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       // Dropdown should show the default image (logo also contains 'klangk')
@@ -983,7 +983,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       // Enter name and command
@@ -1038,7 +1038,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       // Enter name, then focus command field and submit via Enter
@@ -1067,7 +1067,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField).first, 'Fail WS');
@@ -1321,7 +1321,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       // Enter workspace name
@@ -1387,7 +1387,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField).first, 'EnterWS');
@@ -1418,7 +1418,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       // Try adding invalid mount (no colon)
@@ -1480,7 +1480,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField).first, 'EnvWS');
@@ -1524,7 +1524,7 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
       // Try adding env var without = sign
