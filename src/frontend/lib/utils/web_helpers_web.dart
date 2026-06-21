@@ -132,6 +132,41 @@ void Function() onBeforeUnload(void Function() callback) {
   return () => web.window.removeEventListener('beforeunload', handler);
 }
 
+/// Open a file picker and return the selected file's bytes.
+/// Returns null if the user cancels.
+Future<List<int>?> pickFileBytes({String accept = ''}) async {
+  final completer = Completer<List<int>?>();
+  final input = web.HTMLInputElement()
+    ..type = 'file'
+    ..accept = accept;
+  input.addEventListener(
+    'change',
+    ((web.Event _) {
+      final files = input.files;
+      if (files == null || files.length == 0) {
+        completer.complete(null);
+        return;
+      }
+      final reader = web.FileReader();
+      reader.addEventListener(
+        'load',
+        ((web.Event _) {
+          final result = reader.result;
+          if (result != null) {
+            final arrayBuf = result as JSArrayBuffer;
+            completer.complete(arrayBuf.toDart.asUint8List());
+          } else {
+            completer.complete(null);
+          }
+        }).toJS,
+      );
+      reader.readAsArrayBuffer(files.item(0)!);
+    }).toJS,
+  );
+  input.click();
+  return completer.future;
+}
+
 /// Read the build hash from the <meta name="klangk-build-hash"> tag.
 /// Returns empty string if not found (e.g. dev server without build script).
 String getBuildHash() {

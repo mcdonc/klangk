@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import '../theme/colors.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../utils/page_title.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 
@@ -422,6 +425,11 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                 style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
                 child: const Text('Cancel'),
               ),
+              OutlinedButton.icon(
+                onPressed: () => _importWorkspace(context),
+                icon: const Icon(Icons.upload, size: 18),
+                label: const Text('Import'),
+              ),
               FilledButton(
                 onPressed: () => submit(context, setDialogState),
                 child: const Text('Create'),
@@ -434,6 +442,50 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
 
     if (created == true) {
       await _loadWorkspaces();
+    }
+  }
+
+  Future<void> _importWorkspace(BuildContext dialogContext) async {
+    final bytes = await pickFileBytes(accept: '.tar.gz,.tgz');
+    if (bytes == null) return;
+
+    try {
+      // coverage:ignore-start
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/api/v1/workspaces/import'),
+      );
+      request.headers['Authorization'] = 'Bearer ${_auth.token}';
+      request.files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: 'workspace.tar.gz',
+      ));
+      final streamed = await request.send();
+      final resp = await http.Response.fromStream(streamed);
+      // coverage:ignore-end
+      if (resp.statusCode == 200 || resp.statusCode == 201) {
+        if (dialogContext.mounted) Navigator.pop(dialogContext, true);
+      } else {
+        String detail;
+        try {
+          detail = (jsonDecode(resp.body) as Map)['detail'] as String? ??
+              '${resp.statusCode}';
+        } catch (_) {
+          detail = '${resp.statusCode}';
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Import failed: $detail')),
+          );
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Import failed')),
+        );
+      }
     }
   }
 
