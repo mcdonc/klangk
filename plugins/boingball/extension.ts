@@ -11,7 +11,13 @@ function getBrowserId(): string {
 }
 
 const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
-const WORKSPACE_TOKEN = process.env.KLANGK_WORKSPACE_TOKEN;
+function getWorkspaceToken(): string {
+  try {
+    return execSync("klangk-workspace-token", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
 
 export default function (pi: any) {
   if (!BRIDGE_URL) return;
@@ -35,13 +41,12 @@ export default function (pi: any) {
       };
 
       try {
+        const token = getWorkspaceToken();
         const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(WORKSPACE_TOKEN
-              ? { Authorization: `Bearer ${WORKSPACE_TOKEN}` }
-              : {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify(payload),
         });

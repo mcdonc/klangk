@@ -167,9 +167,9 @@ class WorkspaceSession:
         # to /home/.workspace-state.json for crash recovery.
         self.terminal_windows: dict[str, list[dict]] = {}
         self._save_lock = asyncio.Lock()
-        # Workspace token expiry tracking for warning broadcasts.
+        # Workspace token renewal tracking.
         self.workspace_token_expiry: datetime | None = None
-        self._token_warning_task: asyncio.Task | None = None
+        self._token_renewal_task: asyncio.Task | None = None
 
     async def reset(self) -> None:
         self.subscribers.clear()
@@ -198,65 +198,56 @@ class WorkspaceSession:
         """Send message to all subscribers, removing dead ones."""
         return _broadcast_to_set(self.subscribers, message)
 
-    def start_token_expiry_warnings(self, expiry: datetime) -> None:
-        """Schedule background warnings before the workspace token expires.
+    def start_token_renewal(self, expiry: datetime) -> None:
+        """Schedule periodic workspace token renewal.
 
-        Warnings are fire-and-forget — only a container restart (which
-        creates a fresh token) resets the expiry clock.
+        The token is refreshed at 80% of its lifetime so container
+        processes never lose access to the LLM proxy or bridge.
         """
         self.workspace_token_expiry = expiry
-        self._token_warning_task = asyncio.create_task(
-            self._token_warning_loop()
+        self._token_renewal_task = asyncio.create_task(
+            self._token_renewal_loop()
         )
 
-    async def _token_warning_loop(self) -> None:
-        """Broadcast system chat warnings before workspace token expires."""
-        expiry = self.workspace_token_expiry
-        if expiry is None:
-            return  # pragma: no cover
+    async def _token_renewal_loop(self) -> None:
+        """Periodically renew the workspace token before it expires."""
+        while True:
+            expiry = self.workspace_token_expiry
+            if expiry is None:
+                return  # pragma: no cover
 
-        # Warning thresholds: (time_before_expiry, message)
-        warnings = [
-            (
-                timedelta(hours=1),
-                "Workspace token expires in 1 hour. An admin can"
-                " restart the container to refresh it. When the token"
-                " expires, LLM and chat API access from within the"
-                " container will stop working until the container is"
-                " restarted.",
-            ),
-            (
-                timedelta(minutes=15),
-                "Workspace token expires in 15 minutes. LLM and chat"
-                " API access from within the container will stop"
-                " working when the token expires. Restart the container"
-                " to refresh it.",
-            ),
-        ]
-        for threshold, message in warnings:
-            fire_at = expiry - threshold
-            delay = (fire_at - datetime.now(timezone.utc)).total_seconds()
-            if delay <= 0:
-                continue
+            # Renew at 80% of the token lifetime.
+            lifetime = auth.WORKSPACE_TOKEN_EXPIRE_HOURS * 3600
+            delay = lifetime * 0.8
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
+                return
+
+            container_id = self.container_id
+            if container_id is None:
                 return  # pragma: no cover
+
             try:
-                agent_user = await model.get_agent_user()
-                sys_msg = await model.add_chat_message(
+                new_token = auth.create_workspace_token(self.workspace_id)
+                await terminal.set_workspace_token(container_id, new_token)
+                self.workspace_token_expiry = datetime.now(
+                    timezone.utc
+                ) + timedelta(hours=auth.WORKSPACE_TOKEN_EXPIRE_HOURS)
+                logger.info(
+                    "Renewed workspace token for %s",
                     self.workspace_id,
-                    agent_user["id"],
-                    agent_user["email"],
-                    message,
-                    message_type=model.MSG_SYSTEM,
                 )
-                self.broadcast({"type": "chat_message", **sys_msg})
             except Exception:
                 logger.warning(
-                    "Failed to broadcast token expiry warning",
+                    "Failed to renew workspace token for %s, retrying in 60s",
+                    self.workspace_id,
                     exc_info=True,
                 )
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    return
 
     def broadcast_to_browsers(self, message: dict) -> int:
         """Send message to browser subscribers only, removing dead ones."""
@@ -803,12 +794,12 @@ class Connection:
         session = state.get_or_create_session(workspace_id)
         await session.add_subscriber(self.sock, container_id)
 
-        # Start token expiry warnings if not already running for this session.
+        # Start token renewal if not already running for this session.
         if session.workspace_token_expiry is None:
             token_expiry = datetime.now(timezone.utc) + timedelta(
                 hours=auth.WORKSPACE_TOKEN_EXPIRE_HOURS
             )
-            session.start_token_expiry_warnings(token_expiry)
+            session.start_token_renewal(token_expiry)
 
         # Register idle timeout notification (per-connection)
         sock = self.sock

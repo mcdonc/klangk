@@ -12,6 +12,9 @@ for f in /opt/klangk/hooks/*/on-entrypoint.sh; do
   [ -x "$f" ] && "$f" || true
 done
 
+# Create the workspace token directory.
+mkdir -p /tmp/klangk
+
 # Signal that setup is complete. Terminal sessions (podman exec) source
 # /etc/bash.bashrc which waits for this file before showing a prompt.
 # Per-user Pi agent config is handled by setup-clankers (called from

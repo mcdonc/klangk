@@ -5939,73 +5939,88 @@ class TestUiReadySharedTerminals:
             wshandler.state.sessions.pop(ws["id"], None)
 
 
-class TestTokenExpiryWarnings:
-    async def test_warning_fires_when_threshold_reached(
-        self, user, agent_user
-    ):
-        """Token expiry warning is broadcast when the threshold is reached."""
-        from datetime import datetime, timedelta, timezone
-
-        workspace = await _create_workspace_with_acl(user["id"], "expiry-ws")
+class TestTokenRenewal:
+    async def test_renewal_creates_new_token(self, user):
+        """Token renewal loop creates a new token and pushes it."""
+        workspace = await _create_workspace_with_acl(user["id"], "renew-ws")
         session = wshandler.state.get_or_create_session(workspace["id"])
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        wshandler.state.connections[sock] = conn
-        session.subscribers.add(sock)
+        session.container_id = "test-cid"
 
         try:
-            # Set expiry 0.3s from now — only the 15-min warning threshold
-            # will have delay <= 0 (skipped), so we need expiry close enough
-            # that the 1-hour threshold is also skipped, but a custom short
-            # threshold fires.  Instead, set expiry in the past + 0.3s so
-            # both thresholds are skipped except a very short sleep.
-            #
-            # Simpler: set expiry to 15min + 0.2s from now, so the 1-hour
-            # warning is skipped (delay < 0) and the 15-min warning fires
-            # after 0.2s.
-            expiry = datetime.now(timezone.utc) + timedelta(
-                minutes=15, milliseconds=200
-            )
-            session.start_token_expiry_warnings(expiry)
+            with (
+                patch.object(
+                    wshandler.auth,
+                    "WORKSPACE_TOKEN_EXPIRE_HOURS",
+                    0.0001,
+                ),
+                patch(
+                    "klangk_backend.terminal.set_workspace_token",
+                    new_callable=AsyncMock,
+                ) as mock_set,
+            ):
+                expiry = datetime.now(timezone.utc) + timedelta(seconds=0.1)
+                session.start_token_renewal(expiry)
+                await asyncio.sleep(0.5)
+                session._token_renewal_task.cancel()
+                try:
+                    await session._token_renewal_task
+                except asyncio.CancelledError:
+                    pass
 
-            await asyncio.sleep(0.5)
-
-            calls = [c[0][0] for c in sock.send_json.call_args_list]
-            chat_msgs = [c for c in calls if c.get("type") == "chat_message"]
-            assert len(chat_msgs) == 1
-            assert "15 minutes" in chat_msgs[0]["message"]
-            assert chat_msgs[0]["message_type"] == 2  # MSG_SYSTEM
+            assert mock_set.call_count >= 1
+            cid, token = mock_set.call_args.args
+            assert cid == "test-cid"
+            decoded = wshandler.auth.decode_workspace_token(token)
+            assert decoded == workspace["id"]
         finally:
             wshandler.state.sessions.pop(workspace["id"], None)
-            wshandler.state.connections.pop(sock, None)
 
-    async def test_skips_past_thresholds(self, user, agent_user):
-        """Thresholds that are already past are skipped."""
-        from datetime import datetime, timedelta, timezone
-
-        workspace = await _create_workspace_with_acl(
-            user["id"], "past-expiry-ws"
-        )
+    async def test_renewal_retries_on_failure(self, user):
+        """Token renewal retries after failure."""
+        workspace = await _create_workspace_with_acl(user["id"], "retry-ws")
         session = wshandler.state.get_or_create_session(workspace["id"])
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        wshandler.state.connections[sock] = conn
-        session.subscribers.add(sock)
+        session.container_id = "test-cid"
 
         try:
-            # Expiry in 5 minutes — both 1-hour and 15-min thresholds
-            # are in the past, so no warnings should fire.
-            expiry = datetime.now(timezone.utc) + timedelta(minutes=5)
-            session.start_token_expiry_warnings(expiry)
+            call_count = 0
 
-            await asyncio.sleep(0.3)
+            async def fail_then_succeed(cid, token):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise RuntimeError("podman exec failed")
 
-            calls = [c[0][0] for c in sock.send_json.call_args_list]
-            chat_msgs = [c for c in calls if c.get("type") == "chat_message"]
-            assert len(chat_msgs) == 0
+            # Patch asyncio.sleep in the wshandler module to skip delays
+            original_sleep = asyncio.sleep
+
+            async def fast_sleep(delay, *a, **kw):
+                await original_sleep(min(delay, 0.05))
+
+            with (
+                patch.object(
+                    wshandler.auth,
+                    "WORKSPACE_TOKEN_EXPIRE_HOURS",
+                    0.0001,
+                ),
+                patch(
+                    "klangk_backend.terminal.set_workspace_token",
+                    side_effect=fail_then_succeed,
+                ),
+                patch("asyncio.sleep", side_effect=fast_sleep),
+            ):
+                expiry = datetime.now(timezone.utc) + timedelta(seconds=0.1)
+                session.start_token_renewal(expiry)
+                await original_sleep(0.5)
+                session._token_renewal_task.cancel()
+                try:
+                    await session._token_renewal_task
+                except asyncio.CancelledError:
+                    pass
+
+            # First call fails, retry should succeed
+            assert call_count >= 2
         finally:
             wshandler.state.sessions.pop(workspace["id"], None)
-            wshandler.state.connections.pop(sock, None)
 
 
 class TestSSHAgentDispatch:
@@ -6352,24 +6367,25 @@ class TestAgentMentionOtherMsgsContext:
             wshandler._agent_tasks.pop(ws_id, None)
 
 
-class TestTokenExpiryWarningBroadcastFailure:
-    async def test_exception_during_broadcast_is_logged(
-        self, user, agent_user
-    ):
-        """The except Exception branch in _token_warning_loop."""
+class TestTokenRenewalFailureLogged:
+    async def test_exception_during_renewal_is_logged(self, user):
+        """The except Exception branch in _token_renewal_loop."""
         ws_session = WorkspaceSession("ws-tok")
-        # Set expiry ~15 minutes from now so the 15-min threshold
-        # fires immediately (delay ~0) while the 1-hour one is skipped.
+        ws_session.container_id = "test-cid"
         ws_session.workspace_token_expiry = datetime.now(
             timezone.utc
-        ) + timedelta(minutes=15, seconds=0.05)
-        # Make model.get_agent_user raise so the inner try/except fires
-        with patch(
-            "klangk_backend.model.get_agent_user",
-            side_effect=RuntimeError("boom"),
+        ) + timedelta(seconds=0.05)
+        with (
+            patch.object(
+                wshandler.auth, "WORKSPACE_TOKEN_EXPIRE_HOURS", 0.0001
+            ),
+            patch(
+                "klangk_backend.terminal.set_workspace_token",
+                side_effect=RuntimeError("boom"),
+            ),
         ):
-            task = asyncio.create_task(ws_session._token_warning_loop())
-            await asyncio.sleep(0.3)
+            task = asyncio.create_task(ws_session._token_renewal_loop())
+            await asyncio.sleep(0.5)
             task.cancel()
             try:
                 await task
