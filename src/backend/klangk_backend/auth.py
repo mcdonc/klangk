@@ -60,7 +60,9 @@ def _should_lockout(attempt_info: dict | None) -> bool:
 _INSECURE_DEFAULT_SECRET = "klangk-dev-secret-change-in-production"
 SECRET_KEY = resolve_env_secret("KLANGK_JWT_SECRET", _INSECURE_DEFAULT_SECRET)
 ALGORITHM = "HS256"
-TOKEN_EXPIRE_HOURS = int(resolve_env_secret("KLANGK_ACCESS_TOKEN_HOURS", "24"))
+TOKEN_EXPIRE_HOURS = float(
+    resolve_env_secret("KLANGK_ACCESS_TOKEN_HOURS", "24")
+)
 
 
 def jwt_secret_is_secure() -> bool:
@@ -362,7 +364,7 @@ def decode_invitation_token(token: str) -> tuple[str, str] | None:
         return None
 
 
-WORKSPACE_TOKEN_EXPIRE_HOURS = int(
+WORKSPACE_TOKEN_EXPIRE_HOURS = float(
     resolve_env_secret("KLANGK_WORKSPACE_TOKEN_HOURS", "24")
 )
 
