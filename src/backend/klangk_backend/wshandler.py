@@ -453,6 +453,25 @@ class WebSocketState:
         self.sessions.pop(session.workspace_id, None)
         await session.reset()
 
+    async def close_all_connections(self) -> None:
+        """Close all active WebSocket connections with 1001 (Going Away).
+
+        Called during server shutdown so browsers receive a clean close
+        frame and don't throttle the next connection (Firefox
+        FailDelayManager).
+        """
+        sockets = list(self.connections.keys())
+        if not sockets:
+            return
+        logger.info(
+            "Closing %d WebSocket connection(s) for shutdown", len(sockets)
+        )
+        for sock in sockets:
+            try:
+                await sock._sock.close(code=1001, reason="server shutdown")
+            except Exception:
+                pass  # best-effort; server is shutting down
+
     def cancel_pending_leave(self, workspace_id: str, user_id: str) -> bool:
         """Cancel a pending presence_leave for *user_id* in *workspace_id*.
 
