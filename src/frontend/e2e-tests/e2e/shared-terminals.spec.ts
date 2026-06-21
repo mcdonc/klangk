@@ -134,7 +134,7 @@ async function addToRole(
   email: string,
 ) {
   const resp = await request.post(
-    `${API_BASE}/workspaces/${workspaceId}/roles/${role}`,
+    `${API_BASE}/api/v1/workspaces/${workspaceId}/roles/${role}`,
     { headers, data: { email } },
   );
   expect(resp.ok()).toBeTruthy();
@@ -153,7 +153,7 @@ test.describe("workspace roles", () => {
     );
     try {
       const resp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/roles`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/roles`,
         { headers },
       );
       expect(resp.ok()).toBeTruthy();

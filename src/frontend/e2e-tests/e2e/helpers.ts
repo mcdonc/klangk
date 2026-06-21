@@ -16,7 +16,7 @@ export async function registerUser(
   request: APIRequestContext,
   email: string,
 ): Promise<{ token: string; headers: Record<string, string> }> {
-  const resp = await request.post(`${API_BASE}/auth/register`, {
+  const resp = await request.post(`${API_BASE}/api/v1/auth/register`, {
     data: { email, password: TEST_PASSWORD },
   });
   if (!resp.ok()) {
@@ -181,7 +181,7 @@ export async function waitForFile(
   while (Date.now() - start < timeout) {
     try {
       const resp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(path)}`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(path)}`,
         { headers },
       );
       if (resp.ok()) return;
@@ -212,7 +212,7 @@ export async function seedFile(
   const name = path.split("/").pop()!;
   const buffer = typeof content === "string" ? Buffer.from(content) : content;
   const resp = await request.post(
-    `${API_BASE}/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(path)}`,
+    `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(path)}`,
     { headers, multipart: { file: { name, mimeType, buffer } } },
   );
   if (!resp.ok()) {
@@ -268,7 +268,7 @@ export async function createWorkspace(
   cleanup: () => Promise<void>;
 }> {
   const name = `${namePrefix}-${Date.now()}@test.example.com`;
-  const createResp = await request.post(`${API_BASE}/workspaces`, {
+  const createResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
     headers,
     data: { name },
   });
@@ -284,7 +284,7 @@ export async function createWorkspace(
   return {
     workspaceId,
     cleanup: async () => {
-      await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+      await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
         headers,
       });
     },

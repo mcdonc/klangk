@@ -116,7 +116,7 @@ def auth(server):
     """Login and return token + headers."""
     url = server["url"]
     resp = httpx.post(
-        f"{url}/auth/login",
+        f"{url}/api/v1/auth/login",
         json={"email": "test@example.com", "password": "testpass"},
         timeout=10,
     )
@@ -135,7 +135,7 @@ def create_workspace(server, auth):
     name = f"home-e2e-{_ws_counter}"
     url = server["url"]
     resp = httpx.post(
-        f"{url}/workspaces",
+        f"{url}/api/v1/workspaces",
         headers=auth["headers"],
         json={"name": name},
         timeout=10,
@@ -146,7 +146,7 @@ def create_workspace(server, auth):
     def cleanup():
         try:
             httpx.delete(
-                f"{url}/workspaces/{workspace_id}",
+                f"{url}/api/v1/workspaces/{workspace_id}",
                 headers=auth["headers"],
                 timeout=30,
             )

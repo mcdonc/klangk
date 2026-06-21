@@ -19,9 +19,12 @@ test.describe("Token expiry", () => {
       { algorithm: "HS256", expiresIn: -60 },
     );
 
-    const resp = await request.get(`${API_BASE}/auth/verify-workspace-token`, {
-      headers: { Authorization: `Bearer ${expiredToken}` },
-    });
+    const resp = await request.get(
+      `${API_BASE}/api/v1/auth/verify-workspace-token`,
+      {
+        headers: { Authorization: `Bearer ${expiredToken}` },
+      },
+    );
 
     expect(resp.status()).toBe(401);
     const body = await resp.json();
@@ -34,9 +37,12 @@ test.describe("Token expiry", () => {
   test("invalid workspace token returns distinct error", async ({
     request,
   }) => {
-    const resp = await request.get(`${API_BASE}/auth/verify-workspace-token`, {
-      headers: { Authorization: "Bearer garbage-token" },
-    });
+    const resp = await request.get(
+      `${API_BASE}/api/v1/auth/verify-workspace-token`,
+      {
+        headers: { Authorization: "Bearer garbage-token" },
+      },
+    );
 
     expect(resp.status()).toBe(401);
     const body = await resp.json();
@@ -51,7 +57,7 @@ test.describe("Token expiry", () => {
     // Register a user and create a workspace so the shell has a target
     const email = `cli-expired-${Date.now()}@test.example.com`;
     const { token, headers } = await registerUser(request, email);
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers,
       data: { name: `cli-expiry-${Date.now()}` },
     });
@@ -91,7 +97,7 @@ test.describe("Token expiry", () => {
     }
 
     // Cleanup
-    await request.delete(`${API_BASE}/workspaces/${workspace.id}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspace.id}`, {
       headers,
     });
   });

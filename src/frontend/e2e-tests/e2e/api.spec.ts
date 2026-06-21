@@ -20,19 +20,21 @@ test.describe("API", () => {
     const wsName = "e2e-test-workspace";
 
     // Clean up any leftover workspace with the same name
-    const existingResp = await request.get(`${API_BASE}/workspaces`, {
+    const existingResp = await request.get(`${API_BASE}/api/v1/workspaces`, {
       headers,
     });
     if (existingResp.ok()) {
       for (const ws of await existingResp.json()) {
         if (ws.name === wsName) {
-          await request.delete(`${API_BASE}/workspaces/${ws.id}`, { headers });
+          await request.delete(`${API_BASE}/api/v1/workspaces/${ws.id}`, {
+            headers,
+          });
         }
       }
     }
 
     // Create workspace via API
-    const createResp = await request.post(`${API_BASE}/workspaces`, {
+    const createResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers,
       data: { name: wsName },
     });
@@ -42,20 +44,22 @@ test.describe("API", () => {
     expect(created.name).toBe(wsName);
 
     // Verify it appears in the listing
-    let listResp = await request.get(`${API_BASE}/workspaces`, { headers });
+    let listResp = await request.get(`${API_BASE}/api/v1/workspaces`, {
+      headers,
+    });
     expect(listResp.ok()).toBeTruthy();
     let workspaces = await listResp.json();
     expect(workspaces.some((ws: any) => ws.id === created.id)).toBeTruthy();
 
     // Delete it
     const deleteResp = await request.delete(
-      `${API_BASE}/workspaces/${created.id}`,
+      `${API_BASE}/api/v1/workspaces/${created.id}`,
       { headers },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     // Verify it's gone
-    listResp = await request.get(`${API_BASE}/workspaces`, { headers });
+    listResp = await request.get(`${API_BASE}/api/v1/workspaces`, { headers });
     workspaces = await listResp.json();
     expect(workspaces.some((ws: any) => ws.id === created.id)).toBeFalsy();
   });
@@ -65,7 +69,7 @@ test.describe("API", () => {
       request,
       `file-ops-${Date.now()}@test.example.com`,
     );
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers,
       data: { name: `e2e-file-ops-${Date.now()}` },
     });
@@ -76,7 +80,7 @@ test.describe("API", () => {
 
     // Upload
     const uploadResp = await request.post(
-      `${API_BASE}/workspaces/${workspaceId}/files/upload?path=work/${fileName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=work/${fileName}`,
       {
         headers,
         multipart: {
@@ -92,7 +96,7 @@ test.describe("API", () => {
 
     // Verify upload in listing
     let listResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
       { headers },
     );
     let files = await listResp.json();
@@ -101,7 +105,7 @@ test.describe("API", () => {
 
     // Verify content
     const readResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/${fileName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/${fileName}`,
       { headers },
     );
     expect(readResp.ok()).toBeTruthy();
@@ -110,7 +114,7 @@ test.describe("API", () => {
 
     // Rename
     const renameResp = await request.post(
-      `${API_BASE}/workspaces/${workspaceId}/files/rename`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/rename`,
       {
         headers,
         data: { old_path: `work/${fileName}`, new_path: `work/${renamedName}` },
@@ -119,7 +123,7 @@ test.describe("API", () => {
     expect(renameResp.ok()).toBeTruthy();
 
     listResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
       { headers },
     );
     files = await listResp.json();
@@ -129,13 +133,13 @@ test.describe("API", () => {
 
     // Delete
     const deleteResp = await request.delete(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=work/${renamedName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work/${renamedName}`,
       { headers },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     listResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
       { headers },
     );
     files = await listResp.json();
@@ -143,7 +147,9 @@ test.describe("API", () => {
     expect(names).not.toContain(renamedName);
 
     // Clean up workspace
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, { headers });
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
+      headers,
+    });
   });
 
   test("folder upload and zip download round-trip", async ({ request }) => {
@@ -151,7 +157,7 @@ test.describe("API", () => {
       request,
       `folder-${Date.now()}@test.example.com`,
     );
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers,
       data: { name: `e2e-folder-${Date.now()}` },
     });
@@ -167,7 +173,7 @@ test.describe("API", () => {
     // Upload each file into the folder structure
     for (const [filePath, content] of Object.entries(testFiles)) {
       const resp = await request.post(
-        `${API_BASE}/workspaces/${workspaceId}/files/upload?path=work/${encodeURIComponent(filePath)}`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=work/${encodeURIComponent(filePath)}`,
         {
           headers,
           multipart: {
@@ -184,7 +190,7 @@ test.describe("API", () => {
 
     // Verify folder appears in listing
     const listResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
       { headers },
     );
     expect(listResp.ok()).toBeTruthy();
@@ -194,7 +200,7 @@ test.describe("API", () => {
 
     // Download folder as zip
     const dlResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files/download?path=work/${encodeURIComponent(folder)}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=work/${encodeURIComponent(folder)}`,
       { headers },
     );
     expect(dlResp.ok()).toBeTruthy();
@@ -219,24 +225,28 @@ test.describe("API", () => {
     expect(Object.keys(zipFiles)).toHaveLength(3);
 
     // Clean up workspace
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, { headers });
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
+      headers,
+    });
   });
 
   test("invalid token returns 401 from API", async ({ request }) => {
     const headers = { Authorization: "Bearer invalid-token-value" };
 
-    const wsResp = await request.get(`${API_BASE}/workspaces`, { headers });
+    const wsResp = await request.get(`${API_BASE}/api/v1/workspaces`, {
+      headers,
+    });
     expect(wsResp.status()).toBe(401);
 
     const filesResp = await request.get(
-      `${API_BASE}/workspaces/fake-id/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/fake-id/files?path=work`,
       { headers },
     );
     expect(filesResp.status()).toBe(401);
   });
 
   test("no token returns 401 from API", async ({ request }) => {
-    const wsResp = await request.get(`${API_BASE}/workspaces`);
+    const wsResp = await request.get(`${API_BASE}/api/v1/workspaces`);
     expect(wsResp.status()).toBe(401);
   });
 
@@ -247,22 +257,26 @@ test.describe("API", () => {
     );
 
     // Clean up any leftovers
-    const existing = await request.get(`${API_BASE}/workspaces`, { headers });
+    const existing = await request.get(`${API_BASE}/api/v1/workspaces`, {
+      headers,
+    });
     for (const ws of await existing.json()) {
       if (ws.name === "e2e-ws-a" || ws.name === "e2e-ws-b") {
-        await request.delete(`${API_BASE}/workspaces/${ws.id}`, { headers });
+        await request.delete(`${API_BASE}/api/v1/workspaces/${ws.id}`, {
+          headers,
+        });
       }
     }
 
     // Create two workspaces
-    const respA = await request.post(`${API_BASE}/workspaces`, {
+    const respA = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers,
       data: { name: "e2e-ws-a" },
     });
     expect(respA.ok()).toBeTruthy();
     const wsA = await respA.json();
 
-    const respB = await request.post(`${API_BASE}/workspaces`, {
+    const respB = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers,
       data: { name: "e2e-ws-b" },
     });
@@ -271,7 +285,7 @@ test.describe("API", () => {
 
     // Upload a file to workspace A only
     const uploadResp = await request.post(
-      `${API_BASE}/workspaces/${wsA.id}/files/upload?path=work/only-in-a.txt`,
+      `${API_BASE}/api/v1/workspaces/${wsA.id}/files/upload?path=work/only-in-a.txt`,
       {
         headers,
         multipart: {
@@ -287,7 +301,7 @@ test.describe("API", () => {
 
     // Verify file exists in A
     const filesA = await request.get(
-      `${API_BASE}/workspaces/${wsA.id}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${wsA.id}/files?path=work`,
       { headers },
     );
     const namesA = (await filesA.json()).map((e: any) => e.name);
@@ -295,22 +309,26 @@ test.describe("API", () => {
 
     // Verify file does NOT exist in B
     const filesB = await request.get(
-      `${API_BASE}/workspaces/${wsB.id}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${wsB.id}/files?path=work`,
       { headers },
     );
     const namesB = (await filesB.json()).map((e: any) => e.name);
     expect(namesB).not.toContain("only-in-a.txt");
 
     // Clean up
-    await request.delete(`${API_BASE}/workspaces/${wsA.id}`, { headers });
-    await request.delete(`${API_BASE}/workspaces/${wsB.id}`, { headers });
+    await request.delete(`${API_BASE}/api/v1/workspaces/${wsA.id}`, {
+      headers,
+    });
+    await request.delete(`${API_BASE}/api/v1/workspaces/${wsB.id}`, {
+      headers,
+    });
   });
 
   test("admin can list users, add/remove groups, and delete users", async ({
     request,
   }) => {
     // Login as the default admin user (seeded on startup)
-    const loginResp = await request.post(`${API_BASE}/auth/login`, {
+    const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
       data: { email: "admin@example.com", password: "admin" },
     });
     expect(loginResp.ok()).toBeTruthy();
@@ -324,7 +342,7 @@ test.describe("API", () => {
     );
 
     // Admin can list users
-    const listResp = await request.get(`${API_BASE}/admin/users`, {
+    const listResp = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
     expect(listResp.ok()).toBeTruthy();
@@ -336,27 +354,30 @@ test.describe("API", () => {
     expect(testUser.groups).toEqual([]);
 
     // Non-admin cannot list users
-    const forbiddenResp = await request.get(`${API_BASE}/admin/users`, {
+    const forbiddenResp = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: userHeaders,
     });
     expect(forbiddenResp.status()).toBe(403);
 
     // Create a group and add the user to it
-    const createGroupResp = await request.post(`${API_BASE}/admin/groups`, {
-      headers: adminHeaders,
-      data: { name: "editor" },
-    });
+    const createGroupResp = await request.post(
+      `${API_BASE}/api/v1/admin/groups`,
+      {
+        headers: adminHeaders,
+        data: { name: "editor" },
+      },
+    );
     expect(createGroupResp.ok()).toBeTruthy();
     const editorGroup = await createGroupResp.json();
 
     const addMemberResp = await request.post(
-      `${API_BASE}/admin/groups/${editorGroup.id}/members`,
+      `${API_BASE}/api/v1/admin/groups/${editorGroup.id}/members`,
       { headers: adminHeaders, data: { user_id: testUser.id } },
     );
     expect(addMemberResp.ok()).toBeTruthy();
 
     // Verify group membership was added
-    const listResp2 = await request.get(`${API_BASE}/admin/users`, {
+    const listResp2 = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
     const updatedUser = (await listResp2.json()).find(
@@ -366,20 +387,20 @@ test.describe("API", () => {
 
     // Admin can remove user from group
     const removeMemberResp = await request.delete(
-      `${API_BASE}/admin/groups/${editorGroup.id}/members/${testUser.id}`,
+      `${API_BASE}/api/v1/admin/groups/${editorGroup.id}/members/${testUser.id}`,
       { headers: adminHeaders },
     );
     expect(removeMemberResp.ok()).toBeTruthy();
 
     // Admin can delete a user
     const deleteResp = await request.delete(
-      `${API_BASE}/admin/users/${testUser.id}`,
+      `${API_BASE}/api/v1/admin/users/${testUser.id}`,
       { headers: adminHeaders },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     // Verify user is gone
-    const listResp3 = await request.get(`${API_BASE}/admin/users`, {
+    const listResp3 = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
     const deletedUser = (await listResp3.json()).find(
@@ -389,7 +410,7 @@ test.describe("API", () => {
 
     // Clean up the test group
     const deleteGroupResp = await request.delete(
-      `${API_BASE}/admin/groups/${editorGroup.id}`,
+      `${API_BASE}/api/v1/admin/groups/${editorGroup.id}`,
       { headers: adminHeaders },
     );
     expect(deleteGroupResp.ok()).toBeTruthy();
@@ -400,7 +421,7 @@ test.describe("API", () => {
   }) => {
     // Login as the default admin user via the API, then set the token
     // and navigate directly to the admin page.
-    const loginResp = await request.post(`${API_BASE}/auth/login`, {
+    const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
       data: { email: "admin@example.com", password: "admin" },
     });
     expect(loginResp.ok()).toBeTruthy();
@@ -408,7 +429,7 @@ test.describe("API", () => {
     const adminHeaders = { Authorization: `Bearer ${adminToken}` };
 
     // Verify the admin API returns users
-    const resp = await request.get(`${API_BASE}/admin/users`, {
+    const resp = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
     expect(resp.ok()).toBeTruthy();
@@ -419,12 +440,12 @@ test.describe("API", () => {
     ).toBeTruthy();
 
     // Create a user via API, verify it appears, then delete via API
-    const regResp = await request.post(`${API_BASE}/auth/register`, {
+    const regResp = await request.post(`${API_BASE}/api/v1/auth/register`, {
       data: { email: "e2e-admin-ui@test.example.com", password: "testpass" },
     });
     expect(regResp.ok()).toBeTruthy();
 
-    const resp2 = await request.get(`${API_BASE}/admin/users`, {
+    const resp2 = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
     const updatedUsers = await resp2.json();
@@ -435,7 +456,7 @@ test.describe("API", () => {
 
     // Update email via API
     const patchResp = await request.patch(
-      `${API_BASE}/admin/users/${newUser.id}`,
+      `${API_BASE}/api/v1/admin/users/${newUser.id}`,
       {
         headers: adminHeaders,
         data: { email: "e2e-admin-renamed@test.example.com" },
@@ -444,7 +465,7 @@ test.describe("API", () => {
     expect(patchResp.ok()).toBeTruthy();
 
     // Verify rename
-    const resp3 = await request.get(`${API_BASE}/admin/users`, {
+    const resp3 = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
     expect(
@@ -455,13 +476,13 @@ test.describe("API", () => {
 
     // Delete via API
     const deleteResp = await request.delete(
-      `${API_BASE}/admin/users/${newUser.id}`,
+      `${API_BASE}/api/v1/admin/users/${newUser.id}`,
       { headers: adminHeaders },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     // Verify deleted
-    const resp4 = await request.get(`${API_BASE}/admin/users`, {
+    const resp4 = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
     expect(
@@ -479,7 +500,7 @@ test.describe("API", () => {
     const { headers: memberHeaders } = await registerUser(request, memberEmail);
 
     // Create a workspace as owner
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers: ownerHeaders,
       data: { name: `e2e-share-${Date.now()}` },
     });
@@ -489,7 +510,7 @@ test.describe("API", () => {
 
     // Upload a file so we can test access
     const uploadResp = await request.post(
-      `${API_BASE}/workspaces/${workspaceId}/files/upload?path=work/shared.txt`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=work/shared.txt`,
       {
         headers: ownerHeaders,
         multipart: {
@@ -505,7 +526,7 @@ test.describe("API", () => {
 
     // Initially, no members
     let membersResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/members`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/members`,
       { headers: ownerHeaders },
     );
     expect(membersResp.ok()).toBeTruthy();
@@ -514,14 +535,14 @@ test.describe("API", () => {
 
     // Member cannot access the workspace files before sharing
     const preShareFiles = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
       { headers: memberHeaders },
     );
     expect(preShareFiles.ok()).toBeFalsy();
 
     // Share workspace with member
     const addResp = await request.post(
-      `${API_BASE}/workspaces/${workspaceId}/members`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/members`,
       {
         headers: ownerHeaders,
         data: { email: memberEmail },
@@ -531,7 +552,7 @@ test.describe("API", () => {
 
     // Verify member shows up in members list
     membersResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/members`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/members`,
       { headers: ownerHeaders },
     );
     expect(membersResp.ok()).toBeTruthy();
@@ -542,7 +563,7 @@ test.describe("API", () => {
 
     // Member can now access workspace files
     const postShareFiles = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
       { headers: memberHeaders },
     );
     expect(postShareFiles.ok()).toBeTruthy();
@@ -551,14 +572,14 @@ test.describe("API", () => {
 
     // Unshare
     const removeResp = await request.delete(
-      `${API_BASE}/workspaces/${workspaceId}/members/${memberId}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/members/${memberId}`,
       { headers: ownerHeaders },
     );
     expect(removeResp.ok()).toBeTruthy();
 
     // Verify member is gone
     membersResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/members`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/members`,
       { headers: ownerHeaders },
     );
     members = await membersResp.json();
@@ -566,13 +587,13 @@ test.describe("API", () => {
 
     // Member can no longer access workspace files
     const postUnshareFiles = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
       { headers: memberHeaders },
     );
     expect(postUnshareFiles.ok()).toBeFalsy();
 
     // Clean up
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
   });
@@ -587,7 +608,7 @@ test.describe("API", () => {
     const { headers: memberHeaders } = await registerUser(request, memberEmail);
 
     // Create workspace and share with member
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers: ownerHeaders,
       data: { name: `acl-chat-${Date.now()}` },
     });
@@ -595,14 +616,14 @@ test.describe("API", () => {
     const workspace = await wsResp.json();
     const workspaceId = workspace.id;
 
-    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+    await request.post(`${API_BASE}/api/v1/workspaces/${workspaceId}/members`, {
       headers: ownerHeaders,
       data: { email: memberEmail },
     });
 
     // Member should have chat permission initially
     let permResp = await request.get(
-      `${API_BASE}/api/my-permissions?resource=/workspaces/${workspaceId}`,
+      `${API_BASE}/api/v1/my-permissions?resource=/workspaces/${workspaceId}`,
       { headers: memberHeaders },
     );
     expect(permResp.ok()).toBeTruthy();
@@ -614,7 +635,7 @@ test.describe("API", () => {
 
     // Owner gets the ACL, removes the chat ACE for the member
     const aclResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/acl`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/acl`,
       { headers: ownerHeaders },
     );
     expect(aclResp.ok()).toBeTruthy();
@@ -629,7 +650,7 @@ test.describe("API", () => {
 
     // Save the modified ACL
     const putResp = await request.put(
-      `${API_BASE}/workspaces/${workspaceId}/acl`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/acl`,
       {
         headers: ownerHeaders,
         data: filtered.map((ace: any) => ({
@@ -646,7 +667,7 @@ test.describe("API", () => {
 
     // Member should no longer have chat permission
     permResp = await request.get(
-      `${API_BASE}/api/my-permissions?resource=/workspaces/${workspaceId}`,
+      `${API_BASE}/api/v1/my-permissions?resource=/workspaces/${workspaceId}`,
       { headers: memberHeaders },
     );
     perms = (await permResp.json()).permissions[`/workspaces/${workspaceId}`];
@@ -656,7 +677,7 @@ test.describe("API", () => {
     expect(perms).toContain("files");
 
     // Clean up
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
   });
@@ -666,7 +687,7 @@ test.describe("API", () => {
     const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
 
     // Create workspace
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers: ownerHeaders,
       data: { name: `acl-edit-${Date.now()}` },
     });
@@ -676,7 +697,7 @@ test.describe("API", () => {
 
     // Get initial ACL (owner has * ACE)
     let aclResp = await request.get(
-      `${API_BASE}/workspaces/${workspaceId}/acl`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/acl`,
       { headers: ownerHeaders },
     );
     expect(aclResp.ok()).toBeTruthy();
@@ -704,7 +725,7 @@ test.describe("API", () => {
     ];
 
     let putResp = await request.put(
-      `${API_BASE}/workspaces/${workspaceId}/acl`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/acl`,
       { headers: ownerHeaders, data: newAces },
     );
     expect(putResp.ok()).toBeTruthy();
@@ -733,10 +754,13 @@ test.describe("API", () => {
       },
     ];
 
-    putResp = await request.put(`${API_BASE}/workspaces/${workspaceId}/acl`, {
-      headers: ownerHeaders,
-      data: reordered,
-    });
+    putResp = await request.put(
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/acl`,
+      {
+        headers: ownerHeaders,
+        data: reordered,
+      },
+    );
     expect(putResp.ok()).toBeTruthy();
     saved = await putResp.json();
     // Last entry should now be the original first (owner *)
@@ -746,10 +770,13 @@ test.describe("API", () => {
     const withoutFirst = reordered.filter(
       (ace: any) => !(ace.system_principal === 1 && ace.permission === "view"),
     );
-    putResp = await request.put(`${API_BASE}/workspaces/${workspaceId}/acl`, {
-      headers: ownerHeaders,
-      data: withoutFirst,
-    });
+    putResp = await request.put(
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/acl`,
+      {
+        headers: ownerHeaders,
+        data: withoutFirst,
+      },
+    );
     expect(putResp.ok()).toBeTruthy();
     saved = await putResp.json();
     expect(saved.length).toBe(reordered.length - 1);
@@ -758,7 +785,7 @@ test.describe("API", () => {
     ).toBeTruthy();
 
     // Clean up
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
   });
@@ -767,7 +794,7 @@ test.describe("API", () => {
     request,
   }) => {
     // Login as admin
-    const loginResp = await request.post(`${API_BASE}/auth/login`, {
+    const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
       data: { email: "admin@example.com", password: "admin" },
     });
     expect(loginResp.ok()).toBeTruthy();
@@ -776,9 +803,12 @@ test.describe("API", () => {
     };
 
     // Read the root resource ACL
-    let resp = await request.get(`${API_BASE}/admin/acl/resource?resource=/`, {
-      headers: adminHeaders,
-    });
+    let resp = await request.get(
+      `${API_BASE}/api/v1/admin/acl/resource?resource=/`,
+      {
+        headers: adminHeaders,
+      },
+    );
     expect(resp.ok()).toBeTruthy();
     const rootAces = await resp.json();
     expect(rootAces.length).toBeGreaterThan(0);
@@ -790,9 +820,12 @@ test.describe("API", () => {
     ).toBeTruthy();
 
     // Read /admin resource ACL
-    resp = await request.get(`${API_BASE}/admin/acl/resource?resource=/admin`, {
-      headers: adminHeaders,
-    });
+    resp = await request.get(
+      `${API_BASE}/api/v1/admin/acl/resource?resource=/admin`,
+      {
+        headers: adminHeaders,
+      },
+    );
     expect(resp.ok()).toBeTruthy();
     const adminAces = await resp.json();
     expect(
@@ -803,7 +836,7 @@ test.describe("API", () => {
 
     // Modify /admin/groups ACL: add a view entry, then restore
     resp = await request.get(
-      `${API_BASE}/admin/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/admin/acl/resource?resource=/admin/groups`,
       { headers: adminHeaders },
     );
     const originalGroupsAces = await resp.json();
@@ -828,7 +861,7 @@ test.describe("API", () => {
     ];
 
     resp = await request.put(
-      `${API_BASE}/admin/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/admin/acl/resource?resource=/admin/groups`,
       { headers: adminHeaders, data: newEntries },
     );
     expect(resp.ok()).toBeTruthy();
@@ -844,7 +877,7 @@ test.describe("API", () => {
       system_principal: a.system_principal ?? null,
     }));
     resp = await request.put(
-      `${API_BASE}/admin/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/admin/acl/resource?resource=/admin/groups`,
       { headers: adminHeaders, data: restore },
     );
     expect(resp.ok()).toBeTruthy();
@@ -853,7 +886,7 @@ test.describe("API", () => {
   test("admin ACL browser: all static resources readable", async ({
     request,
   }) => {
-    const loginResp = await request.post(`${API_BASE}/auth/login`, {
+    const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
       data: { email: "admin@example.com", password: "admin" },
     });
     const adminHeaders = {
@@ -871,7 +904,7 @@ test.describe("API", () => {
 
     for (const resource of resources) {
       const resp = await request.get(
-        `${API_BASE}/admin/acl/resource?resource=${encodeURIComponent(resource)}`,
+        `${API_BASE}/api/v1/admin/acl/resource?resource=${encodeURIComponent(resource)}`,
         { headers: adminHeaders },
       );
       expect(resp.ok()).toBeTruthy();
@@ -885,7 +918,7 @@ test.describe("API", () => {
     );
 
     const resp = await request.get(
-      `${API_BASE}/admin/acl/resource?resource=/`,
+      `${API_BASE}/api/v1/admin/acl/resource?resource=/`,
       { headers: userHeaders },
     );
     expect(resp.status()).toBe(403);

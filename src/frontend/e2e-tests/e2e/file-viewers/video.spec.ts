@@ -112,7 +112,7 @@ test.describe("file-viewers/video", () => {
       // rather than the browser "download" event, which Flutter web's blob-
       // anchor download does not reliably surface to Playwright in CI.
       const dl = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
           "work/dl.mp4",
         )}`,
         { headers },
