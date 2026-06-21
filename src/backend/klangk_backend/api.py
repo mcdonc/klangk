@@ -239,7 +239,12 @@ async def register(
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
     )
-    logger.info("Verification URL: %s", verification_url)
+    logger.info(
+        "Verification URL: %s/#/verify?token=%s...%s",
+        f"{proto}://{hostname}{base_path}",
+        verification_token[:8],
+        verification_token[-4:],
+    )
 
     # Insert user and send email in a transaction — if the email fails,
     # the user insert is rolled back so they can try again.
