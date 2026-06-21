@@ -12,6 +12,11 @@ for f in /opt/klangk/hooks/*/on-entrypoint.sh; do
   [ -x "$f" ] && "$f" || true
 done
 
+# Create the workspace token directory. /run is a tmpfs owned by root,
+# so this must happen at entrypoint time (before dropping privileges).
+mkdir -p /run/klangk
+chown klangk:klangk /run/klangk 2>/dev/null || true
+
 # Signal that setup is complete. Terminal sessions (podman exec) source
 # /etc/bash.bashrc which waits for this file before showing a prompt.
 # Per-user Pi agent config is handled by setup-clankers (called from
