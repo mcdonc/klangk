@@ -6,14 +6,20 @@ via ``Path.is_relative_to``.  CodeQL cannot trace this inter-procedural
 validation; the corresponding alerts are dismissed as false positives.
 """
 
+import os
 import shutil
 from pathlib import Path
 
 from . import workspaces
 
+NAME_MAX = os.pathconf("/", "PC_NAME_MAX") if hasattr(os, "pathconf") else 255
+
 
 def resolve_path(user_id: str, workspace_id: str, relative_path: str) -> Path:
     """Resolve a relative path within a workspace, preventing traversal."""
+    for part in Path(relative_path).parts:
+        if len(part.encode()) > NAME_MAX:
+            raise ValueError(f"Filename exceeds {NAME_MAX}-byte limit")
     root = workspaces.get_home_host_path(user_id, workspace_id).resolve()
     resolved = (root / relative_path).resolve()
     if not resolved.is_relative_to(root):
