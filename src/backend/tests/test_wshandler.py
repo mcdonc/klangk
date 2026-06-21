@@ -6223,7 +6223,7 @@ class TestStartAgentIfNeeded:
                 "klangk_backend.agent.get_session",
                 return_value=mock_agent_session,
             ):
-                await conn._start_agent_if_needed("cid")
+                await conn._start_agent_if_needed()
             mock_agent_session._ensure_started.assert_awaited_once()
         finally:
             await session.remove_subscriber(sock)
@@ -6239,7 +6239,7 @@ class TestStartAgentIfNeeded:
             side_effect=RuntimeError("nope"),
         ):
             # Should not raise
-            await conn._start_agent_if_needed("cid")
+            await conn._start_agent_if_needed()
 
 
 class TestHandleChatAgentAbort:

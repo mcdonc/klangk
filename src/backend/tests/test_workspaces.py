@@ -182,6 +182,31 @@ class TestEnsureHomeSymlink:
         assert not (home / "alice").exists()
         assert (home / "alicia").is_symlink()
 
+    async def test_replaces_stale_symlink_from_import(self, user):
+        """Imported workspace has a symlink for a different user ID.
+
+        The old user's files should be adopted into the new user dir.
+        """
+        ws = await ws_mod.create_workspace(user["id"], "symlink-ws4")
+        home = ws_mod.home_path(user["id"], ws["id"])
+        # Simulate imported workspace: symlink for old user ID with files.
+        (home / ".users").mkdir(parents=True, exist_ok=True)
+        old_dir = home / ".users" / "old-uid"
+        old_dir.mkdir()
+        (old_dir / ".bashrc").write_text("# old bashrc")
+        (old_dir / ".profile").write_text("# old profile")
+        (home / "admin").symlink_to(".users/old-uid")
+        # New user connects — different user ID, same handle.
+        result, created = ws_mod.ensure_home_symlink(home, "admin", "new-uid")
+        assert result == "/home/admin"
+        assert created is False  # content adopted, no skel needed
+        assert (home / "admin").is_symlink()
+        assert os.readlink(home / "admin") == ".users/new-uid"
+        # Files were moved from old-uid to new-uid.
+        new_dir = home / ".users" / "new-uid"
+        assert (new_dir / ".bashrc").read_text() == "# old bashrc"
+        assert (new_dir / ".profile").read_text() == "# old profile"
+
 
 class TestPopulateHomeSkel:
     async def test_execs_setup_home(self):

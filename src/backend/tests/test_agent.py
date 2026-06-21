@@ -18,11 +18,26 @@ from klangk_backend.agent import (
 )
 
 
+class _FakeContainerState:
+    def __init__(self, container_id="cid"):
+        self.container_id = container_id
+
+
 @pytest.fixture(autouse=True)
 def _clear_agents():
     _agents.clear()
     yield
     _agents.clear()
+
+
+@pytest.fixture(autouse=True)
+def _mock_container_registry():
+    """Provide a default container registry state for all agent tests."""
+    with patch(
+        "klangk_backend.agent.container.registry.get_state",
+        return_value=_FakeContainerState("cid"),
+    ):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -40,10 +55,11 @@ async def _seed_agent_db(db):
     model.clear_agent_cache()
 
 
-def _make_session(container_id="cid", workspace_id="ws-id"):
+def _make_session(workspace_id="ws-id"):
     """Create an AgentSession with home setup already done."""
-    s = AgentSession(workspace_id, container_id)
+    s = AgentSession(workspace_id)
     s._home_ready = True
+    s._last_container_id = "cid"
     return s
 
 
@@ -522,23 +538,14 @@ class TestAgentSession:
 
 class TestGetSession:
     async def test_creates_new_session(self):
-        session = await get_session("ws-1", "cid-1")
-        assert session.container_id == "cid-1"
+        session = await get_session("ws-1")
         assert session.workspace_id == "ws-1"
         assert "ws-1" in _agents
 
     async def test_reuses_existing_session(self):
-        s1 = await get_session("ws-1", "cid-1")
-        s2 = await get_session("ws-1", "cid-1")
+        s1 = await get_session("ws-1")
+        s2 = await get_session("ws-1")
         assert s1 is s2
-
-    async def test_updates_container_id_on_restart(self):
-        s1 = await get_session("ws-1", "old-cid")
-        s1._home_ready = True
-        s2 = await get_session("ws-1", "new-cid")
-        assert s1 is s2
-        assert s2.container_id == "new-cid"
-        assert not s2._home_ready  # reset for new container
 
 
 class TestEnsureHome:
@@ -547,7 +554,7 @@ class TestEnsureHome:
     ):
         from klangk_backend import model, workspaces
 
-        session = AgentSession("ws1", "cid")
+        session = AgentSession("ws1")
 
         fake_ws = {"user_id": "owner1"}
         fake_home = tmp_path / "home"
@@ -582,7 +589,7 @@ class TestEnsureHome:
                 return_value=mock_proc,
             ),
         ):
-            result = await session._ensure_home()
+            result = await session._ensure_home("cid")
 
         assert result == "/home/MrBoops"
         assert session._home_ready is True
@@ -592,25 +599,25 @@ class TestEnsureHome:
         )
 
     async def test_ensure_home_cached(self):
-        session = AgentSession("ws-id", "cid")
+        session = AgentSession("ws-id")
         session._home_ready = True
-        result = await session._ensure_home()
+        result = await session._ensure_home("cid")
         assert result == "/home/MrBoops"
 
     async def test_ensure_home_workspace_not_in_db(self):
         from klangk_backend import model
         from klangk_backend.agent import AgentSetupError
 
-        session = AgentSession("ws-gone", "cid")
+        session = AgentSession("ws-gone")
 
         with patch.object(model, "get_workspace_by_id", return_value=None):
             with pytest.raises(AgentSetupError, match="not found in database"):
-                await session._ensure_home()
+                await session._ensure_home("cid")
 
 
 class TestStopSession:
     async def test_stop_existing(self):
-        session = await get_session("ws-1", "cid-1")
+        session = await get_session("ws-1")
         session._proc = AsyncMock()
         session._proc.returncode = None
         session._proc.kill = MagicMock()
@@ -729,7 +736,7 @@ class TestMonitorProcess:
     async def test_monitor_auto_restarts(self):
         from klangk_backend import model
 
-        session = _make_session("cid-restart", "ws-restart")
+        session = _make_session("ws-restart")
         _agents["ws-restart"] = session
 
         mock_proc = AsyncMock()
@@ -767,7 +774,7 @@ class TestMonitorProcess:
     async def test_monitor_gives_up_after_max_retries(self):
         from klangk_backend import model
 
-        session = _make_session("cid-giveup", "ws-giveup")
+        session = _make_session("ws-giveup")
         _agents["ws-giveup"] = session
         session._restart_attempts = 2  # already at limit
 
@@ -802,23 +809,31 @@ class TestMonitorProcess:
             assert session._gave_up is True
 
     async def test_gave_up_blocks_ensure_started(self):
-        session = _make_session("cid-gaveup", "ws-gaveup")
+        session = _make_session("ws-gaveup")
         session._gave_up = True
 
         with pytest.raises(AgentError, match="gave up"):
             await session._ensure_started()
 
     async def test_gave_up_reset_on_container_change(self):
-        s = await get_session("ws-gaveup2", "old-cid")
-        s._gave_up = True
-        s2 = await get_session("ws-gaveup2", "new-cid")
-        assert s2._gave_up is False
+        session = _make_session("ws-gaveup2")
+        session._gave_up = True
+        session._last_container_id = "old-cid"
+        # Simulate container change — _resolve_container_id sees new ID.
+        with patch(
+            "klangk_backend.agent.container.registry.get_state",
+            return_value=_FakeContainerState("new-cid"),
+        ):
+            cid = session._resolve_container_id()
+        assert cid == "new-cid"
+        assert session._gave_up is False
+        assert session._restart_attempts == 0
 
     async def test_monitor_logs_stderr(self, caplog):
         from klangk_backend import model
         import logging
 
-        session = _make_session("cid-stderr", "ws-stderr")
+        session = _make_session("ws-stderr")
         _agents["ws-stderr"] = session
         session._restart_attempts = 2  # will give up
 
@@ -853,7 +868,7 @@ class TestMonitorProcess:
         """Monitor handles stderr read errors gracefully."""
         from klangk_backend import model
 
-        session = _make_session("cid-stderr-err", "ws-stderr-err")
+        session = _make_session("ws-stderr-err")
         _agents["ws-stderr-err"] = session
         session._restart_attempts = 2
 
@@ -882,7 +897,7 @@ class TestMonitorProcess:
     async def test_monitor_restart_failure_logged(self):
         from klangk_backend import model
 
-        session = _make_session("cid-fail", "ws-fail")
+        session = _make_session("ws-fail")
         _agents["ws-fail"] = session
 
         mock_proc = AsyncMock()
@@ -960,7 +975,7 @@ class TestMonitorProcess:
     async def test_monitor_skips_restart_if_already_restarted(self):
         from klangk_backend import model
 
-        session = _make_session("cid-skip", "ws-skip")
+        session = _make_session("ws-skip")
         _agents["ws-skip"] = session
 
         dead_proc = AsyncMock()
