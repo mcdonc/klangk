@@ -225,7 +225,7 @@ class TestVersion:
         monkeypatch.setattr(
             "klangk_backend.plugins._PLUGINS_DIR", str(tmp_path / "plugins")
         )
-        resp = await client.get("/version")
+        resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         plugins = resp.json()["plugins"]
         assert len(plugins) == 1
