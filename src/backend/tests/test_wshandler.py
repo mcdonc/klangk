@@ -5957,10 +5957,6 @@ class TestTokenRenewal:
                     "klangk_backend.terminal.set_workspace_token",
                     new_callable=AsyncMock,
                 ) as mock_set,
-                patch(
-                    "klangk_backend.agent.stop_session",
-                    new_callable=AsyncMock,
-                ),
             ):
                 expiry = datetime.now(timezone.utc) + timedelta(seconds=0.1)
                 session.start_token_renewal(expiry)
@@ -6009,10 +6005,6 @@ class TestTokenRenewal:
                 patch(
                     "klangk_backend.terminal.set_workspace_token",
                     side_effect=fail_then_succeed,
-                ),
-                patch(
-                    "klangk_backend.agent.stop_session",
-                    new_callable=AsyncMock,
                 ),
                 patch("asyncio.sleep", side_effect=fast_sleep),
             ):

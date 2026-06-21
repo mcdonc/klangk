@@ -238,9 +238,6 @@ class WorkspaceSession:
                     "Renewed workspace token for %s",
                     self.workspace_id,
                 )
-                # Stop the chat agent so it picks up the new token
-                # on the next prompt.
-                await agent.stop_session(self.workspace_id)
             except Exception:
                 logger.warning(
                     "Failed to renew workspace token for %s, retrying in 60s",
