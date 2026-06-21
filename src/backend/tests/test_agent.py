@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from klangk_backend.agent import (
+    AgentError,
     AgentProcessDied,
     AgentSession,
     any_running,
@@ -734,6 +735,8 @@ class TestMonitorProcess:
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
         mock_proc.wait = AsyncMock()
+        mock_proc.stderr = asyncio.StreamReader()
+        mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
         with (
@@ -771,6 +774,8 @@ class TestMonitorProcess:
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
         mock_proc.wait = AsyncMock()
+        mock_proc.stderr = asyncio.StreamReader()
+        mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
         with (
@@ -794,6 +799,85 @@ class TestMonitorProcess:
 
             mock_start.assert_not_awaited()
             assert session._restart_attempts == 3
+            assert session._gave_up is True
+
+    async def test_gave_up_blocks_ensure_started(self):
+        session = _make_session("cid-gaveup", "ws-gaveup")
+        session._gave_up = True
+
+        with pytest.raises(AgentError, match="gave up"):
+            await session._ensure_started()
+
+    async def test_gave_up_reset_on_container_change(self):
+        s = await get_session("ws-gaveup2", "old-cid")
+        s._gave_up = True
+        s2 = await get_session("ws-gaveup2", "new-cid")
+        assert s2._gave_up is False
+
+    async def test_monitor_logs_stderr(self, caplog):
+        from klangk_backend import model
+        import logging
+
+        session = _make_session("cid-stderr", "ws-stderr")
+        _agents["ws-stderr"] = session
+        session._restart_attempts = 2  # will give up
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 255
+        mock_proc.wait = AsyncMock()
+        mock_proc.stderr = asyncio.StreamReader()
+        mock_proc.stderr.feed_data(b"Error: container not running\n")
+        mock_proc.stderr.feed_eof()
+        session._proc = mock_proc
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "msg"},
+            ),
+            patch(
+                "klangk_backend.agent._get_workspace_session",
+                return_value=MagicMock(),
+            ),
+            caplog.at_level(logging.WARNING, logger="klangk_backend.agent"),
+        ):
+            await session._monitor_process(mock_proc)
+
+        assert any(
+            "container not running" in r.message for r in caplog.records
+        )
+
+    async def test_monitor_stderr_read_error(self):
+        """Monitor handles stderr read errors gracefully."""
+        from klangk_backend import model
+
+        session = _make_session("cid-stderr-err", "ws-stderr-err")
+        _agents["ws-stderr-err"] = session
+        session._restart_attempts = 2
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock()
+        mock_proc.stderr = AsyncMock()
+        mock_proc.stderr.read = AsyncMock(side_effect=OSError("broken pipe"))
+        session._proc = mock_proc
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "msg"},
+            ),
+            patch(
+                "klangk_backend.agent._get_workspace_session",
+                return_value=MagicMock(),
+            ),
+        ):
+            await session._monitor_process(mock_proc)
+            assert session._gave_up is True
 
     async def test_monitor_restart_failure_logged(self):
         from klangk_backend import model
@@ -804,6 +888,8 @@ class TestMonitorProcess:
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
         mock_proc.wait = AsyncMock()
+        mock_proc.stderr = asyncio.StreamReader()
+        mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
         with (
@@ -880,6 +966,8 @@ class TestMonitorProcess:
         dead_proc = AsyncMock()
         dead_proc.returncode = 1
         dead_proc.wait = AsyncMock()
+        dead_proc.stderr = asyncio.StreamReader()
+        dead_proc.stderr.feed_eof()
         session._proc = dead_proc
 
         async def fake_sleep(_):
