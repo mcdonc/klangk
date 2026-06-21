@@ -335,7 +335,7 @@ async def init_db() -> None:
         # Migration: add new_token column to existing token_blocklist tables
         cursor = await db.execute("PRAGMA table_info(token_blocklist)")
         bl_cols = {row[1] for row in await cursor.fetchall()}
-        if "new_token" not in bl_cols:
+        if "new_token" not in bl_cols:  # pragma: no cover
             await db.execute(
                 "ALTER TABLE token_blocklist ADD COLUMN new_token TEXT"
             )
