@@ -95,12 +95,19 @@ async def verify_workspace_token(request: Request):
 
 @router.get("/version")
 async def version():
-    """Return build version info (version, commit, build timestamp)."""
-    version_file = os.environ.get("KLANGK_VERSION_FILE", "")
-    if version_file and os.path.isfile(version_file):
-        with open(version_file) as f:
-            return json.load(f)
-    return {"version": "dev", "commit": "unknown", "built_at": None}
+    """Return build version info, plus loaded plugin metadata."""
+    if version_file := os.environ.get("KLANGK_VERSION_FILE", ""):
+        if os.path.isfile(version_file):
+            with open(version_file) as f:
+                info = json.load(f)
+            info["plugins"] = plugins.plugin_list()
+            return info
+    return {
+        "version": "dev",
+        "commit": "unknown",
+        "built_at": None,
+        "plugins": plugins.plugin_list(),
+    }
 
 
 # --- Test/debug endpoints (only when KLANGK_TEST_MODE is set) ---

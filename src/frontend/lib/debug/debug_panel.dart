@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../auth/auth_service.dart';
 import '../ws/ws_client.dart';
+import 'system_info_tab.dart';
 
-/// Debug panel showing live WebSocket messages.
+/// Debug panel with tabs: WebSocket message log and System Info.
 /// Rendered inside IdeLayout's debug pane with a draggable divider above.
 class DebugPanel extends StatefulWidget {
   final WsClient wsClient;
@@ -15,6 +18,7 @@ class DebugPanel extends StatefulWidget {
 }
 
 class _DebugPanelState extends State<DebugPanel> {
+  int _tabIndex = 0;
   final List<WsDebugEntry> _entries = [];
   final ScrollController _scrollController = ScrollController();
   StreamSubscription<WsDebugEntry>? _sub;
@@ -55,55 +59,78 @@ class _DebugPanelState extends State<DebugPanel> {
       color: const Color(0xFF1A1A1A),
       child: Column(
         children: [
-          // Toolbar
+          // Tab bar
           Container(
             height: 22,
             color: const Color(0xFF2D2D2D),
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Row(
               children: [
-                Text(
-                  'WebSocket (${_entries.length})',
-                  style: const TextStyle(
-                    color: Color(0xFF888888),
-                    fontSize: 10,
-                  ),
-                ),
+                _tabButton('WebSocket', 0),
+                const SizedBox(width: 12),
+                _tabButton('System', 1),
                 const Spacer(),
-                GestureDetector(
-                  onTap: () => setState(() => _autoScroll = !_autoScroll),
-                  child: Icon(
-                    _autoScroll
-                        ? Icons.vertical_align_bottom
-                        : Icons.pause,
-                    color: _autoScroll
-                        ? const Color(0xFF5B8C5A)
-                        : const Color(0xFF888888),
-                    size: 12,
+                if (_tabIndex == 0) ...[
+                  GestureDetector(
+                    onTap: () => setState(() => _autoScroll = !_autoScroll),
+                    child: Icon(
+                      _autoScroll ? Icons.vertical_align_bottom : Icons.pause,
+                      color: _autoScroll
+                          ? const Color(0xFF5B8C5A)
+                          : const Color(0xFF888888),
+                      size: 12,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () => setState(() => _entries.clear()),
-                  child: const Icon(Icons.delete_outline,
-                      color: Color(0xFF888888), size: 12),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () => setState(() => _entries.clear()),
+                    child: const Icon(Icons.delete_outline,
+                        color: Color(0xFF888888), size: 12),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          // Content
+          Expanded(
+            child: IndexedStack(
+              index: _tabIndex,
+              children: [
+                _buildWsTab(),
+                SystemInfoTab(
+                  auth: Provider.of<AuthService>(context, listen: false),
                 ),
               ],
             ),
           ),
-          // Message list
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: _entries.length,
-              itemBuilder: (context, index) {
-                final entry = _entries[index];
-                return _DebugEntryRow(entry: entry);
-              },
-            ),
-          ),
         ],
       ),
+    );
+  }
+
+  Widget _tabButton(String label, int index) {
+    final selected = _tabIndex == index;
+    return GestureDetector(
+      onTap: () => setState(() => _tabIndex = index),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: selected ? const Color(0xFFC5C8C6) : const Color(0xFF888888),
+          fontSize: 10,
+          fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWsTab() {
+    return ListView.builder(
+      controller: _scrollController,
+      itemCount: _entries.length,
+      itemBuilder: (context, index) {
+        final entry = _entries[index];
+        return _DebugEntryRow(entry: entry);
+      },
     );
   }
 }
@@ -124,8 +151,7 @@ class _DebugEntryRow extends StatelessWidget {
         detail.length > 200 ? '${detail.substring(0, 200)}...' : detail;
 
     return InkWell(
-      onTap:
-          entry.data != null ? () => _showFullMessage(context, entry) : null,
+      onTap: entry.data != null ? () => _showFullMessage(context, entry) : null,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         child: Row(
