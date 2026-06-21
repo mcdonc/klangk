@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../ws/ws_client.dart';
 
 /// Workspace settings panel: config editing only.
@@ -121,6 +123,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     if (_workspace == null) return const Center(child: Text('No data'));
 
     return _SettingsForm(
+      workspaceId: widget.workspaceId,
       workspace: _workspace!,
       allowedImages: _allowedImages,
       defaultImage: _defaultImage,
@@ -131,6 +134,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
 }
 
 class _SettingsForm extends StatefulWidget {
+  final String workspaceId;
   final Map<String, dynamic> workspace;
   final List<String> allowedImages;
   final String defaultImage;
@@ -138,6 +142,7 @@ class _SettingsForm extends StatefulWidget {
   final Future<void> Function(Map<String, dynamic>) onSave;
 
   const _SettingsForm({
+    required this.workspaceId,
     required this.workspace,
     required this.allowedImages,
     required this.defaultImage,
@@ -160,6 +165,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   String? _mountError;
   String? _envError;
   bool _saving = false;
+  bool _exporting = false;
 
   @override
   void initState() {
@@ -451,6 +457,27 @@ class _SettingsFormState extends State<_SettingsForm> {
                   const SizedBox(height: 32),
                   const Divider(),
                   const SizedBox(height: 16),
+                  const SizedBox(height: 32),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Export',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _exporting ? null : _exportWorkspace,
+                    icon: _exporting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.download, size: 18),
+                    label: const Text('Export Workspace'),
+                  ),
+                  const SizedBox(height: 32),
+                  const Divider(),
+                  const SizedBox(height: 16),
                   Text(
                     'Danger Zone',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -475,6 +502,33 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
       ),
     );
+  }
+
+  Future<void> _exportWorkspace() async {
+    setState(() => _exporting = true);
+    try {
+      final auth = context.read<AuthService>();
+      final resp =
+          await auth.authGet('/api/v1/workspaces/${widget.workspaceId}/export');
+      if (resp.statusCode == 200) {
+        final name = widget.workspace['name'] as String? ?? 'workspace';
+        downloadBytes(resp.bodyBytes, '$name.tar.gz');
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Export failed: ${resp.statusCode}')),
+          );
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Export failed')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   void _confirmShutdown(BuildContext context) {

@@ -37,3 +37,6 @@ void Function() onBeforeUnload(void Function() callback) => () {};
 
 /// Stub — no build hash outside the browser.
 String getBuildHash() => '';
+
+/// Stub — no file picker outside the browser.
+Future<List<int>?> pickFileBytes({String accept = ''}) async => null;

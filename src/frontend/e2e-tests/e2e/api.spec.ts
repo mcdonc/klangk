@@ -911,6 +911,172 @@ test.describe("API", () => {
     }
   });
 
+  test("workspace export and import round-trip", async ({ request }) => {
+    // Login as admin (export requires admin permission)
+    const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { email: "admin@example.com", password: "admin" },
+    });
+    expect(loginResp.ok()).toBeTruthy();
+    const adminToken = (await loginResp.json()).access_token;
+    const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+
+    // Create a workspace and seed a file
+    const wsName = `e2e-export-${Date.now()}`;
+    const createResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
+      headers: adminHeaders,
+      data: { name: wsName },
+    });
+    expect(createResp.ok()).toBeTruthy();
+    const workspace = await createResp.json();
+    const workspaceId = workspace.id;
+
+    const testContent = "hello from export test";
+    const uploadResp = await request.post(
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=work/testfile.txt`,
+      {
+        headers: adminHeaders,
+        multipart: {
+          file: {
+            name: "testfile.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from(testContent),
+          },
+        },
+      },
+    );
+    expect(uploadResp.ok()).toBeTruthy();
+
+    // Export the workspace
+    const exportResp = await request.get(
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/export`,
+      { headers: adminHeaders },
+    );
+    expect(exportResp.ok()).toBeTruthy();
+    const exportBody = await exportResp.body();
+    expect(exportBody.length).toBeGreaterThan(0);
+    // Should be gzip (starts with 1f 8b)
+    expect(exportBody[0]).toBe(0x1f);
+    expect(exportBody[1]).toBe(0x8b);
+
+    // Delete the original workspace
+    const deleteResp = await request.delete(
+      `${API_BASE}/api/v1/workspaces/${workspaceId}`,
+      { headers: adminHeaders },
+    );
+    expect(deleteResp.ok()).toBeTruthy();
+
+    // Import the archive as a new workspace
+    const importResp = await request.post(
+      `${API_BASE}/api/v1/workspaces/import`,
+      {
+        headers: adminHeaders,
+        multipart: {
+          file: {
+            name: `${wsName}.tar.gz`,
+            mimeType: "application/gzip",
+            buffer: Buffer.from(exportBody),
+          },
+        },
+      },
+    );
+    expect(importResp.ok()).toBeTruthy();
+    const imported = await importResp.json();
+    expect(imported.name).toBe(wsName);
+    expect(imported.id).not.toBe(workspaceId); // new workspace
+
+    // Verify the file survived the round-trip
+    const fileResp = await request.get(
+      `${API_BASE}/api/v1/workspaces/${imported.id}/files/content?path=work/testfile.txt`,
+      { headers: adminHeaders },
+    );
+    expect(fileResp.ok()).toBeTruthy();
+    const fileData = await fileResp.json();
+    expect(fileData.content).toBe(testContent);
+
+    // Clean up
+    await request.delete(`${API_BASE}/api/v1/workspaces/${imported.id}`, {
+      headers: adminHeaders,
+    });
+  });
+
+  test("workspace export requires admin", async ({ request }) => {
+    const { headers: userHeaders } = await registerUser(
+      request,
+      `export-nonadmin-${Date.now()}@test.example.com`,
+    );
+
+    // Create workspace as regular user
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
+      headers: userHeaders,
+      data: { name: `e2e-export-noadmin-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspace = await wsResp.json();
+
+    // Export should fail for non-admin
+    const exportResp = await request.get(
+      `${API_BASE}/api/v1/workspaces/${workspace.id}/export`,
+      { headers: userHeaders },
+    );
+    expect(exportResp.status()).toBe(403);
+
+    // Clean up
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspace.id}`, {
+      headers: userHeaders,
+    });
+  });
+
+  test("workspace import with custom name", async ({ request }) => {
+    // Login as admin
+    const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { email: "admin@example.com", password: "admin" },
+    });
+    const adminHeaders = {
+      Authorization: `Bearer ${(await loginResp.json()).access_token}`,
+    };
+
+    // Create and export a workspace
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
+      headers: adminHeaders,
+      data: { name: `e2e-import-src-${Date.now()}` },
+    });
+    const workspace = await wsResp.json();
+
+    const exportResp = await request.get(
+      `${API_BASE}/api/v1/workspaces/${workspace.id}/export`,
+      { headers: adminHeaders },
+    );
+    const exportBody = await exportResp.body();
+
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspace.id}`, {
+      headers: adminHeaders,
+    });
+
+    // Import with a custom name
+    const customName = `e2e-imported-${Date.now()}`;
+    const importResp = await request.post(
+      `${API_BASE}/api/v1/workspaces/import?name=${encodeURIComponent(customName)}`,
+      {
+        headers: adminHeaders,
+        multipart: {
+          file: {
+            name: "workspace.tar.gz",
+            mimeType: "application/gzip",
+            buffer: Buffer.from(exportBody),
+          },
+        },
+      },
+    );
+    expect(importResp.ok()).toBeTruthy();
+    const imported = await importResp.json();
+    expect(imported.name).toBe(customName);
+
+    // Clean up
+    await request.delete(`${API_BASE}/api/v1/workspaces/${imported.id}`, {
+      headers: adminHeaders,
+    });
+  });
+
   test("admin ACL browser: non-admin denied access", async ({ request }) => {
     const { headers: userHeaders } = await registerUser(
       request,

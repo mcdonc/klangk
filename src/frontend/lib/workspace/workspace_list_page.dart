@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import '../theme/colors.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../utils/page_title.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 
@@ -437,6 +440,150 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     }
   }
 
+  // coverage:ignore-start
+  Future<void> _showImportDialog() async {
+    final nameController = TextEditingController();
+    List<int>? selectedBytes;
+    String? fileName;
+    String? errorMessage;
+    bool importing = false;
+
+    final imported = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            'Import Workspace',
+            style: TextStyle(color: KColors.textPrimary),
+          ),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (errorMessage != null) ...[
+                  Text(
+                    errorMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                OutlinedButton.icon(
+                  onPressed: importing
+                      ? null
+                      : () async {
+                          final bytes =
+                              await pickFileBytes(accept: '.tar.gz,.tgz');
+                          if (bytes != null) {
+                            setDialogState(() {
+                              selectedBytes = bytes;
+                              fileName = 'workspace.tar.gz';
+                            });
+                          }
+                        },
+                  icon: const Icon(Icons.file_open, size: 18),
+                  label: Text(fileName ?? 'Select .tar.gz file'),
+                ),
+                if (selectedBytes != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${(selectedBytes!.length / 1024).toStringAsFixed(0)} KB',
+                    style: const TextStyle(
+                      color: KColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Workspace Name (optional)',
+                    hintText: 'Uses name from archive if empty',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: importing ? null : () => Navigator.pop(context),
+              style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: selectedBytes == null || importing
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        importing = true;
+                        errorMessage = null;
+                      });
+                      final name = nameController.text.trim();
+                      var url = '$baseUrl/api/v1/workspaces/import';
+                      if (name.isNotEmpty) {
+                        url += '?name=${Uri.encodeComponent(name)}';
+                      }
+                      try {
+                        final request =
+                            http.MultipartRequest('POST', Uri.parse(url));
+                        request.headers['Authorization'] =
+                            'Bearer ${_auth.token}';
+                        request.files.add(http.MultipartFile.fromBytes(
+                          'file',
+                          selectedBytes!,
+                          filename: 'workspace.tar.gz',
+                        ));
+                        final streamed = await request.send();
+                        final resp = await http.Response.fromStream(streamed);
+                        if (resp.statusCode == 200 || resp.statusCode == 201) {
+                          if (context.mounted) {
+                            Navigator.pop(context, true);
+                          }
+                        } else {
+                          String detail;
+                          try {
+                            detail = (jsonDecode(resp.body) as Map)['detail']
+                                    as String? ??
+                                '${resp.statusCode}';
+                          } catch (_) {
+                            detail = '${resp.statusCode}';
+                          }
+                          setDialogState(() {
+                            importing = false;
+                            errorMessage = 'Import failed: $detail';
+                          });
+                        }
+                      } catch (_) {
+                        setDialogState(() {
+                          importing = false;
+                          errorMessage = 'Import failed';
+                        });
+                      }
+                    },
+              child: importing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Import'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (imported == true) {
+      await _loadWorkspaces();
+    }
+  }
+  // coverage:ignore-end
+
   Future<void> _deleteWorkspace(String id) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -692,9 +839,23 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       ),
       floatingActionButton:
           context.watch<AuthService>().hasPermission('/workspaces', 'create')
-              ? FloatingActionButton(
-                  onPressed: _createWorkspace,
-                  child: const Icon(Icons.add),
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FloatingActionButton.small(
+                      heroTag: 'import',
+                      onPressed: _showImportDialog, // coverage:ignore-line
+                      tooltip: 'Import Workspace',
+                      child: const Icon(Icons.upload),
+                    ),
+                    const SizedBox(height: 12),
+                    FloatingActionButton(
+                      heroTag: 'create',
+                      onPressed: _createWorkspace,
+                      tooltip: 'New Workspace',
+                      child: const Icon(Icons.add),
+                    ),
+                  ],
                 )
               : null,
       body: _buildWorkspacesList(),
