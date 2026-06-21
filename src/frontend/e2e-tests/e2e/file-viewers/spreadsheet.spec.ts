@@ -114,7 +114,7 @@ test.describe("file-viewers/spreadsheet", () => {
       // rather than the browser "download" event, which Flutter web's blob-
       // anchor download does not reliably surface to Playwright in CI.
       const dl = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
           "work/dl.xlsx",
         )}`,
         { headers },
@@ -155,7 +155,7 @@ test.describe("file-viewers/spreadsheet", () => {
       await expect(page).toHaveTitle(/^Klangk - /, { timeout: 30_000 });
 
       const after = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
           "work/nav.xlsx",
         )}`,
         { headers },

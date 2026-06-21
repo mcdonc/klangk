@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, Request
 
 from . import auth, model
+from .util import API_PREFIX
 from .model import (
     ACTION_ALLOW,
     PRINCIPAL_GROUP,
@@ -77,7 +78,11 @@ def _request_to_resource(request: Request) -> str:
       /admin/invitations   -> /admin/invitations
       /admin/groups        -> /admin/groups
     """
-    parts = request.url.path.strip("/").split("/")
+    # Strip the versioned API prefix to get the logical resource path.
+    path = request.url.path
+    if path.startswith(API_PREFIX + "/"):
+        path = path[len(API_PREFIX) :]
+    parts = path.strip("/").split("/")
     if not parts or parts[0] == "":
         return "/"
 

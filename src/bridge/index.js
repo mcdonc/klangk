@@ -52,7 +52,7 @@ function getConfig() {
     );
   }
   return {
-    bridgeUrl: `${bridgeUrl}/api/browser-delegate`,
+    bridgeUrl: `${bridgeUrl}/api/v1/browser-delegate`,
     browserId,
     workspaceToken: workspaceToken || null,
   };

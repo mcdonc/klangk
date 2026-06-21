@@ -42,7 +42,7 @@ test.describe("file-viewers/deep-link", () => {
 
       // Backing content exists via API.
       const api = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/readme.md`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/readme.md`,
         { headers },
       );
       expect((await api.json()).content).toContain("# Deep Link Heading");

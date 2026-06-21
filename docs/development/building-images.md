@@ -11,7 +11,7 @@ This builds everything from source: Flutter web, workspace image
 and a version tag derived from git state (release tag, branch name,
 or commit). Only the version tag is pushed to GHCR — `:latest` is
 never pushed to the registry. The version is baked into
-`/home/klangk/version.json` and served at `GET /version`.
+`/home/klangk/version.json` and served at `GET /api/v1/version`.
 
 ## Custom Image with Plugins
 

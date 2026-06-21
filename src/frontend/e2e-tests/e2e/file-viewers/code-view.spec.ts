@@ -34,7 +34,7 @@ test.describe("file-viewers/code-view", () => {
     try {
       await seedFile(request, workspaceId, "work/main.dart", DART, headers);
       const api = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/main.dart`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/main.dart`,
         { headers },
       );
       expect((await api.json()).content).toContain("void main()");
@@ -70,7 +70,7 @@ test.describe("file-viewers/code-view", () => {
       // routes here; Flutter web's blob download doesn't surface a Playwright
       // "download" event in CI).
       const dl = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
           "work/dl.dart",
         )}`,
         { headers },

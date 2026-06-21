@@ -30,7 +30,10 @@ from klangk_backend import (
 async def app(db):
     """Create a minimal FastAPI app with just the API router."""
     app = FastAPI()
-    app.include_router(api.router)
+    from klangk_backend.util import API_PREFIX
+
+    app.include_router(api.root_router)
+    app.include_router(api.router, prefix=API_PREFIX)
     return app
 
 
@@ -43,7 +46,7 @@ async def client(app):
 
 async def _auth_headers(client):
     resp = await client.post(
-        "/auth/login",
+        "/api/v1/auth/login",
         json={"email": "testuser@example.com", "password": "testpass"},
     )
     token = resp.json()["access_token"]
@@ -64,19 +67,19 @@ class TestVerifyWorkspaceToken:
     async def test_valid_workspace_token(self, client):
         token = auth.create_workspace_token("ws-123")
         resp = await client.get(
-            "/auth/verify-workspace-token",
+            "/api/v1/auth/verify-workspace-token",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
         assert resp.json()["workspace_id"] == "ws-123"
 
     async def test_missing_auth_header(self, client):
-        resp = await client.get("/auth/verify-workspace-token")
+        resp = await client.get("/api/v1/auth/verify-workspace-token")
         assert resp.status_code == 401
 
     async def test_invalid_token(self, client):
         resp = await client.get(
-            "/auth/verify-workspace-token",
+            "/api/v1/auth/verify-workspace-token",
             headers={"Authorization": "Bearer garbage"},
         )
         assert resp.status_code == 401
@@ -84,7 +87,7 @@ class TestVerifyWorkspaceToken:
     async def test_user_jwt_rejected(self, client):
         user_token = auth.create_token("user-1", "u@test.com")
         resp = await client.get(
-            "/auth/verify-workspace-token",
+            "/api/v1/auth/verify-workspace-token",
             headers={"Authorization": f"Bearer {user_token}"},
         )
         assert resp.status_code == 401
@@ -98,7 +101,7 @@ class TestVerifyWorkspaceToken:
         payload = {"sub": "ws-123", "purpose": "workspace", "exp": expired}
         token = jwt.encode(payload, auth.SECRET_KEY, algorithm=auth.ALGORITHM)
         resp = await client.get(
-            "/auth/verify-workspace-token",
+            "/api/v1/auth/verify-workspace-token",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 401
@@ -106,7 +109,7 @@ class TestVerifyWorkspaceToken:
 
     async def test_invalid_workspace_token_detail(self, client):
         resp = await client.get(
-            "/auth/verify-workspace-token",
+            "/api/v1/auth/verify-workspace-token",
             headers={"Authorization": "Bearer garbage"},
         )
         assert resp.status_code == 401
@@ -118,7 +121,7 @@ class TestWorkspaceChat:
         workspace = await model.create_workspace(user["id"], "chat-ws")
         token = auth.create_workspace_token(workspace["id"])
         resp = await client.post(
-            "/api/workspace/post-chat-message",
+            "/api/v1/workspaces/post-chat-message",
             headers={"Authorization": f"Bearer {token}"},
             json={"message": "hello from agent"},
         )
@@ -136,7 +139,7 @@ class TestWorkspaceChat:
         session.subscribers.add(mock_sock)
 
         await client.post(
-            "/api/workspace/post-chat-message",
+            "/api/v1/workspaces/post-chat-message",
             headers={"Authorization": f"Bearer {token}"},
             json={"message": "broadcast test"},
         )
@@ -150,13 +153,13 @@ class TestWorkspaceChat:
 
     async def test_missing_auth(self, client):
         resp = await client.post(
-            "/api/workspace/post-chat-message", json={"message": "hi"}
+            "/api/v1/workspaces/post-chat-message", json={"message": "hi"}
         )
         assert resp.status_code == 401
 
     async def test_invalid_token(self, client):
         resp = await client.post(
-            "/api/workspace/post-chat-message",
+            "/api/v1/workspaces/post-chat-message",
             headers={"Authorization": "Bearer garbage"},
             json={"message": "hi"},
         )
@@ -165,7 +168,7 @@ class TestWorkspaceChat:
     async def test_workspace_not_found(self, client):
         token = auth.create_workspace_token("nonexistent-ws")
         resp = await client.post(
-            "/api/workspace/post-chat-message",
+            "/api/v1/workspaces/post-chat-message",
             headers={"Authorization": f"Bearer {token}"},
             json={"message": "hi"},
         )
@@ -175,7 +178,7 @@ class TestWorkspaceChat:
         workspace = await model.create_workspace(user["id"], "empty-ws")
         token = auth.create_workspace_token(workspace["id"])
         resp = await client.post(
-            "/api/workspace/post-chat-message",
+            "/api/v1/workspaces/post-chat-message",
             headers={"Authorization": f"Bearer {token}"},
             json={"message": "   "},
         )
@@ -191,7 +194,7 @@ class TestVersion:
             ' "built_at": "2026-01-01T00:00:00Z"}'
         )
         monkeypatch.setenv("KLANGK_VERSION_FILE", str(version_file))
-        resp = await client.get("/version")
+        resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         data = resp.json()
         assert data["version"] == "2026.01.01+abc1234"
@@ -201,7 +204,7 @@ class TestVersion:
 
     async def test_version_no_file(self, client, monkeypatch):
         monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
-        resp = await client.get("/version")
+        resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         data = resp.json()
         assert data["version"] == "dev"
@@ -222,7 +225,7 @@ class TestVersion:
         monkeypatch.setattr(
             "klangk_backend.plugins._PLUGINS_DIR", str(tmp_path / "plugins")
         )
-        resp = await client.get("/version")
+        resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         plugins = resp.json()["plugins"]
         assert len(plugins) == 1
@@ -236,7 +239,7 @@ class TestVersion:
 
 class TestConfig:
     async def test_get_config(self, client):
-        resp = await client.get("/api/config")
+        resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
         assert "login_banner_title" in data
@@ -259,7 +262,7 @@ class TestConfig:
         monkeypatch.setattr(
             plugins, "_values", {"MY_PLUGIN_VAR": "test-value"}
         )
-        resp = await client.get("/api/config")
+        resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["my_plugin_var"] == "test-value"
@@ -267,7 +270,7 @@ class TestConfig:
     async def test_get_config_banner_fields(self, client, monkeypatch):
         monkeypatch.setattr(api, "LOGIN_BANNER_TITLE", "Notice")
         monkeypatch.setattr(api, "LOGIN_BANNER", "You must accept terms.")
-        resp = await client.get("/api/config")
+        resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["login_banner_title"] == "Notice"
@@ -280,7 +283,7 @@ class TestConfig:
 class TestAuthRoutes:
     async def test_register(self, client, admin_user):
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         token = login_resp.json()["access_token"]
@@ -290,7 +293,7 @@ class TestAuthRoutes:
             new_callable=AsyncMock,
         ):
             resp = await client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"email": "new@example.com", "password": "newpass"},
                 headers={"Authorization": f"Bearer {token}"},
             )
@@ -303,7 +306,7 @@ class TestAuthRoutes:
         """In test mode, unauthenticated registration is allowed and auto-verified."""
         monkeypatch.setenv("KLANGK_TEST_MODE", "1")
         resp = await client.post(
-            "/auth/register",
+            "/api/v1/auth/register",
             json={"email": "new@example.com", "password": "newpass"},
         )
         assert resp.status_code == 200
@@ -317,7 +320,7 @@ class TestAuthRoutes:
             new_callable=AsyncMock,
         ):
             resp = await client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"email": "new@example.com", "password": "newpass"},
             )
         assert resp.status_code == 200
@@ -332,7 +335,7 @@ class TestAuthRoutes:
             side_effect=RuntimeError("sendmail not found"),
         ):
             resp = await client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"email": "fail@example.com", "password": "newpass"},
             )
         assert resp.status_code == 503
@@ -342,19 +345,19 @@ class TestAuthRoutes:
 
     async def test_register_short_password(self, client, db):
         resp = await client.post(
-            "/auth/register",
+            "/api/v1/auth/register",
             json={"email": "short@example.com", "password": "abc"},
         )
         assert resp.status_code == 400
 
     async def test_register_duplicate(self, client, admin_user):
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         token = login_resp.json()["access_token"]
         resp = await client.post(
-            "/auth/register",
+            "/api/v1/auth/register",
             json={"email": "testadmin@example.com", "password": "pass"},
             headers={"Authorization": f"Bearer {token}"},
         )
@@ -371,30 +374,30 @@ class TestAuthRoutes:
             "unverified@example.com", password_hash, verified=False
         )
         token = auth_mod.create_verification_token(user["id"])
-        resp = await client.get(f"/auth/verify?token={token}")
+        resp = await client.get(f"/api/v1/auth/verify?token={token}")
         assert resp.status_code == 200
         assert resp.json()["status"] == "verified"
         # User can now log in
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "unverified@example.com", "password": "pass"},
         )
         assert login_resp.status_code == 200
 
     async def test_verify_invalid_token(self, client, db):
-        resp = await client.get("/auth/verify?token=garbage")
+        resp = await client.get("/api/v1/auth/verify?token=garbage")
         assert resp.status_code == 400
 
     async def test_verify_nonexistent_user(self, client, db):
         from klangk_backend import auth as auth_mod
 
         token = auth_mod.create_verification_token("nonexistent-id")
-        resp = await client.get(f"/auth/verify?token={token}")
+        resp = await client.get(f"/api/v1/auth/verify?token={token}")
         assert resp.status_code == 404
 
     async def test_login(self, client, user):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         assert resp.status_code == 200
@@ -402,7 +405,7 @@ class TestAuthRoutes:
 
     async def test_login_bad_password(self, client, user):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "wrong"},
         )
         assert resp.status_code == 401
@@ -414,17 +417,17 @@ class TestAuthRoutes:
             "stop_user_containers",
             new_callable=AsyncMock,
         ):
-            resp = await client.post("/auth/logout", headers=headers)
+            resp = await client.post("/api/v1/auth/logout", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
     async def test_logout_no_auth(self, client):
-        resp = await client.post("/auth/logout")
+        resp = await client.post("/api/v1/auth/logout")
         assert resp.status_code == 401
 
     async def test_refresh(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.post("/auth/refresh", headers=headers)
+        resp = await client.post("/api/v1/auth/refresh", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert "access_token" in data
@@ -432,7 +435,7 @@ class TestAuthRoutes:
         assert data["access_token"] != headers["Authorization"].split(" ")[1]
 
     async def test_refresh_no_auth(self, client):
-        resp = await client.post("/auth/refresh")
+        resp = await client.post("/api/v1/auth/refresh")
         assert resp.status_code == 401
 
 
@@ -454,7 +457,7 @@ class TestResendVerification:
             new_callable=AsyncMock,
         ) as mock_send:
             resp = await client.post(
-                "/auth/resend-verification",
+                "/api/v1/auth/resend-verification",
                 json={
                     "email": "unverified@example.com",
                     "password": "testpass",
@@ -467,7 +470,7 @@ class TestResendVerification:
     async def test_resend_wrong_password(self, client, db):
         await self._create_unverified_user()
         resp = await client.post(
-            "/auth/resend-verification",
+            "/api/v1/auth/resend-verification",
             json={
                 "email": "unverified@example.com",
                 "password": "wrong",
@@ -477,7 +480,7 @@ class TestResendVerification:
 
     async def test_resend_nonexistent_user(self, client, db):
         resp = await client.post(
-            "/auth/resend-verification",
+            "/api/v1/auth/resend-verification",
             json={
                 "email": "nobody@example.com",
                 "password": "pass",
@@ -487,7 +490,7 @@ class TestResendVerification:
 
     async def test_resend_already_verified(self, client, admin_user):
         resp = await client.post(
-            "/auth/resend-verification",
+            "/api/v1/auth/resend-verification",
             json={
                 "email": "testadmin@example.com",
                 "password": "testpass",
@@ -506,7 +509,7 @@ class TestResendVerification:
             new_callable=AsyncMock,
         ):
             resp1 = await client.post(
-                "/auth/resend-verification",
+                "/api/v1/auth/resend-verification",
                 json={
                     "email": "unverified@example.com",
                     "password": "testpass",
@@ -514,7 +517,7 @@ class TestResendVerification:
             )
             assert resp1.status_code == 200
             resp2 = await client.post(
-                "/auth/resend-verification",
+                "/api/v1/auth/resend-verification",
                 json={
                     "email": "unverified@example.com",
                     "password": "testpass",
@@ -539,7 +542,7 @@ class TestForgotPassword:
             new_callable=AsyncMock,
         ) as mock_send:
             resp = await client.post(
-                "/auth/forgot-password",
+                "/api/v1/auth/forgot-password",
                 json={"email": "forgot@example.com"},
             )
         assert resp.status_code == 200
@@ -549,7 +552,7 @@ class TestForgotPassword:
 
     async def test_forgot_unknown_email_still_returns_sent(self, client, db):
         resp = await client.post(
-            "/auth/forgot-password",
+            "/api/v1/auth/forgot-password",
             json={"email": "nobody@example.com"},
         )
         assert resp.status_code == 200
@@ -563,11 +566,11 @@ class TestForgotPassword:
             new_callable=AsyncMock,
         ):
             await client.post(
-                "/auth/forgot-password",
+                "/api/v1/auth/forgot-password",
                 json={"email": "forgot@example.com"},
             )
             resp2 = await client.post(
-                "/auth/forgot-password",
+                "/api/v1/auth/forgot-password",
                 json={"email": "forgot@example.com"},
             )
         assert resp2.status_code == 429
@@ -585,7 +588,7 @@ class TestResetPassword:
         user = await self._create_user()
         token = auth.create_password_reset_token(user["id"])
         resp = await client.post(
-            "/auth/reset-password",
+            "/api/v1/auth/reset-password",
             json={"token": token, "password": "newpass"},
         )
         assert resp.status_code == 200
@@ -594,7 +597,7 @@ class TestResetPassword:
         assert "access_token" in data
         # Can login with new password
         resp2 = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={
                 "email": "reset@example.com",
                 "password": "newpass",
@@ -604,7 +607,7 @@ class TestResetPassword:
 
     async def test_reset_invalid_token(self, client, db):
         resp = await client.post(
-            "/auth/reset-password",
+            "/api/v1/auth/reset-password",
             json={"token": "garbage", "password": "newpass"},
         )
         assert resp.status_code == 400
@@ -613,7 +616,7 @@ class TestResetPassword:
         user = await self._create_user()
         token = auth.create_password_reset_token(user["id"])
         resp = await client.post(
-            "/auth/reset-password",
+            "/api/v1/auth/reset-password",
             json={"token": token, "password": "ab"},
         )
         assert resp.status_code == 400
@@ -622,7 +625,7 @@ class TestResetPassword:
     async def test_reset_agent_user_rejected(self, client, db):
         token = auth.create_password_reset_token(model.AGENT_USER_ID)
         resp = await client.post(
-            "/auth/reset-password",
+            "/api/v1/auth/reset-password",
             json={"token": token, "password": "newpass"},
         )
         assert resp.status_code == 400
@@ -633,7 +636,7 @@ class TestChangePassword:
     async def test_change_password_success(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-password",
+            "/api/v1/auth/change-password",
             json={
                 "current_password": "testpass",
                 "new_password": "newpass",
@@ -644,7 +647,7 @@ class TestChangePassword:
         assert resp.json()["status"] == "updated"
         # Can login with new password
         resp2 = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={
                 "email": "testuser@example.com",
                 "password": "newpass",
@@ -655,7 +658,7 @@ class TestChangePassword:
     async def test_change_password_wrong_current(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-password",
+            "/api/v1/auth/change-password",
             json={
                 "current_password": "wrongpass",
                 "new_password": "newpass",
@@ -667,7 +670,7 @@ class TestChangePassword:
     async def test_change_password_too_short(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-password",
+            "/api/v1/auth/change-password",
             json={
                 "current_password": "testpass",
                 "new_password": "ab",
@@ -678,7 +681,7 @@ class TestChangePassword:
 
     async def test_change_password_no_auth(self, client, db):
         resp = await client.post(
-            "/auth/change-password",
+            "/api/v1/auth/change-password",
             json={
                 "current_password": "testpass",
                 "new_password": "newpass",
@@ -696,7 +699,7 @@ class TestChangeEmail:
             new_callable=AsyncMock,
         ) as mock_send:
             resp = await client.post(
-                "/auth/change-email",
+                "/api/v1/auth/change-email",
                 json={
                     "email": "new@example.com",
                     "password": "testpass",
@@ -716,7 +719,7 @@ class TestChangeEmail:
     async def test_change_email_wrong_password(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-email",
+            "/api/v1/auth/change-email",
             json={
                 "email": "new@example.com",
                 "password": "wrongpass",
@@ -733,7 +736,7 @@ class TestChangeEmail:
         )
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-email",
+            "/api/v1/auth/change-email",
             json={
                 "email": "other@example.com",
                 "password": "testpass",
@@ -745,7 +748,7 @@ class TestChangeEmail:
     async def test_change_email_invalid_format(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-email",
+            "/api/v1/auth/change-email",
             json={
                 "email": "not-an-email",
                 "password": "testpass",
@@ -756,7 +759,7 @@ class TestChangeEmail:
 
     async def test_change_email_no_auth(self, client, db):
         resp = await client.post(
-            "/auth/change-email",
+            "/api/v1/auth/change-email",
             json={
                 "email": "new@example.com",
                 "password": "testpass",
@@ -771,14 +774,14 @@ class TestChangeEmail:
 class TestWorkspaceRoutes:
     async def test_list_empty(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/workspaces", headers=headers)
+        resp = await client.get("/api/v1/workspaces", headers=headers)
         assert resp.status_code == 200
         assert resp.json() == []
 
     async def test_create_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "test-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "test-ws"}
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -787,9 +790,11 @@ class TestWorkspaceRoutes:
 
     async def test_create_duplicate(self, client, user):
         headers = await _auth_headers(client)
-        await client.post("/workspaces", headers=headers, json={"name": "dup"})
+        await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "dup"}
+        )
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "dup"}
+            "/api/v1/workspaces", headers=headers, json={"name": "dup"}
         )
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
@@ -797,7 +802,7 @@ class TestWorkspaceRoutes:
     async def test_create_with_disallowed_image(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             headers=headers,
             json={"name": "bad-img", "image": "evil:latest"},
         )
@@ -807,7 +812,7 @@ class TestWorkspaceRoutes:
     async def test_create_with_invalid_mount(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             headers=headers,
             json={"name": "bad-mount", "mounts": ["not-valid"]},
         )
@@ -817,7 +822,7 @@ class TestWorkspaceRoutes:
     async def test_create_with_valid_mount(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             headers=headers,
             json={"name": "good-mount", "mounts": ["/tmp:/mnt/tmp"]},
         )
@@ -825,7 +830,7 @@ class TestWorkspaceRoutes:
 
     async def test_list_images(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/images", headers=headers)
+        resp = await client.get("/api/v1/images", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert "default" in data
@@ -835,7 +840,7 @@ class TestWorkspaceRoutes:
     async def test_delete_workspace(self, client, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "doomed"}
+            "/api/v1/workspaces", headers=headers, json={"name": "doomed"}
         )
         ws_id = create_resp.json()["id"]
 
@@ -844,13 +849,17 @@ class TestWorkspaceRoutes:
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ):
-            resp = await client.delete(f"/workspaces/{ws_id}", headers=headers)
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}", headers=headers
+            )
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
 
     async def test_delete_no_permission(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.delete("/workspaces/fake-id", headers=headers)
+        resp = await client.delete(
+            "/api/v1/workspaces/fake-id", headers=headers
+        )
         assert resp.status_code == 403
 
     async def test_delete_not_found(self, client, user):
@@ -865,13 +874,17 @@ class TestWorkspaceRoutes:
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
-        resp = await client.delete(f"/workspaces/{fake_id}", headers=headers)
+        resp = await client.delete(
+            f"/api/v1/workspaces/{fake_id}", headers=headers
+        )
         assert resp.status_code == 404
 
     async def test_delete_workspace_with_container(self, client, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "has-container"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "has-container"},
         )
         ws_id = create_resp.json()["id"]
         # Simulate a running container
@@ -882,14 +895,18 @@ class TestWorkspaceRoutes:
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ) as mock_rm:
-            resp = await client.delete(f"/workspaces/{ws_id}", headers=headers)
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}", headers=headers
+            )
         assert resp.status_code == 200
         mock_rm.assert_awaited_once_with("fake-container-id")
 
     async def test_delete_workspace_cleans_up_groups(self, client, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "cleanup-test"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "cleanup-test"},
         )
         ws_id = create_resp.json()["id"]
 
@@ -907,7 +924,9 @@ class TestWorkspaceRoutes:
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ):
-            resp = await client.delete(f"/workspaces/{ws_id}", headers=headers)
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}", headers=headers
+            )
         assert resp.status_code == 200
 
         # Role groups should be gone
@@ -922,7 +941,7 @@ class TestWorkspaceRoutes:
     async def test_restart_workspace(self, client, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "restart-me"}
+            "/api/v1/workspaces", headers=headers, json={"name": "restart-me"}
         )
         ws_id = create_resp.json()["id"]
 
@@ -935,7 +954,7 @@ class TestWorkspaceRoutes:
             new_callable=AsyncMock,
         ) as mock_stop:
             resp = await client.post(
-                f"/workspaces/{ws_id}/restart", headers=headers
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "restarted"
@@ -956,18 +975,18 @@ class TestWorkspaceRoutes:
             user_id=user["id"],
         )
         resp = await client.post(
-            f"/workspaces/{fake_id}/restart", headers=headers
+            f"/api/v1/workspaces/{fake_id}/restart", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_list_no_auth(self, client):
-        resp = await client.get("/workspaces")
+        resp = await client.get("/api/v1/workspaces")
         assert resp.status_code == 401
 
     async def test_create_with_default_command(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             json={"name": "cmd-ws", "default_command": "pi"},
             headers=headers,
         )
@@ -977,13 +996,13 @@ class TestWorkspaceRoutes:
     async def test_update_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             json={"name": "upd-ws"},
             headers=headers,
         )
         ws_id = resp.json()["id"]
         resp = await client.put(
-            f"/workspaces/{ws_id}",
+            f"/api/v1/workspaces/{ws_id}",
             json={
                 "name": "renamed",
                 "default_command": "pi",
@@ -991,7 +1010,7 @@ class TestWorkspaceRoutes:
             headers=headers,
         )
         assert resp.status_code == 200
-        resp = await client.get("/workspaces", headers=headers)
+        resp = await client.get("/api/v1/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["name"] == "renamed"
         assert match[0]["default_command"] == "pi"
@@ -999,7 +1018,7 @@ class TestWorkspaceRoutes:
     async def test_update_workspace_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.put(
-            "/workspaces/nonexistent",
+            "/api/v1/workspaces/nonexistent",
             json={"default_command": "pi"},
             headers=headers,
         )
@@ -1018,7 +1037,7 @@ class TestWorkspaceRoutes:
             user_id=user["id"],
         )
         resp = await client.put(
-            f"/workspaces/{fake_id}",
+            f"/api/v1/workspaces/{fake_id}",
             json={"default_command": "pi"},
             headers=headers,
         )
@@ -1030,7 +1049,7 @@ class TestWorkspaceRoutes:
         """Workspace deleted between get and update returns 404."""
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "race-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "race-ws"}
         )
         ws_id = resp.json()["id"]
         original_update = model.update_workspace
@@ -1041,7 +1060,7 @@ class TestWorkspaceRoutes:
 
         monkeypatch.setattr(model, "update_workspace", _delete_then_update)
         resp = await client.put(
-            f"/workspaces/{ws_id}",
+            f"/api/v1/workspaces/{ws_id}",
             json={"default_command": "pi"},
             headers=headers,
         )
@@ -1050,13 +1069,13 @@ class TestWorkspaceRoutes:
     async def test_update_workspace_bad_image(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             json={"name": "img-upd"},
             headers=headers,
         )
         ws_id = resp.json()["id"]
         resp = await client.put(
-            f"/workspaces/{ws_id}",
+            f"/api/v1/workspaces/{ws_id}",
             json={"image": "evil:latest"},
             headers=headers,
         )
@@ -1066,13 +1085,13 @@ class TestWorkspaceRoutes:
     async def test_update_workspace_no_fields(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             json={"name": "empty-upd"},
             headers=headers,
         )
         ws_id = resp.json()["id"]
         resp = await client.put(
-            f"/workspaces/{ws_id}",
+            f"/api/v1/workspaces/{ws_id}",
             json={},
             headers=headers,
         )
@@ -1081,13 +1100,13 @@ class TestWorkspaceRoutes:
     async def test_update_workspace_invalid_mount(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             json={"name": "mnt-upd"},
             headers=headers,
         )
         ws_id = resp.json()["id"]
         resp = await client.put(
-            f"/workspaces/{ws_id}",
+            f"/api/v1/workspaces/{ws_id}",
             json={"mounts": ["bad"]},
             headers=headers,
         )
@@ -1097,7 +1116,7 @@ class TestWorkspaceRoutes:
     async def test_duplicate_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             json={
                 "name": "src-ws",
                 "image": "klangk-workspace",
@@ -1109,7 +1128,7 @@ class TestWorkspaceRoutes:
         )
         ws_id = resp.json()["id"]
         resp = await client.post(
-            f"/workspaces/{ws_id}/duplicate",
+            f"/api/v1/workspaces/{ws_id}/duplicate",
             json={"name": "dup-ws"},
             headers=headers,
         )
@@ -1125,7 +1144,7 @@ class TestWorkspaceRoutes:
     async def test_duplicate_workspace_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces/nonexistent/duplicate",
+            "/api/v1/workspaces/nonexistent/duplicate",
             json={"name": "dup"},
             headers=headers,
         )
@@ -1144,7 +1163,7 @@ class TestWorkspaceRoutes:
             user_id=user["id"],
         )
         resp = await client.post(
-            f"/workspaces/{fake_id}/duplicate",
+            f"/api/v1/workspaces/{fake_id}/duplicate",
             json={"name": "dup"},
             headers=headers,
         )
@@ -1153,19 +1172,19 @@ class TestWorkspaceRoutes:
     async def test_duplicate_workspace_name_conflict(self, client, user):
         headers = await _auth_headers(client)
         await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             json={"name": "orig"},
             headers=headers,
         )
         ws_id = (
             await client.post(
-                "/workspaces",
+                "/api/v1/workspaces",
                 json={"name": "taken"},
                 headers=headers,
             )
         ).json()["id"]
         resp = await client.post(
-            f"/workspaces/{ws_id}/duplicate",
+            f"/api/v1/workspaces/{ws_id}/duplicate",
             json={"name": "orig"},
             headers=headers,
         )
@@ -1185,7 +1204,7 @@ class TestWorkspaceSharingRoutes:
 
     async def _other_headers(self, client):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "other@example.com", "password": "otherpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
@@ -1196,17 +1215,19 @@ class TestWorkspaceSharingRoutes:
         other_headers = await self._other_headers(client)
         # Create workspace as owner
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "shared-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "shared-ws"}
         )
         ws_id = resp.json()["id"]
         # Share with other
         await client.post(
-            f"/workspaces/{ws_id}/members",
+            f"/api/v1/workspaces/{ws_id}/members",
             headers=headers,
             json={"email": "other@example.com"},
         )
         # Other user sees it in shared list
-        resp = await client.get("/workspaces/shared", headers=other_headers)
+        resp = await client.get(
+            "/api/v1/workspaces/shared", headers=other_headers
+        )
         assert resp.status_code == 200
         shared = resp.json()
         assert len(shared) >= 1
@@ -1216,11 +1237,11 @@ class TestWorkspaceSharingRoutes:
     async def test_get_members_empty(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "share-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
         )
         ws_id = resp.json()["id"]
         resp = await client.get(
-            f"/workspaces/{ws_id}/members", headers=headers
+            f"/api/v1/workspaces/{ws_id}/members", headers=headers
         )
         assert resp.status_code == 200
         assert resp.json() == []
@@ -1229,11 +1250,11 @@ class TestWorkspaceSharingRoutes:
         headers = await _auth_headers(client)
         other = await self._create_other_user()
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "share-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
         )
         ws_id = resp.json()["id"]
         resp = await client.post(
-            f"/workspaces/{ws_id}/members",
+            f"/api/v1/workspaces/{ws_id}/members",
             headers=headers,
             json={"email": "other@example.com"},
         )
@@ -1242,7 +1263,7 @@ class TestWorkspaceSharingRoutes:
         assert resp.json()["user_id"] == other["id"]
         # Verify member is listed
         resp = await client.get(
-            f"/workspaces/{ws_id}/members", headers=headers
+            f"/api/v1/workspaces/{ws_id}/members", headers=headers
         )
         assert len(resp.json()) == 1
         assert resp.json()[0]["email"] == "other@example.com"
@@ -1250,11 +1271,11 @@ class TestWorkspaceSharingRoutes:
     async def test_add_member_not_found(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "share-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
         )
         ws_id = resp.json()["id"]
         resp = await client.post(
-            f"/workspaces/{ws_id}/members",
+            f"/api/v1/workspaces/{ws_id}/members",
             headers=headers,
             json={"email": "nobody@example.com"},
         )
@@ -1264,11 +1285,11 @@ class TestWorkspaceSharingRoutes:
     async def test_add_member_self(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "share-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
         )
         ws_id = resp.json()["id"]
         resp = await client.post(
-            f"/workspaces/{ws_id}/members",
+            f"/api/v1/workspaces/{ws_id}/members",
             headers=headers,
             json={"email": "testuser@example.com"},
         )
@@ -1279,22 +1300,23 @@ class TestWorkspaceSharingRoutes:
         headers = await _auth_headers(client)
         other = await self._create_other_user()
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "share-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
         )
         ws_id = resp.json()["id"]
         await client.post(
-            f"/workspaces/{ws_id}/members",
+            f"/api/v1/workspaces/{ws_id}/members",
             headers=headers,
             json={"email": "other@example.com"},
         )
         resp = await client.delete(
-            f"/workspaces/{ws_id}/members/{other['id']}", headers=headers
+            f"/api/v1/workspaces/{ws_id}/members/{other['id']}",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "removed"
         # Verify member is gone
         resp = await client.get(
-            f"/workspaces/{ws_id}/members", headers=headers
+            f"/api/v1/workspaces/{ws_id}/members", headers=headers
         )
         assert resp.json() == []
 
@@ -1303,30 +1325,31 @@ class TestWorkspaceSharingRoutes:
         other = await self._create_other_user()
         other_headers = await self._other_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "share-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
         )
         ws_id = resp.json()["id"]
         # Share with other (gives view/terminal/files but not share)
         await client.post(
-            f"/workspaces/{ws_id}/members",
+            f"/api/v1/workspaces/{ws_id}/members",
             headers=headers,
             json={"email": "other@example.com"},
         )
         # Other tries to list members — no share permission
         resp = await client.get(
-            f"/workspaces/{ws_id}/members", headers=other_headers
+            f"/api/v1/workspaces/{ws_id}/members", headers=other_headers
         )
         assert resp.status_code == 403
         # Other tries to add a member
         resp = await client.post(
-            f"/workspaces/{ws_id}/members",
+            f"/api/v1/workspaces/{ws_id}/members",
             headers=other_headers,
             json={"email": "testuser@example.com"},
         )
         assert resp.status_code == 403
         # Other tries to remove a member
         resp = await client.delete(
-            f"/workspaces/{ws_id}/members/{other['id']}", headers=other_headers
+            f"/api/v1/workspaces/{ws_id}/members/{other['id']}",
+            headers=other_headers,
         )
         assert resp.status_code == 403
 
@@ -1337,7 +1360,9 @@ class TestWorkspaceSharingRoutes:
         headers = await _auth_headers(client)
         await self._create_other_user()
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "broadcast-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "broadcast-ws"},
         )
         ws_id = resp.json()["id"]
         mock_sock = MagicMock()
@@ -1347,7 +1372,7 @@ class TestWorkspaceSharingRoutes:
         wshandler.state.sessions[ws_id] = session
         try:
             resp = await client.post(
-                f"/workspaces/{ws_id}/members",
+                f"/api/v1/workspaces/{ws_id}/members",
                 headers=headers,
                 json={"email": "other@example.com"},
             )
@@ -1366,14 +1391,14 @@ class TestWorkspaceSharingRoutes:
         """User without share permission gets 403 on nonexistent workspace."""
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/workspaces/nonexistent/members", headers=headers
+            "/api/v1/workspaces/nonexistent/members", headers=headers
         )
         assert resp.status_code == 403
 
     async def test_add_member_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces/nonexistent/members",
+            "/api/v1/workspaces/nonexistent/members",
             headers=headers,
             json={"email": "other@example.com"},
         )
@@ -1382,7 +1407,7 @@ class TestWorkspaceSharingRoutes:
     async def test_remove_member_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.delete(
-            "/workspaces/nonexistent/members/some-id", headers=headers
+            "/api/v1/workspaces/nonexistent/members/some-id", headers=headers
         )
         assert resp.status_code == 403
 
@@ -1391,10 +1416,12 @@ class TestWorkspaceACL:
     async def test_get_workspace_acl(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "acl-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "acl-ws"}
         )
         ws_id = resp.json()["id"]
-        resp = await client.get(f"/workspaces/{ws_id}/acl", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/acl", headers=headers
+        )
         assert resp.status_code == 200
         entries = resp.json()
         # Owner has * ACE
@@ -1406,7 +1433,9 @@ class TestWorkspaceACL:
 
     async def test_get_workspace_acl_no_permission(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/workspaces/nonexistent/acl", headers=headers)
+        resp = await client.get(
+            "/api/v1/workspaces/nonexistent/acl", headers=headers
+        )
         assert resp.status_code == 403
 
     async def test_get_workspace_acl_with_group(
@@ -1415,7 +1444,9 @@ class TestWorkspaceACL:
         """ACL endpoint resolves group names."""
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "group-acl-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "group-acl-ws"},
         )
         ws_id = resp.json()["id"]
         # Add a group ACE
@@ -1428,7 +1459,9 @@ class TestWorkspaceACL:
             model.PRINCIPAL_GROUP,
             group_id=group["id"],
         )
-        resp = await client.get(f"/workspaces/{ws_id}/acl", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/acl", headers=headers
+        )
         assert resp.status_code == 200
         entries = resp.json()
         group_entry = next(
@@ -1440,7 +1473,9 @@ class TestWorkspaceACL:
     async def test_replace_workspace_acl(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "replace-acl-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "replace-acl-ws"},
         )
         ws_id = resp.json()["id"]
         # Replace with custom ACL
@@ -1459,7 +1494,7 @@ class TestWorkspaceACL:
             },
         ]
         resp = await client.put(
-            f"/workspaces/{ws_id}/acl",
+            f"/api/v1/workspaces/{ws_id}/acl",
             headers=headers,
             json=new_acl,
         )
@@ -1475,10 +1510,12 @@ class TestWorkspaceRoles:
     async def test_role_groups_created_on_workspace_create(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "roles-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "roles-ws"}
         )
         ws_id = resp.json()["id"]
-        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+        )
         assert resp.status_code == 200
         roles = resp.json()
         role_names = [r["role"] for r in roles]
@@ -1490,10 +1527,14 @@ class TestWorkspaceRoles:
     async def test_creator_in_owners_group(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "owner-role-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "owner-role-ws"},
         )
         ws_id = resp.json()["id"]
-        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+        )
         roles = {r["role"]: r for r in resp.json()}
         owner_members = [m["id"] for m in roles["owners"]["members"]]
         assert user["id"] in owner_members
@@ -1501,19 +1542,21 @@ class TestWorkspaceRoles:
     async def test_add_user_to_role(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "add-role-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "add-role-ws"}
         )
         ws_id = resp.json()["id"]
         # Create a second user
         target = await model.create_user("role-target@test.com", "pass")
         resp = await client.post(
-            f"/workspaces/{ws_id}/roles/spectators",
+            f"/api/v1/workspaces/{ws_id}/roles/spectators",
             headers=headers,
             json={"email": "role-target@test.com"},
         )
         assert resp.status_code == 200
         # Verify user is in the role
-        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+        )
         roles = {r["role"]: r for r in resp.json()}
         member_ids = [m["id"] for m in roles["spectators"]["members"]]
         assert target["id"] in member_ids
@@ -1521,23 +1564,25 @@ class TestWorkspaceRoles:
     async def test_remove_user_from_role(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "rm-role-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "rm-role-ws"}
         )
         ws_id = resp.json()["id"]
         target = await model.create_user("role-rm@test.com", "pass")
         # Add then remove
         await client.post(
-            f"/workspaces/{ws_id}/roles/coders",
+            f"/api/v1/workspaces/{ws_id}/roles/coders",
             headers=headers,
             json={"email": "role-rm@test.com"},
         )
         resp = await client.delete(
-            f"/workspaces/{ws_id}/roles/coders/{target['id']}",
+            f"/api/v1/workspaces/{ws_id}/roles/coders/{target['id']}",
             headers=headers,
         )
         assert resp.status_code == 200
         # Verify removed
-        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+        )
         roles = {r["role"]: r for r in resp.json()}
         member_ids = [m["id"] for m in roles["coders"]["members"]]
         assert target["id"] not in member_ids
@@ -1545,11 +1590,11 @@ class TestWorkspaceRoles:
     async def test_add_to_invalid_role(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "bad-role-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "bad-role-ws"}
         )
         ws_id = resp.json()["id"]
         resp = await client.post(
-            f"/workspaces/{ws_id}/roles/invalid",
+            f"/api/v1/workspaces/{ws_id}/roles/invalid",
             headers=headers,
             json={"email": "x@test.com"},
         )
@@ -1558,11 +1603,13 @@ class TestWorkspaceRoles:
     async def test_add_nonexistent_user_to_role(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "nouser-role-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "nouser-role-ws"},
         )
         ws_id = resp.json()["id"]
         resp = await client.post(
-            f"/workspaces/{ws_id}/roles/spectators",
+            f"/api/v1/workspaces/{ws_id}/roles/spectators",
             headers=headers,
             json={"email": "nobody@nowhere.com"},
         )
@@ -1570,17 +1617,19 @@ class TestWorkspaceRoles:
 
     async def test_roles_on_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/workspaces/fake-id/roles", headers=headers)
+        resp = await client.get(
+            "/api/v1/workspaces/fake-id/roles", headers=headers
+        )
         assert resp.status_code == 403
 
     async def test_remove_from_invalid_role(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "bad-rm-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "bad-rm-ws"}
         )
         ws_id = resp.json()["id"]
         resp = await client.delete(
-            f"/workspaces/{ws_id}/roles/invalid/some-id",
+            f"/api/v1/workspaces/{ws_id}/roles/invalid/some-id",
             headers=headers,
         )
         assert resp.status_code == 400
@@ -1588,7 +1637,7 @@ class TestWorkspaceRoles:
     async def test_remove_from_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.delete(
-            "/workspaces/fake-id/roles/coders/some-id",
+            "/api/v1/workspaces/fake-id/roles/coders/some-id",
             headers=headers,
         )
         assert resp.status_code == 403
@@ -1596,7 +1645,7 @@ class TestWorkspaceRoles:
     async def test_add_to_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces/fake-id/roles/coders",
+            "/api/v1/workspaces/fake-id/roles/coders",
             headers=headers,
             json={"email": "x@test.com"},
         )
@@ -1606,14 +1655,16 @@ class TestWorkspaceRoles:
         """Adding to a role when the group was deleted returns 404."""
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "norole-add-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "norole-add-ws"},
         )
         ws_id = resp.json()["id"]
         # Delete the spectators group to simulate missing role group
         group = await model.get_group_by_name(f"spectators-{ws_id}")
         await model.delete_group(group["id"])
         resp = await client.post(
-            f"/workspaces/{ws_id}/roles/spectators",
+            f"/api/v1/workspaces/{ws_id}/roles/spectators",
             headers=headers,
             json={"email": "x@test.com"},
         )
@@ -1624,13 +1675,15 @@ class TestWorkspaceRoles:
         """Removing from a role when the group was deleted returns 404."""
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "norole-rm-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "norole-rm-ws"},
         )
         ws_id = resp.json()["id"]
         group = await model.get_group_by_name(f"coders-{ws_id}")
         await model.delete_group(group["id"])
         resp = await client.delete(
-            f"/workspaces/{ws_id}/roles/coders/some-id",
+            f"/api/v1/workspaces/{ws_id}/roles/coders/some-id",
             headers=headers,
         )
         assert resp.status_code == 404
@@ -1640,12 +1693,16 @@ class TestWorkspaceRoles:
         """Listing roles skips groups that were deleted."""
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "missing-grp-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "missing-grp-ws"},
         )
         ws_id = resp.json()["id"]
         group = await model.get_group_by_name(f"spectators-{ws_id}")
         await model.delete_group(group["id"])
-        resp = await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+        )
         roles = resp.json()
         role_names = [r["role"] for r in roles]
         assert "spectators" not in role_names
@@ -1656,20 +1713,22 @@ class TestChangeWorkspaceRole:
     async def test_change_role(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "chg-role-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "chg-role-ws"}
         )
         ws_id = resp.json()["id"]
         target = await model.create_user("chg-role@test.com", "pass")
         # Add as coder
         resp = await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "chg-role@test.com", "role": "coders"},
         )
         assert resp.status_code == 200
         # Verify in coders
         roles = (
-            await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+            await client.get(
+                f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+            )
         ).json()
         coders = [
             m["id"]
@@ -1680,14 +1739,16 @@ class TestChangeWorkspaceRole:
         assert target["id"] in coders
         # Change to spectator
         resp = await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "chg-role@test.com", "role": "spectators"},
         )
         assert resp.status_code == 200
         # Verify moved
         roles = (
-            await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+            await client.get(
+                f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+            )
         ).json()
         coders = [
             m["id"]
@@ -1707,24 +1768,26 @@ class TestChangeWorkspaceRole:
     async def test_remove_all_roles(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "rm-all-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "rm-all-ws"}
         )
         ws_id = resp.json()["id"]
         await model.create_user("rm-all@test.com", "pass")
         await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "rm-all@test.com", "role": "coders"},
         )
         # Remove from all
         resp = await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "rm-all@test.com", "role": None},
         )
         assert resp.status_code == 200
         roles = (
-            await client.get(f"/workspaces/{ws_id}/roles", headers=headers)
+            await client.get(
+                f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+            )
         ).json()
         all_members = [m["email"] for r in roles for m in r["members"]]
         assert "rm-all@test.com" not in all_members
@@ -1732,12 +1795,12 @@ class TestChangeWorkspaceRole:
     async def test_invalid_role(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "bad-chg-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "bad-chg-ws"}
         )
         ws_id = resp.json()["id"]
         await model.create_user("bad-chg@test.com", "pass")
         resp = await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "bad-chg@test.com", "role": "invalid"},
         )
@@ -1746,11 +1809,13 @@ class TestChangeWorkspaceRole:
     async def test_nonexistent_user(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "nouser-chg-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "nouser-chg-ws"},
         )
         ws_id = resp.json()["id"]
         resp = await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "nobody@nowhere.com", "role": "coders"},
         )
@@ -1759,7 +1824,9 @@ class TestChangeWorkspaceRole:
     async def test_change_role_missing_group(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "miss-grp-chg-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "miss-grp-chg-ws"},
         )
         ws_id = resp.json()["id"]
         await model.create_user("miss-grp@test.com", "pass")
@@ -1767,7 +1834,7 @@ class TestChangeWorkspaceRole:
         group = await model.get_group_by_name(f"spectators-{ws_id}")
         await model.delete_group(group["id"])
         resp = await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "miss-grp@test.com", "role": "spectators"},
         )
@@ -1779,7 +1846,7 @@ class TestChangeWorkspaceRole:
     ):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             headers=headers,
             json={"name": "skip-miss-ws"},
         )
@@ -1787,7 +1854,7 @@ class TestChangeWorkspaceRole:
         await model.create_user("skip-miss@test.com", "pass")
         # Add user to coders
         await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "skip-miss@test.com", "role": "coders"},
         )
@@ -1796,7 +1863,7 @@ class TestChangeWorkspaceRole:
         await model.delete_group(group["id"])
         # Change role — removal phase should skip missing group
         resp = await client.patch(
-            f"/workspaces/{ws_id}/roles",
+            f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
             json={"email": "skip-miss@test.com", "role": None},
         )
@@ -1807,13 +1874,15 @@ class TestWorkspaceGroupSharing:
     async def test_share_with_group(self, client, admin_user, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "group-share-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "group-share-ws"},
         )
         ws_id = resp.json()["id"]
         group = await model.create_group("devs")
 
         resp = await client.post(
-            f"/workspaces/{ws_id}/groups",
+            f"/api/v1/workspaces/{ws_id}/groups",
             headers=headers,
             json={"group_id": group["id"]},
         )
@@ -1821,7 +1890,9 @@ class TestWorkspaceGroupSharing:
         assert resp.json()["name"] == "devs"
 
         # Group shows up in list
-        resp = await client.get(f"/workspaces/{ws_id}/groups", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/groups", headers=headers
+        )
         assert resp.status_code == 200
         groups = resp.json()
         group_names = [g["name"] for g in groups]
@@ -1830,33 +1901,37 @@ class TestWorkspaceGroupSharing:
     async def test_remove_group(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "group-rm-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "group-rm-ws"}
         )
         ws_id = resp.json()["id"]
         group = await model.create_group("temp-devs")
 
         await client.post(
-            f"/workspaces/{ws_id}/groups",
+            f"/api/v1/workspaces/{ws_id}/groups",
             headers=headers,
             json={"group_id": group["id"]},
         )
         resp = await client.delete(
-            f"/workspaces/{ws_id}/groups/{group['id']}", headers=headers
+            f"/api/v1/workspaces/{ws_id}/groups/{group['id']}", headers=headers
         )
         assert resp.status_code == 200
 
-        resp = await client.get(f"/workspaces/{ws_id}/groups", headers=headers)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/groups", headers=headers
+        )
         group_names = [g["name"] for g in resp.json()]
         assert "temp-devs" not in group_names
 
     async def test_share_with_nonexistent_group(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "bad-group-ws"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "bad-group-ws"},
         )
         ws_id = resp.json()["id"]
         resp = await client.post(
-            f"/workspaces/{ws_id}/groups",
+            f"/api/v1/workspaces/{ws_id}/groups",
             headers=headers,
             json={"group_id": "nonexistent"},
         )
@@ -1865,7 +1940,7 @@ class TestWorkspaceGroupSharing:
     async def test_group_share_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/workspaces/nonexistent/groups", headers=headers
+            "/api/v1/workspaces/nonexistent/groups", headers=headers
         )
         assert resp.status_code == 403
 
@@ -1875,7 +1950,7 @@ class TestUserGroupEndpoints:
 
     async def test_list_groups(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/groups", headers=headers)
+        resp = await client.get("/api/v1/groups", headers=headers)
         assert resp.status_code == 200
 
     async def test_create_group(self, client, admin_user, user):
@@ -1891,7 +1966,7 @@ class TestUserGroupEndpoints:
             system_principal=model.SYSTEM_AUTHENTICATED,
         )
         resp = await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "user-group", "description": "My team"},
         )
@@ -1918,12 +1993,12 @@ class TestUserGroupEndpoints:
             system_principal=model.SYSTEM_AUTHENTICATED,
         )
         await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "dup-user-group"},
         )
         resp = await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "dup-user-group"},
         )
@@ -1940,13 +2015,13 @@ class TestUserGroupEndpoints:
             system_principal=model.SYSTEM_AUTHENTICATED,
         )
         resp = await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "edit-group"},
         )
         group_id = resp.json()["id"]
         resp = await client.patch(
-            f"/groups/{group_id}",
+            f"/api/v1/groups/{group_id}",
             headers=headers,
             json={"description": "updated"},
         )
@@ -1963,12 +2038,14 @@ class TestUserGroupEndpoints:
             system_principal=model.SYSTEM_AUTHENTICATED,
         )
         resp = await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "del-group"},
         )
         group_id = resp.json()["id"]
-        resp = await client.delete(f"/groups/{group_id}", headers=headers)
+        resp = await client.delete(
+            f"/api/v1/groups/{group_id}", headers=headers
+        )
         assert resp.status_code == 200
         # ACEs should be cleaned up
         entries = await model.get_acl_entries(f"/groups/{group_id}")
@@ -1985,7 +2062,7 @@ class TestUserGroupEndpoints:
             system_principal=model.SYSTEM_AUTHENTICATED,
         )
         resp = await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "member-group"},
         )
@@ -1993,20 +2070,22 @@ class TestUserGroupEndpoints:
 
         # Add admin_user as member
         resp = await client.post(
-            f"/groups/{group_id}/members",
+            f"/api/v1/groups/{group_id}/members",
             headers=headers,
             json={"user_id": admin_user["id"]},
         )
         assert resp.status_code == 200
 
         # List members
-        resp = await client.get(f"/groups/{group_id}/members", headers=headers)
+        resp = await client.get(
+            f"/api/v1/groups/{group_id}/members", headers=headers
+        )
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
         # Remove member
         resp = await client.delete(
-            f"/groups/{group_id}/members/{admin_user['id']}",
+            f"/api/v1/groups/{group_id}/members/{admin_user['id']}",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -2023,7 +2102,7 @@ class TestUserGroupEndpoints:
             user_id=user["id"],
         )
         resp = await client.patch(
-            "/groups/fake-id",
+            "/api/v1/groups/fake-id",
             headers=headers,
             json={"name": "x"},
         )
@@ -2040,13 +2119,13 @@ class TestUserGroupEndpoints:
             system_principal=model.SYSTEM_AUTHENTICATED,
         )
         resp = await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "noupdate-group"},
         )
         group_id = resp.json()["id"]
         resp = await client.patch(
-            f"/groups/{group_id}",
+            f"/api/v1/groups/{group_id}",
             headers=headers,
             json={},
         )
@@ -2062,7 +2141,7 @@ class TestUserGroupEndpoints:
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
-        resp = await client.delete("/groups/fake-del", headers=headers)
+        resp = await client.delete("/api/v1/groups/fake-del", headers=headers)
         assert resp.status_code == 404
 
     async def test_list_members_nonexistent_group(self, client, user):
@@ -2075,7 +2154,9 @@ class TestUserGroupEndpoints:
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
-        resp = await client.get("/groups/fake-mem/members", headers=headers)
+        resp = await client.get(
+            "/api/v1/groups/fake-mem/members", headers=headers
+        )
         assert resp.status_code == 404
 
     async def test_add_member_nonexistent_group(self, client, user):
@@ -2089,7 +2170,7 @@ class TestUserGroupEndpoints:
             user_id=user["id"],
         )
         resp = await client.post(
-            "/groups/fake-add/members",
+            "/api/v1/groups/fake-add/members",
             headers=headers,
             json={"user_id": user["id"]},
         )
@@ -2106,13 +2187,13 @@ class TestUserGroupEndpoints:
             system_principal=model.SYSTEM_AUTHENTICATED,
         )
         resp = await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "baduser-group"},
         )
         group_id = resp.json()["id"]
         resp = await client.post(
-            f"/groups/{group_id}/members",
+            f"/api/v1/groups/{group_id}/members",
             headers=headers,
             json={"user_id": "nonexistent"},
         )
@@ -2129,13 +2210,13 @@ class TestUserGroupEndpoints:
             system_principal=model.SYSTEM_AUTHENTICATED,
         )
         resp = await client.post(
-            "/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "noremove-group"},
         )
         group_id = resp.json()["id"]
         resp = await client.delete(
-            f"/groups/{group_id}/members/nonexistent",
+            f"/api/v1/groups/{group_id}/members/nonexistent",
             headers=headers,
         )
         assert resp.status_code == 404
@@ -2144,10 +2225,10 @@ class TestUserGroupEndpoints:
         """User without permission on the group gets 403."""
         # Admin creates a group (no ACE for regular user)
         admin_headers = {
-            "Authorization": f"Bearer {(await client.post('/auth/login', json={'email': 'testadmin@example.com', 'password': 'testpass'})).json()['access_token']}"
+            "Authorization": f"Bearer {(await client.post('/api/v1/auth/login', json={'email': 'testadmin@example.com', 'password': 'testpass'})).json()['access_token']}"
         }
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=admin_headers,
             json={"name": "admin-only-group"},
         )
@@ -2156,7 +2237,7 @@ class TestUserGroupEndpoints:
         # Regular user tries to manage members
         headers = await _auth_headers(client)
         resp = await client.post(
-            f"/groups/{group_id}/members",
+            f"/api/v1/groups/{group_id}/members",
             headers=headers,
             json={"user_id": user["id"]},
         )
@@ -2166,7 +2247,9 @@ class TestUserGroupEndpoints:
 class TestUserSearch:
     async def test_search_users(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/users/search?q=testuser", headers=headers)
+        resp = await client.get(
+            "/api/v1/users/search?q=testuser", headers=headers
+        )
         assert resp.status_code == 200
         results = resp.json()
         assert len(results) >= 1
@@ -2174,17 +2257,19 @@ class TestUserSearch:
 
     async def test_search_no_results(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/users/search?q=zzzzz", headers=headers)
+        resp = await client.get(
+            "/api/v1/users/search?q=zzzzz", headers=headers
+        )
         assert resp.status_code == 200
         assert resp.json() == []
 
     async def test_search_requires_auth(self, client, db):
-        resp = await client.get("/users/search?q=test")
+        resp = await client.get("/api/v1/users/search?q=test")
         assert resp.status_code == 401
 
     async def test_search_empty_query(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/users/search?q=", headers=headers)
+        resp = await client.get("/api/v1/users/search?q=", headers=headers)
         assert resp.status_code == 400
 
 
@@ -2201,14 +2286,14 @@ class TestBrowserBridge:
 
     async def test_missing_token_returns_401(self, client, user):
         resp = await client.post(
-            "/api/browser-delegate",
+            "/api/v1/browser-delegate",
             json={"action": "fetch", "browser_id": "bad-id"},
         )
         assert resp.status_code == 401
 
     async def test_unknown_browser_id_returns_403(self, client, user):
         resp = await client.post(
-            "/api/browser-delegate",
+            "/api/v1/browser-delegate",
             json={"action": "fetch", "browser_id": "bad-id"},
             headers=self._ws_token_headers(),
         )
@@ -2222,7 +2307,7 @@ class TestBrowserBridge:
             return_value=auth.WORKSPACE_TOKEN_EXPIRED,
         ):
             resp = await client.post(
-                "/api/browser-delegate",
+                "/api/v1/browser-delegate",
                 json={"action": "fetch", "browser_id": "x"},
                 headers={"Authorization": "Bearer some-expired-token"},
             )
@@ -2245,7 +2330,7 @@ class TestBrowserBridge:
                 return_value=mock_session,
             ):
                 resp = await client.post(
-                    "/api/browser-delegate",
+                    "/api/v1/browser-delegate",
                     json={"action": "fetch", "browser_id": "bid-conn"},
                     headers=self._ws_token_headers("ws-conn"),
                 )
@@ -2270,7 +2355,7 @@ class TestBrowserBridge:
                 return_value=mock_session,
             ):
                 resp = await client.post(
-                    "/api/browser-delegate",
+                    "/api/v1/browser-delegate",
                     json={"action": "fetch", "browser_id": "bid-nosub"},
                     headers=self._ws_token_headers("ws-nosub"),
                 )
@@ -2286,7 +2371,7 @@ class TestBrowserBridge:
         )
         try:
             resp = await client.post(
-                "/api/browser-delegate",
+                "/api/v1/browser-delegate",
                 json={"action": "fetch", "browser_id": "bid-nosess"},
                 headers=self._ws_token_headers("ws-nosess"),
             )
@@ -2310,7 +2395,7 @@ class TestBrowserBridge:
                 wshandler.state, "get_session", return_value=mock_session
             ):
                 resp = await client.post(
-                    "/api/browser-delegate",
+                    "/api/v1/browser-delegate",
                     json={"action": "fetch", "browser_id": "bid-err"},
                     headers=self._ws_token_headers("ws-err"),
                 )
@@ -2342,7 +2427,7 @@ class TestBrowserBridge:
                 wshandler.state, "get_session", return_value=mock_session
             ):
                 resp = await client.post(
-                    "/api/browser-delegate/stream",
+                    "/api/v1/browser-delegate/stream",
                     json={
                         "action": "soliplex_query",
                         "browser_id": "bid-stream",
@@ -2398,7 +2483,7 @@ class TestVolumeRoutes:
                 ]
             ),
         ):
-            resp = await client.get("/volumes", headers=headers)
+            resp = await client.get("/api/v1/volumes", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1
@@ -2416,7 +2501,7 @@ class TestVolumeRoutes:
             patch.object(podman, "create_volume", mock_create),
         ):
             resp = await client.post(
-                "/volumes",
+                "/api/v1/volumes",
                 json={"name": "new-vol"},
                 headers=headers,
             )
@@ -2433,7 +2518,7 @@ class TestVolumeRoutes:
             AsyncMock(return_value={"Name": "dup-vol"}),
         ):
             resp = await client.post(
-                "/volumes",
+                "/api/v1/volumes",
                 json={"name": "dup-vol"},
                 headers=headers,
             )
@@ -2453,7 +2538,7 @@ class TestVolumeRoutes:
             pytest.raises(podman.PodmanError),
         ):
             await client.post(
-                "/volumes",
+                "/api/v1/volumes",
                 json={"name": "err-vol"},
                 headers=headers,
             )
@@ -2468,7 +2553,9 @@ class TestVolumeRoutes:
             ),
             patch.object(podman, "remove_volume", AsyncMock()),
         ):
-            resp = await client.delete("/volumes/test-vol", headers=headers)
+            resp = await client.delete(
+                "/api/v1/volumes/test-vol", headers=headers
+            )
         assert resp.status_code == 200
 
     async def test_delete_volume_not_found(self, client, user):
@@ -2476,7 +2563,7 @@ class TestVolumeRoutes:
         with patch.object(
             podman, "inspect_volume", AsyncMock(return_value=None)
         ):
-            resp = await client.delete("/volumes/nope", headers=headers)
+            resp = await client.delete("/api/v1/volumes/nope", headers=headers)
         assert resp.status_code == 404
 
     async def test_delete_volume_wrong_instance(self, client, user):
@@ -2486,7 +2573,9 @@ class TestVolumeRoutes:
             "inspect_volume",
             AsyncMock(return_value={"Labels": {"klangk.instance": "other"}}),
         ):
-            resp = await client.delete("/volumes/foreign", headers=headers)
+            resp = await client.delete(
+                "/api/v1/volumes/foreign", headers=headers
+            )
         assert resp.status_code == 404
 
     async def test_delete_volume_wrong_user(self, client, user):
@@ -2496,7 +2585,9 @@ class TestVolumeRoutes:
             "inspect_volume",
             AsyncMock(return_value=_managed_volume("someone-else")),
         ):
-            resp = await client.delete("/volumes/other", headers=headers)
+            resp = await client.delete(
+                "/api/v1/volumes/other", headers=headers
+            )
         assert resp.status_code == 403
 
     async def test_delete_volume_remove_not_found(self, client, user):
@@ -2514,7 +2605,7 @@ class TestVolumeRoutes:
                 AsyncMock(side_effect=podman.PodmanError(404, "gone")),
             ),
         ):
-            resp = await client.delete("/volumes/gone", headers=headers)
+            resp = await client.delete("/api/v1/volumes/gone", headers=headers)
         assert resp.status_code == 404
 
     async def test_delete_volume_other_error(self, client, user):
@@ -2532,7 +2623,7 @@ class TestVolumeRoutes:
             ),
             pytest.raises(podman.PodmanError),
         ):
-            await client.delete("/volumes/err-vol", headers=headers)
+            await client.delete("/api/v1/volumes/err-vol", headers=headers)
 
     async def test_delete_volume_in_use(self, client, user):
         headers = await _auth_headers(client)
@@ -2548,7 +2639,7 @@ class TestVolumeRoutes:
                 AsyncMock(side_effect=podman.PodmanError(409, "in use")),
             ),
         ):
-            resp = await client.delete("/volumes/busy", headers=headers)
+            resp = await client.delete("/api/v1/volumes/busy", headers=headers)
         assert resp.status_code == 409
 
 
@@ -2558,7 +2649,7 @@ class TestVolumeRoutes:
 class TestFileRoutes:
     async def _create_workspace(self, client, headers):
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "file-ws"}
+            "/api/v1/workspaces", headers=headers, json={"name": "file-ws"}
         )
         return resp.json()["id"]
 
@@ -2566,7 +2657,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.get(
-            f"/workspaces/{ws_id}/files?path=.", headers=headers
+            f"/api/v1/workspaces/{ws_id}/files?path=.", headers=headers
         )
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
@@ -2574,7 +2665,7 @@ class TestFileRoutes:
     async def test_list_files_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/workspaces/fake-id/files?path=.", headers=headers
+            "/api/v1/workspaces/fake-id/files?path=.", headers=headers
         )
         assert resp.status_code == 403
 
@@ -2583,7 +2674,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
 
         resp = await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=hello.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=hello.txt",
             headers=headers,
             files={"file": ("hello.txt", b"hello world", "text/plain")},
         )
@@ -2591,7 +2682,7 @@ class TestFileRoutes:
         assert resp.json()["status"] == "uploaded"
 
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/content?path=hello.txt",
+            f"/api/v1/workspaces/{ws_id}/files/content?path=hello.txt",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -2606,7 +2697,7 @@ class TestFileRoutes:
         container.registry.states[ws_id].last_activity = 0.0
 
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=test.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=test.txt",
             headers=headers,
             files={"file": ("test.txt", b"data", "text/plain")},
         )
@@ -2620,7 +2711,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         with patch.object(api, "FILE_UPLOAD_SIZE_MAX", 10):
             resp = await client.post(
-                f"/workspaces/{ws_id}/files/upload?path=big.txt",
+                f"/api/v1/workspaces/{ws_id}/files/upload?path=big.txt",
                 headers=headers,
                 files={"file": ("big.txt", b"x" * 100, "text/plain")},
             )
@@ -2631,7 +2722,8 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/content?path=nope.txt", headers=headers
+            f"/api/v1/workspaces/{ws_id}/files/content?path=nope.txt",
+            headers=headers,
         )
         assert resp.status_code == 404
 
@@ -2639,7 +2731,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.post(
-            f"/workspaces/{ws_id}/files/upload",
+            f"/api/v1/workspaces/{ws_id}/files/upload",
             headers=headers,
             files={"file": ("", b"data", "application/octet-stream")},
         )
@@ -2650,12 +2742,13 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
 
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=doomed.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=doomed.txt",
             headers=headers,
             files={"file": ("doomed.txt", b"bye", "text/plain")},
         )
         resp = await client.delete(
-            f"/workspaces/{ws_id}/files?path=doomed.txt", headers=headers
+            f"/api/v1/workspaces/{ws_id}/files?path=doomed.txt",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
@@ -2664,7 +2757,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.delete(
-            f"/workspaces/{ws_id}/files?path=ghost.txt", headers=headers
+            f"/api/v1/workspaces/{ws_id}/files?path=ghost.txt", headers=headers
         )
         assert resp.status_code == 404
 
@@ -2673,12 +2766,12 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
 
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=old.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=old.txt",
             headers=headers,
             files={"file": ("old.txt", b"data", "text/plain")},
         )
         resp = await client.post(
-            f"/workspaces/{ws_id}/files/rename",
+            f"/api/v1/workspaces/{ws_id}/files/rename",
             headers=headers,
             json={"old_path": "old.txt", "new_path": "new.txt"},
         )
@@ -2689,7 +2782,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.post(
-            f"/workspaces/{ws_id}/files/rename",
+            f"/api/v1/workspaces/{ws_id}/files/rename",
             headers=headers,
             json={"old_path": "nope.txt", "new_path": "new.txt"},
         )
@@ -2700,17 +2793,17 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
 
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=a.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=a.txt",
             headers=headers,
             files={"file": ("a.txt", b"a", "text/plain")},
         )
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=b.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=b.txt",
             headers=headers,
             files={"file": ("b.txt", b"b", "text/plain")},
         )
         resp = await client.post(
-            f"/workspaces/{ws_id}/files/rename",
+            f"/api/v1/workspaces/{ws_id}/files/rename",
             headers=headers,
             json={"old_path": "a.txt", "new_path": "b.txt"},
         )
@@ -2721,12 +2814,13 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
 
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=dl.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=dl.txt",
             headers=headers,
             files={"file": ("dl.txt", b"download me", "text/plain")},
         )
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/download?path=dl.txt", headers=headers
+            f"/api/v1/workspaces/{ws_id}/files/download?path=dl.txt",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.content == b"download me"
@@ -2736,17 +2830,18 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
 
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=mydir/a.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=mydir/a.txt",
             headers=headers,
             files={"file": ("a.txt", b"aaa", "text/plain")},
         )
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=mydir/b.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=mydir/b.txt",
             headers=headers,
             files={"file": ("b.txt", b"bbb", "text/plain")},
         )
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/download?path=mydir", headers=headers
+            f"/api/v1/workspaces/{ws_id}/files/download?path=mydir",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/zip"
@@ -2762,7 +2857,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
 
         await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=mydir/a.txt",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=mydir/a.txt",
             headers=headers,
             files={"file": ("a.txt", b"aaa", "text/plain")},
         )
@@ -2770,7 +2865,7 @@ class TestFileRoutes:
             mock_zf.side_effect = OSError("disk full")
             with pytest.raises(OSError, match="disk full"):
                 await client.get(
-                    f"/workspaces/{ws_id}/files/download?path=mydir",
+                    f"/api/v1/workspaces/{ws_id}/files/download?path=mydir",
                     headers=headers,
                 )
 
@@ -2778,7 +2873,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/download?path=nope.txt",
+            f"/api/v1/workspaces/{ws_id}/files/download?path=nope.txt",
             headers=headers,
         )
         assert resp.status_code == 404
@@ -2786,7 +2881,7 @@ class TestFileRoutes:
     async def test_upload_to_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces/fake-id/files/upload?path=f.txt",
+            "/api/v1/workspaces/fake-id/files/upload?path=f.txt",
             headers=headers,
             files={"file": ("f.txt", b"data", "text/plain")},
         )
@@ -2796,7 +2891,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/content?path=../../etc/passwd",
+            f"/api/v1/workspaces/{ws_id}/files/content?path=../../etc/passwd",
             headers=headers,
         )
         assert resp.status_code == 400
@@ -2805,7 +2900,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.get(
-            f"/workspaces/{ws_id}/files?path=../../etc",
+            f"/api/v1/workspaces/{ws_id}/files?path=../../etc",
             headers=headers,
         )
         assert resp.status_code == 400
@@ -2813,7 +2908,7 @@ class TestFileRoutes:
     async def test_delete_file_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.delete(
-            "/workspaces/fake-id/files?path=f.txt", headers=headers
+            "/api/v1/workspaces/fake-id/files?path=f.txt", headers=headers
         )
         assert resp.status_code == 403
 
@@ -2821,7 +2916,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.delete(
-            f"/workspaces/{ws_id}/files?path=../../etc/passwd",
+            f"/api/v1/workspaces/{ws_id}/files?path=../../etc/passwd",
             headers=headers,
         )
         assert resp.status_code == 400
@@ -2829,7 +2924,7 @@ class TestFileRoutes:
     async def test_rename_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/workspaces/fake-id/files/rename",
+            "/api/v1/workspaces/fake-id/files/rename",
             headers=headers,
             json={"old_path": "a", "new_path": "b"},
         )
@@ -2839,7 +2934,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.post(
-            f"/workspaces/{ws_id}/files/rename",
+            f"/api/v1/workspaces/{ws_id}/files/rename",
             headers=headers,
             json={"old_path": "../../etc/passwd", "new_path": "stolen"},
         )
@@ -2848,7 +2943,8 @@ class TestFileRoutes:
     async def test_download_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/workspaces/fake-id/files/download?path=f.txt", headers=headers
+            "/api/v1/workspaces/fake-id/files/download?path=f.txt",
+            headers=headers,
         )
         assert resp.status_code == 403
 
@@ -2856,7 +2952,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.get(
-            f"/workspaces/{ws_id}/files/download?path=../../etc/passwd",
+            f"/api/v1/workspaces/{ws_id}/files/download?path=../../etc/passwd",
             headers=headers,
         )
         assert resp.status_code == 400
@@ -2864,7 +2960,8 @@ class TestFileRoutes:
     async def test_read_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/workspaces/fake-id/files/content?path=f.txt", headers=headers
+            "/api/v1/workspaces/fake-id/files/content?path=f.txt",
+            headers=headers,
         )
         assert resp.status_code == 403
 
@@ -2872,7 +2969,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         resp = await client.post(
-            f"/workspaces/{ws_id}/files/upload?path=../../etc/evil",
+            f"/api/v1/workspaces/{ws_id}/files/upload?path=../../etc/evil",
             headers=headers,
             files={"file": ("evil.txt", b"bad", "text/plain")},
         )
@@ -2897,10 +2994,10 @@ class TestSetIdleTimeout:
     async def test_endpoint_missing_without_test_mode(self, client):
         """Without KLANGK_TEST_MODE, the endpoints should not exist."""
         resp = await client.post(
-            "/api/test/set-idle-timeout", json={"seconds": 10}
+            "/api/v1/test/set-idle-timeout", json={"seconds": 10}
         )
         assert resp.status_code in (404, 405)
-        resp = await client.get("/api/test/idle-timeout")
+        resp = await client.get("/api/v1/test/idle-timeout")
         assert resp.status_code in (404, 405)
 
     async def test_set_idle_timeout_per_workspace(self, db):
@@ -3008,7 +3105,7 @@ class TestGroups:
 
     async def test_login_jwt_has_no_roles(self, client, user):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         assert resp.status_code == 200
@@ -3023,14 +3120,14 @@ class TestGroups:
 class TestAdminEndpoints:
     async def _admin_headers(self, client):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
     async def test_list_users(self, client, admin_user, user):
         headers = await self._admin_headers(client)
-        resp = await client.get("/admin/users", headers=headers)
+        resp = await client.get("/api/v1/admin/users", headers=headers)
         assert resp.status_code == 200
         users = resp.json()
         assert len(users) >= 2
@@ -3043,19 +3140,19 @@ class TestAdminEndpoints:
 
     async def test_list_users_requires_admin(self, client, user):
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
         }
-        resp = await client.get("/admin/users", headers=headers)
+        resp = await client.get("/api/v1/admin/users", headers=headers)
         assert resp.status_code == 403
 
     async def test_admin_create_user(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/users",
+            "/api/v1/admin/users",
             headers=headers,
             json={"email": "newuser@example.com", "password": "testpass123"},
         )
@@ -3064,7 +3161,7 @@ class TestAdminEndpoints:
         assert resp.json()["status"] == "created"
         # User should be verified and able to log in
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "newuser@example.com", "password": "testpass123"},
         )
         assert login_resp.status_code == 200
@@ -3072,7 +3169,7 @@ class TestAdminEndpoints:
     async def test_admin_create_user_duplicate(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/users",
+            "/api/v1/admin/users",
             headers=headers,
             json={"email": "testuser@example.com", "password": "testpass"},
         )
@@ -3082,7 +3179,7 @@ class TestAdminEndpoints:
     async def test_admin_create_user_short_password(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/users",
+            "/api/v1/admin/users",
             headers=headers,
             json={"email": "short@example.com", "password": "ab"},
         )
@@ -3091,14 +3188,14 @@ class TestAdminEndpoints:
 
     async def test_admin_create_user_requires_admin(self, client, user):
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
         }
         resp = await client.post(
-            "/admin/users",
+            "/api/v1/admin/users",
             headers=headers,
             json={"email": "new@example.com", "password": "testpass123"},
         )
@@ -3115,25 +3212,25 @@ class TestAdminEndpoints:
             patch.object(ws_mod, "archive_user_data", new_callable=AsyncMock),
         ):
             resp = await client.delete(
-                f"/admin/users/{user['id']}", headers=headers
+                f"/api/v1/admin/users/{user['id']}", headers=headers
             )
         assert resp.status_code == 200
         # Verify user is gone
-        resp = await client.get("/admin/users", headers=headers)
+        resp = await client.get("/api/v1/admin/users", headers=headers)
         emails = [u["email"] for u in resp.json()]
         assert "testuser@example.com" not in emails
 
     async def test_delete_self_forbidden(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            f"/admin/users/{admin_user['id']}", headers=headers
+            f"/api/v1/admin/users/{admin_user['id']}", headers=headers
         )
         assert resp.status_code == 400
 
     async def test_delete_nonexistent_user(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            "/admin/users/nonexistent-id", headers=headers
+            "/api/v1/admin/users/nonexistent-id", headers=headers
         )
         assert resp.status_code == 404
 
@@ -3143,7 +3240,7 @@ class TestAdminEndpoints:
         await seed_agent_user()
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            f"/admin/users/{model.AGENT_USER_ID}", headers=headers
+            f"/api/v1/admin/users/{model.AGENT_USER_ID}", headers=headers
         )
         assert resp.status_code == 400
         assert "system agent" in resp.json()["detail"]
@@ -3155,14 +3252,16 @@ class TestAdminEndpoints:
         headers = await self._admin_headers(client)
         # Create a workspace for the user
         user_login = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         user_headers = {
             "Authorization": f"Bearer {user_login.json()['access_token']}"
         }
         ws_resp = await client.post(
-            "/workspaces", headers=user_headers, json={"name": "to-delete"}
+            "/api/v1/workspaces",
+            headers=user_headers,
+            json={"name": "to-delete"},
         )
         assert ws_resp.status_code == 200
         # Delete the user
@@ -3172,7 +3271,7 @@ class TestAdminEndpoints:
             new_callable=AsyncMock,
         ):
             resp = await client.delete(
-                f"/admin/users/{user['id']}", headers=headers
+                f"/api/v1/admin/users/{user['id']}", headers=headers
             )
         assert resp.status_code == 200
         # Workspace should be gone (CASCADE)
@@ -3182,7 +3281,7 @@ class TestAdminEndpoints:
     async def test_update_email(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            f"/admin/users/{user['id']}",
+            f"/api/v1/admin/users/{user['id']}",
             json={"email": "renamed"},
             headers=headers,
         )
@@ -3193,14 +3292,14 @@ class TestAdminEndpoints:
     async def test_update_password(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            f"/admin/users/{user['id']}",
+            f"/api/v1/admin/users/{user['id']}",
             json={"password": "newpass123"},
             headers=headers,
         )
         assert resp.status_code == 200
         # Verify can login with new password
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "newpass123"},
         )
         assert login_resp.status_code == 200
@@ -3208,7 +3307,7 @@ class TestAdminEndpoints:
     async def test_update_nonexistent_user(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            "/admin/users/nonexistent-id",
+            "/api/v1/admin/users/nonexistent-id",
             json={"email": "x"},
             headers=headers,
         )
@@ -3223,7 +3322,7 @@ class TestAdminEndpoints:
         await seed_agent_user()
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            f"/admin/users/{model.AGENT_USER_ID}",
+            f"/api/v1/admin/users/{model.AGENT_USER_ID}",
             json={"password": "sneaky"},
             headers=headers,
         )
@@ -3234,14 +3333,14 @@ class TestAdminEndpoints:
 class TestGroupEndpoints:
     async def _admin_headers(self, client):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
     async def test_list_groups(self, client, admin_user):
         headers = await self._admin_headers(client)
-        resp = await client.get("/admin/groups", headers=headers)
+        resp = await client.get("/api/v1/admin/groups", headers=headers)
         assert resp.status_code == 200
         groups = resp.json()
         assert any(g["name"] == "admin" for g in groups)
@@ -3249,7 +3348,7 @@ class TestGroupEndpoints:
     async def test_create_group(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "editors", "description": "Editor group"},
         )
@@ -3259,12 +3358,12 @@ class TestGroupEndpoints:
     async def test_create_group_duplicate(self, client, admin_user):
         headers = await self._admin_headers(client)
         await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "dup-group"},
         )
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "dup-group"},
         )
@@ -3273,13 +3372,13 @@ class TestGroupEndpoints:
     async def test_update_group(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "to-rename"},
         )
         group_id = resp.json()["id"]
         resp = await client.patch(
-            f"/admin/groups/{group_id}",
+            f"/api/v1/admin/groups/{group_id}",
             headers=headers,
             json={"name": "renamed", "description": "new desc"},
         )
@@ -3288,13 +3387,13 @@ class TestGroupEndpoints:
     async def test_update_group_no_fields(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "no-update"},
         )
         group_id = resp.json()["id"]
         resp = await client.patch(
-            f"/admin/groups/{group_id}",
+            f"/api/v1/admin/groups/{group_id}",
             headers=headers,
             json={},
         )
@@ -3303,7 +3402,7 @@ class TestGroupEndpoints:
     async def test_update_group_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            "/admin/groups/nonexistent",
+            "/api/v1/admin/groups/nonexistent",
             headers=headers,
             json={"name": "x"},
         )
@@ -3312,41 +3411,41 @@ class TestGroupEndpoints:
     async def test_delete_group(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "to-delete"},
         )
         group_id = resp.json()["id"]
         resp = await client.delete(
-            f"/admin/groups/{group_id}", headers=headers
+            f"/api/v1/admin/groups/{group_id}", headers=headers
         )
         assert resp.status_code == 200
 
     async def test_delete_group_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            "/admin/groups/nonexistent", headers=headers
+            "/api/v1/admin/groups/nonexistent", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_list_group_members(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "members-test"},
         )
         group_id = resp.json()["id"]
         # Add user to group
         resp = await client.post(
-            f"/admin/groups/{group_id}/members",
+            f"/api/v1/admin/groups/{group_id}/members",
             headers=headers,
             json={"user_id": user["id"]},
         )
         assert resp.status_code == 200
         # List members
         resp = await client.get(
-            f"/admin/groups/{group_id}/members", headers=headers
+            f"/api/v1/admin/groups/{group_id}/members", headers=headers
         )
         assert resp.status_code == 200
         assert len(resp.json()) == 1
@@ -3355,20 +3454,20 @@ class TestGroupEndpoints:
     async def test_list_group_members_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.get(
-            "/admin/groups/nonexistent/members", headers=headers
+            "/api/v1/admin/groups/nonexistent/members", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_add_group_member_user_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "member-test2"},
         )
         group_id = resp.json()["id"]
         resp = await client.post(
-            f"/admin/groups/{group_id}/members",
+            f"/api/v1/admin/groups/{group_id}/members",
             headers=headers,
             json={"user_id": "nonexistent"},
         )
@@ -3377,7 +3476,7 @@ class TestGroupEndpoints:
     async def test_add_group_member_group_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups/nonexistent/members",
+            "/api/v1/admin/groups/nonexistent/members",
             headers=headers,
             json={"user_id": "x"},
         )
@@ -3386,31 +3485,33 @@ class TestGroupEndpoints:
     async def test_remove_group_member(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "remove-test"},
         )
         group_id = resp.json()["id"]
         await client.post(
-            f"/admin/groups/{group_id}/members",
+            f"/api/v1/admin/groups/{group_id}/members",
             headers=headers,
             json={"user_id": user["id"]},
         )
         resp = await client.delete(
-            f"/admin/groups/{group_id}/members/{user['id']}", headers=headers
+            f"/api/v1/admin/groups/{group_id}/members/{user['id']}",
+            headers=headers,
         )
         assert resp.status_code == 200
 
     async def test_remove_group_member_not_member(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/groups",
+            "/api/v1/admin/groups",
             headers=headers,
             json={"name": "rm-test"},
         )
         group_id = resp.json()["id"]
         resp = await client.delete(
-            f"/admin/groups/{group_id}/members/nonexistent", headers=headers
+            f"/api/v1/admin/groups/{group_id}/members/nonexistent",
+            headers=headers,
         )
         assert resp.status_code == 404
 
@@ -3418,14 +3519,14 @@ class TestGroupEndpoints:
 class TestACLEndpoints:
     async def _admin_headers(self, client):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
     async def test_get_acl_tree(self, client, admin_user):
         headers = await self._admin_headers(client)
-        resp = await client.get("/admin/acl/tree", headers=headers)
+        resp = await client.get("/api/v1/admin/acl/tree", headers=headers)
         assert resp.status_code == 200
         tree = resp.json()
         assert len(tree) > 0
@@ -3433,7 +3534,8 @@ class TestACLEndpoints:
     async def test_get_acl_by_user(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/admin/acl/by-principal/user/{user['id']}", headers=headers
+            f"/api/v1/admin/acl/by-principal/user/{user['id']}",
+            headers=headers,
         )
         assert resp.status_code == 200
 
@@ -3443,7 +3545,7 @@ class TestACLEndpoints:
         groups = await model.list_groups()
         admin_group = next(g for g in groups if g["name"] == "admin")
         resp = await client.get(
-            f"/admin/acl/by-principal/group/{admin_group['id']}",
+            f"/api/v1/admin/acl/by-principal/group/{admin_group['id']}",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -3452,7 +3554,7 @@ class TestACLEndpoints:
 
     async def test_my_permissions(self, client, admin_user):
         headers = await self._admin_headers(client)
-        resp = await client.get("/api/my-permissions", headers=headers)
+        resp = await client.get("/api/v1/my-permissions", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["email"] == "testadmin@example.com"
@@ -3462,7 +3564,7 @@ class TestACLEndpoints:
     async def test_my_permissions_non_admin(self, client, admin_user, user):
         """Non-admin user has no admin permissions."""
         headers = await _auth_headers(client)
-        resp = await client.get("/api/my-permissions", headers=headers)
+        resp = await client.get("/api/v1/my-permissions", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert "/admin" not in data["permissions"]
@@ -3472,11 +3574,11 @@ class TestACLEndpoints:
         headers = await _auth_headers(client)
         # Create a workspace (owner gets * ACE)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "perm-check"}
+            "/api/v1/workspaces", headers=headers, json={"name": "perm-check"}
         )
         ws_id = resp.json()["id"]
         resp = await client.get(
-            f"/api/my-permissions?resource=/workspaces/{ws_id}",
+            f"/api/v1/my-permissions?resource=/workspaces/{ws_id}",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -3492,7 +3594,7 @@ class TestACLEndpoints:
         """User without specific ACE only gets inherited permissions."""
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/api/my-permissions?resource=/workspaces/nonexistent",
+            "/api/v1/my-permissions?resource=/workspaces/nonexistent",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -3507,7 +3609,7 @@ class TestACLEndpoints:
 class TestAdminResourceACL:
     async def _admin_headers(self, client):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
@@ -3515,7 +3617,7 @@ class TestAdminResourceACL:
     async def test_get_resource_acl(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.get(
-            "/admin/acl/resource?resource=/workspaces", headers=headers
+            "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
         )
         assert resp.status_code == 200
         entries = resp.json()
@@ -3526,7 +3628,7 @@ class TestAdminResourceACL:
         headers = await self._admin_headers(client)
         # Get current ACL
         resp = await client.get(
-            "/admin/acl/resource?resource=/workspaces", headers=headers
+            "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
         )
         original = resp.json()
 
@@ -3550,7 +3652,7 @@ class TestAdminResourceACL:
             },
         ]
         resp = await client.put(
-            "/admin/acl/resource?resource=/workspaces",
+            "/api/v1/admin/acl/resource?resource=/workspaces",
             headers=headers,
             json=new_entries,
         )
@@ -3570,7 +3672,7 @@ class TestAdminResourceACL:
             for e in original
         ]
         resp = await client.put(
-            "/admin/acl/resource?resource=/workspaces",
+            "/api/v1/admin/acl/resource?resource=/workspaces",
             headers=headers,
             json=restore,
         )
@@ -3579,7 +3681,7 @@ class TestAdminResourceACL:
     async def test_get_resource_acl_requires_admin(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/admin/acl/resource?resource=/workspaces", headers=headers
+            "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
         )
         assert resp.status_code == 403
 
@@ -3589,7 +3691,7 @@ class TestAdminResourceACL:
         headers = await self._admin_headers(client)
         # Try to save root ACL without Authenticated view
         resp = await client.put(
-            "/admin/acl/resource?resource=/",
+            "/api/v1/admin/acl/resource?resource=/",
             headers=headers,
             json=[
                 {
@@ -3609,7 +3711,7 @@ class TestAdminResourceACL:
         headers = await self._admin_headers(client)
         # Authenticated with * should be accepted
         resp = await client.put(
-            "/admin/acl/resource?resource=/",
+            "/api/v1/admin/acl/resource?resource=/",
             headers=headers,
             json=[
                 {
@@ -3634,7 +3736,7 @@ class TestAdminResourceACL:
         headers = await self._admin_headers(client)
         # Try to save /admin ACL with no group Allow
         resp = await client.put(
-            "/admin/acl/resource?resource=/admin",
+            "/api/v1/admin/acl/resource?resource=/admin",
             headers=headers,
             json=[
                 {
@@ -3980,14 +4082,14 @@ class TestArchiveUserData:
 class TestWorkspaceExportImport:
     async def _admin_headers(self, client):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
     async def _user_headers(self, client):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
@@ -3996,7 +4098,7 @@ class TestWorkspaceExportImport:
         # Create a workspace as regular user
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "export-test"}
+            "/api/v1/workspaces", headers=headers, json={"name": "export-test"}
         )
         assert resp.status_code == 200
         ws = resp.json()
@@ -4012,7 +4114,7 @@ class TestWorkspaceExportImport:
         # Export as admin
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/gzip"
@@ -4036,20 +4138,20 @@ class TestWorkspaceExportImport:
     async def test_export_requires_admin(self, client, user):
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "no-export"}
+            "/api/v1/workspaces", headers=headers, json={"name": "no-export"}
         )
         ws = resp.json()
 
         # Non-admin cannot export
         resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert resp.status_code == 403
 
     async def test_export_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.get(
-            "/workspaces/nonexistent-id/export", headers=headers
+            "/api/v1/workspaces/nonexistent-id/export", headers=headers
         )
         assert resp.status_code == 404
 
@@ -4057,7 +4159,7 @@ class TestWorkspaceExportImport:
         # Create and export a workspace
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces",
+            "/api/v1/workspaces",
             headers=headers,
             json={
                 "name": "import-source",
@@ -4076,13 +4178,13 @@ class TestWorkspaceExportImport:
 
         admin_headers = await self._admin_headers(client)
         export_resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert export_resp.status_code == 200
 
         # Import as regular user with a new name
         import_resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             params={"name": "imported-ws"},
             files={
@@ -4118,7 +4220,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4130,7 +4232,7 @@ class TestWorkspaceExportImport:
     async def test_import_duplicate_name(self, client, user):
         headers = await self._user_headers(client)
         await client.post(
-            "/workspaces", headers=headers, json={"name": "taken"}
+            "/api/v1/workspaces", headers=headers, json={"name": "taken"}
         )
 
         import io
@@ -4146,7 +4248,7 @@ class TestWorkspaceExportImport:
         buf.seek(0)
 
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4168,7 +4270,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4180,7 +4282,7 @@ class TestWorkspaceExportImport:
     async def test_import_invalid_archive(self, client, user):
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("bad.tar.gz", b"not a tarball", "application/gzip")
@@ -4204,7 +4306,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4231,7 +4333,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4258,7 +4360,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4294,7 +4396,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4314,7 +4416,7 @@ class TestWorkspaceExportImport:
         """Export streams a valid .tar.gz with size estimate header."""
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "stream-test"}
+            "/api/v1/workspaces", headers=headers, json={"name": "stream-test"}
         )
         ws = resp.json()
 
@@ -4327,7 +4429,7 @@ class TestWorkspaceExportImport:
 
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/gzip"
@@ -4347,7 +4449,9 @@ class TestWorkspaceExportImport:
         """Export with large files triggers the write buffer flush path."""
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "large-export"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "large-export"},
         )
         ws = resp.json()
 
@@ -4367,7 +4471,7 @@ class TestWorkspaceExportImport:
 
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert resp.status_code == 200
 
@@ -4383,7 +4487,7 @@ class TestWorkspaceExportImport:
         """If du fails, estimated size defaults to minimum."""
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "du-fail"}
+            "/api/v1/workspaces", headers=headers, json={"name": "du-fail"}
         )
         ws = resp.json()
 
@@ -4407,7 +4511,7 @@ class TestWorkspaceExportImport:
 
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert resp.status_code == 200
         # Falls back to 0 * 0.4 = 0, clamped to 1
@@ -4417,13 +4521,15 @@ class TestWorkspaceExportImport:
         """Export of workspace with no home dir still works."""
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "empty-export"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "empty-export"},
         )
         ws = resp.json()
 
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert resp.status_code == 200
         # Estimated size is 0 * 0.4 = 0, clamped to 1
@@ -4456,7 +4562,7 @@ class TestWorkspaceExportImport:
 
         with pytest.raises(IOError, match="disk full"):
             await client.post(
-                "/workspaces/import",
+                "/api/v1/workspaces/import",
                 headers=headers,
                 files={
                     "file": (
@@ -4476,7 +4582,9 @@ class TestWorkspaceExportImport:
         """All symlinks are preserved in export (stored as links, not content)."""
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "symlink-export"}
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "symlink-export"},
         )
         ws = resp.json()
 
@@ -4491,7 +4599,7 @@ class TestWorkspaceExportImport:
 
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert resp.status_code == 200
 
@@ -4516,7 +4624,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces", headers=headers, json={"name": "deep-export"}
+            "/api/v1/workspaces", headers=headers, json={"name": "deep-export"}
         )
         ws = resp.json()
 
@@ -4554,7 +4662,7 @@ class TestWorkspaceExportImport:
         # Export
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
         )
         assert resp.status_code == 200
         archive_bytes = resp.content
@@ -4578,7 +4686,7 @@ class TestWorkspaceExportImport:
 
         # Import into a new workspace
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             params={"name": "deep-imported"},
             files={
@@ -4622,7 +4730,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={"file": ("big.tar.gz", b"x" * 200, "application/gzip")},
         )
@@ -4654,7 +4762,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4664,7 +4772,7 @@ class TestWorkspaceExportImport:
         ws = resp.json()
 
         # Fetch the workspace to check env
-        resp = await client.get("/workspaces", headers=headers)
+        resp = await client.get("/api/v1/workspaces", headers=headers)
         workspaces_list = resp.json()
         imported = next(w for w in workspaces_list if w["id"] == ws["id"])
         env = imported.get("env", {})
@@ -4713,7 +4821,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4722,7 +4830,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 400
 
         # Workspace should have been cleaned up
-        resp = await client.get("/workspaces", headers=headers)
+        resp = await client.get("/api/v1/workspaces", headers=headers)
         names = [w["name"] for w in resp.json()]
         assert "fail-extract" not in names
 
@@ -4740,7 +4848,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4781,7 +4889,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4789,7 +4897,7 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 400
 
-        resp = await client.get("/workspaces", headers=headers)
+        resp = await client.get("/api/v1/workspaces", headers=headers)
         names = [w["name"] for w in resp.json()]
         assert "timeout-test" not in names
 
@@ -4813,7 +4921,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         resp = await client.post(
-            "/workspaces/import",
+            "/api/v1/workspaces/import",
             headers=headers,
             files={
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
@@ -4823,7 +4931,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 400
 
         # Workspace should have been cleaned up
-        resp = await client.get("/workspaces", headers=headers)
+        resp = await client.get("/api/v1/workspaces", headers=headers)
         names = [w["name"] for w in resp.json()]
         assert "traversal-test" not in names
 
@@ -4834,7 +4942,7 @@ class TestWorkspaceExportImport:
 class TestInvitations:
     async def _admin_headers(self, client):
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
@@ -4847,7 +4955,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ) as mock_send:
             resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "invited@example.com"},
             )
@@ -4864,7 +4972,7 @@ class TestInvitations:
         headers = await self._admin_headers(client)
         monkeypatch.setattr(auth, "invitations_enabled", lambda: False)
         resp = await client.post(
-            "/admin/invitations",
+            "/api/v1/admin/invitations",
             headers=headers,
             json={"email": "invited@example.com"},
         )
@@ -4876,7 +4984,7 @@ class TestInvitations:
     ):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/invitations",
+            "/api/v1/admin/invitations",
             headers=headers,
             json={"email": "testuser@example.com"},
         )
@@ -4891,12 +4999,12 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "dup@example.com"},
             )
             resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "dup@example.com"},
             )
@@ -4906,7 +5014,7 @@ class TestInvitations:
     async def test_send_invitation_invalid_email(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/invitations",
+            "/api/v1/admin/invitations",
             headers=headers,
             json={"email": "not-an-email"},
         )
@@ -4914,14 +5022,14 @@ class TestInvitations:
 
     async def test_send_invitation_requires_admin(self, client, user):
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
         }
         resp = await client.post(
-            "/admin/invitations",
+            "/api/v1/admin/invitations",
             headers=headers,
             json={"email": "invited@example.com"},
         )
@@ -4935,16 +5043,16 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "list1@example.com"},
             )
             await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "list2@example.com"},
             )
-        resp = await client.get("/admin/invitations", headers=headers)
+        resp = await client.get("/api/v1/admin/invitations", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         emails = [inv["email"] for inv in data]
@@ -4960,27 +5068,27 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "revoke@example.com"},
             )
         inv_id = create_resp.json()["id"]
         resp = await client.delete(
-            f"/admin/invitations/{inv_id}", headers=headers
+            f"/api/v1/admin/invitations/{inv_id}", headers=headers
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "revoked"
 
         # Can't revoke again
         resp = await client.delete(
-            f"/admin/invitations/{inv_id}", headers=headers
+            f"/api/v1/admin/invitations/{inv_id}", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_revoke_nonexistent(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            "/admin/invitations/nonexistent-id", headers=headers
+            "/api/v1/admin/invitations/nonexistent-id", headers=headers
         )
         assert resp.status_code == 404
 
@@ -4992,7 +5100,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "resend@example.com"},
             )
@@ -5003,7 +5111,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ) as mock_resend:
             resp = await client.post(
-                f"/admin/invitations/{inv_id}/resend", headers=headers
+                f"/api/v1/admin/invitations/{inv_id}/resend", headers=headers
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "resent"
@@ -5012,7 +5120,7 @@ class TestInvitations:
     async def test_resend_nonexistent(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/admin/invitations/nonexistent/resend", headers=headers
+            "/api/v1/admin/invitations/nonexistent/resend", headers=headers
         )
         assert resp.status_code == 404
 
@@ -5024,14 +5132,16 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "revoked-resend@example.com"},
             )
         inv_id = create_resp.json()["id"]
-        await client.delete(f"/admin/invitations/{inv_id}", headers=headers)
+        await client.delete(
+            f"/api/v1/admin/invitations/{inv_id}", headers=headers
+        )
         resp = await client.post(
-            f"/admin/invitations/{inv_id}/resend", headers=headers
+            f"/api/v1/admin/invitations/{inv_id}/resend", headers=headers
         )
         assert resp.status_code == 404
 
@@ -5043,7 +5153,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "accept@example.com"},
             )
@@ -5051,7 +5161,7 @@ class TestInvitations:
         token = auth.create_invitation_token(inv_id, "accept@example.com")
 
         resp = await client.post(
-            "/auth/accept-invite",
+            "/api/v1/auth/accept-invite",
             json={"token": token, "password": "newpassword"},
         )
         assert resp.status_code == 200
@@ -5061,14 +5171,14 @@ class TestInvitations:
 
         # User can log in
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "accept@example.com", "password": "newpassword"},
         )
         assert login_resp.status_code == 200
 
     async def test_accept_invite_invalid_token(self, client, db):
         resp = await client.post(
-            "/auth/accept-invite",
+            "/api/v1/auth/accept-invite",
             json={"token": "invalid-token", "password": "newpassword"},
         )
         assert resp.status_code == 400
@@ -5082,7 +5192,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "double@example.com"},
             )
@@ -5091,12 +5201,12 @@ class TestInvitations:
 
         # Accept once
         await client.post(
-            "/auth/accept-invite",
+            "/api/v1/auth/accept-invite",
             json={"token": token, "password": "newpassword"},
         )
         # Try again
         resp = await client.post(
-            "/auth/accept-invite",
+            "/api/v1/auth/accept-invite",
             json={"token": token, "password": "newpassword"},
         )
         assert resp.status_code == 400
@@ -5110,7 +5220,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "short@example.com"},
             )
@@ -5118,7 +5228,7 @@ class TestInvitations:
         token = auth.create_invitation_token(inv_id, "short@example.com")
 
         resp = await client.post(
-            "/auth/accept-invite",
+            "/api/v1/auth/accept-invite",
             json={"token": token, "password": "ab"},
         )
         assert resp.status_code == 400
@@ -5134,7 +5244,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "noreg@example.com"},
             )
@@ -5146,7 +5256,7 @@ class TestInvitations:
 
         # Accept-invite should still work
         resp = await client.post(
-            "/auth/accept-invite",
+            "/api/v1/auth/accept-invite",
             json={"token": token, "password": "newpassword"},
         )
         assert resp.status_code == 200
@@ -5162,7 +5272,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/admin/invitations",
+                "/api/v1/admin/invitations",
                 headers=headers,
                 json={"email": "race@example.com"},
             )
@@ -5175,7 +5285,7 @@ class TestInvitations:
         )
 
         resp = await client.post(
-            "/auth/accept-invite",
+            "/api/v1/auth/accept-invite",
             json={"token": token, "password": "newpassword"},
         )
         assert resp.status_code == 400
@@ -5185,13 +5295,13 @@ class TestInvitations:
         # Use a verification token (wrong purpose)
         token = auth.create_verification_token("fake-user-id")
         resp = await client.post(
-            "/auth/accept-invite",
+            "/api/v1/auth/accept-invite",
             json={"token": token, "password": "newpassword"},
         )
         assert resp.status_code == 400
 
     async def test_config_includes_invitations_enabled(self, client):
-        resp = await client.get("/api/config")
+        resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         assert "invitations_enabled" in resp.json()
 
@@ -5202,7 +5312,7 @@ class TestInvitations:
 class TestOIDCConfig:
     async def test_config_includes_oidc_fields(self, client, monkeypatch):
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        resp = await client.get("/api/config")
+        resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
         assert "oidc_providers" in data
@@ -5217,7 +5327,7 @@ class TestOIDCConfig:
             lambda: [{"id": "test", "display_name": "Test"}],
         )
         monkeypatch.setattr(api.oidc, "auth_modes", lambda: "both")
-        resp = await client.get("/api/config")
+        resp = await client.get("/api/v1/config")
         data = resp.json()
         assert len(data["oidc_providers"]) == 1
         assert data["auth_modes"] == "both"
@@ -5229,7 +5339,7 @@ class TestOIDCAuthModeGuards:
     ):
         monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: False)
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         assert resp.status_code == 403
@@ -5240,7 +5350,7 @@ class TestOIDCAuthModeGuards:
     ):
         monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: False)
         resp = await client.post(
-            "/auth/register",
+            "/api/v1/auth/register",
             json={"email": "new@example.com", "password": "testpass"},
         )
         assert resp.status_code == 403
@@ -5248,7 +5358,7 @@ class TestOIDCAuthModeGuards:
     async def test_login_allowed_when_both(self, client, monkeypatch, user):
         monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: True)
         resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         assert resp.status_code == 200
@@ -5257,13 +5367,13 @@ class TestOIDCAuthModeGuards:
 class TestOIDCLogin:
     async def test_oidc_login_not_enabled(self, client, monkeypatch):
         monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: False)
-        resp = await client.get("/auth/oidc/test/login")
+        resp = await client.get("/api/v1/auth/oidc/test/login")
         assert resp.status_code == 404
 
     async def test_unknown_provider(self, client, monkeypatch):
         monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: True)
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)
-        resp = await client.get("/auth/oidc/nope/login")
+        resp = await client.get("/api/v1/auth/oidc/nope/login")
         assert resp.status_code == 404
 
     async def test_invalid_cli_redirect(self, client, monkeypatch):
@@ -5277,7 +5387,7 @@ class TestOIDCLogin:
         monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: True)
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
         resp = await client.get(
-            "/auth/oidc/test/login",
+            "/api/v1/auth/oidc/test/login",
             params={"cli_redirect": "https://evil.com/steal"},
         )
         assert resp.status_code == 400
@@ -5299,7 +5409,7 @@ class TestOIDCLogin:
             AsyncMock(return_value="https://idp.example.com/auth?foo=bar"),
         )
         resp = await client.get(
-            "/auth/oidc/test/login", follow_redirects=False
+            "/api/v1/auth/oidc/test/login", follow_redirects=False
         )
         assert resp.status_code == 302
         assert (
@@ -5357,7 +5467,7 @@ class TestOIDCCallback:
     async def test_callback_creates_user(self, client, monkeypatch, db):
         _, cookie_data = await self._setup_callback(client, monkeypatch, db)
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
             cookies={"oidc_test": cookie_data},
             follow_redirects=False,
@@ -5398,7 +5508,7 @@ class TestOIDCCallback:
             },
         )
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "test-state"},
             cookies={"oidc_test": cookie_data},
             follow_redirects=False,
@@ -5425,7 +5535,7 @@ class TestOIDCCallback:
             claims={"sub": "new-sub", "email": "testuser@example.com"},
         )
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "test-state"},
             cookies={"oidc_test": cookie_data},
             follow_redirects=False,
@@ -5440,7 +5550,7 @@ class TestOIDCCallback:
     async def test_callback_state_mismatch(self, client, monkeypatch, db):
         _, cookie_data = await self._setup_callback(client, monkeypatch, db)
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "wrong-state"},
             cookies={"oidc_test": cookie_data},
         )
@@ -5450,7 +5560,7 @@ class TestOIDCCallback:
     async def test_callback_missing_cookie(self, client, monkeypatch, db):
         await self._setup_callback(client, monkeypatch, db)
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "test-state"},
         )
         assert resp.status_code == 400
@@ -5466,7 +5576,7 @@ class TestOIDCCallback:
         )
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"error": "access_denied"},
         )
         assert resp.status_code == 400
@@ -5508,7 +5618,7 @@ class TestOIDCCallback:
             }
         )
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
             cookies={"oidc_test": cookie_data},
             follow_redirects=False,
@@ -5553,7 +5663,7 @@ class TestOIDCCallback:
             }
         )
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
             cookies={"oidc_test": cookie_data},
         )
@@ -5584,7 +5694,7 @@ class TestOIDCCallback:
             }
         )
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
             cookies={"oidc_test": cookie_data},
         )
@@ -5621,7 +5731,7 @@ class TestOIDCCallback:
             }
         )
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
             cookies={"oidc_test": cookie_data},
         )
@@ -5658,7 +5768,7 @@ class TestOIDCCallback:
             }
         )
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
             cookies={"oidc_test": cookie_data},
         )
@@ -5680,7 +5790,7 @@ class TestOIDCCallback:
         )
         monkeypatch.setattr(oidc, "_login_hook_is_async", False)
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
             cookies={"oidc_test": cookie_data},
             follow_redirects=False,
@@ -5701,7 +5811,7 @@ class TestOIDCCallback:
         )
         monkeypatch.setattr(oidc, "_login_hook", None)
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
             cookies={"oidc_test": cookie_data},
             follow_redirects=False,
@@ -5714,7 +5824,7 @@ class TestOIDCCallback:
     async def test_callback_unknown_provider(self, client, monkeypatch, db):
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)
         resp = await client.get(
-            "/auth/oidc/nope/callback",
+            "/api/v1/auth/oidc/nope/callback",
             params={"code": "code", "state": "s"},
         )
         assert resp.status_code == 404
@@ -5729,7 +5839,7 @@ class TestOIDCCallback:
         )
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
         resp = await client.get(
-            "/auth/oidc/test/callback",
+            "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
             cookies={"oidc_test": "not-json"},
         )
@@ -5766,7 +5876,7 @@ class TestOIDCLogout:
                 AsyncMock(return_value="https://idp.example.com/logout?x=1"),
             ),
         ):
-            resp = await client.post("/auth/logout", headers=headers)
+            resp = await client.post("/api/v1/auth/logout", headers=headers)
         assert resp.status_code == 200
         assert (
             resp.json()["oidc_logout_url"]
@@ -5776,13 +5886,13 @@ class TestOIDCLogout:
     async def test_logout_no_redirect_for_local_user(self, client, user):
         """Local user gets no oidc_logout_url."""
         login_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
         )
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
         }
-        resp = await client.post("/auth/logout", headers=headers)
+        resp = await client.post("/api/v1/auth/logout", headers=headers)
         assert resp.status_code == 200
         assert "oidc_logout_url" not in resp.json()
 
@@ -5807,7 +5917,7 @@ class TestOIDCLogout:
             logout_redirect=False,
         )
         with patch.object(api.oidc, "get_provider", return_value=provider):
-            resp = await client.post("/auth/logout", headers=headers)
+            resp = await client.post("/api/v1/auth/logout", headers=headers)
         assert resp.status_code == 200
         assert "oidc_logout_url" not in resp.json()
 
@@ -5816,7 +5926,7 @@ class TestHandleEndpoints:
     async def test_change_own_handle(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-handle",
+            "/api/v1/auth/change-handle",
             json={"handle": "newhandle", "password": "testpass"},
             headers=headers,
         )
@@ -5836,7 +5946,7 @@ class TestHandleEndpoints:
             new_callable=AsyncMock,
         ) as mock_refresh:
             resp = await client.post(
-                "/auth/change-handle",
+                "/api/v1/auth/change-handle",
                 json={"handle": "freshhandle", "password": "testpass"},
                 headers=headers,
             )
@@ -5846,7 +5956,7 @@ class TestHandleEndpoints:
     async def test_change_handle_invalid_empty(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-handle",
+            "/api/v1/auth/change-handle",
             json={"handle": "", "password": "testpass"},
             headers=headers,
         )
@@ -5855,7 +5965,7 @@ class TestHandleEndpoints:
     async def test_change_handle_invalid_chars(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-handle",
+            "/api/v1/auth/change-handle",
             json={"handle": "BAD HANDLE!", "password": "testpass"},
             headers=headers,
         )
@@ -5864,7 +5974,7 @@ class TestHandleEndpoints:
     async def test_change_handle_reserved(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-handle",
+            "/api/v1/auth/change-handle",
             json={"handle": "work", "password": "testpass"},
             headers=headers,
         )
@@ -5877,7 +5987,7 @@ class TestHandleEndpoints:
         # Try to set user's handle to the same
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-handle",
+            "/api/v1/auth/change-handle",
             json={"handle": "taken-handle", "password": "testpass"},
             headers=headers,
         )
@@ -5887,7 +5997,7 @@ class TestHandleEndpoints:
     async def test_change_handle_wrong_password(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/auth/change-handle",
+            "/api/v1/auth/change-handle",
             json={"handle": "good-handle", "password": "wrongpass"},
             headers=headers,
         )
@@ -5895,14 +6005,14 @@ class TestHandleEndpoints:
 
     async def test_admin_change_user_handle(self, client, admin_user, user):
         admin_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         admin_headers = {
             "Authorization": f"Bearer {admin_resp.json()['access_token']}"
         }
         resp = await client.patch(
-            f"/admin/users/{user['id']}",
+            f"/api/v1/admin/users/{user['id']}",
             json={"handle": "admin-set-handle"},
             headers=admin_headers,
         )
@@ -5914,7 +6024,7 @@ class TestHandleEndpoints:
         self, client, admin_user, user
     ):
         admin_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         admin_headers = {
@@ -5926,7 +6036,7 @@ class TestHandleEndpoints:
             new_callable=AsyncMock,
         ) as mock_refresh:
             resp = await client.patch(
-                f"/admin/users/{user['id']}",
+                f"/api/v1/admin/users/{user['id']}",
                 json={"handle": "admin-refreshed"},
                 headers=admin_headers,
             )
@@ -5937,14 +6047,14 @@ class TestHandleEndpoints:
         self, client, admin_user, user
     ):
         admin_resp = await client.post(
-            "/auth/login",
+            "/api/v1/auth/login",
             json={"email": "testadmin@example.com", "password": "testpass"},
         )
         admin_headers = {
             "Authorization": f"Bearer {admin_resp.json()['access_token']}"
         }
         resp = await client.patch(
-            f"/admin/users/{user['id']}",
+            f"/api/v1/admin/users/{user['id']}",
             json={"handle": "", "password": "testpass"},
             headers=admin_headers,
         )
@@ -5952,7 +6062,7 @@ class TestHandleEndpoints:
 
     async def test_get_me(self, client, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/auth/me", headers=headers)
+        resp = await client.get("/api/v1/auth/me", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == user["id"]

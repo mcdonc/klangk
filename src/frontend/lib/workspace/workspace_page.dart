@@ -131,7 +131,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   Future<void> _fetchWorkspaceName() async {
     final auth = context.read<AuthService>();
     try {
-      final response = await auth.authGet('/workspaces');
+      final response = await auth.authGet('/api/v1/workspaces');
       if (response.statusCode == 200) {
         final workspaces = jsonDecode(response.body) as List;
         for (final ws in workspaces) {
@@ -152,7 +152,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     try {
       final resource = '/workspaces/${widget.workspaceId}';
       final permResp = await auth.authGet(
-        '/api/my-permissions?resource=${Uri.encodeQueryComponent(resource)}',
+        '/api/v1/my-permissions?resource=${Uri.encodeQueryComponent(resource)}',
       );
       if (permResp.statusCode == 200 && mounted) {
         final data = jsonDecode(permResp.body) as Map<String, dynamic>;

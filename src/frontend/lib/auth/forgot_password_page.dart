@@ -42,7 +42,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     final auth = context.read<AuthService>();
     try {
       final resp = await auth.authPost(
-        '/auth/forgot-password',
+        '/api/v1/auth/forgot-password',
         body: jsonEncode({'email': _emailController.text.trim()}),
       );
       if (!mounted) return;

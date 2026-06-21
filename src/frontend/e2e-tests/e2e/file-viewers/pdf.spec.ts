@@ -83,7 +83,7 @@ test.describe("file-viewers/pdf", () => {
       // routes here; Flutter web's blob download doesn't surface a Playwright
       // "download" event in CI).
       const dl = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
           "work/dl.pdf",
         )}`,
         { headers },

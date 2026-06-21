@@ -162,10 +162,13 @@ test.describe("documentation screenshots", () => {
 
     try {
       // Add collaborator as owner (so they can type in shared terminals)
-      await request.post(`${API_BASE}/workspaces/${workspaceId}/roles/owners`, {
-        headers: owner.headers,
-        data: { email: collabEmail },
-      });
+      await request.post(
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/roles/owners`,
+        {
+          headers: owner.headers,
+          data: { email: collabEmail },
+        },
+      );
 
       // --- Owner opens workspace ---
       await openWorkspace(page, ownerEmail, workspaceId, {

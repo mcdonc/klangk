@@ -20,13 +20,13 @@ void main() {
     List<Map<String, dynamic>>? groups,
   }) {
     return MockClient((request) async {
-      if (request.url.path.contains('/api/config')) {
+      if (request.url.path.contains('/api/v1/config')) {
         return http.Response(
           jsonEncode({'login_banner_title': '', 'login_banner': ''}),
           200,
         );
       }
-      if (request.url.path.contains('/api/my-permissions')) {
+      if (request.url.path.contains('/api/v1/my-permissions')) {
         return http.Response(
           jsonEncode({
             'user_id': 'test',
@@ -48,10 +48,10 @@ void main() {
   /// Default mock that serves workspaces, config, and permissions.
   http.Client defaultMockClient() {
     return withPermissions((request) async {
-      if (request.url.path == '/workspaces') {
+      if (request.url.path == '/api/v1/workspaces') {
         return http.Response(jsonEncode([]), 200);
       }
-      if (request.url.path == '/workspaces/shared') {
+      if (request.url.path == '/api/v1/workspaces/shared') {
         return http.Response(jsonEncode([]), 200);
       }
       return http.Response('Not found', 404);
@@ -123,10 +123,10 @@ void main() {
     testWidgets('no FAB when user lacks create permission', (tester) async {
       testAuthHttpClientOverride = withPermissions(
         (request) async {
-          if (request.url.path == '/workspaces') {
+          if (request.url.path == '/api/v1/workspaces') {
             return http.Response(jsonEncode([]), 200);
           }
-          if (request.url.path == '/workspaces/shared') {
+          if (request.url.path == '/api/v1/workspaces/shared') {
             return http.Response(jsonEncode([]), 200);
           }
           return http.Response('Not found', 404);
@@ -158,7 +158,7 @@ void main() {
 
     testWidgets('shows workspace list from mock', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -193,7 +193,7 @@ void main() {
 
     testWidgets('shows member avatars on workspace cards', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -206,7 +206,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/workspaces/ws-1/members') {
+        if (request.url.path == '/api/v1/workspaces/ws-1/members') {
           return http.Response(
             jsonEncode([
               {'id': 'uid-2', 'email': 'alice@example.com'},
@@ -231,7 +231,7 @@ void main() {
 
     testWidgets('shows shared workspaces section', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -244,7 +244,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/workspaces/shared') {
+        if (request.url.path == '/api/v1/workspaces/shared') {
           return http.Response(
             jsonEncode([
               {
@@ -285,10 +285,10 @@ void main() {
     testWidgets('shows only shared section when no owned workspaces',
         (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces/shared') {
+        if (request.url.path == '/api/v1/workspaces/shared') {
           return http.Response(
             jsonEncode([
               {
@@ -316,7 +316,7 @@ void main() {
     testWidgets('handles missing and invalid created_at gracefully',
         (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -361,7 +361,7 @@ void main() {
 
     testWidgets('shows empty state when no workspaces', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -375,7 +375,7 @@ void main() {
 
     testWidgets('shows delete button for each workspace', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -426,7 +426,7 @@ void main() {
 
     testWidgets('shows created date for workspaces', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -450,7 +450,8 @@ void main() {
 
     testWidgets('FAB opens create workspace dialog', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -469,7 +470,8 @@ void main() {
 
     testWidgets('create dialog has text field', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -487,7 +489,8 @@ void main() {
 
     testWidgets('cancel button closes create dialog', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -507,7 +510,7 @@ void main() {
 
     testWidgets('delete button shows confirmation dialog', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -537,7 +540,7 @@ void main() {
 
     testWidgets('cancel delete closes dialog without deleting', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -568,7 +571,7 @@ void main() {
 
     testWidgets('workspace cards use ListTile', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -598,7 +601,7 @@ void main() {
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -613,7 +616,8 @@ void main() {
     testWidgets('create dialog submit adds workspace to list', (tester) async {
       var postCalled = false;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           if (postCalled) {
             return http.Response(
               jsonEncode([
@@ -629,7 +633,8 @@ void main() {
           }
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           postCalled = true;
           return http.Response(
             jsonEncode({
@@ -662,10 +667,12 @@ void main() {
 
     testWidgets('create dialog shows inline error on failure', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           return http.Response(
             jsonEncode({'detail': 'Name already taken'}),
             409,
@@ -690,7 +697,8 @@ void main() {
     testWidgets('confirm delete removes workspace from list', (tester) async {
       var deleteCalled = false;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           if (deleteCalled) {
             return http.Response(jsonEncode([]), 200);
           }
@@ -706,7 +714,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/workspaces/ws-1' &&
+        if (request.url.path == '/api/v1/workspaces/ws-1' &&
             request.method == 'DELETE') {
           deleteCalled = true;
           return http.Response('', 200);
@@ -735,7 +743,7 @@ void main() {
     testWidgets('tapping workspace card navigates to workspace URL',
         (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
               {
@@ -794,7 +802,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = withPermissions(
         (request) async {
-          if (request.url.path == '/workspaces') {
+          if (request.url.path == '/api/v1/workspaces') {
             return http.Response(jsonEncode([]), 200);
           }
           return http.Response('Not found', 404);
@@ -823,7 +831,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = withPermissions(
         (request) async {
-          if (request.url.path == '/workspaces') {
+          if (request.url.path == '/api/v1/workspaces') {
             return http.Response(jsonEncode([]), 200);
           }
           return http.Response('Not found', 404);
@@ -843,7 +851,8 @@ void main() {
         (tester) async {
       var postCalled = false;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           if (postCalled) {
             return http.Response(
               jsonEncode([
@@ -859,7 +868,8 @@ void main() {
           }
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           postCalled = true;
           return http.Response(
             jsonEncode({
@@ -892,10 +902,11 @@ void main() {
     testWidgets('create dialog with image selection', (tester) async {
       String? postedBody;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/images' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/images' && request.method == 'GET') {
           return http.Response(
             jsonEncode({
               'default': 'klangk',
@@ -904,7 +915,8 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           postedBody = request.body;
           return http.Response(
             jsonEncode({
@@ -948,10 +960,12 @@ void main() {
         (tester) async {
       String? postedBody;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           postedBody = request.body;
           return http.Response(
             jsonEncode({
@@ -988,7 +1002,8 @@ void main() {
         (tester) async {
       var postCalled = false;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           if (postCalled) {
             return http.Response(
               jsonEncode([
@@ -1004,7 +1019,8 @@ void main() {
           }
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           postCalled = true;
           return http.Response(
             jsonEncode({
@@ -1037,10 +1053,12 @@ void main() {
     testWidgets('create workspace exception shows inline error',
         (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           throw Exception('Network error');
         }
         return http.Response('Not found', 404);
@@ -1062,7 +1080,8 @@ void main() {
     testWidgets('delete workspace exception shows error snackbar',
         (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(
             jsonEncode([
               {
@@ -1075,7 +1094,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/workspaces/ws-1' &&
+        if (request.url.path == '/api/v1/workspaces/ws-1' &&
             request.method == 'DELETE') {
           throw Exception('Network error');
         }
@@ -1097,10 +1116,10 @@ void main() {
     testWidgets('logout button calls logout and navigates', (tester) async {
       var logoutCalled = false;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/auth/logout') {
+        if (request.url.path == '/api/v1/auth/logout') {
           logoutCalled = true;
           return http.Response('', 200);
         }
@@ -1137,10 +1156,10 @@ void main() {
 
     testWidgets('logout with oidc redirect calls navigateTo', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/auth/logout') {
+        if (request.url.path == '/api/v1/auth/logout') {
           return http.Response(
             jsonEncode({
               'status': 'ok',
@@ -1181,7 +1200,7 @@ void main() {
 
     testWidgets('title tap navigates to home', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces') {
+        if (request.url.path == '/api/v1/workspaces') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -1230,7 +1249,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = withPermissions(
         (request) async {
-          if (request.url.path == '/workspaces') {
+          if (request.url.path == '/api/v1/workspaces') {
             return http.Response(jsonEncode([]), 200);
           }
           return http.Response('Not found', 404);
@@ -1279,10 +1298,12 @@ void main() {
     testWidgets('create workspace with mounts', (tester) async {
       String? postedBody;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           postedBody = request.body;
           return http.Response(
             jsonEncode({
@@ -1343,10 +1364,12 @@ void main() {
     testWidgets('create dialog adds mount via Enter key', (tester) async {
       String? postedBody;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           postedBody = request.body;
           return http.Response(
             jsonEncode({
@@ -1385,7 +1408,8 @@ void main() {
 
     testWidgets('create dialog rejects invalid mount', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -1433,10 +1457,12 @@ void main() {
     testWidgets('create workspace with env vars', (tester) async {
       String? postedBody;
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
-        if (request.url.path == '/workspaces' && request.method == 'POST') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
           postedBody = request.body;
           return http.Response(
             jsonEncode({
@@ -1488,7 +1514,8 @@ void main() {
 
     testWidgets('create dialog rejects invalid env var', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
-        if (request.url.path == '/workspaces' && request.method == 'GET') {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);

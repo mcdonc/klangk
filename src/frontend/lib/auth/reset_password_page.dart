@@ -45,7 +45,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     final auth = context.read<AuthService>();
     try {
       final resp = await auth.authPost(
-        '/auth/reset-password',
+        '/api/v1/auth/reset-password',
         body: jsonEncode({
           'token': widget.token,
           'password': _passwordController.text,

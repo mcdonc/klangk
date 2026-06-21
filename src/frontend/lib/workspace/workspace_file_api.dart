@@ -25,7 +25,7 @@ Future<PathKind> statWorkspacePath({
   final slash = rel.lastIndexOf('/');
   final parent = slash >= 0 ? rel.substring(0, slash) : '';
   final name = slash >= 0 ? rel.substring(slash + 1) : rel;
-  final uri = Uri.parse('$baseUrl/workspaces/$workspaceId/files'
+  final uri = Uri.parse('$baseUrl/api/v1/workspaces/$workspaceId/files'
       '?path=${Uri.encodeQueryComponent(parent)}');
   try {
     final res = await client.get(uri, headers: {

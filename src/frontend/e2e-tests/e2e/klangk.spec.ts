@@ -95,7 +95,7 @@ test.describe("Klangk E2E", () => {
       await waitForFile(request, workspaceId, "work/.term-test", headers);
 
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.term-test`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.term-test`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -150,7 +150,7 @@ test.describe("Klangk E2E", () => {
 
       await waitForFile(request, workspaceId, "work/.paste-test", headers);
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.paste-test`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.paste-test`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -205,7 +205,7 @@ test.describe("Klangk E2E", () => {
 
       await waitForFile(request, workspaceId, "work/.paste-utf8", headers);
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.paste-utf8`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.paste-utf8`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -433,7 +433,7 @@ test.describe("Klangk E2E", () => {
       await page.waitForTimeout(500);
 
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.paste-leak-canary`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.paste-leak-canary`,
         { headers },
       );
       // 404 (or any non-2xx) is the expected outcome: file shouldn't exist.
@@ -476,7 +476,7 @@ test.describe("Klangk E2E", () => {
       await waitForFile(request, workspaceId, "work/foo.txt", headers);
 
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/foo.txt`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/foo.txt`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -641,7 +641,7 @@ test.describe("Klangk E2E", () => {
         );
 
         const readResp = await request.get(
-          `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.reconnect-after`,
+          `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.reconnect-after`,
           { headers },
         );
         expect(readResp.ok()).toBeTruthy();
@@ -687,7 +687,7 @@ test.describe("Klangk E2E", () => {
     const password = "testpass1234";
 
     // Register via API
-    const regResp = await request.post(`${API_BASE}/auth/register`, {
+    const regResp = await request.post(`${API_BASE}/api/v1/auth/register`, {
       data: { email, password },
     });
     expect(regResp.ok()).toBeTruthy();
@@ -747,7 +747,7 @@ test.describe("Klangk E2E", () => {
 
       // Verify file content
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.e2e-multitest/sub/result.txt`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.e2e-multitest/sub/result.txt`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -802,7 +802,7 @@ test.describe("Klangk E2E", () => {
       await waitForFile(request, workspaceId, "work/.tab-survive", headers);
 
       const readResp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.tab-survive`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.tab-survive`,
         { headers },
       );
       expect(readResp.ok()).toBeTruthy();
@@ -883,7 +883,7 @@ test.describe("Klangk E2E", () => {
 
       // Verify structure via API
       const innerFiles = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files?path=work/.e2e-nav/inner`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work/.e2e-nav/inner`,
         { headers },
       );
       expect(innerFiles.ok()).toBeTruthy();
@@ -892,7 +892,7 @@ test.describe("Klangk E2E", () => {
 
       // Read nested file content
       const content = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.e2e-nav/inner/file.txt`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.e2e-nav/inner/file.txt`,
         { headers },
       );
       expect(content.ok()).toBeTruthy();
@@ -936,7 +936,7 @@ test.describe("Klangk E2E", () => {
 
       // File API now roots at home, so we can read it directly
       const resp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=.host-created-file`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=.host-created-file`,
         { headers },
       );
       expect(resp.ok()).toBeTruthy();
@@ -971,7 +971,7 @@ test.describe("Klangk E2E", () => {
       );
 
       const resp = await request.get(
-        `${API_BASE}/workspaces/${workspaceId}/files/content?path=work/.home-persist-test`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/.home-persist-test`,
         { headers },
       );
       expect(resp.ok()).toBeTruthy();
@@ -990,7 +990,7 @@ test.describe("Klangk E2E", () => {
         "requires local podman access",
       );
       // Check if test mode is enabled
-      const getResp = await request.get(`${API_BASE}/api/test/idle-timeout`);
+      const getResp = await request.get(`${API_BASE}/api/v1/test/idle-timeout`);
       if (!getResp.ok()) {
         test.skip(true, "KLANGK_TEST_MODE not enabled");
         return;
@@ -1002,7 +1002,7 @@ test.describe("Klangk E2E", () => {
         });
 
       // Set a short idle timeout for this workspace only
-      await request.post(`${API_BASE}/api/test/set-idle-timeout`, {
+      await request.post(`${API_BASE}/api/v1/test/set-idle-timeout`, {
         headers,
         data: { seconds: 5, workspace_id: workspaceId },
       });
@@ -1021,7 +1021,7 @@ test.describe("Klangk E2E", () => {
 
         // Reset per-workspace timeout so the restarted container isn't
         // immediately killed again.
-        await request.post(`${API_BASE}/api/test/set-idle-timeout`, {
+        await request.post(`${API_BASE}/api/v1/test/set-idle-timeout`, {
           headers,
           data: { seconds: 300, workspace_id: workspaceId },
         });
@@ -1080,7 +1080,9 @@ test.describe("Klangk E2E", () => {
     expect(finalUrl).toContain(workspaceId);
 
     // Cleanup
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, { headers });
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
+      headers,
+    });
   });
 
   test("browser-delegate routes to the correct connection", async ({
@@ -1092,7 +1094,7 @@ test.describe("Klangk E2E", () => {
       "requires local podman access",
     );
     // Check if test mode is enabled (browsers endpoint needs it)
-    const testCheck = await request.get(`${API_BASE}/api/test/idle-timeout`);
+    const testCheck = await request.get(`${API_BASE}/api/v1/test/idle-timeout`);
     if (!testCheck.ok()) {
       test.skip(true, "KLANGK_TEST_MODE not enabled");
       return;
@@ -1104,7 +1106,7 @@ test.describe("Klangk E2E", () => {
     const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
     await registerUser(request, memberEmail);
 
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers: ownerHeaders,
       data: { name: `e2e-bridge-${Date.now()}` },
     });
@@ -1113,7 +1115,7 @@ test.describe("Klangk E2E", () => {
 
     // Add member as collaborator
     await request.post(
-      `${API_BASE}/workspaces/${workspaceId}/roles/collaborators`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/roles/collaborators`,
       { headers: ownerHeaders, data: { email: memberEmail } },
     );
 
@@ -1167,7 +1169,7 @@ test.describe("Klangk E2E", () => {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const browsersResp = await request.get(
-        `${API_BASE}/api/test/browsers/${workspaceId}`,
+        `${API_BASE}/api/v1/test/browsers/${workspaceId}`,
       );
       expect(browsersResp.ok()).toBeTruthy();
       browsers = await browsersResp.json();
@@ -1187,7 +1189,7 @@ test.describe("Klangk E2E", () => {
 
     // Get a workspace token for the bridge requests
     const tokenResp = await request.get(
-      `${API_BASE}/api/test/workspace-token/${workspaceId}`,
+      `${API_BASE}/api/v1/test/workspace-token/${workspaceId}`,
     );
     expect(tokenResp.ok()).toBeTruthy();
     const wsToken = (await tokenResp.json()).token;
@@ -1195,7 +1197,7 @@ test.describe("Klangk E2E", () => {
 
     // Send bridge request targeting the OWNER — the auto-responder
     // in page1 will reply with {pong: "ping owner"}.
-    const resp1 = await request.post(`${API_BASE}/api/browser-delegate`, {
+    const resp1 = await request.post(`${API_BASE}/api/v1/browser-delegate`, {
       headers: bridgeHeaders,
       data: {
         action: "test_ping",
@@ -1208,7 +1210,7 @@ test.describe("Klangk E2E", () => {
 
     // Send bridge request targeting the MEMBER — the auto-responder
     // in page2 will reply with {pong: "ping member"}.
-    const resp2 = await request.post(`${API_BASE}/api/browser-delegate`, {
+    const resp2 = await request.post(`${API_BASE}/api/v1/browser-delegate`, {
       headers: bridgeHeaders,
       data: {
         action: "test_ping",
@@ -1222,7 +1224,7 @@ test.describe("Klangk E2E", () => {
     // Clean up
     await ctx1.close();
     await ctx2.close();
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
   });
@@ -1237,14 +1239,14 @@ test.describe("Klangk E2E", () => {
     const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
     await registerUser(request, memberEmail);
 
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers: ownerHeaders,
       data: { name: `e2e-isolation-${Date.now()}` },
     });
     expect(wsResp.ok()).toBeTruthy();
     const workspaceId = (await wsResp.json()).id;
 
-    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+    await request.post(`${API_BASE}/api/v1/workspaces/${workspaceId}/members`, {
       headers: ownerHeaders,
       data: { email: memberEmail },
     });
@@ -1316,7 +1318,7 @@ test.describe("Klangk E2E", () => {
     // Clean up
     await ctx1.close();
     await ctx2.close();
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
   });
@@ -1330,14 +1332,14 @@ test.describe("Klangk E2E", () => {
     const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
     await registerUser(request, memberEmail);
 
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers: ownerHeaders,
       data: { name: `e2e-chat-${Date.now()}` },
     });
     expect(wsResp.ok()).toBeTruthy();
     const workspaceId = (await wsResp.json()).id;
 
-    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+    await request.post(`${API_BASE}/api/v1/workspaces/${workspaceId}/members`, {
       headers: ownerHeaders,
       data: { email: memberEmail },
     });
@@ -1406,7 +1408,7 @@ test.describe("Klangk E2E", () => {
 
     await ctx1.close();
     await ctx2.close();
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
   });
@@ -1420,14 +1422,14 @@ test.describe("Klangk E2E", () => {
     const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
     await registerUser(request, memberEmail);
 
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers: ownerHeaders,
       data: { name: `e2e-joinleave-${Date.now()}` },
     });
     expect(wsResp.ok()).toBeTruthy();
     const workspaceId = (await wsResp.json()).id;
 
-    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+    await request.post(`${API_BASE}/api/v1/workspaces/${workspaceId}/members`, {
       headers: ownerHeaders,
       data: { email: memberEmail },
     });
@@ -1484,7 +1486,7 @@ test.describe("Klangk E2E", () => {
     expect(leaveMsgs[0].message).toBe(`${memberHandle} left`);
 
     await ctx1.close();
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
   });
@@ -1500,7 +1502,7 @@ test.describe("Klangk E2E", () => {
     await registerUser(request, memberEmail);
     await registerUser(request, lateEmail);
 
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers: ownerHeaders,
       data: { name: `e2e-mention-${Date.now()}` },
     });
@@ -1508,7 +1510,7 @@ test.describe("Klangk E2E", () => {
     const workspaceId = (await wsResp.json()).id;
 
     // Share with first member
-    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+    await request.post(`${API_BASE}/api/v1/workspaces/${workspaceId}/members`, {
       headers: ownerHeaders,
       data: { email: memberEmail },
     });
@@ -1563,7 +1565,7 @@ test.describe("Klangk E2E", () => {
 
     // Now add a late member while owner is connected
     const countBefore = ownerWsMessages.length;
-    await request.post(`${API_BASE}/workspaces/${workspaceId}/members`, {
+    await request.post(`${API_BASE}/api/v1/workspaces/${workspaceId}/members`, {
       headers: ownerHeaders,
       data: { email: lateEmail },
     });
@@ -1604,7 +1606,7 @@ test.describe("Klangk E2E", () => {
     expect(chatMsg.mentions.length).toBeGreaterThan(0);
 
     await ctx1.close();
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers: ownerHeaders,
     });
   });
@@ -1616,7 +1618,7 @@ test.describe("Klangk E2E", () => {
     const email = `presence-${Date.now()}@test.example.com`;
     const { headers } = await registerUser(request, email);
 
-    const wsResp = await request.post(`${API_BASE}/workspaces`, {
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
       headers,
       data: { name: `e2e-presence-${Date.now()}` },
     });
@@ -1655,7 +1657,7 @@ test.describe("Klangk E2E", () => {
     expect(emails).toContain(email);
 
     await ctx.close();
-    await request.delete(`${API_BASE}/workspaces/${workspaceId}`, {
+    await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
       headers,
     });
   });

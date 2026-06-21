@@ -14,7 +14,7 @@ nginx reverse proxy (port 8995, serves UI + API + hosted app proxy + LLM proxy)
 Python/FastAPI backend (port 8997, serves API + frontend static files)
     ├── Auth (JWT sessions, SQLite user store)
     ├── Workspace registry (user → [workspace] → container)
-    ├── Browser bridge (/api/browser-delegate → WebSocket → Flutter)
+    ├── Browser bridge (/api/v1/browser-delegate → WebSocket → Flutter)
     ├── Chat (messages, @mentions, pagination, message types, container-to-chat REST API)
     ├── Presence (who's connected per workspace, join/leave broadcasts)
     ├── Terminal/exec session management

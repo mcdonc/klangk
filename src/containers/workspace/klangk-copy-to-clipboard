@@ -71,7 +71,7 @@ def _try_bridge(text, browser_id):
         headers["Authorization"] = f"Bearer {workspace_token}"
 
     req = urllib.request.Request(
-        f"{BRIDGE_URL}/api/browser-delegate",
+        f"{BRIDGE_URL}/api/v1/browser-delegate",
         data=payload,
         headers=headers,
         method="POST",

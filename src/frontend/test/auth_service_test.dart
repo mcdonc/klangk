@@ -25,7 +25,7 @@ void main() {
     List<Map<String, dynamic>>? groups,
   }) {
     return MockClient((request) async {
-      if (request.url.path.contains('/api/config')) {
+      if (request.url.path.contains('/api/v1/config')) {
         return http.Response(
           jsonEncode({
             'login_banner_title': '',
@@ -34,7 +34,7 @@ void main() {
           200,
         );
       }
-      if (request.url.path.contains('/api/my-permissions')) {
+      if (request.url.path.contains('/api/v1/my-permissions')) {
         return http.Response(
           jsonEncode({
             'user_id': 'test',
@@ -84,7 +84,7 @@ void main() {
       String instanceId = 'default',
     }) {
       return MockClient((request) async {
-        if (request.url.path.contains('/api/config')) {
+        if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
             jsonEncode({
               'login_banner_title': bannerTitle,
@@ -211,7 +211,7 @@ void main() {
   group('AuthService.login', () {
     test('successful login saves token and returns null', () async {
       testAuthHttpClientOverride = MockClient((request) async {
-        expect(request.url.path, '/auth/login');
+        expect(request.url.path, '/api/v1/auth/login');
         return http.Response(
           jsonEncode({'access_token': 'new-token'}),
           200,
@@ -282,7 +282,7 @@ void main() {
   group('AuthService.register', () {
     test('successful register saves token', () async {
       testAuthHttpClientOverride = MockClient((request) async {
-        expect(request.url.path, '/auth/register');
+        expect(request.url.path, '/api/v1/auth/register');
         return http.Response(
           jsonEncode({'access_token': 'reg-token'}),
           200,
@@ -394,7 +394,7 @@ void main() {
   group('AuthService.resendVerification', () {
     test('successful resend returns null', () async {
       testAuthHttpClientOverride = MockClient((request) async {
-        expect(request.url.path, '/auth/resend-verification');
+        expect(request.url.path, '/api/v1/auth/resend-verification');
         final body = jsonDecode(request.body);
         expect(body['email'], 'user@example.com');
         expect(body['password'], 'pass');
@@ -599,13 +599,13 @@ void main() {
     test('refreshPermissions updates cached permissions', () async {
       var callCount = 0;
       testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path.contains('/api/config')) {
+        if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
             jsonEncode({'login_banner_title': '', 'login_banner': ''}),
             200,
           );
         }
-        if (request.url.path.contains('/api/my-permissions')) {
+        if (request.url.path.contains('/api/v1/my-permissions')) {
           callCount++;
           final isAdmin = callCount > 1;
           return http.Response(
@@ -657,13 +657,13 @@ void main() {
       final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600; // 1h
       final token = makeJwtWithExp(exp);
       testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path.contains('/api/config')) {
+        if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
             jsonEncode({'login_banner_title': '', 'login_banner': ''}),
             200,
           );
         }
-        if (request.url.path.contains('/api/my-permissions')) {
+        if (request.url.path.contains('/api/v1/my-permissions')) {
           return http.Response(
             jsonEncode({
               'user_id': 'u',
@@ -674,7 +674,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path.contains('/auth/login')) {
+        if (request.url.path.contains('/api/v1/auth/login')) {
           return http.Response(
             jsonEncode({'access_token': token}),
             200,
@@ -695,13 +695,13 @@ void main() {
       final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600;
       final token = makeJwtWithExp(exp);
       testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path.contains('/api/config')) {
+        if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
             jsonEncode({'login_banner_title': '', 'login_banner': ''}),
             200,
           );
         }
-        if (request.url.path.contains('/api/my-permissions')) {
+        if (request.url.path.contains('/api/v1/my-permissions')) {
           return http.Response(
             jsonEncode({
               'user_id': 'u',
@@ -730,13 +730,13 @@ void main() {
       var refreshCalled = false;
 
       testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path.contains('/api/config')) {
+        if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
             jsonEncode({'login_banner_title': '', 'login_banner': ''}),
             200,
           );
         }
-        if (request.url.path.contains('/api/my-permissions')) {
+        if (request.url.path.contains('/api/v1/my-permissions')) {
           return http.Response(
             jsonEncode({
               'user_id': 'u',
@@ -747,7 +747,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path.contains('/auth/refresh')) {
+        if (request.url.path.contains('/api/v1/auth/refresh')) {
           refreshCalled = true;
           expect(request.headers['Authorization'], 'Bearer $oldToken');
           return http.Response(
@@ -775,13 +775,13 @@ void main() {
       final token = makeJwtWithExp(exp);
 
       testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path.contains('/api/config')) {
+        if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
             jsonEncode({'login_banner_title': '', 'login_banner': ''}),
             200,
           );
         }
-        if (request.url.path.contains('/api/my-permissions')) {
+        if (request.url.path.contains('/api/v1/my-permissions')) {
           return http.Response(
             jsonEncode({
               'user_id': 'u',
@@ -792,7 +792,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path.contains('/auth/refresh')) {
+        if (request.url.path.contains('/api/v1/auth/refresh')) {
           return http.Response('{"detail":"Token expired"}', 401);
         }
         return http.Response('Not found', 404);
@@ -813,13 +813,13 @@ void main() {
       final token = makeJwtWithExp(exp);
 
       testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path.contains('/api/config')) {
+        if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
             jsonEncode({'login_banner_title': '', 'login_banner': ''}),
             200,
           );
         }
-        if (request.url.path.contains('/api/my-permissions')) {
+        if (request.url.path.contains('/api/v1/my-permissions')) {
           return http.Response(
             jsonEncode({
               'user_id': 'u',
@@ -830,7 +830,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path.contains('/auth/refresh')) {
+        if (request.url.path.contains('/api/v1/auth/refresh')) {
           throw Exception('Network error');
         }
         return http.Response('Not found', 404);
@@ -851,13 +851,13 @@ void main() {
   group('AuthService authenticated requests', () {
     test('authGet clears token on 401', () async {
       testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path.contains('/api/config')) {
+        if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
             jsonEncode({'login_banner_title': '', 'login_banner': ''}),
             200,
           );
         }
-        if (request.url.path.contains('/api/my-permissions')) {
+        if (request.url.path.contains('/api/v1/my-permissions')) {
           return http.Response(
             jsonEncode({
               'user_id': 'x',
@@ -876,7 +876,7 @@ void main() {
       await Future.delayed(Duration.zero);
       expect(service.isLoggedIn, isTrue);
 
-      await service.authGet('/workspaces');
+      await service.authGet('/api/v1/workspaces');
       expect(service.isLoggedIn, isFalse);
     });
 
@@ -889,7 +889,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      await service.authGet('/workspaces');
+      await service.authGet('/api/v1/workspaces');
       expect(service.isLoggedIn, isTrue);
     });
 
@@ -902,7 +902,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      await service.authPost('/workspaces?name=test');
+      await service.authPost('/api/v1/workspaces?name=test');
       expect(service.isLoggedIn, isFalse);
     });
 
@@ -915,7 +915,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      await service.authPatch('/users/1', body: '{"name":"new"}');
+      await service.authPatch('/api/v1/users/1', body: '{"name":"new"}');
       expect(service.isLoggedIn, isFalse);
     });
 
@@ -931,7 +931,7 @@ void main() {
       await Future.delayed(Duration.zero);
 
       final response =
-          await service.authPatch('/users/1', body: '{"name":"new"}');
+          await service.authPatch('/api/v1/users/1', body: '{"name":"new"}');
       expect(service.isLoggedIn, isTrue);
       expect(response.statusCode, 200);
       expect(method, 'PATCH');
@@ -946,7 +946,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      await service.authDelete('/workspaces/123');
+      await service.authDelete('/api/v1/workspaces/123');
       expect(service.isLoggedIn, isFalse);
     });
 
@@ -959,7 +959,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      await service.authPut('/workspaces/123/command', body: '{}');
+      await service.authPut('/api/v1/workspaces/123/command', body: '{}');
       expect(service.isLoggedIn, isFalse);
     });
 
@@ -992,7 +992,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      await service.authGet('/workspaces');
+      await service.authGet('/api/v1/workspaces');
       expect(authHeader, 'Bearer my-token');
     });
   });

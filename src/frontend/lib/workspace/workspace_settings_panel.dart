@@ -37,7 +37,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     });
     final auth = context.read<AuthService>();
 
-    final wsResp = await auth.authGet('/workspaces');
+    final wsResp = await auth.authGet('/api/v1/workspaces');
     if (!mounted) return;
 
     List<Map<String, dynamic>> workspaces = [];
@@ -51,7 +51,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
 
     // Try shared workspaces if not found in owned
     if (ws == null) {
-      final sharedResp = await auth.authGet('/workspaces/shared');
+      final sharedResp = await auth.authGet('/api/v1/workspaces/shared');
       if (!mounted) return;
       if (sharedResp.statusCode == 200) {
         final shared =
@@ -74,7 +74,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
 
     // Load allowed images
     try {
-      final imgResp = await auth.authGet('/images');
+      final imgResp = await auth.authGet('/api/v1/images');
       if (mounted && imgResp.statusCode == 200) {
         final imgData = jsonDecode(imgResp.body) as Map<String, dynamic>;
         _defaultImage = imgData['default'] as String? ?? 'klangk-pi';
@@ -92,7 +92,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   Future<void> _saveSettings(Map<String, dynamic> fields) async {
     final auth = context.read<AuthService>();
     final resp = await auth.authPut(
-      '/workspaces/${widget.workspaceId}',
+      '/api/v1/workspaces/${widget.workspaceId}',
       body: jsonEncode(fields),
     );
     if (!mounted) return;

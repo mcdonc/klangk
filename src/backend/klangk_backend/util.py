@@ -7,6 +7,10 @@ from typing import TypeVar
 
 T = TypeVar("T")
 
+# Versioned API prefix — used by api.py (router mount) and acl.py
+# (resource path extraction). Defined here to avoid circular imports.
+API_PREFIX = "/api/v1"
+
 logger = logging.getLogger(__name__)
 
 

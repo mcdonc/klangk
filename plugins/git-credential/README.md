@@ -66,19 +66,19 @@ git push (to github.com)
     → KLANGK_GITHUB_OAUTH_CLIENT_ID is set, host is github.com
     → POST https://github.com/login/device/code (from container)
     → GitHub returns device_code, user_code, verification_uri
-    → POST /api/browser-delegate { operation: "device_flow_show",
+    → POST /api/v1/browser-delegate { operation: "device_flow_show",
         user_code, verification_uri }
     → browser shows code dialog, opens GitHub auth page in popup
     → helper polls POST https://github.com/login/oauth/access_token
     → user authorizes in popup
     → poll returns access_token
-    → POST /api/browser-delegate { operation: "device_flow_done" }
+    → POST /api/v1/browser-delegate { operation: "device_flow_done" }
     → browser dismisses code dialog
     → helper prints username=x-access-token / password=<token>
   → git authenticates with the token
   → push succeeds
   → git calls: git-credential-klangk store
-    → POST /api/browser-delegate { operation: "store", username, password }
+    → POST /api/v1/browser-delegate { operation: "store", username, password }
     → plugin caches credentials for future requests
 ```
 
@@ -90,7 +90,7 @@ directly from GitHub to the container helper to git's stdout.
 ```text
 git push (to any host, or github.com without device flow)
   → git calls: git-credential-klangk get
-    → POST /api/browser-delegate { operation: "get", host: "..." }
+    → POST /api/v1/browser-delegate { operation: "get", host: "..." }
     → browser plugin checks cache
       → cache hit: return cached credentials
       → cache miss: show PAT dialog, wait for user

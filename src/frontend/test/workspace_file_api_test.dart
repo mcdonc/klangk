@@ -53,7 +53,7 @@ void main() {
       });
       expect(await stat('work/research/a.pdf', client: c, authToken: 'tok'),
           PathKind.file);
-      expect(seen.path, '/workspaces/ws1/files');
+      expect(seen.path, '/api/v1/workspaces/ws1/files');
       expect(seen.queryParameters['path'], 'work/research'); // parent listed
       expect(headers['Authorization'], 'Bearer tok');
     });

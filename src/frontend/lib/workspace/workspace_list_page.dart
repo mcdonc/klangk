@@ -67,7 +67,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   Future<void> _loadWorkspaces() async {
     setState(() => _loading = true);
     try {
-      final response = await _auth.authGet('/workspaces');
+      final response = await _auth.authGet('/api/v1/workspaces');
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as List;
         final workspaces = data.cast<Map<String, dynamic>>();
@@ -77,7 +77,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
           workspaces.map((ws) async {
             final id = ws['id'] as String;
             try {
-              final resp = await _auth.authGet('/workspaces/$id/members');
+              final resp =
+                  await _auth.authGet('/api/v1/workspaces/$id/members');
               if (resp.statusCode == 200) {
                 members[id] = List<Map<String, dynamic>>.from(
                   jsonDecode(resp.body) as List,
@@ -92,7 +93,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         // Fetch shared workspaces
         List<Map<String, dynamic>> shared = [];
         try {
-          final sharedResp = await _auth.authGet('/workspaces/shared');
+          final sharedResp = await _auth.authGet('/api/v1/workspaces/shared');
           if (sharedResp.statusCode == 200) {
             shared = List<Map<String, dynamic>>.from(
               jsonDecode(sharedResp.body) as List,
@@ -126,7 +127,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
 
   Future<Map<String, dynamic>?> _fetchImages() async {
     try {
-      final response = await _auth.authGet('/images');
+      final response = await _auth.authGet('/api/v1/images');
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
@@ -215,7 +216,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
 
           try {
             final response = await _auth.authPost(
-              '/workspaces',
+              '/api/v1/workspaces',
               body: jsonEncode(body),
             );
             if (response.statusCode == 200) {
@@ -465,7 +466,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     if (confirmed != true) return;
 
     try {
-      await _auth.authDelete('/workspaces/$id');
+      await _auth.authDelete('/api/v1/workspaces/$id');
       await _loadWorkspaces();
     } catch (e) {
       if (mounted) {

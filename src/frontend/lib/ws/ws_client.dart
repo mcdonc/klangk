@@ -170,7 +170,7 @@ class WsClient extends ChangeNotifier {
     if (testChannelFactory != null) return true; // coverage:ignore-line
     // coverage:ignore-start
     try {
-      final resp = await http.get(Uri.parse('$_httpBaseUrl/api/config'));
+      final resp = await http.get(Uri.parse('$_httpBaseUrl/api/v1/config'));
       return resp.statusCode == 200;
     } catch (e) {
       debugPrint('[WsClient] server health check failed: $e');

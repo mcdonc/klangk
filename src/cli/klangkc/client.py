@@ -190,13 +190,13 @@ class KlangkClient:
 
     def get_handle(self) -> str:
         """Return the current user's handle via ``GET /auth/me``."""
-        resp = self.get("/auth/me")
+        resp = self.get("/api/v1/auth/me")
         self._check_auth(resp)
         resp.raise_for_status()
         return resp.json()["handle"]
 
     def list_workspaces(self) -> list[Workspace]:
-        resp = self.get("/workspaces")
+        resp = self.get("/api/v1/workspaces")
         self._check_auth(resp)
         resp.raise_for_status()
         raw = resp.json()
@@ -214,7 +214,7 @@ class KlangkClient:
         ]
 
     def list_shared_workspaces(self) -> list[Workspace]:
-        resp = self.get("/workspaces/shared")
+        resp = self.get("/api/v1/workspaces/shared")
         self._check_auth(resp)
         resp.raise_for_status()
         raw = resp.json()
@@ -246,7 +246,7 @@ class KlangkClient:
             body["mounts"] = mounts
         if env:
             body["env"] = env
-        resp = self.post("/workspaces", json=body)
+        resp = self.post("/api/v1/workspaces", json=body)
         self._check_auth(resp)
         resp.raise_for_status()
         w = resp.json()
@@ -255,7 +255,7 @@ class KlangkClient:
         )
 
     def list_images(self) -> dict:
-        resp = self.get("/images")
+        resp = self.get("/api/v1/images")
         self._check_auth(resp)
         resp.raise_for_status()
         return resp.json()
@@ -273,13 +273,13 @@ class KlangkClient:
 
     def delete_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
-        resp = self.delete(f"/workspaces/{ws.id}")
+        resp = self.delete(f"/api/v1/workspaces/{ws.id}")
         self._check_auth(resp)
         resp.raise_for_status()
 
     def list_workspace_members(self, name: str) -> list[dict]:
         ws = self.resolve_workspace(name)
-        resp = self.get(f"/workspaces/{ws.id}/members")
+        resp = self.get(f"/api/v1/workspaces/{ws.id}/members")
         self._check_auth(resp)
         resp.raise_for_status()
         return resp.json()
@@ -289,7 +289,7 @@ class KlangkClient:
     ) -> dict:
         ws = self.resolve_workspace(name)
         resp = self.patch(
-            f"/workspaces/{ws.id}/roles",
+            f"/api/v1/workspaces/{ws.id}/roles",
             json={"email": email, "role": role},
         )
         self._check_auth(resp)
@@ -299,7 +299,7 @@ class KlangkClient:
     def remove_workspace_member(self, name: str, email: str) -> None:
         ws = self.resolve_workspace(name)
         resp = self.patch(
-            f"/workspaces/{ws.id}/roles",
+            f"/api/v1/workspaces/{ws.id}/roles",
             json={"email": email, "role": None},
         )
         self._check_auth(resp)
@@ -311,7 +311,7 @@ class KlangkClient:
 
     def restart_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
-        resp = self.post(f"/workspaces/{ws.id}/restart")
+        resp = self.post(f"/api/v1/workspaces/{ws.id}/restart")
         self._check_auth(resp)
         resp.raise_for_status()
 
@@ -328,7 +328,7 @@ class KlangkClient:
         """
         with httpx.stream(
             "GET",
-            f"{self.cfg.server.url}/workspaces/{workspace_id}/export",
+            f"{self.cfg.server.url}/api/v1/workspaces/{workspace_id}/export",
             headers=self._headers(),
             timeout=300.0,
         ) as resp:
@@ -391,7 +391,7 @@ class KlangkClient:
         with open(archive, "rb") as f:
             pf = _ProgressFile(f) if on_progress else f
             resp = httpx.post(
-                f"{self.cfg.server.url}/workspaces/import",
+                f"{self.cfg.server.url}/api/v1/workspaces/import",
                 headers=self._headers(),
                 files={"file": (archive.name, pf, "application/gzip")},
                 params=params,

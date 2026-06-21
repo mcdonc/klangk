@@ -13,7 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import auth, container, model, oidc, plugins, wshandler
-from .api import router
+from .api import root_router, router
+from .util import API_PREFIX
 from .model import (
     ACTION_ALLOW,
     ACTION_DENY,
@@ -239,7 +240,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router)
+app.include_router(root_router)
+app.include_router(router, prefix=API_PREFIX)
 
 
 # --- WebSocket ---

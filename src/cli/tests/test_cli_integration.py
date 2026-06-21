@@ -1084,7 +1084,7 @@ class TestClientLines:
             ) as mock_post:
                 client.restart_workspace("ws1")
 
-        mock_post.assert_called_once_with("/workspaces/ws1/restart")
+        mock_post.assert_called_once_with("/api/v1/workspaces/ws1/restart")
 
 
 class TestImagesCommand:

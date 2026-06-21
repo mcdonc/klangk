@@ -56,7 +56,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     });
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet('/admin/users');
+      final resp = await auth.authGet('/api/v1/admin/users');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as List;
         setState(() {
@@ -80,7 +80,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Future<void> _loadInvitations() async {
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet('/admin/invitations');
+      final resp = await auth.authGet('/api/v1/admin/invitations');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as List;
         if (mounted) {
@@ -97,7 +97,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Future<void> _loadGroups() async {
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet('/admin/groups');
+      final resp = await auth.authGet('/api/v1/admin/groups');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as List;
         if (mounted) {
@@ -150,7 +150,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (result != true || nameCtrl.text.trim().isEmpty) return;
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/admin/groups',
+      '/api/v1/admin/groups',
       body: jsonEncode({
         'name': nameCtrl.text.trim(),
         if (descCtrl.text.trim().isNotEmpty)
@@ -189,7 +189,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     );
     if (confirm != true) return;
     final auth = context.read<AuthService>();
-    final resp = await auth.authDelete('/admin/groups/$groupId');
+    final resp = await auth.authDelete('/api/v1/admin/groups/$groupId');
     if (!mounted) return;
     if (resp.statusCode == 200) {
       _loadGroups();
@@ -203,8 +203,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final groupId = group['id'] as String;
     final groupName = group['name'] as String;
 
-    final membersResp = await auth.authGet('/admin/groups/$groupId/members');
-    final usersResp = await auth.authGet('/admin/users');
+    final membersResp =
+        await auth.authGet('/api/v1/admin/groups/$groupId/members');
+    final usersResp = await auth.authGet('/api/v1/admin/users');
     if (!mounted) return;
     if (membersResp.statusCode != 200 || usersResp.statusCode != 200) return;
 
@@ -242,12 +243,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                       onChanged: (userId) async {
                         if (userId == null) return;
                         final resp = await auth.authPost(
-                          '/admin/groups/$groupId/members',
+                          '/api/v1/admin/groups/$groupId/members',
                           body: jsonEncode({'user_id': userId}),
                         );
                         if (resp.statusCode == 200) {
                           final r = await auth.authGet(
-                            '/admin/groups/$groupId/members',
+                            '/api/v1/admin/groups/$groupId/members',
                           );
                           if (r.statusCode == 200) {
                             setDialogState(() {
@@ -290,7 +291,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                                   tooltip: 'Remove from group',
                                   onPressed: () async {
                                     final resp = await auth.authDelete(
-                                      '/admin/groups/$groupId/members/${member['id']}',
+                                      '/api/v1/admin/groups/$groupId/members/${member['id']}',
                                     );
                                     if (resp.statusCode == 200) {
                                       setDialogState(() {
@@ -387,7 +388,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/admin/invitations',
+      '/api/v1/admin/invitations',
       body: jsonEncode({'email': email}),
     );
     if (resp.statusCode == 200) {
@@ -435,7 +436,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (confirm != true) return;
 
     final auth = context.read<AuthService>();
-    final resp = await auth.authDelete('/admin/invitations/$invitationId');
+    final resp =
+        await auth.authDelete('/api/v1/admin/invitations/$invitationId');
     if (resp.statusCode == 200) {
       _loadInvitations();
     } else {
@@ -452,7 +454,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   Future<void> _resendInvitation(String invitationId, String email) async {
     final auth = context.read<AuthService>();
-    final resp = await auth.authPost('/admin/invitations/$invitationId/resend');
+    final resp =
+        await auth.authPost('/api/v1/admin/invitations/$invitationId/resend');
     if (mounted) {
       if (resp.statusCode == 200) {
         ScaffoldMessenger.of(
@@ -477,7 +480,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (result == null) return;
 
     final auth = context.read<AuthService>();
-    final resp = await auth.authPost('/admin/users', body: jsonEncode(result));
+    final resp =
+        await auth.authPost('/api/v1/admin/users', body: jsonEncode(result));
     if (resp.statusCode == 200) {
       _loadUsers();
     } else {
@@ -518,7 +522,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (confirm != true) return;
 
     final auth = context.read<AuthService>();
-    final resp = await auth.authDelete('/admin/users/$userId');
+    final resp = await auth.authDelete('/api/v1/admin/users/$userId');
     if (resp.statusCode == 200) {
       _loadUsers();
     } else {
@@ -543,7 +547,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
     final auth = context.read<AuthService>();
     final resp = await auth.authPatch(
-      '/admin/users/${user['id']}',
+      '/api/v1/admin/users/${user['id']}',
       body: jsonEncode(result),
     );
     if (resp.statusCode == 200) {

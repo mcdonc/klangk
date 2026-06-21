@@ -97,7 +97,7 @@ if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
   LLM_BLOCK="
     location ~ ^/llm-proxy/(.*)\$ {
 ${CONTAINER_ACL}
-      auth_request /auth/verify-workspace-token;
+      auth_request /api/v1/auth/verify-workspace-token;
       auth_request_set \$auth_token_error \$upstream_http_x_token_error;
       error_page 401 = @token_auth_failed;
       resolver ${DNS_RESOLVERS} valid=30s;
@@ -166,9 +166,9 @@ ${LLM_BLOCK}
     # (soliplex RAG + LLM) through here. The read timeout must accommodate
     # the git-credential device flow (up to 15 min) as well as streaming
     # RAG/LLM responses, so it exceeds the backend's max bridge timeout.
-    location /api/browser-delegate {
+    location /api/v1/browser-delegate {
 ${CONTAINER_ACL}
-      auth_request /auth/verify-workspace-token;
+      auth_request /api/v1/auth/verify-workspace-token;
       auth_request_set \$auth_token_error \$upstream_http_x_token_error;
       error_page 401 = @token_auth_failed;
       proxy_pass http://127.0.0.1:${KLANGK_PORT};
@@ -182,12 +182,12 @@ ${CONTAINER_ACL}
     }
 
     # Container-to-chat API: containers post chat messages via workspace JWT.
-    location = /api/workspace/post-chat-message {
+    location = /api/v1/workspaces/post-chat-message {
 ${CONTAINER_ACL}
-      auth_request /auth/verify-workspace-token;
+      auth_request /api/v1/auth/verify-workspace-token;
       auth_request_set \$auth_token_error \$upstream_http_x_token_error;
       error_page 401 = @token_auth_failed;
-      proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/workspace/post-chat-message;
+      proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/v1/workspaces/post-chat-message;
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -197,9 +197,9 @@ ${CONTAINER_ACL}
     # Workspace token verification subrequest (nginx auth_request target).
     # X-Token-Error is captured so the 401 error page can return a
     # meaningful JSON body to containers (expired vs invalid vs missing).
-    location = /auth/verify-workspace-token {
+    location = /api/v1/auth/verify-workspace-token {
       internal;
-      proxy_pass http://127.0.0.1:${KLANGK_PORT}/auth/verify-workspace-token;
+      proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/v1/auth/verify-workspace-token;
       proxy_pass_request_body off;
       proxy_set_header Content-Length "";
       proxy_set_header Authorization \$http_authorization;

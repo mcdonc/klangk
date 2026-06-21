@@ -993,13 +993,13 @@ class TestExportSymlinks:
         import httpx
 
         resp = httpx.post(
-            f"{server['url']}/auth/login",
+            f"{server['url']}/api/v1/auth/login",
             json={"email": "test@example.com", "password": "testpass"},
         )
         token = resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
-        resp = httpx.get(f"{server['url']}/workspaces", headers=headers)
+        resp = httpx.get(f"{server['url']}/api/v1/workspaces", headers=headers)
         ws = [w for w in resp.json() if w["name"] == "e2e-symlink"][0]
         ws_id = ws["id"]
 
@@ -1157,14 +1157,16 @@ class TestExportImport:
             import httpx
 
             resp = httpx.post(
-                f"{server['url']}/auth/login",
+                f"{server['url']}/api/v1/auth/login",
                 json={"email": "test@example.com", "password": "testpass"},
                 timeout=30,
             )
             token = resp.json()["access_token"]
             headers = {"Authorization": f"Bearer {token}"}
             resp = httpx.get(
-                f"{server['url']}/workspaces", headers=headers, timeout=30
+                f"{server['url']}/api/v1/workspaces",
+                headers=headers,
+                timeout=30,
             )
             ws = [w for w in resp.json() if w["name"] == "export-symlink"][0]
             ws_id = ws["id"]
@@ -1236,7 +1238,9 @@ class TestExportImport:
 
             # Find the imported workspace's home dir
             resp = httpx.get(
-                f"{server['url']}/workspaces", headers=headers, timeout=30
+                f"{server['url']}/api/v1/workspaces",
+                headers=headers,
+                timeout=30,
             )
             imported = [
                 w
@@ -1366,7 +1370,7 @@ class TestVolumeUserIsolation:
 
         # Register a second user via the API
         httpx.post(
-            f"{base_url}/auth/register",
+            f"{base_url}/api/v1/auth/register",
             json={
                 "email": "user2@example.com",
                 "password": "testpass2",
@@ -1669,7 +1673,7 @@ class TestWorkspaceSharing:
         import httpx
 
         httpx.post(
-            f"{base_url}/auth/register",
+            f"{base_url}/api/v1/auth/register",
             json={
                 "email": "share-user@example.com",
                 "password": "testpass",

@@ -36,7 +36,8 @@ class _VerifyPageState extends State<VerifyPage> {
 
     try {
       final auth = context.read<AuthService>();
-      final response = await auth.authGet('/auth/verify?token=${widget.token}');
+      final response =
+          await auth.authGet('/api/v1/auth/verify?token=${widget.token}');
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['access_token'] != null && mounted) {

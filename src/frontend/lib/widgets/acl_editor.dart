@@ -88,9 +88,9 @@ class AclEditorState extends State<AclEditor> {
   String get _aclUrl {
     final parts = widget.resource.split('/');
     if (parts.length >= 3 && parts[1] == 'workspaces') {
-      return '/workspaces/${parts[2]}/acl';
+      return '/api/v1/workspaces/${parts[2]}/acl';
     }
-    return '/admin/acl/resource?resource=${Uri.encodeQueryComponent(widget.resource)}';
+    return '/api/v1/admin/acl/resource?resource=${Uri.encodeQueryComponent(widget.resource)}';
   }
 
   void _removeEntry(int index) {
@@ -104,7 +104,7 @@ class AclEditorState extends State<AclEditor> {
     List<Map<String, dynamic>> users = [];
     List<Map<String, dynamic>> groups = [];
     try {
-      final uResp = await auth.authGet('/admin/users');
+      final uResp = await auth.authGet('/api/v1/admin/users');
       if (uResp.statusCode == 200) {
         users = List<Map<String, dynamic>>.from(jsonDecode(uResp.body));
       }
@@ -112,7 +112,7 @@ class AclEditorState extends State<AclEditor> {
       debugPrint('[AclEditor] fetch users failed: $e');
     }
     try {
-      final gResp = await auth.authGet('/admin/groups');
+      final gResp = await auth.authGet('/api/v1/admin/groups');
       if (gResp.statusCode == 200) {
         groups = List<Map<String, dynamic>>.from(jsonDecode(gResp.body));
       }

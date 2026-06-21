@@ -43,11 +43,11 @@ Groups replace the old role system. A group is a named collection of users. The 
 
 **API endpoints**:
 
-- `GET /admin/groups` — list all groups
-- `POST /admin/groups` — create group `{"name": "...", "description": "..."}`
-- `DELETE /admin/groups/{id}` — delete group (cascades: removes all ACEs referencing it)
-- `POST /admin/groups/{id}/members` — add user `{"user_id": "..."}`
-- `DELETE /admin/groups/{id}/members/{user_id}` — remove user
+- `GET /api/v1/admin/groups` — list all groups
+- `POST /api/v1/admin/groups` — create group `{"name": "...", "description": "..."}`
+- `DELETE /api/v1/admin/groups/{id}` — delete group (cascades: removes all ACEs referencing it)
+- `POST /api/v1/admin/groups/{id}/members` — add user `{"user_id": "..."}`
+- `DELETE /api/v1/admin/groups/{id}/members/{user_id}` — remove user
 
 ## Workspace Permissions
 
@@ -74,13 +74,13 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 
 **Web UI**: the UI automatically shows/hides elements based on your permissions (admin button, workspace tabs, create button, etc.).
 
-**API**: `GET /api/my-permissions` returns your effective permissions on all static resources. Add `?resource=/workspaces/{id}` to check a specific resource.
+**API**: `GET /api/v1/my-permissions` returns your effective permissions on all static resources. Add `?resource=/workspaces/{id}` to check a specific resource.
 
 **CLI**: `klangkc ls --shared` shows workspaces shared with you.
 
 ## Troubleshooting: "Why can't I access this workspace?"
 
-1. **Check your permissions**: `GET /api/my-permissions?resource=/workspaces/{id}` — does it include the permission you need?
+1. **Check your permissions**: `GET /api/v1/my-permissions?resource=/workspaces/{id}` — does it include the permission you need?
 2. **Check the workspace ACL**: in the Sharing tab, expand "Advanced: Access Control" to see the ACE list.
 3. **Check group membership**: are you in the right group? Admin > Groups tab shows group members.
 4. **Check the ACL walk**: permissions are inherited from parent resources. An ACE on `/` applies to everything below it unless overridden. A `Deny` ACE at a higher level blocks access even if a lower-level `Allow` exists, if the `Deny` has a lower position number.
