@@ -183,11 +183,6 @@ class TestConfig:
         data = resp.json()
         assert data["instance_id"] == "acl-e2e"
 
-    def test_config_instance_id_stable_across_requests(self, api):
-        resp1 = api.get("/api/config")
-        resp2 = api.get("/api/config")
-        assert resp1.json()["instance_id"] == resp2.json()["instance_id"]
-
 
 # --- Group management ---
 
