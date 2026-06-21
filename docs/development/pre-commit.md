@@ -4,6 +4,7 @@ Pre-commit hooks run automatically on `git commit` via [git-hooks.nix](https://g
 
 - **actionlint** — GitHub Actions workflow linting
 - **check-executables-have-shebangs** — ensures executable scripts have a shebang line
+- **deferred-imports** — flags non-module-scope imports
 - **check-toml** — TOML syntax validation
 - **dart format** — Dart formatting
 - **markdownlint** — Markdown linting
