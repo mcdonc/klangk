@@ -556,7 +556,7 @@ class WsClient extends ChangeNotifier {
   }
 
   void _scheduleReconnect() {
-    if (!_autoReconnect || _reconnecting) return;
+    if (!_autoReconnect || _reconnecting || _reconnectTimer != null) return;
 
     // Record when the reconnect cycle started.
     _reconnectStartedAt ??= DateTime.now();
