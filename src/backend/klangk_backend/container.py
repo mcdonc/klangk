@@ -525,6 +525,16 @@ class ContainerRegistry:
                                 f"Volume {source!r} belongs to another user"
                             )
 
+        # Check that bind-mount sources exist before calling podman.
+        # Missing sources cause a cryptic podman 404 (statfs) error.
+        if extra_mounts:
+            for mount_spec in extra_mounts:
+                source = mount_spec.split(":")[0]
+                if not _is_named_volume(source) and not os.path.exists(source):
+                    raise ValueError(
+                        f"Bind mount source does not exist: {source}"
+                    )
+
         binds = [
             f"{home_path}:/home",
         ]

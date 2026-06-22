@@ -1171,8 +1171,11 @@ class TestExtraMountsVolumeCreation:
             )
         p.create_volume.assert_not_awaited()
 
-    async def test_bind_mount_not_treated_as_volume(self, workspace):
+    async def test_bind_mount_not_treated_as_volume(
+        self, workspace, monkeypatch
+    ):
         """Bind mounts (starting with /) are not treated as volumes."""
+        monkeypatch.setattr("os.path.exists", lambda p: True)
         with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
@@ -1182,8 +1185,9 @@ class TestExtraMountsVolumeCreation:
             )
         p.inspect_volume.assert_not_awaited()
 
-    async def test_mount_with_multiple_colons(self, workspace):
+    async def test_mount_with_multiple_colons(self, workspace, monkeypatch):
         """Mount spec with options (host:container:ro) — source starts with /."""
+        monkeypatch.setattr("os.path.exists", lambda p: True)
         with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
@@ -1205,8 +1209,11 @@ class TestExtraMountsVolumeCreation:
             )
         p.create_volume.assert_awaited_once()
 
-    async def test_mount_source_with_slash_is_bind(self, workspace):
+    async def test_mount_source_with_slash_is_bind(
+        self, workspace, monkeypatch
+    ):
         """A mount source containing slashes is a bind mount, not a volume."""
+        monkeypatch.setattr("os.path.exists", lambda p: True)
         with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
@@ -1233,8 +1240,11 @@ class TestExtraMountsVolumeCreation:
                 extra_mounts=["bad-vol:/data"],
             )
 
-    async def test_mount_source_with_special_characters(self, workspace):
+    async def test_mount_source_with_special_characters(
+        self, workspace, monkeypatch
+    ):
         """Mount source with special/binary-like chars is a bind mount."""
+        monkeypatch.setattr("os.path.exists", lambda p: True)
         with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"],
@@ -1244,6 +1254,17 @@ class TestExtraMountsVolumeCreation:
             )
         # Has leading /, so treated as bind mount
         p.inspect_volume.assert_not_awaited()
+
+    async def test_missing_bind_mount_source_rejected(self, workspace):
+        """A bind mount with a non-existent source path is refused."""
+        with patch_podman():
+            with pytest.raises(ValueError, match="does not exist"):
+                await container.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    extra_mounts=["/nonexistent/path:/work/src"],
+                )
 
     async def test_browsers_revoked_on_creation_failure(self, workspace):
         """If container creation fails, the error propagates cleanly."""
