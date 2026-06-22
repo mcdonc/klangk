@@ -5,5 +5,5 @@ set -e
 target="${1:-/home/.workspace-state.json}"
 t=$(mktemp "${target}.XXXXXX")
 trap 'rm -f "$t"' EXIT
-cat > "$t" && mv "$t" "$target"
+cat >"$t" && mv "$t" "$target"
 trap - EXIT

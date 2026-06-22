@@ -17,7 +17,7 @@ mkdir -p /tmp/klangk
 
 # Signal that setup is complete. Terminal sessions (podman exec) source
 # /etc/bash.bashrc which waits for this file before showing a prompt.
-# Per-user Pi agent config is handled by setup-clankers (called from
+# Per-user Pi agent config is handled by klangk-setup-clankers (called from
 # bash.bashrc on each login).
 # /tmp is a tmpfs, so .klangk-ready is cleared on every container start.
 touch /tmp/.klangk-ready

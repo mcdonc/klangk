@@ -2,7 +2,7 @@
 # Source this to add OTEL env vars for Logfire tracing to the current shell.
 #
 # Usage (inside a container):
-#   . /opt/klangk/otel.sh
+#   . /opt/klangk/bin/klangk-otel.sh
 #
 # Requires LOGFIRE_TOKEN to be set in the container environment
 # (via workspace --env LOGFIRE_TOKEN=...).

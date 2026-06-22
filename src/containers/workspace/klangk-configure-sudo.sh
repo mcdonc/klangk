@@ -2,5 +2,5 @@
 # Write a sudoers rule for the klangk user.
 # Usage: klangk-configure-sudo <rule>
 # Example: klangk-configure-sudo "klangk ALL=(ALL) NOPASSWD:ALL"
-printf '%s\n' "$1" > /etc/sudoers.d/klangk
+printf '%s\n' "$1" >/etc/sudoers.d/klangk
 chmod 0440 /etc/sudoers.d/klangk

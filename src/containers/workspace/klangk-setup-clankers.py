@@ -17,7 +17,7 @@ from pathlib import Path
 
 IMAGE_DIR = Path("/opt/klangk/pi-agent")
 SYSTEM_PROMPT_SRC = Path("/opt/klangk/system-prompt.md")
-ERROR_LOG = Path("/tmp/setup_clankers_errors.log")
+ERROR_LOG = Path("/tmp/klangk-setup-clankers-errors.log")
 
 
 def _agent_dir():
@@ -134,7 +134,7 @@ def main():
     _run_step("build_system_prompt", build_system_prompt)
 
     if ERROR_LOG.exists():
-        print(f"setup_clankers: some steps failed, see {ERROR_LOG}")
+        print(f"klangk-setup-clankers: some steps failed, see {ERROR_LOG}")
 
 
 if __name__ == "__main__":

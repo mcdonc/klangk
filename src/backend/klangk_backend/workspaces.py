@@ -377,7 +377,7 @@ async def populate_home_skel(
         "-u",
         "klangk",
         container_id,
-        "/opt/klangk/bin/setup-home",
+        "/opt/klangk/bin/klangk-setup-home",
         home,
     ]
     try:

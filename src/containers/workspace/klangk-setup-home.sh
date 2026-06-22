@@ -3,13 +3,13 @@
 # append the Klangk default prompt.  Called by the backend when a
 # per-user home directory is first created.
 #
-# Usage: setup-home.sh <home-dir>
+# Usage: klangk-setup-home <home-dir>
 
 set -e
 
 home="$1"
 if [ -z "$home" ]; then
-  echo "Usage: setup-home.sh <home-dir>" >&2
+  echo "Usage: klangk-setup-home.sh <home-dir>" >&2
   exit 1
 fi
 

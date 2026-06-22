@@ -28,7 +28,7 @@ trap - INT
 cd "$HOME" 2>/dev/null
 
 # Per-user Pi agent config (extensions, settings, models, skills).
-python3 /opt/klangk/bin/setup-clankers
+python3 /opt/klangk/bin/klangk-setup-clankers
 
 # Run plugin on-shell-init hooks (alphabetical by plugin name).
 # These run as the klangk user on every shell open.

@@ -210,7 +210,7 @@ class TestEnsureHomeSymlink:
 
 class TestPopulateHomeSkel:
     async def test_execs_setup_home(self):
-        """populate_home_skel runs podman exec with setup-home script."""
+        """populate_home_skel runs podman exec with klangk-setup-home script."""
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
         with patch(
@@ -221,7 +221,7 @@ class TestPopulateHomeSkel:
         args = mock_exec.call_args[0]
         assert "exec" in args
         assert "cid-123" in args
-        assert any("setup-home" in str(a) for a in args)
+        assert any("klangk-setup-home" in str(a) for a in args)
         assert any("uid-456" in str(a) for a in args)
 
     async def test_logs_warning_on_failure(self):
