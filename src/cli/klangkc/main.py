@@ -931,6 +931,11 @@ def sandbox(
             )
             raise typer.Exit(code=1) from None
         raise
+    except ConnectionError as e:
+        reset_terminal()
+        _drain_stdin()
+        _err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
 
 
 async def _sandbox_connect(  # pragma: no cover
