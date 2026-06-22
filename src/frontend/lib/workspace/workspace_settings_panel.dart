@@ -496,9 +496,6 @@ class _SettingsFormState extends State<_SettingsForm> {
                     const SizedBox(height: 32),
                     const Divider(),
                     const SizedBox(height: 16),
-                    const SizedBox(height: 32),
-                    const Divider(),
-                    const SizedBox(height: 16),
                     Text(
                       'Export',
                       style: Theme.of(context).textTheme.titleMedium,
