@@ -16,14 +16,12 @@ from klangkc.sandbox import (
 
 @pytest.fixture
 def sandbox_root(tmp_path):
-    """Create a minimal sandbox root with .klangk/sandbox.yaml."""
-    klangk_dir = tmp_path / ".klangk"
-    klangk_dir.mkdir()
+    """Create a minimal sandbox root with .klangk-sandbox.yaml."""
     return tmp_path
 
 
 def _write_config(sandbox_root, config):
-    config_path = sandbox_root / ".klangk" / "sandbox.yaml"
+    config_path = sandbox_root / ".klangk-sandbox.yaml"
     config_path.write_text(yaml.dump(config))
 
 
@@ -45,7 +43,7 @@ class TestLoadSandboxConfig:
                 "workspace": {"image": "my-image"},
                 "sandbox": {
                     "mount_at": "~/project",
-                    "setup": ".klangk/setup.sh",
+                    "setup": "setup.sh",
                 },
                 "copy": ["~/.gitconfig:~/.gitconfig"],
                 "mounts": ["/data:~/data:ro"],
@@ -55,7 +53,7 @@ class TestLoadSandboxConfig:
         config = load_sandbox_config(sandbox_root)
         assert config.image == "my-image"
         assert config.mount_at == "~/project"
-        assert config.setup == ".klangk/setup.sh"
+        assert config.setup == "setup.sh"
         assert config.copy == ["~/.gitconfig:~/.gitconfig"]
         assert config.mounts == ["/data:~/data:ro"]
         assert config.volumes == ["cache:/cache"]
@@ -65,7 +63,7 @@ class TestLoadSandboxConfig:
             load_sandbox_config(tmp_path)
 
     def test_invalid_yaml_raises(self, sandbox_root):
-        config_path = sandbox_root / ".klangk" / "sandbox.yaml"
+        config_path = sandbox_root / ".klangk-sandbox.yaml"
         config_path.write_text("not a mapping")
         with pytest.raises(ValueError, match="Invalid sandbox config"):
             load_sandbox_config(sandbox_root)
@@ -168,9 +166,9 @@ class TestResolveSetupCommand:
         assert resolve_setup_command(config, "admin") is None
 
     def test_relative(self):
-        config = SandboxConfig(setup=".klangk/setup.sh")
+        config = SandboxConfig(setup="setup.sh")
         result = resolve_setup_command(config, "admin")
-        assert result == "/home/admin/work/.klangk/setup.sh"
+        assert result == "/home/admin/work/setup.sh"
 
     def test_absolute(self):
         config = SandboxConfig(setup="/opt/setup.sh")
@@ -178,6 +176,6 @@ class TestResolveSetupCommand:
         assert result == "/opt/setup.sh"
 
     def test_custom_mount_at(self):
-        config = SandboxConfig(mount_at="~/project", setup=".klangk/setup.sh")
+        config = SandboxConfig(mount_at="~/project", setup="setup.sh")
         result = resolve_setup_command(config, "admin")
-        assert result == "/home/admin/project/.klangk/setup.sh"
+        assert result == "/home/admin/project/setup.sh"

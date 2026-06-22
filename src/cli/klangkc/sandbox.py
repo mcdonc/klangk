@@ -11,7 +11,7 @@ import yaml
 
 @dataclass
 class SandboxConfig:
-    """Parsed .klangk/sandbox.yaml."""
+    """Parsed .klangk-sandbox.yaml."""
 
     # workspace
     image: str | None = None
@@ -25,12 +25,12 @@ class SandboxConfig:
 
 
 def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
-    """Parse ``.klangk/sandbox.yaml`` under *sandbox_root*.
+    """Parse ``.klangk-sandbox.yaml`` under *sandbox_root*.
 
     Raises ``FileNotFoundError`` if the config file doesn't exist.
     Raises ``ValueError`` on invalid config.
     """
-    config_path = sandbox_root / ".klangk" / "sandbox.yaml"
+    config_path = sandbox_root / ".klangk-sandbox.yaml"
     if not config_path.exists():
         raise FileNotFoundError(f"No sandbox config found at {config_path}")
     with open(config_path) as f:

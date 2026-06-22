@@ -11,7 +11,7 @@ Klangk's individual features — workspace creation, bind mounts,
 file copying, command execution, and shell access — into a single
 step driven by a config file. Everything it does can be done manually
 with `klangkc create`, `klangkc exec`, and `klangkc shell`, but the
-sandbox command makes it easy to check a `.klangk/sandbox.yaml` into
+sandbox command makes it easy to check a `.klangk-sandbox.yaml` into
 your repo so you or your teammates can spin up an identical sandboxed
 environment with one command.
 
@@ -21,7 +21,7 @@ web UI.
 
 ## Quick start
 
-Create a `.klangk/sandbox.yaml` in your project root:
+Create a `.klangk-sandbox.yaml` in your project root:
 
 ```yaml
 sandbox:
@@ -40,8 +40,8 @@ Run the same command again to reconnect to the existing workspace.
 
 ## Config file reference
 
-The config file lives at `.klangk/sandbox.yaml` inside your project.
-The directory containing `.klangk/` is called the **sandbox root** —
+The config file lives at `.klangk-sandbox.yaml` inside your project.
+The directory containing `.klangk-sandbox.yaml` is called the **sandbox root** —
 it's automatically mounted into the container at the `mount_at`
 location. If you do not specify a `mount_at` location, it will be
 placed in `~/work`.
@@ -65,7 +65,7 @@ specified as a positional argument on the command line.
 ```yaml
 sandbox:
   mount_at: ~/klangk
-  setup: .klangk/setup.sh
+  setup: setup.sh
 ```
 
 | Field      | Required | Default  | Description                                                                                                |
@@ -167,18 +167,18 @@ next shell session without recreating the workspace.
 klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup]
 ```
 
-| Argument/Flag        | Default | Description                                                 |
-| -------------------- | ------- | ----------------------------------------------------------- |
-| `WORKSPACE`          |         | Workspace name (required).                                  |
-| `PATH`               | `.`     | Path to the sandbox root (directory containing `.klangk/`). |
-| `--forward-agent/-A` | `false` | Forward local SSH agent into the container.                 |
-| `--force-setup`      | `false` | Re-run copy and setup steps even if the workspace exists.   |
+| Argument/Flag        | Default | Description                                                             |
+| -------------------- | ------- | ----------------------------------------------------------------------- |
+| `WORKSPACE`          |         | Workspace name (required).                                              |
+| `PATH`               | `.`     | Path to the sandbox root (directory containing `.klangk-sandbox.yaml`). |
+| `--forward-agent/-A` | `false` | Forward local SSH agent into the container.                             |
+| `--force-setup`      | `false` | Re-run copy and setup steps even if the workspace exists.               |
 
 ### Behavior
 
 **First run** (workspace doesn't exist):
 
-1. Read `.klangk/sandbox.yaml` from the sandbox root
+1. Read `.klangk-sandbox.yaml` from the sandbox root
 2. Create the workspace with the configured image, mounts, and
    volumes
 3. Mount the sandbox root at `mount_at`
@@ -222,7 +222,7 @@ in the server's `.env` file.
 
 ```bash
 #!/bin/bash
-# .klangk/setup.sh
+# setup.sh
 set -euo pipefail
 
 # Install nix (requires KLANGK_ALLOW_SUDO=true on the server)
@@ -272,10 +272,10 @@ A project that needs nix/devenv, custom dotfiles, a data directory,
 and SSH access to GitHub:
 
 ```yaml
-# .klangk/sandbox.yaml
+# .klangk-sandbox.yaml
 sandbox:
   mount_at: ~/klangk
-  setup: .klangk/setup.sh
+  setup: setup.sh
 
 copy:
   - ~/.gitconfig:~/.gitconfig
@@ -296,7 +296,7 @@ And a setup script:
 
 ```bash
 #!/bin/bash
-# .klangk/setup.sh
+# setup.sh
 set -euo pipefail
 
 # Install nix (single-user, no daemon needed in containers).

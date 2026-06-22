@@ -2448,9 +2448,7 @@ class TestSandboxCommand:
     def test_invalid_config_exits(self, logged_in_cfg, tmp_path):
         from klangkc import main
 
-        klangk_dir = tmp_path / ".klangk"
-        klangk_dir.mkdir()
-        (klangk_dir / "sandbox.yaml").write_text("not a mapping")
+        (tmp_path / ".klangk-sandbox.yaml").write_text("not a mapping")
 
         client = MagicMock()
         client.get_handle.return_value = "admin"
@@ -2468,9 +2466,7 @@ class TestSandboxCommand:
     def test_creates_workspace(self, logged_in_cfg, tmp_path):
         from klangkc import main
 
-        klangk_dir = tmp_path / ".klangk"
-        klangk_dir.mkdir()
-        (klangk_dir / "sandbox.yaml").write_text(
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount_at: ~/test\n"
         )
 
@@ -2506,9 +2502,7 @@ class TestSandboxCommand:
     def test_reconnects_existing(self, logged_in_cfg, tmp_path):
         from klangkc import main
 
-        klangk_dir = tmp_path / ".klangk"
-        klangk_dir.mkdir()
-        (klangk_dir / "sandbox.yaml").write_text(
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount_at: ~/test\n"
         )
 
@@ -2542,9 +2536,7 @@ class TestSandboxCommand:
     def test_config_changed_warning(self, logged_in_cfg, tmp_path):
         from klangkc import main
 
-        klangk_dir = tmp_path / ".klangk"
-        klangk_dir.mkdir()
-        (klangk_dir / "sandbox.yaml").write_text(
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount_at: ~/test\nmounts:\n  - /extra:/extra\n"
         )
 
@@ -2577,9 +2569,7 @@ class TestSandboxCommand:
     def test_force_setup_passes_config(self, logged_in_cfg, tmp_path):
         from klangkc import main
 
-        klangk_dir = tmp_path / ".klangk"
-        klangk_dir.mkdir()
-        (klangk_dir / "sandbox.yaml").write_text(
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount_at: ~/test\n"
         )
 
@@ -2680,7 +2670,7 @@ class TestSandboxSetup:
 
         config = SandboxConfig(
             mount_at="~/project",
-            setup=".klangk/setup.sh",
+            setup="setup.sh",
         )
 
         ws = AsyncMock()
@@ -2694,7 +2684,7 @@ class TestSandboxSetup:
             await _sandbox_setup(ws, config, tmp_path, "admin")
 
         assert len(exec_calls) == 1
-        assert "/home/admin/project/.klangk/setup.sh" in exec_calls[0][2]
+        assert "/home/admin/project/setup.sh" in exec_calls[0][2]
 
     async def test_setup_failure_warns(self, tmp_path):
         from klangkc.main import _sandbox_setup
@@ -2702,7 +2692,7 @@ class TestSandboxSetup:
 
         config = SandboxConfig(
             mount_at="~/project",
-            setup=".klangk/setup.sh",
+            setup="setup.sh",
         )
 
         ws = AsyncMock()
