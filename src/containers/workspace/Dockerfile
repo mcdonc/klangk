@@ -37,6 +37,8 @@ COPY setup-home.sh /opt/klangk/bin/setup-home
 COPY klangk-attach-browser /opt/klangk/bin/klangk-attach-browser
 COPY klangk-browser-id /opt/klangk/bin/klangk-browser-id
 COPY klangk-copy-to-clipboard /opt/klangk/bin/klangk-copy-to-clipboard
+COPY klangk-configure-sudo /opt/klangk/bin/klangk-configure-sudo
+COPY klangk-save-workspace-state /opt/klangk/bin/klangk-save-workspace-state
 COPY klangk-set-workspace-token /opt/klangk/bin/klangk-set-workspace-token
 COPY klangk-workspace-token /opt/klangk/bin/klangk-workspace-token
 RUN chmod +x /opt/klangk/entrypoint.sh \
@@ -44,7 +46,9 @@ RUN chmod +x /opt/klangk/entrypoint.sh \
       /opt/klangk/bin/setup-home \
       /opt/klangk/bin/klangk-attach-browser \
       /opt/klangk/bin/klangk-browser-id \
+      /opt/klangk/bin/klangk-configure-sudo \
       /opt/klangk/bin/klangk-copy-to-clipboard \
+      /opt/klangk/bin/klangk-save-workspace-state \
       /opt/klangk/bin/klangk-set-workspace-token \
       /opt/klangk/bin/klangk-workspace-token
 COPY bash.bashrc /etc/bash.bashrc

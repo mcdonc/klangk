@@ -467,30 +467,19 @@ async def load_workspace_state(container_id: str) -> dict:
 async def save_workspace_state(container_id: str, state: dict) -> None:
     """Snapshot per-user workspace state.
 
-    Writes atomically to /home/.workspace-state.json via temp + rename.
+    Delegates to ``klangk-save-workspace-state`` inside the container,
+    which atomically writes stdin to the target path via mktemp + rename.
     Callers should serialize access via WorkspaceSession._save_lock.
-
-    Uses ``mktemp`` inside the container so the temp file is created with
-    ``O_EXCL``, preventing symlink-following attacks.
     """
     data = json.dumps(state, indent=2)
-    # mktemp creates a file safely (O_EXCL); cat writes into it; mv renames
-    # atomically; trap ensures cleanup on any failure.
-    script = (
-        "set -e; t=$(mktemp /home/.workspace-state.XXXXXX);"
-        " trap 'rm -f \"$t\"' EXIT;"
-        f' cat > "$t" && mv "$t" {_STATE_PATH};'
-        " trap - EXIT"
-    )
     argv = [
         "exec",
         "-i",
         "-u",
         CONTAINER_USER,
         container_id,
-        "bash",
-        "-c",
-        script,
+        "klangk-save-workspace-state",
+        _STATE_PATH,
     ]
     proc = await asyncio.create_subprocess_exec(
         podman.PODMAN_BIN,
