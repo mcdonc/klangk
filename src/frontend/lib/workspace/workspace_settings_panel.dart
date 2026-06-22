@@ -493,12 +493,36 @@ class _SettingsFormState extends State<_SettingsForm> {
                         label: const Text('Save'),
                       ),
                     ),
-                    const SizedBox(height: 32),
-                    const Divider(),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Export',
-                      style: Theme.of(context).textTheme.titleMedium,
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: KColors.borderDefault),
+                  borderRadius: BorderRadius.circular(8),
+                  color: KColors.bgSurface,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.download,
+                          size: 18,
+                          color: KColors.textSecondary,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Export',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
@@ -512,14 +536,37 @@ class _SettingsFormState extends State<_SettingsForm> {
                           : const Icon(Icons.download, size: 18),
                       label: const Text('Export Workspace'),
                     ),
-                    const SizedBox(height: 32),
-                    const Divider(),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Danger Zone',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleMedium?.copyWith(color: Colors.red),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: KColors.borderDefault),
+                  borderRadius: BorderRadius.circular(8),
+                  color: KColors.bgSurface,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.warning_amber,
+                          size: 18,
+                          color: Colors.red,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Danger Zone',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
