@@ -47,20 +47,23 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       workspaces = List<Map<String, dynamic>>.from(jsonDecode(wsResp.body));
     }
 
-    var ws = workspaces
-        .cast<Map<String, dynamic>?>()
-        .firstWhere((w) => w!['id'] == widget.workspaceId, orElse: () => null);
+    var ws = workspaces.cast<Map<String, dynamic>?>().firstWhere(
+      (w) => w!['id'] == widget.workspaceId,
+      orElse: () => null,
+    );
 
     // Try shared workspaces if not found in owned
     if (ws == null) {
       final sharedResp = await auth.authGet('/api/v1/workspaces/shared');
       if (!mounted) return;
       if (sharedResp.statusCode == 200) {
-        final shared =
-            List<Map<String, dynamic>>.from(jsonDecode(sharedResp.body));
+        final shared = List<Map<String, dynamic>>.from(
+          jsonDecode(sharedResp.body),
+        );
         ws = shared.cast<Map<String, dynamic>?>().firstWhere(
-            (w) => w!['id'] == widget.workspaceId,
-            orElse: () => null);
+          (w) => w!['id'] == widget.workspaceId,
+          orElse: () => null,
+        );
       }
     }
 
@@ -216,8 +219,9 @@ class _SettingsFormState extends State<_SettingsForm> {
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
-      'default_command':
-          _cmdCtrl.text.trim().isEmpty ? null : _cmdCtrl.text.trim(),
+      'default_command': _cmdCtrl.text.trim().isEmpty
+          ? null
+          : _cmdCtrl.text.trim(),
       'mounts': _mounts.isNotEmpty ? _mounts : null,
       'env': _envVars.isNotEmpty ? _envVars : null,
     });
@@ -267,93 +271,112 @@ class _SettingsFormState extends State<_SettingsForm> {
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 500),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (widget.saveMessage != null) ...[
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: widget.saveMessage!.startsWith('Failed')
-                      ? KColors.accentRed.withValues(alpha: 0.1)
-                      : KColors.accentGreen.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(4),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (widget.saveMessage != null) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: widget.saveMessage!.startsWith('Failed')
+                        ? KColors.accentRed.withValues(alpha: 0.1)
+                        : KColors.accentGreen.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(widget.saveMessage!),
                 ),
-                child: Text(widget.saveMessage!),
-              ),
-              const SizedBox(height: 16),
-            ],
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border.all(color: KColors.borderDefault),
-                borderRadius: BorderRadius.circular(8),
-                color: KColors.bgSurface,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.settings,
-                          size: 18, color: KColors.textSecondary),
-                      const SizedBox(width: 8),
-                      const Text('Workspace Configuration',
+                const SizedBox(height: 16),
+              ],
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: KColors.borderDefault),
+                  borderRadius: BorderRadius.circular(8),
+                  color: KColors.bgSurface,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.settings,
+                          size: 18,
+                          color: KColors.textSecondary,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Workspace Configuration',
                           style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _nameCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'Workspace Name',
-                      labelStyle: labelStyle,
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
-                      border: const OutlineInputBorder(),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  if (widget.allowedImages.isNotEmpty)
-                    DropdownButtonFormField<String>(
-                      value: _selectedImage,
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _nameCtrl,
                       decoration: InputDecoration(
-                        labelText: 'Container Image',
+                        labelText: 'Workspace Name',
                         labelStyle: labelStyle,
                         floatingLabelBehavior: FloatingLabelBehavior.always,
                         border: const OutlineInputBorder(),
                       ),
-                      items: widget.allowedImages
-                          .map((img) =>
-                              DropdownMenuItem(value: img, child: Text(img)))
-                          .toList(),
-                      onChanged: (v) => setState(
-                          () => _selectedImage = v ?? widget.defaultImage),
                     ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _cmdCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'Default Shell Command',
-                      labelStyle: labelStyle,
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
-                      border: const OutlineInputBorder(),
-                      hintText: 'Optional — runs on terminal open',
+                    const SizedBox(height: 16),
+                    if (widget.allowedImages.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        value: _selectedImage,
+                        decoration: InputDecoration(
+                          labelText: 'Container Image',
+                          labelStyle: labelStyle,
+                          floatingLabelBehavior: FloatingLabelBehavior.always,
+                          border: const OutlineInputBorder(),
+                        ),
+                        items: widget.allowedImages
+                            .map(
+                              (img) => DropdownMenuItem(
+                                value: img,
+                                child: Text(img),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(
+                          () => _selectedImage = v ?? widget.defaultImage,
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _cmdCtrl,
+                      decoration: InputDecoration(
+                        labelText: 'Default Shell Command',
+                        labelStyle: labelStyle,
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        border: const OutlineInputBorder(),
+                        hintText: 'Optional — runs on terminal open',
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text('Mounts', style: labelStyle),
-                  const SizedBox(height: 8),
-                  ..._mounts.asMap().entries.map((e) => Padding(
+                    const SizedBox(height: 16),
+                    Text('Mounts', style: labelStyle),
+                    const SizedBox(height: 8),
+                    ..._mounts.asMap().entries.map(
+                      (e) => Padding(
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Row(
                           children: [
                             Expanded(
-                                child: Text(e.value,
-                                    style: const TextStyle(fontSize: 13))),
+                              child: Text(
+                                e.value,
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ),
                             IconButton(
                               icon: const Icon(Icons.close, size: 18),
                               onPressed: () =>
@@ -363,44 +386,53 @@ class _SettingsFormState extends State<_SettingsForm> {
                             ),
                           ],
                         ),
-                      )),
-                  if (_mountError != null) ...[
-                    Text(_mountError!,
+                      ),
+                    ),
+                    if (_mountError != null) ...[
+                      Text(
+                        _mountError!,
                         style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                            fontSize: 12)),
-                    const SizedBox(height: 4),
-                  ],
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _mountCtrl,
-                          decoration: const InputDecoration(
-                            hintText: '/host/path:/container/path',
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          style: const TextStyle(fontSize: 13),
-                          onSubmitted: (_) => _tryAddMount(),
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 12,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                          icon: const Icon(Icons.add), onPressed: _tryAddMount),
+                      const SizedBox(height: 4),
                     ],
-                  ),
-                  const SizedBox(height: 16),
-                  Text('Environment Variables', style: labelStyle),
-                  const SizedBox(height: 8),
-                  ..._envVars.entries.toList().asMap().entries.map((e) =>
-                      Padding(
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _mountCtrl,
+                            decoration: const InputDecoration(
+                              hintText: '/host/path:/container/path',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            style: const TextStyle(fontSize: 13),
+                            onSubmitted: (_) => _tryAddMount(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          onPressed: _tryAddMount,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text('Environment Variables', style: labelStyle),
+                    const SizedBox(height: 8),
+                    ..._envVars.entries.toList().asMap().entries.map(
+                      (e) => Padding(
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Row(
                           children: [
                             Expanded(
-                                child: Text('${e.value.key}=${e.value.value}',
-                                    style: const TextStyle(fontSize: 13))),
+                              child: Text(
+                                '${e.value.key}=${e.value.value}',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ),
                             IconButton(
                               icon: const Icon(Icons.close, size: 18),
                               onPressed: () =>
@@ -410,95 +442,107 @@ class _SettingsFormState extends State<_SettingsForm> {
                             ),
                           ],
                         ),
-                      )),
-                  if (_envError != null) ...[
-                    Text(_envError!,
+                      ),
+                    ),
+                    if (_envError != null) ...[
+                      Text(
+                        _envError!,
                         style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                            fontSize: 12)),
-                    const SizedBox(height: 4),
-                  ],
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _envCtrl,
-                          decoration: const InputDecoration(
-                            hintText: 'KEY=VALUE',
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          style: const TextStyle(fontSize: 13),
-                          onSubmitted: (_) => _tryAddEnv(),
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 12,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                          icon: const Icon(Icons.add), onPressed: _tryAddEnv),
+                      const SizedBox(height: 4),
                     ],
-                  ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: _saving ? null : _save,
-                      icon: _saving
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _envCtrl,
+                            decoration: const InputDecoration(
+                              hintText: 'KEY=VALUE',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            style: const TextStyle(fontSize: 13),
+                            onSubmitted: (_) => _tryAddEnv(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          onPressed: _tryAddEnv,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.icon(
+                        onPressed: _saving ? null : _save,
+                        icon: _saving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.save, size: 18),
+                        label: const Text('Save'),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    const SizedBox(height: 32),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Export',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _exporting ? null : _exportWorkspace,
+                      icon: _exporting
                           ? const SizedBox(
                               width: 16,
                               height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ))
-                          : const Icon(Icons.save, size: 18),
-                      label: const Text('Save'),
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download, size: 18),
+                      label: const Text('Export Workspace'),
                     ),
-                  ),
-                  const SizedBox(height: 32),
-                  const Divider(),
-                  const SizedBox(height: 16),
-                  const SizedBox(height: 32),
-                  const Divider(),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Export',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _exporting ? null : _exportWorkspace,
-                    icon: _exporting
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.download, size: 18),
-                    label: const Text('Export Workspace'),
-                  ),
-                  const SizedBox(height: 32),
-                  const Divider(),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Danger Zone',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Colors.red,
-                        ),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => _confirmShutdown(context),
-                    icon: const Icon(Icons.power_settings_new,
-                        size: 18, color: Colors.red),
-                    label: const Text('Shut Down Container'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
+                    const SizedBox(height: 32),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Danger Zone',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.titleMedium?.copyWith(color: Colors.red),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () => _confirmShutdown(context),
+                      icon: const Icon(
+                        Icons.power_settings_new,
+                        size: 18,
+                        color: Colors.red,
+                      ),
+                      label: const Text('Shut Down Container'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red,
+                        side: const BorderSide(color: Colors.red),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -508,8 +552,9 @@ class _SettingsFormState extends State<_SettingsForm> {
     setState(() => _exporting = true);
     try {
       final auth = context.read<AuthService>();
-      final resp =
-          await auth.authGet('/api/v1/workspaces/${widget.workspaceId}/export');
+      final resp = await auth.authGet(
+        '/api/v1/workspaces/${widget.workspaceId}/export',
+      );
       if (resp.statusCode == 200) {
         final name = widget.workspace['name'] as String? ?? 'workspace';
         downloadBytes(resp.bodyBytes, '$name.tar.gz');
@@ -522,9 +567,9 @@ class _SettingsFormState extends State<_SettingsForm> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Export failed')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Export failed')));
       }
     } finally {
       if (mounted) setState(() => _exporting = false);
@@ -550,9 +595,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               Navigator.of(ctx).pop();
               context.read<WsClient>().sendShutdownContainer();
             },
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Shut Down'),
           ),
         ],

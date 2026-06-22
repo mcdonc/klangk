@@ -49,11 +49,11 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
 
   List<Map<String, dynamic>> get _sortedRoles {
     final order = {
-      for (var i = 0; i < _roleOrder.length; i++) _roleOrder[i]: i
+      for (var i = 0; i < _roleOrder.length; i++) _roleOrder[i]: i,
     };
-    return List.of(_roles)
-      ..sort(
-          (a, b) => (order[a['role']] ?? 99).compareTo(order[b['role']] ?? 99));
+    return List.of(_roles)..sort(
+      (a, b) => (order[a['role']] ?? 99).compareTo(order[b['role']] ?? 99),
+    );
   }
 
   @override
@@ -94,9 +94,9 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
         detail = 'Error';
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(detail)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(detail)));
       }
     }
   }
@@ -140,25 +140,23 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                     searchResults.value = [];
                     return;
                   }
-                  debounce = Timer(
-                    const Duration(milliseconds: 300),
-                    () async {
-                      final auth = context.read<AuthService>();
-                      try {
-                        final resp = await auth.authGet(
-                          '/api/v1/users/search?q=${Uri.encodeQueryComponent(q.trim())}',
+                  debounce = Timer(const Duration(milliseconds: 300), () async {
+                    final auth = context.read<AuthService>();
+                    try {
+                      final resp = await auth.authGet(
+                        '/api/v1/users/search?q=${Uri.encodeQueryComponent(q.trim())}',
+                      );
+                      if (resp.statusCode == 200) {
+                        searchResults.value = List<Map<String, dynamic>>.from(
+                          jsonDecode(resp.body) as List,
                         );
-                        if (resp.statusCode == 200) {
-                          searchResults.value = List<Map<String, dynamic>>.from(
-                            jsonDecode(resp.body) as List,
-                          );
-                        }
-                      } catch (e) {
-                        debugPrint(
-                            '[WorkspaceSharingPanel] user search failed: $e');
                       }
-                    },
-                  );
+                    } catch (e) {
+                      debugPrint(
+                        '[WorkspaceSharingPanel] user search failed: $e',
+                      );
+                    }
+                  });
                 },
                 onSubmitted: (value) {
                   final email = value.trim();
@@ -174,15 +172,19 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                 builder: (_, results, __) => Column(
                   mainAxisSize: MainAxisSize.min,
                   children: results
-                      .map((r) => ListTile(
-                            dense: true,
-                            title: Text(r['email'] as String,
-                                style: const TextStyle(fontSize: 13)),
-                            onTap: () {
-                              Navigator.of(ctx).pop();
-                              _addToRole(role, r['email'] as String);
-                            },
-                          ))
+                      .map(
+                        (r) => ListTile(
+                          dense: true,
+                          title: Text(
+                            r['email'] as String,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          onTap: () {
+                            Navigator.of(ctx).pop();
+                            _addToRole(role, r['email'] as String);
+                          },
+                        ),
+                      )
                       .toList(),
                 ),
               ),
@@ -206,47 +208,49 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 500),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (_loading)
-              const Center(child: CircularProgressIndicator())
-            else
-              for (final role in _sortedRoles) _buildRoleBucket(role),
-            const SizedBox(height: 16),
-            // Collapsible ACL editor
-            GestureDetector(
-              onTap: () => setState(() => _aclExpanded = !_aclExpanded),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      _aclExpanded ? Icons.expand_less : Icons.expand_more,
-                      size: 20,
-                      color: KColors.textSecondary,
-                    ),
-                    const SizedBox(width: 4),
-                    const Text(
-                      'Advanced: Access Control',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_loading)
+                const Center(child: CircularProgressIndicator())
+              else
+                for (final role in _sortedRoles) _buildRoleBucket(role),
+              const SizedBox(height: 16),
+              // Collapsible ACL editor
+              GestureDetector(
+                onTap: () => setState(() => _aclExpanded = !_aclExpanded),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _aclExpanded ? Icons.expand_less : Icons.expand_more,
+                        size: 20,
                         color: KColors.textSecondary,
-                        fontSize: 13,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      const Text(
+                        'Advanced: Access Control',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: KColors.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            if (_aclExpanded)
-              AclEditor(
-                key: _aclEditorKey,
-                resource: '/workspaces/${widget.workspaceId}',
-              ),
-          ],
+              if (_aclExpanded)
+                AclEditor(
+                  key: _aclEditorKey,
+                  resource: '/workspaces/${widget.workspaceId}',
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -296,8 +300,10 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                   icon: const Icon(Icons.person_add, size: 16),
                   onPressed: () => _showAddDialog(roleName),
                   padding: EdgeInsets.zero,
-                  constraints:
-                      const BoxConstraints(minWidth: 28, minHeight: 28),
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
                   tooltip: 'Add user',
                 ),
               ],
@@ -322,10 +328,8 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                         style: const TextStyle(fontSize: 11),
                       ),
                       deleteIcon: const Icon(Icons.close, size: 14),
-                      onDeleted: () => _removeFromRole(
-                        roleName,
-                        m['id'] as String,
-                      ),
+                      onDeleted: () =>
+                          _removeFromRole(roleName, m['id'] as String),
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       visualDensity: VisualDensity.compact,
                     ),
