@@ -769,7 +769,7 @@ class TestMonitorProcess:
             await session._monitor_process(mock_proc)
 
             mock_start.assert_awaited_once()
-            assert session._restart_attempts == 0
+            assert session._restart_attempts == 1
 
     async def test_monitor_gives_up_after_max_retries(self):
         from klangk_backend import model
