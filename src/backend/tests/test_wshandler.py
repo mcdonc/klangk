@@ -1840,6 +1840,34 @@ class TestHandleWebsocket:
 
         websocket.accept.assert_awaited_once()
 
+    async def test_unexpected_exception_logged(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=ValueError("unexpected")
+        )
+
+        await handle_websocket(websocket)
+
+        websocket.accept.assert_awaited_once()
+
+    async def test_runtime_error_treated_as_disconnect(self, user):
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=RuntimeError(
+                'WebSocket is not connected. Need to call "accept" first.'
+            )
+        )
+
+        await handle_websocket(websocket)
+
+        websocket.accept.assert_awaited_once()
+
     async def test_invalid_json(self, user):
         from klangk_backend import auth as auth_mod
 

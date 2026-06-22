@@ -588,6 +588,29 @@ void main() {
       client.dispose();
     });
 
+    test('duplicate scheduleReconnect calls do not stack timers', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // Simulate both onDone and onError firing (race condition)
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+
+      // Should be exactly 1 attempt, not 2
+      expect(client.reconnectAttempt, 1);
+
+      client.disconnect();
+      client.dispose();
+    });
+
     test('no auto-reconnect before workspace connected', () async {
       final auth = AuthService();
       await Future.delayed(Duration.zero);
