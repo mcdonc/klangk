@@ -229,7 +229,6 @@ class AgentSession:
             return  # something else already restarted it
         try:
             await self._ensure_started()
-            self._restart_attempts = 0
             await _broadcast_agent_reconnect(self.workspace_id)
         except Exception:
             logger.exception(
