@@ -187,9 +187,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     }
 
     // Preserve scroll position: measure before prepending, restore after.
-    final scrollBefore = _scrollController.hasClients
-        ? _scrollController.position.pixels
-        : 0.0;
+    final scrollBefore =
+        _scrollController.hasClients ? _scrollController.position.pixels : 0.0;
     final maxBefore = _scrollController.hasClients
         ? _scrollController.position.maxScrollExtent
         : 0.0;
@@ -259,9 +258,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             _inputKey.currentContext?.findRenderObject() as RenderBox?;
         if (renderBox == null) return const SizedBox.shrink();
         final offset = renderBox.localToGlobal(Offset.zero);
-        final visibleCount = _filteredMembers.length > 5
-            ? 5
-            : _filteredMembers.length;
+        final visibleCount =
+            _filteredMembers.length > 5 ? 5 : _filteredMembers.length;
         final height = visibleCount * 36.0;
         return Positioned(
           left: offset.dx,
@@ -684,21 +682,18 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             final uid = u['user_id'] as String?;
             final isSelf = uid == currentUserId;
             final displayName = handle.isNotEmpty ? handle : email;
-            final initial = displayName.isNotEmpty
-                ? displayName[0].toUpperCase()
-                : '?';
+            final initial =
+                displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
             return Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Tooltip(
                 message: displayName,
                 child: CircleAvatar(
                   radius: 10,
-                  backgroundColor: isSelf
-                      ? Colors.transparent
-                      : _colorForEmail(email),
-                  foregroundColor: isSelf
-                      ? _colorForEmail(email)
-                      : Colors.white,
+                  backgroundColor:
+                      isSelf ? Colors.transparent : _colorForEmail(email),
+                  foregroundColor:
+                      isSelf ? _colorForEmail(email) : Colors.white,
                   child: isSelf
                       ? DecoratedBox(
                           decoration: BoxDecoration(
@@ -799,7 +794,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                         msg['created_at'] as String? ?? '',
                       );
                       final msgUserId = msg['user_id'] as String?;
-                      final isOwn = msgUserId == currentUserId;
+                      final isOwn =
+                          msgUserId != null && msgUserId == currentUserId;
                       final isDeleted = text == '<message deleted by author>';
                       final messageType = msg['message_type'] as int? ?? 0;
 
