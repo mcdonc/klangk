@@ -3216,6 +3216,42 @@ class TestAdminEndpoints:
         assert resp.status_code == 400
         assert "Password" in resp.json()["detail"]
 
+    async def test_admin_create_user_send_verification_email(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        with patch("klangk_backend.api.emailsvc") as mock_email:
+            mock_email.send_verification_email = AsyncMock()
+            resp = await client.post(
+                "/api/v1/admin/users",
+                headers=headers,
+                json={
+                    "email": "verify@example.com",
+                    "send_verification_email": True,
+                },
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == "verify@example.com"
+        assert data["status"] == "pending_verification"
+        mock_email.send_verification_email.assert_called_once()
+        # User should exist but not be verified
+        user = await model.get_user_by_email("verify@example.com")
+        assert user is not None
+        assert user["verified"] == 0
+
+    async def test_admin_create_user_no_password_no_verify(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/admin/users",
+            headers=headers,
+            json={"email": "nopw@example.com"},
+        )
+        assert resp.status_code == 400
+        assert "Password is required" in resp.json()["detail"]
+
     async def test_admin_create_user_requires_admin(self, client, user):
         login_resp = await client.post(
             "/api/v1/auth/login",

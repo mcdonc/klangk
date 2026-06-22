@@ -770,10 +770,14 @@ No request body.
 
 ### POST `/api/v1/admin/users`
 
-Create a new user account with email already verified (no verification
-email sent).
+Create a new user account. By default the user is created verified with
+the given password. Set `send_verification_email` to `true` to create
+the user unverified and send a verification email so they can set their
+own password (the `password` field is ignored in this case).
 
 **Auth:** JWT required. User must have `admin` permission on `/`.
+
+With password (default):
 
 ```json
 { "email": "user@example.com", "password": "secretpass" }
@@ -781,6 +785,20 @@ email sent).
 
 ```json
 { "id": "uuid", "email": "user@example.com", "status": "created" }
+```
+
+With verification email:
+
+```json
+{ "email": "user@example.com", "send_verification_email": true }
+```
+
+```json
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "status": "pending_verification"
+}
 ```
 
 ---
