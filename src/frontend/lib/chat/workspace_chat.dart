@@ -152,9 +152,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
-          _scrollController.jumpTo(
-            _scrollController.position.maxScrollExtent,
-          );
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         }
       });
     });
@@ -189,8 +187,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     }
 
     // Preserve scroll position: measure before prepending, restore after.
-    final scrollBefore =
-        _scrollController.hasClients ? _scrollController.position.pixels : 0.0;
+    final scrollBefore = _scrollController.hasClients
+        ? _scrollController.position.pixels
+        : 0.0;
     final maxBefore = _scrollController.hasClients
         ? _scrollController.position.maxScrollExtent
         : 0.0;
@@ -260,8 +259,9 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             _inputKey.currentContext?.findRenderObject() as RenderBox?;
         if (renderBox == null) return const SizedBox.shrink();
         final offset = renderBox.localToGlobal(Offset.zero);
-        final visibleCount =
-            _filteredMembers.length > 5 ? 5 : _filteredMembers.length;
+        final visibleCount = _filteredMembers.length > 5
+            ? 5
+            : _filteredMembers.length;
         final height = visibleCount * 36.0;
         return Positioned(
           left: offset.dx,
@@ -504,24 +504,26 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
     if (isDeleted) {
       return Text.rich(
-        TextSpan(children: [
-          TextSpan(
-            text: '$senderName  ',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: nameColor,
-              fontSize: 13,
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$senderName  ',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: nameColor,
+                fontSize: 13,
+              ),
             ),
-          ),
-          TextSpan(
-            text: text,
-            style: const TextStyle(
-              color: KColors.textMuted,
-              fontSize: 13,
-              fontStyle: FontStyle.italic,
+            TextSpan(
+              text: text,
+              style: const TextStyle(
+                color: KColors.textMuted,
+                fontSize: 13,
+                fontStyle: FontStyle.italic,
+              ),
             ),
-          ),
-        ]),
+          ],
+        ),
       );
     }
 
@@ -543,8 +545,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
           extensionSet: md.ExtensionSet(
             md.ExtensionSet.gitHubWeb.blockSyntaxes,
             [
-              ...md.ExtensionSet.gitHubWeb.inlineSyntaxes.where((s) =>
-                  s is! md.AutolinkSyntax && s is! md.AutolinkExtensionSyntax),
+              ...md.ExtensionSet.gitHubWeb.inlineSyntaxes.where(
+                (s) =>
+                    s is! md.AutolinkSyntax && s is! md.AutolinkExtensionSyntax,
+              ),
             ],
           ),
           styleSheet: _chatMarkdownStyle(context),
@@ -680,18 +684,21 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             final uid = u['user_id'] as String?;
             final isSelf = uid == currentUserId;
             final displayName = handle.isNotEmpty ? handle : email;
-            final initial =
-                displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+            final initial = displayName.isNotEmpty
+                ? displayName[0].toUpperCase()
+                : '?';
             return Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Tooltip(
                 message: displayName,
                 child: CircleAvatar(
                   radius: 10,
-                  backgroundColor:
-                      isSelf ? Colors.transparent : _colorForEmail(email),
-                  foregroundColor:
-                      isSelf ? _colorForEmail(email) : Colors.white,
+                  backgroundColor: isSelf
+                      ? Colors.transparent
+                      : _colorForEmail(email),
+                  foregroundColor: isSelf
+                      ? _colorForEmail(email)
+                      : Colors.white,
                   child: isSelf
                       ? DecoratedBox(
                           decoration: BoxDecoration(
@@ -795,6 +802,12 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                       final isOwn = msgUserId == currentUserId;
                       final isDeleted = text == '<message deleted by author>';
                       final messageType = msg['message_type'] as int? ?? 0;
+
+                      // Hide own join/leave system messages — they
+                      // are only informational for other users.
+                      if (messageType == 2 && isOwn) {
+                        return const SizedBox.shrink();
+                      }
 
                       // System messages: compact divider style
                       if (messageType == 2) {
