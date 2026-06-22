@@ -2702,3 +2702,45 @@ class TestSandboxSetup:
 
         with patch("klangkc.main._exec_on_ws", fake_exec):
             await _sandbox_setup(ws, config, tmp_path, "admin")
+
+    def test_connection_error_exits_cleanly(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
+            "sandbox:\n  mount_at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("myws")
+        client.create_workspace.return_value = ws
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(
+                main,
+                "asyncio",
+                MagicMock(
+                    run=MagicMock(
+                        side_effect=ConnectionError(
+                            "Bind mount source does not exist: /tmp/.env"
+                        )
+                    )
+                ),
+            ),
+            patch.object(main, "reset_terminal"),
+            patch.object(main, "_drain_stdin"),
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app, ["sandbox", "myws", str(tmp_path)]
+            )
+        assert result.exit_code == 1
+        assert "Bind mount source does not exist" in result.output
