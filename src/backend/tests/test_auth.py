@@ -30,6 +30,10 @@ class TestPasswordHashing:
         with pytest.raises(ValueError, match="exceeds 72 bytes"):
             auth.hash_password(long_pw)
 
+    def test_verify_password_over_72_bytes_returns_false(self):
+        hashed = auth.hash_password("shortpassword")
+        assert not auth.verify_password("a" * 73, hashed)
+
     def test_hash_password_accepts_exactly_72_bytes(self):
         pw = "a" * 72
         hashed = auth.hash_password(pw)
