@@ -59,11 +59,13 @@ def _try_bridge(text, browser_id):
     if not BRIDGE_URL or not browser_id:
         return False
 
-    payload = json.dumps({
-        "action": "clipboard_write",
-        "browser_id": browser_id,
-        "text": text,
-    }).encode()
+    payload = json.dumps(
+        {
+            "action": "clipboard_write",
+            "browser_id": browser_id,
+            "text": text,
+        }
+    ).encode()
 
     headers = {"Content-Type": "application/json"}
     workspace_token = _get_workspace_token()

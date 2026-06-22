@@ -31,19 +31,19 @@ RUN HERDR_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64")
 # Entrypoint, system prompt, bash defaults (change frequently during dev)
 COPY system-prompt.md /opt/klangk/system-prompt.md
 COPY entrypoint.sh /opt/klangk/entrypoint.sh
-COPY otel.sh /opt/klangk/otel.sh
-COPY setup_clankers.py /opt/klangk/bin/setup-clankers
-COPY setup-home.sh /opt/klangk/bin/setup-home
-COPY klangk-attach-browser /opt/klangk/bin/klangk-attach-browser
-COPY klangk-browser-id /opt/klangk/bin/klangk-browser-id
-COPY klangk-copy-to-clipboard /opt/klangk/bin/klangk-copy-to-clipboard
+COPY klangk-otel.sh /opt/klangk/bin/klangk-otel.sh
+COPY klangk-setup-clankers.py /opt/klangk/bin/klangk-setup-clankers
+COPY klangk-setup-home.sh /opt/klangk/bin/klangk-setup-home
+COPY klangk-attach-browser.sh /opt/klangk/bin/klangk-attach-browser
+COPY klangk-browser-id.sh /opt/klangk/bin/klangk-browser-id
+COPY klangk-copy-to-clipboard.py /opt/klangk/bin/klangk-copy-to-clipboard
 COPY klangk-configure-sudo /opt/klangk/bin/klangk-configure-sudo
 COPY klangk-save-workspace-state /opt/klangk/bin/klangk-save-workspace-state
-COPY klangk-set-workspace-token /opt/klangk/bin/klangk-set-workspace-token
-COPY klangk-workspace-token /opt/klangk/bin/klangk-workspace-token
+COPY klangk-set-workspace-token.sh /opt/klangk/bin/klangk-set-workspace-token
+COPY klangk-workspace-token.sh /opt/klangk/bin/klangk-workspace-token
 RUN chmod +x /opt/klangk/entrypoint.sh \
-      /opt/klangk/bin/setup-clankers \
-      /opt/klangk/bin/setup-home \
+      /opt/klangk/bin/klangk-setup-clankers \
+      /opt/klangk/bin/klangk-setup-home \
       /opt/klangk/bin/klangk-attach-browser \
       /opt/klangk/bin/klangk-browser-id \
       /opt/klangk/bin/klangk-configure-sudo \
