@@ -11,6 +11,7 @@ Skips setup if $HOME/.pi/agent/settings.json already exists.
 import json
 import os
 import subprocess
+import sys
 import traceback
 from pathlib import Path
 
@@ -112,7 +113,12 @@ def main():
     if not home or home == Path("/home"):
         return  # don't init for the system user
 
+    force = "--force" in sys.argv
+
     agent = _agent_dir()
+    if force:
+        (agent / "settings.json").unlink(missing_ok=True)
+
     if (agent / "settings.json").exists():
         # Already initialized — just refresh models.json (token may
         # have changed on container restart).

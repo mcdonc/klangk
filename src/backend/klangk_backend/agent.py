@@ -114,7 +114,7 @@ class AgentSession:
 
         # Run setup-clankers to populate ~/.pi/agent/ with models.json,
         # settings.json, etc.  Unlike real users, the agent has no
-        # personal preferences — always delete settings.json first so
+        # personal preferences — --force deletes settings.json first so
         # it picks up the current KLANGK_LLM_MODEL env var.
         proc = await asyncio.create_subprocess_exec(
             podman.PODMAN_BIN,
@@ -124,10 +124,8 @@ class AgentSession:
             "-e",
             f"HOME={container_home}",
             container_id,
-            "bash",
-            "-c",
-            "rm -f $HOME/.pi/agent/settings.json"
-            " && python3 /opt/klangk/bin/setup-clankers",
+            "setup-clankers",
+            "--force",
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

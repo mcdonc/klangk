@@ -650,13 +650,7 @@ class ContainerRegistry:
                 sudoers_rule = "klangk ALL=(ALL) !ALL"
             await podman.exec_container(
                 cid,
-                [
-                    "sh",
-                    "-c",
-                    f'echo "{sudoers_rule}"'
-                    " > /etc/sudoers.d/klangk"
-                    " && chmod 0440 /etc/sudoers.d/klangk",
-                ],
+                ["klangk-configure-sudo", sudoers_rule],
                 user="root",
             )
 
