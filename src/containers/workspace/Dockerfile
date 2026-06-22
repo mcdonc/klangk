@@ -37,8 +37,8 @@ COPY klangk-setup-home.sh /opt/klangk/bin/klangk-setup-home
 COPY klangk-attach-browser.sh /opt/klangk/bin/klangk-attach-browser
 COPY klangk-browser-id.sh /opt/klangk/bin/klangk-browser-id
 COPY klangk-copy-to-clipboard.py /opt/klangk/bin/klangk-copy-to-clipboard
-COPY klangk-configure-sudo /opt/klangk/bin/klangk-configure-sudo
-COPY klangk-save-workspace-state /opt/klangk/bin/klangk-save-workspace-state
+COPY klangk-configure-sudo.sh /opt/klangk/bin/klangk-configure-sudo
+COPY klangk-save-workspace-state.sh /opt/klangk/bin/klangk-save-workspace-state
 COPY klangk-set-workspace-token.sh /opt/klangk/bin/klangk-set-workspace-token
 COPY klangk-workspace-token.sh /opt/klangk/bin/klangk-workspace-token
 RUN chmod +x /opt/klangk/entrypoint.sh \
