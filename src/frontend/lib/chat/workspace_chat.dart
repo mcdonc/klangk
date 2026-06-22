@@ -152,9 +152,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
-          _scrollController.jumpTo(
-            _scrollController.position.maxScrollExtent,
-          );
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         }
       });
     });
@@ -504,24 +502,26 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
     if (isDeleted) {
       return Text.rich(
-        TextSpan(children: [
-          TextSpan(
-            text: '$senderName  ',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: nameColor,
-              fontSize: 13,
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$senderName  ',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: nameColor,
+                fontSize: 13,
+              ),
             ),
-          ),
-          TextSpan(
-            text: text,
-            style: const TextStyle(
-              color: KColors.textMuted,
-              fontSize: 13,
-              fontStyle: FontStyle.italic,
+            TextSpan(
+              text: text,
+              style: const TextStyle(
+                color: KColors.textMuted,
+                fontSize: 13,
+                fontStyle: FontStyle.italic,
+              ),
             ),
-          ),
-        ]),
+          ],
+        ),
       );
     }
 
@@ -543,8 +543,10 @@ class WorkspaceChatState extends State<WorkspaceChat> {
           extensionSet: md.ExtensionSet(
             md.ExtensionSet.gitHubWeb.blockSyntaxes,
             [
-              ...md.ExtensionSet.gitHubWeb.inlineSyntaxes.where((s) =>
-                  s is! md.AutolinkSyntax && s is! md.AutolinkExtensionSyntax),
+              ...md.ExtensionSet.gitHubWeb.inlineSyntaxes.where(
+                (s) =>
+                    s is! md.AutolinkSyntax && s is! md.AutolinkExtensionSyntax,
+              ),
             ],
           ),
           styleSheet: _chatMarkdownStyle(context),
@@ -792,9 +794,16 @@ class WorkspaceChatState extends State<WorkspaceChat> {
                         msg['created_at'] as String? ?? '',
                       );
                       final msgUserId = msg['user_id'] as String?;
-                      final isOwn = msgUserId == currentUserId;
+                      final isOwn =
+                          msgUserId != null && msgUserId == currentUserId;
                       final isDeleted = text == '<message deleted by author>';
                       final messageType = msg['message_type'] as int? ?? 0;
+
+                      // Hide own join/leave system messages — they
+                      // are only informational for other users.
+                      if (messageType == 2 && isOwn) {
+                        return const SizedBox.shrink();
+                      }
 
                       // System messages: compact divider style
                       if (messageType == 2) {
