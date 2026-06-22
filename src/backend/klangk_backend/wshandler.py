@@ -2552,6 +2552,10 @@ async def handle_websocket(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for user %s", user["email"])
+    except RuntimeError as e:
+        # Starlette raises RuntimeError("WebSocket is not connected...")
+        # when the client disconnects before or during receive_text().
+        logger.info("WebSocket disconnected for user %s: %s", user["email"], e)
     except SlowClientError:
         logger.warning("Slow client dropped for user %s", user["email"])
     except Exception as e:
