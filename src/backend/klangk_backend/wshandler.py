@@ -856,7 +856,11 @@ class Connection:
         await self.handle_workspace_disconnect()
 
         t_container = time.monotonic()
-        await self.start_workspace_container(workspace_id, workspace)
+        try:
+            await self.start_workspace_container(workspace_id, workspace)
+        except ValueError as exc:
+            send_error(self.sock, str(exc))
+            return
         logger.info(
             "workspace-open: start or reuse container (see breakdown above): %.3fs",
             time.monotonic() - t_container,

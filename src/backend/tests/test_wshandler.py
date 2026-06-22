@@ -1528,6 +1528,26 @@ class TestHandleWorkspaceConnect:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Workspace not found" in str(c) for c in calls)
 
+    async def test_connect_container_start_valueerror(self, user, agent_user):
+        """ValueError from start_container is sent as an error, not a crash."""
+        sock = _mock_sock()
+        workspace = await _create_workspace_with_acl(user["id"], "bad-mount")
+        conn = _base_conn(user=user, ws=sock)
+
+        with patch.object(
+            Connection,
+            "start_workspace_container",
+            side_effect=ValueError("Bind mount source does not exist: /nope"),
+        ):
+            await conn.handle_workspace_connect(
+                {"workspaceId": workspace["id"]}
+            )
+
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        errors = [c for c in calls if c.get("type") == "error"]
+        assert len(errors) == 1
+        assert "does not exist" in errors[0]["message"]
+
 
 class TestHandleWorkspaceDisconnect:
     async def test_disconnect(self):
