@@ -972,6 +972,51 @@ class TestMonitorProcess:
         # Should not raise when workspace has been deleted
         await _broadcast_agent_reconnect("deleted-ws-id")
 
+    async def test_monitor_skips_restart_if_container_gone(self, caplog):
+        """Monitor does not restart when the container has been removed."""
+        from klangk_backend import model
+        import logging
+
+        session = _make_session("ws-gone")
+        _agents["ws-gone"] = session
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock()
+        mock_proc.stderr = asyncio.StreamReader()
+        mock_proc.stderr.feed_eof()
+        session._proc = mock_proc
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "msg"},
+            ),
+            patch(
+                "klangk_backend.agent._get_workspace_session",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "klangk_backend.agent.container.registry.get_state",
+                return_value=None,
+            ),
+            patch(
+                "klangk_backend.agent.asyncio.sleep", new_callable=AsyncMock
+            ),
+            patch.object(
+                session,
+                "_ensure_started",
+                new_callable=AsyncMock,
+            ) as mock_start,
+            caplog.at_level(logging.INFO, logger="klangk_backend.agent"),
+        ):
+            await session._monitor_process(mock_proc)
+            mock_start.assert_not_awaited()
+
+        assert any("Container gone" in r.message for r in caplog.records)
+
     async def test_monitor_skips_restart_if_already_restarted(self):
         from klangk_backend import model
 

@@ -898,15 +898,23 @@ class TestWorkspaceRoutes:
         # Simulate a running container
         await model.update_workspace_container(ws_id, "fake-container-id")
 
-        with patch.object(
-            api.container.registry,
-            "stop_and_remove_container",
-            new_callable=AsyncMock,
-        ) as mock_rm:
+        with (
+            patch.object(
+                api.container.registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ) as mock_rm,
+            patch.object(
+                api.agent,
+                "stop_session",
+                new_callable=AsyncMock,
+            ) as mock_stop_agent,
+        ):
             resp = await client.delete(
                 f"/api/v1/workspaces/{ws_id}", headers=headers
             )
         assert resp.status_code == 200
+        mock_stop_agent.assert_awaited_once_with(ws_id)
         mock_rm.assert_awaited_once_with("fake-container-id")
 
     async def test_delete_workspace_cleans_up_groups(self, client, user):

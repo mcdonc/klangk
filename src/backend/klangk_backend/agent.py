@@ -225,6 +225,13 @@ class AgentSession:
         await asyncio.sleep(2)
         if self._proc is not None:
             return  # something else already restarted it
+        # If the container is gone (workspace deleted), don't restart.
+        if container.registry.get_state(self.workspace_id) is None:
+            logger.info(
+                "Container gone for workspace %s, not restarting agent",
+                self.workspace_id,
+            )
+            return
         try:
             await self._ensure_started()
             await _broadcast_agent_reconnect(self.workspace_id)
