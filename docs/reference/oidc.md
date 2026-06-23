@@ -8,19 +8,19 @@ Klangk supports OIDC authentication via one or more external Identity Providers 
 
 ```yaml
 - id: cac
-  display_name: CAC Login
+  display-name: CAC Login
   issuer: https://keycloak.example.com/realms/company
-  client_id: klangk
-  client_secret: "file:/run/secrets/cac-secret"
+  client-id: klangk
+  client-secret: "file:/run/secrets/cac-secret"
   scopes: openid email profile
-  ca_cert: /etc/pki/tls/certs/company-ca-bundle.pem
-  logout_redirect: true
+  ca-cert: /etc/pki/tls/certs/company-ca-bundle.pem
+  logout-redirect: true
 
 - id: internal
-  display_name: Internal SSO
+  display-name: Internal SSO
   issuer: https://keycloak.example.com/realms/corp
-  client_id: klangk
-  client_secret: "file:/run/secrets/corp-secret"
+  client-id: klangk
+  client-secret: "file:/run/secrets/corp-secret"
 ```
 
 1. Set `KLANGK_OIDC_CONFIG` in `.env`:
@@ -39,14 +39,14 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 | Field                  | Required | Description                                                                                                                 |
 | ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `id`                   | Yes      | URL-safe slug, used in endpoint paths (`/api/v1/auth/oidc/{id}/login`) and stored as `provider` on users                    |
-| `display_name`         | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                                                |
+| `display-name`         | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                                                |
 | `issuer`               | Yes      | OIDC issuer URL. Discovery via `{issuer}/.well-known/openid-configuration`                                                  |
-| `client_id`            | Yes      | OIDC client ID registered with the IdP                                                                                      |
-| `client_secret`        | Yes      | OIDC client secret. Supports `file:` prefix for secret management                                                           |
+| `client-id`            | Yes      | OIDC client ID registered with the IdP                                                                                      |
+| `client-secret`        | Yes      | OIDC client secret. Supports `file:` prefix for secret management                                                           |
 | `scopes`               | No       | Space-separated scopes (default: `openid email profile`)                                                                    |
-| `ca_cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs                                                          |
-| `token_validation_pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                                             |
-| `logout_redirect`      | No       | If `true`, logout redirects to the IdP's `end_session_endpoint` (RP-Initiated Logout). Default: `false` (local-only logout) |
+| `ca-cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs                                                          |
+| `token-validation-pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                                             |
+| `logout-redirect`      | No       | If `true`, logout redirects to the IdP's `end_session_endpoint` (RP-Initiated Logout). Default: `false` (local-only logout) |
 
 ## How It Works
 
@@ -55,7 +55,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 - **Login hook**: A single Python hook (`KLANGK_OIDC_LOGIN_HOOK`) handles both login validation and group mapping. See [OIDC Login Hook](#oidc-login-hook) below.
 - **User provisioning**: On first OIDC login, a user is created automatically (verified, no password). If a local user with the same email already exists, the OIDC identity is linked to it.
 - **OIDC users** cannot use forgot-password, change-password, or change-email.
-- **Logout**: By default, logout only kills the Klangk session. With `logout_redirect: true`, the user is also redirected to the IdP's logout endpoint to end the SSO session (requires full re-authentication on next login).
+- **Logout**: By default, logout only kills the Klangk session. With `logout-redirect: true`, the user is also redirected to the IdP's logout endpoint to end the SSO session (requires full re-authentication on next login).
 
 ## IdP Setup (Keycloak Example)
 

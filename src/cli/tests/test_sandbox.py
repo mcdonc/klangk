@@ -42,7 +42,7 @@ class TestLoadSandboxConfig:
             {
                 "workspace": {"image": "my-image"},
                 "sandbox": {
-                    "mount_at": "~/project",
+                    "mount-at": "~/project",
                     "setup": "setup.sh",
                 },
                 "copy": ["~/.gitconfig:~/.gitconfig"],
@@ -57,6 +57,15 @@ class TestLoadSandboxConfig:
         assert config.copy == ["~/.gitconfig:~/.gitconfig"]
         assert config.mounts == ["/data:~/data:ro"]
         assert config.volumes == ["cache:/cache"]
+
+    def test_snake_case_mount_at_fallback(self, sandbox_root):
+        """Legacy mount_at key still works for backwards compat."""
+        _write_config(
+            sandbox_root,
+            {"sandbox": {"mount_at": "~/legacy"}},
+        )
+        config = load_sandbox_config(sandbox_root)
+        assert config.mount_at == "~/legacy"
 
     def test_missing_config_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="No sandbox config"):

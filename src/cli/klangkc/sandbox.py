@@ -43,7 +43,7 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
 
     return SandboxConfig(
         image=workspace.get("image"),
-        mount_at=sandbox.get("mount_at", "~/work"),
+        mount_at=sandbox.get("mount-at", sandbox.get("mount_at", "~/work")),
         setup=sandbox.get("setup"),
         copy=raw.get("copy") or [],
         mounts=raw.get("mounts") or [],

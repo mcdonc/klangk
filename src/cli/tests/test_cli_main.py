@@ -2591,7 +2591,7 @@ class TestSandboxCommand:
         from klangkc import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
-            "sandbox:\n  mount_at: ~/test\n"
+            "sandbox:\n  mount-at: ~/test\n"
         )
 
         ws = Workspace(
@@ -2627,7 +2627,7 @@ class TestSandboxCommand:
         from klangkc import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
-            "sandbox:\n  mount_at: ~/test\n"
+            "sandbox:\n  mount-at: ~/test\n"
         )
 
         ws = Workspace(
@@ -2661,7 +2661,7 @@ class TestSandboxCommand:
         from klangkc import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
-            "sandbox:\n  mount_at: ~/test\nmounts:\n  - /extra:/extra\n"
+            "sandbox:\n  mount-at: ~/test\nmounts:\n  - /extra:/extra\n"
         )
 
         ws = Workspace(
@@ -2694,7 +2694,7 @@ class TestSandboxCommand:
         from klangkc import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
-            "sandbox:\n  mount_at: ~/test\n"
+            "sandbox:\n  mount-at: ~/test\n"
         )
 
         ws = Workspace(
@@ -2831,7 +2831,7 @@ class TestSandboxSetup:
         from klangkc import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
-            "sandbox:\n  mount_at: ~/test\n"
+            "sandbox:\n  mount-at: ~/test\n"
         )
 
         ws = Workspace(

@@ -25,7 +25,7 @@ Create a `.klangk-sandbox.yaml` in your project root:
 
 ```yaml
 sandbox:
-  mount_at: ~/myproj
+  mount-at: ~/myproj
 ```
 
 Then run:
@@ -42,8 +42,8 @@ Run the same command again to reconnect to the existing workspace.
 
 The config file lives at `.klangk-sandbox.yaml` inside your project.
 The directory containing `.klangk-sandbox.yaml` is called the **sandbox root** —
-it's automatically mounted into the container at the `mount_at`
-location. If you do not specify a `mount_at` location, it will be
+it's automatically mounted into the container at the `mount-at`
+location. If you do not specify a `mount-at` location, it will be
 placed in `~/work`.
 
 ### `workspace`
@@ -64,14 +64,14 @@ specified as a positional argument on the command line.
 
 ```yaml
 sandbox:
-  mount_at: ~/klangk
+  mount-at: ~/klangk
   setup: setup.sh
 ```
 
 | Field      | Required | Default  | Description                                                                                                |
 | ---------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `mount_at` | no       | `~/work` | Where the sandbox root is mounted inside the container. `~` expands to `/home/{handle}`.                   |
-| `setup`    | no       | (none)   | Script to run inside the container after creation. Relative to `mount_at`, or absolute if starts with `/`. |
+| `mount-at` | no       | `~/work` | Where the sandbox root is mounted inside the container. `~` expands to `/home/{handle}`.                   |
+| `setup`    | no       | (none)   | Script to run inside the container after creation. Relative to `mount-at`, or absolute if starts with `/`. |
 
 The setup script runs once — on workspace creation, not on reconnect.
 It runs as the `klangk` user inside the container. If
@@ -113,7 +113,7 @@ Bind mounts from the host into the container. Format:
   Tilde expands to the host user's home.
 - **Destination**: container path. Tilde expands to
   `/home/{handle}`. Relative paths (no `~` or `/` prefix) are
-  resolved relative to `mount_at`.
+  resolved relative to `mount-at`.
 - **Options**: optional, comma-separated. Common options: `ro`
   (read-only), `rw` (read-write, default).
 
@@ -121,7 +121,7 @@ Relative source paths are resolved to absolute paths before being
 sent to the server. The server validates all mount sources against
 `KLANGK_ALLOWED_MOUNT_ROOTS` if that setting is configured.
 
-The sandbox root mount (at `mount_at`) is implicit — you don't need
+The sandbox root mount (at `mount-at`) is implicit — you don't need
 to list it here.
 
 Use mounts for files that should stay in sync between host and
@@ -181,7 +181,7 @@ klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup]
 1. Read `.klangk-sandbox.yaml` from the sandbox root
 2. Create the workspace with the configured image, mounts, and
    volumes
-3. Mount the sandbox root at `mount_at`
+3. Mount the sandbox root at `mount-at`
 4. Copy files listed in `copy` into the container home
 5. Run the `setup` script inside the container (if configured)
 6. Connect to the workspace shell
@@ -209,7 +209,7 @@ or re-run the setup script. This means:
 
 The setup script runs inside the container as the `klangk` user. It
 has access to everything that's been mounted and copied. The working
-directory is the sandbox root (the `mount_at` path).
+directory is the sandbox root (the `mount-at` path).
 
 **Important:** The `klangk` user does not have sudo access by
 default. Without it, setup scripts are limited to user-space
@@ -274,7 +274,7 @@ and SSH access to GitHub:
 ```yaml
 # .klangk-sandbox.yaml
 sandbox:
-  mount_at: ~/klangk
+  mount-at: ~/klangk
   setup: setup.sh
 
 copy:
