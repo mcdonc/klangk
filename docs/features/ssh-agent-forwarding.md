@@ -8,10 +8,9 @@ private keys.
 
 ## How it works
 
-When the `--forward-agent` (`-A`) flag is passed (or the
-`KLANGKC_FORWARD_AGENT` env var is set), `klangkc shell` checks for
-a local `SSH_AUTH_SOCK` and sets up a relay over the existing
-WebSocket tunnel:
+When `--forward-agent` (`-A`) is enabled (via CLI flag or config
+file), `klangkc shell` checks for a local `SSH_AUTH_SOCK` and sets
+up a relay over the existing WebSocket tunnel:
 
 1. A Unix socket is created inside the container at a well-known path
 2. The socket is bridged to the CLI via socat and the WebSocket
@@ -38,20 +37,16 @@ ssh -T git@github.com               # authenticates with your key
 git clone git@github.com:user/repo  # works without any credentials
 ```
 
-To enable forwarding by default, set the `KLANGKC_FORWARD_AGENT`
-environment variable:
+To enable forwarding by default, add `forward-agent: true` to your
+CLI config file (`~/.config/klangk/cli.yaml`):
 
-```bash
-# Always forward
-export KLANGKC_FORWARD_AGENT=true
-
-# Or forward only to specific servers
-export KLANGKC_FORWARD_AGENT="https://klangk.example.com"
+```yaml
+forward-agent: true
 ```
 
-The `-A` flag always takes highest precedence. See the
-[environment variables reference](../reference/environment.md) for
-details on `KLANGKC_FORWARD_AGENT`.
+The CLI flag always takes highest precedence: `--forward-agent`
+enables forwarding and `--no-forward-agent` disables it, regardless
+of the config file setting.
 
 ## Requirements
 

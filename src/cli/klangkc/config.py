@@ -26,6 +26,7 @@ class AuthConfig:
 class CLIConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
+    forward_agent: bool | None = None
 
     @classmethod
     def load(cls) -> CLIConfig:
@@ -41,6 +42,7 @@ class CLIConfig:
                 token=data.get("auth", {}).get("token"),
                 email=data.get("auth", {}).get("email"),
             ),
+            forward_agent=data.get("forward-agent"),
         )
 
     def save(self) -> None:

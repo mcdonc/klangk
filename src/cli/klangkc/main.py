@@ -640,29 +640,26 @@ def _build_ws_url(server_url: str) -> str:
     return f"ws://{server_url}/ws"
 
 
-def _resolve_forward_agent(forward_agent: bool, server_url: str) -> bool:
-    """Resolve forward_agent: -A flag wins, then KLANGKC_FORWARD_AGENT env.
+def _resolve_forward_agent(
+    forward_agent: bool | None,
+    config_default: bool = False,
+) -> bool:
+    """Resolve forward_agent: CLI flag wins, then config file default.
 
-    The env var can be:
-      "true"/"1"/"yes" — forward to any server
-      "false"/"0"/"no" — don't forward
-      space-separated URLs — forward only to listed servers
+    *forward_agent* is the CLI flag (True/False/None).  None means the
+    user did not pass ``--forward-agent`` or ``--no-forward-agent``.
     """
-    if not isinstance(forward_agent, bool):
-        forward_agent = False
-    if not forward_agent:
-        env_val = os.environ.get("KLANGKC_FORWARD_AGENT", "")
-        if env_val.lower() in ("1", "true", "yes"):
-            forward_agent = True
-        elif env_val and env_val.lower() not in ("0", "false", "no"):
-            forward_agent = server_url in env_val.split()
-    if forward_agent:
+    if forward_agent is not None:
+        result = forward_agent
+    else:
+        result = config_default
+    if result:
         if not os.environ.get("SSH_AUTH_SOCK"):
             _err.print(
                 "[yellow]Warning: --forward-agent set but SSH_AUTH_SOCK"
                 " is not set. Agent forwarding will be skipped.[/yellow]"
             )
-    return forward_agent
+    return result
 
 
 @app.command()
@@ -680,18 +677,18 @@ def shell(
         "-c",
         help="Override the default shell command",
     ),
-    forward_agent: bool = typer.Option(
-        False,
-        "--forward-agent",
+    forward_agent: bool | None = typer.Option(
+        None,
+        "--forward-agent/--no-forward-agent",
         "-A",
         help="Forward local SSH agent into the container",
     ),
 ) -> None:
     """Connect to a workspace and execute the default shell command."""
     # When called directly (not via typer CLI), forward_agent may be a
-    # typer.models.OptionInfo instead of a bool.  Treat that as False.
+    # typer.models.OptionInfo instead of bool/None.  Normalize to None.
     if not isinstance(forward_agent, bool):
-        forward_agent = False
+        forward_agent = None
     cfg = _cfg()
     if not cfg.auth.token:  # pragma: no cover
         _err.print(
@@ -740,7 +737,9 @@ def shell(
     token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
-    forward_agent = _resolve_forward_agent(forward_agent, server_url)
+    forward_agent = _resolve_forward_agent(
+        forward_agent, config_default=cfg.forward_agent or False
+    )
     try:
         asyncio.run(
             _ws_shell(
@@ -845,9 +844,9 @@ def sandbox(
         ".",
         help="Path to sandbox root (directory containing .klangk/)",
     ),
-    forward_agent: bool = typer.Option(
-        False,
-        "--forward-agent",
+    forward_agent: bool | None = typer.Option(
+        None,
+        "--forward-agent/--no-forward-agent",
         "-A",
         help="Forward local SSH agent into the container",
     ),
@@ -858,6 +857,8 @@ def sandbox(
     ),
 ) -> None:
     """Create or reconnect to a sandbox workspace."""
+    if not isinstance(forward_agent, bool):
+        forward_agent = None
     cfg = _cfg()
     if not cfg.auth.token:  # pragma: no cover
         _err.print(
@@ -906,7 +907,9 @@ def sandbox(
         created = True
 
     # Single WebSocket connection: setup (if new) then shell.
-    forward_agent = _resolve_forward_agent(forward_agent, server_url)
+    forward_agent = _resolve_forward_agent(
+        forward_agent, config_default=cfg.forward_agent or False
+    )
     _err.print(f"Connecting to [bold]{workspace}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
     try:
