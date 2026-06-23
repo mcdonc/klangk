@@ -297,9 +297,15 @@ async def remove_volume(name: str) -> None:
 class ExecSession:
     """Manages a podman exec session with raw stdin/stdout pipes (no PTY)."""
 
-    def __init__(self, container_id: str, user_home: str | None = None):
+    def __init__(
+        self,
+        container_id: str,
+        env: list[str] | None = None,
+        work_dir: str = "/home/work",
+    ):
         self.container_id = container_id
-        self.user_home = user_home
+        self.env = env or []
+        self.work_dir = work_dir
         self._proc: asyncio.subprocess.Process | None = None
         self._output_queue: BoundedOutputQueue[bytes] = BoundedOutputQueue(
             maxsize=64
@@ -311,10 +317,8 @@ class ExecSession:
     async def start(self, command: list[str]) -> None:
         """Start a command via podman exec with piped stdin/stdout."""
         env_flags: list[str] = []
-        work_dir = "/home/work"
-        if self.user_home is not None:
-            env_flags += ["-e", f"HOME={self.user_home}"]
-            work_dir = self.user_home
+        for entry in self.env:
+            env_flags += ["-e", entry]
         exec_cmd = [
             PODMAN_BIN,
             "exec",
@@ -323,7 +327,7 @@ class ExecSession:
             "-u",
             "klangk",
             "-w",
-            work_dir,
+            self.work_dir,
             self.container_id,
             *command,
         ]

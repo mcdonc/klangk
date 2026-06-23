@@ -1784,7 +1784,14 @@ class Connection:
         if not command:
             send_error(self.sock, "exec_start requires a command list")
             return
-        session = ExecSession(self.container_id, user_home=self._user_home)
+        env: list[str] = []
+        work_dir = "/home/work"
+        if self._user_home is not None:
+            env.append(f"HOME={self._user_home}")
+            work_dir = self._user_home
+        if self._ssh_agent_socket is not None:
+            env.append(f"SSH_AUTH_SOCK={self._ssh_agent_socket}")
+        session = ExecSession(self.container_id, env=env, work_dir=work_dir)
         await session.start(command)
         self.exec_session = session
         self.exec_task = asyncio.create_task(self.forward_exec_output(session))

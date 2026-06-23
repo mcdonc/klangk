@@ -2074,6 +2074,40 @@ class TestExecHandlers:
         except asyncio.CancelledError:
             pass
 
+    async def test_exec_start_passes_ssh_agent_socket(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        conn._ssh_agent_socket = "/tmp/agent.sock"
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+
+        async def empty_output():
+            return
+            yield  # pragma: no cover
+
+        mock_session.output = empty_output
+        mock_session.returncode = 0
+        with patch(
+            "klangk_backend.wshandler.ExecSession",
+            return_value=mock_session,
+        ) as mock_cls:
+            with patch.object(container.registry, "record_activity"):
+                with patch.object(
+                    conn, "_has_perm", new=AsyncMock(return_value=True)
+                ):
+                    await conn.handle_exec_start({"command": ["ls"]})
+        call_kwargs = mock_cls.call_args[1]
+        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in call_kwargs["env"]
+        assert "HOME=/home/admin" in call_kwargs["env"]
+        assert call_kwargs["work_dir"] == "/home/admin"
+        conn.exec_task.cancel()
+        try:
+            await conn.exec_task
+        except asyncio.CancelledError:
+            pass
+
     async def test_exec_input_sends_data(self):
         import base64
 
