@@ -1349,6 +1349,21 @@ class Connection:
             self._broadcast_shared_terminals(ws_session)
         self._save_state_snapshot(ws_session)
 
+    def _notify_user_terminal_windows(self, windows: list[dict]) -> None:
+        """Send terminal_windows to all connections for this user."""
+        ws_session = state.get_session(self.workspace_id)
+        if not ws_session:
+            self.sock.send_json(
+                {"type": "terminal_windows", "windows": windows}
+            )
+            return
+        user_id = self.user["id"]
+        msg = {"type": "terminal_windows", "windows": windows}
+        for sock in list(ws_session.subscribers):
+            conn = state.connections.get(sock)
+            if conn and conn.user.get("id") == user_id:
+                sock.send_json(msg)
+
     async def handle_terminal_new_window(self, msg: dict) -> None:
         t0 = time.monotonic()
         if not self.container_id or not self._user_home:
@@ -1365,9 +1380,7 @@ class Connection:
                 time.monotonic() - t0,
             )
             self._sync_terminal_windows(windows)
-            self.sock.send_json(
-                {"type": "terminal_windows", "windows": windows}
-            )
+            self._notify_user_terminal_windows(windows)
         except Exception as e:
             send_error(self.sock, f"Failed to create window: {e}")
 
@@ -1409,9 +1422,7 @@ class Connection:
                 self.container_id, session_name, index
             )
             self._sync_terminal_windows(windows)
-            self.sock.send_json(
-                {"type": "terminal_windows", "windows": windows}
-            )
+            self._notify_user_terminal_windows(windows)
         except Exception as e:
             send_error(self.sock, f"Failed to close window: {e}")
 
@@ -1433,9 +1444,7 @@ class Connection:
                 self.container_id, session_name
             )
             self._sync_terminal_windows(windows)
-            self.sock.send_json(
-                {"type": "terminal_windows", "windows": windows}
-            )
+            self._notify_user_terminal_windows(windows)
         except Exception as e:
             send_error(self.sock, f"Failed to rename window: {e}")
 
