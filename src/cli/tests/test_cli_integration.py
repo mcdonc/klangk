@@ -2097,6 +2097,40 @@ class TestExecOnWsRealFd:
 
         assert code == 0
 
+    async def test_ssh_agent_relay_idle_loop(self):
+        """Relay loops with no data then exits when stop is set."""
+        import tempfile
+
+        from klangkc.client import _exec_on_ws
+
+        # Create a real socket file so the relay enters the while loop,
+        # but never send ssh_agent_response — it should hit the
+        # TimeoutError/continue branch, then exit when exec finishes.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sock_path = os.path.join(tmpdir, "agent.sock")
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            srv.bind(sock_path)
+            srv.listen(1)
+
+            ws = AsyncMock()
+            ws.send = AsyncMock()
+
+            async def delayed_exit():
+                # Give the relay time to hit at least one timeout cycle.
+                await asyncio.sleep(1.5)
+                return json.dumps({"type": "exec_exit", "code": 0})
+
+            ws.recv = delayed_exit
+
+            with patch.dict(
+                os.environ, {"SSH_AUTH_SOCK": sock_path}, clear=False
+            ):
+                code = await _exec_on_ws(ws, ["true"])
+
+            srv.close()
+
+        assert code == 0
+
     async def test_ssh_agent_relay_bad_socket(self):
         """Relay handles OSError when local agent socket is a regular file."""
         import base64
