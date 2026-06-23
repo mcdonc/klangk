@@ -878,7 +878,7 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
         shell_cmd = (
             "export GIT_SSH_COMMAND="
             "'ssh -o StrictHostKeyChecking=accept-new'"
-            f" && cd {mount_at} && {setup_cmd}"
+            f" && cd {mount_at} && sh {setup_cmd}"
         )
         timeout = config.setup_timeout or None
         exit_code = await _exec_on_ws(
