@@ -80,7 +80,7 @@ cat >~/.openclaw/openclaw.json <<JSON
   },
   "gateway": {
     "port": 8000,
-    "bind": "0.0.0.0"
+    "bind": "lan"
   },
   "secrets": {
     "providers": {
