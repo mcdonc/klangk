@@ -7,6 +7,7 @@ import os
 import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 _CONFIG_DIR = Path.home() / ".config" / "klangk"
 _CONFIG_PATH = _CONFIG_DIR / "cli.yaml"
@@ -82,6 +83,20 @@ class CLIConfig:
             if entry.url == server_url and entry.ws_max_size is not None:
                 return entry.ws_max_size
         return self.ws_max_size or _DEFAULT_WS_MAX_SIZE
+
+
+def seed_config(server_url: str, user: str | None = None) -> None:
+    """Create cli.yaml with an initial server entry if it doesn't exist."""
+    if _CONFIG_PATH.exists():
+        return
+    parsed = urlparse(server_url)
+    alias = parsed.hostname or "default"
+    entry: dict = {"url": server_url}
+    if user:
+        entry["user"] = user
+    data = {"servers": {alias: entry}}
+    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
 
 
 @dataclass

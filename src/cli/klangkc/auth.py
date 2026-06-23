@@ -15,7 +15,7 @@ import httpx
 from rich.console import Console
 from rich.prompt import Prompt
 
-from .config import CLIState
+from .config import CLIState, seed_config
 
 _err = Console(stderr=True)
 _out = Console()
@@ -128,6 +128,7 @@ margin:0;background:#1a1a2e;color:#e0e0e0">
 
         state.set_credentials(server_url, email, token)
         state.save()
+        seed_config(server_url, email)
         _out.print(f"Logged in as [bold]{email}[/bold]")
     elif error_holder[0]:
         _err.print(f"[red]Login failed:[/red] {error_holder[0]}")
@@ -228,6 +229,7 @@ def login(
 
     state.set_credentials(server_url, email, token)
     state.save()
+    seed_config(server_url, email)
     _out.print(f"Logged in as [bold]{email}[/bold]")
 
 

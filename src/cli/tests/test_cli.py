@@ -19,6 +19,7 @@ from klangkc.config import (
     ServerState,
     UserEntry,
     _DEFAULT_WS_MAX_SIZE,
+    seed_config,
 )
 from klangkc.client import (
     AuthError,
@@ -208,6 +209,49 @@ class TestCLIConfig:
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.servers["prod"].user == "admin@prod.com"
+
+
+# --- seed_config tests ---
+
+
+class TestSeedConfig:
+    def test_creates_config_if_missing(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "cli.yaml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        seed_config("http://localhost:8995", "admin@example.com")
+        assert config_path.exists()
+        cfg = CLIConfig.load()
+        assert "localhost" in cfg.servers
+        assert cfg.servers["localhost"].url == "http://localhost:8995"
+        assert cfg.servers["localhost"].user == "admin@example.com"
+
+    def test_does_not_overwrite_existing(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "cli.yaml"
+        config_path.write_text("forward-agent: true\n")
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        seed_config("http://localhost:8995", "admin@example.com")
+        # Should not have been overwritten
+        assert "forward-agent" in config_path.read_text()
+        cfg = CLIConfig.load()
+        assert cfg.forward_agent is True
+        assert len(cfg.servers) == 0
+
+    def test_creates_without_user(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "cli.yaml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        seed_config("https://klangk.example.com")
+        cfg = CLIConfig.load()
+        entry = cfg.servers.get("klangk.example.com")
+        assert entry is not None
+        assert entry.url == "https://klangk.example.com"
+        assert entry.user is None
+
+    def test_uses_hostname_as_alias(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "cli.yaml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        seed_config("http://myhost:9000")
+        cfg = CLIConfig.load()
+        assert "myhost" in cfg.servers
 
 
 # --- CLIState tests ---
