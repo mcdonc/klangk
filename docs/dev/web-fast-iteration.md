@@ -196,3 +196,86 @@ helps once the extension is installed.
 4. Edit a widget; confirm `R` reflects in the browser in seconds with **no** full
    rebuild; confirm login, `/api/v1/config`, and the WS still work.
 5. Record real timings back into this doc. (macOS playwright e2e stays excluded.)
+
+## Container-side iteration (D + F) — validated
+
+The other half of `devenv up` is `klangk:build-workspace-image` (the image where
+`pi` / `claude code` / `hermes` run). Two findings:
+
+### D — the image build is already hash-gated (decoupled)
+
+`build-workspace-image.sh` hashes `scripts/build-workspace-image.sh` +
+`src/containers/workspace/` + the plugins dir against
+`$DEVENV_STATE/klangk/.backend-image-hash` and **skips** when unchanged
+(confirmed live: "Image klangk-arm64 is up to date, skipping build."). So
+frontend-only work doesn't rebuild the image. Dev mode (Strategy A) additionally
+skips `klangk:flutter-build`, so a `KLANGK_WEB_DEV=1` start does neither heavy
+build when nothing relevant changed. No change needed here beyond documenting it.
+
+### F — bind-mount extensions to skip the image rebuild ✅ mechanic validated
+
+Today the Dockerfile `COPY`s plugin/builtin **extensions**, **tools**, **hooks**,
+and the frequently-edited `klangk-*` scripts / `system-prompt.md` /
+`entrypoint.sh` into the image (`src/containers/workspace/Dockerfile:13-60`). Any
+edit to those changes the hash → full `podman build`. Pi runs as a long-lived
+container (`entrypoint.sh` = `sleep infinity`; sessions via `podman exec`), so the
+container doesn't even need rebuilding — just the files refreshed.
+
+**Key insight** (`klangk-setup-clankers.py:64`): Pi auto-discovers
+`~/.pi/agent/extensions/` _in addition_ to the baked image dir. So dev extensions
+can be bind-mounted **additively** into the user dir — no need to mount over
+`/opt/klangk/pi-agent/extensions` (which would _hide_ the baked builtin/plugin
+extensions).
+
+Validated against the real `klangk-arm64` image (no rebuild):
+
+```text
+podman run -d --userns=keep-id:uid=1000,gid=1000 \
+  -v $PWD/scratch/fdev-extensions:/home/klangk/.pi/agent/extensions:ro klangk-arm64
+# file visible inside, owned by klangk; host edit -> reflected live in the
+# running container with NO rebuild and NO restart.
+```
+
+**Proposed implementation (opt-in, separate tested PR):** in `container.py` where
+`binds` is assembled (~line 538), when a dev flag is set (e.g.
+`KLANGK_WORKSPACE_DEV=1`), append additive read-only mounts:
+
+- host plugin/builtin extensions dir → `/home/klangk/.pi/agent/extensions/` (or a
+  second dir added to Pi's `extensions` array in `settings.json`)
+- staged tools dir → an extra `PATH` dir (avoid hiding `/opt/klangk/bin`)
+- `src/containers/workspace/*.sh` dev copies → `/opt/klangk/bin/*` individually
+
+Then editing an extension/tool/script + reopening the workspace (or re-exec'ing
+the agent) picks up changes with **no image rebuild**. Gate it so prod/default is
+untouched, mirroring Strategy A. Needs unit tests (container `binds` assembly is
+covered) to hold the 100% coverage bar — hence a separate PR, not bundled here.
+
+## Stretch (G) — hermes agent in klangkc mode: investigation + blocker
+
+What I confirmed:
+
+- The workspace image bakes in only **Pi** (`@earendil-works/pi-coding-agent`)
+  and **Herdr** (`herdr` 0.6.6, a terminal-based agent runtime). `claude code`
+  and `hermes` are not baked — they'd be installed/run _inside_ a workspace.
+- Agents talk to the LLM via the **`llm-proxy`** provider (nginx →
+  `KLANGK_LLM_BASE_URL` with the server-side key); `klangk-setup-clankers.py`
+  wires Pi's `~/.pi/agent/{settings,models}.json` to it using `KLANGK_LLM_MODEL`.
+- **MiniMax** is a supported LLM (builtin `minimax-thinking-tags.ts` repairs
+  `<think>` tags from MiniMax models). `MINIMAX_API_KEY` is in `.env`.
+- **`klangkc sandbox`** reads a `.klangk/` config (`image`, `setup-command`,
+  mounts, `forward-agent`) and runs a default command in a workspace container —
+  this is the "klangkc mode" surface where an agent build would be driven.
+- **"hermes" appears nowhere** in the repo or git history/branches.
+
+**Blocker (needs your input):** I can't "get the hermes agent build running"
+without knowing what `hermes` _is_. Which of these?
+
+1. An external agent CLI/binary (give the repo URL / install command), or
+2. An npm package (like Pi) to add to the image / a sandbox `setup-command`, or
+3. A Pi/Herdr configuration preset, or
+4. A MiniMax **model id** named "Hermes" to set as `KLANGK_LLM_MODEL`.
+
+Once identified, the concrete path is: add a `.klangk/` sandbox config (or image
+layer) that installs hermes and sets the MiniMax-backed model via the llm-proxy,
+then `klangkc sandbox` / `klangkc shell` to run it. I've left this unblocked-but-
+unstarted rather than guess.

@@ -15,6 +15,13 @@ Running log so you can see direction + decisions while away. Newest at top.
 `ws_client.dart` derives WS + HTTP base from `Uri.base`. Keep browser on nginx :8995 →
 all API/WS/bridge unchanged; nginx only forks by path in dev mode.
 
+## Status
+
+Foundation (Strategy A) DONE + validated + pushed. Draft PR:
+https://github.com/mcdonc/klangk/pull/785 (commit 6c7ae4b). Live stack still up:
+backend :8997 + nginx-dev :8995 (dev server :8996 stopped after baseline build).
+Now working the container side (D/F + hermes) where your interest is.
+
 ## Log
 
 - [setup] Branched `feat/flutter-web-dev-mode` off main@1783784. Pre-existing WIP
@@ -49,6 +56,20 @@ all API/WS/bridge unchanged; nginx only forks by path in dev mode.
   reload** watcher (livereload-style) beats trying to script `R`, unless we adopt
   `-d chrome` (flutter-controlled Chrome has the debug client, but loads from
   :8996 directly -> breaks same-origin API/WS). Documenting both.
-- [next] Capture baseline `flutter build web --release` time -> compute speedup;
-  fold findings into the doc; commit my files; push; draft PR. Then loop on
-  Strategy B (reload watcher), D/F (bind-mount extensions), and hermes/klangkc.
+- [DONE] Baseline 21.3s warm; folded into doc; committed (6c7ae4b); pushed; draft
+  PR #785 opened.
+- [container side] Mapped it: long-lived container (`sleep infinity`), sessions via
+  `podman exec`; agents = Pi + Herdr baked; LLM via `llm-proxy`; MiniMax is a
+  provider; klangkc `sandbox` runs a setup/default command in a workspace.
+- [D] build-workspace-image is already hash-gated and skips when unchanged
+  (confirmed live: "up to date, skipping build"). Dev mode also skips
+  flutter-build. Documented; no change needed.
+- [F ✅ validated] Bind-mount mechanic proven on the real klangk-arm64 image:
+  host edit -> live in running container, NO rebuild/restart, using the additive
+  `~/.pi/agent/extensions/` path (doesn't hide baked extensions). Wrote the exact
+  opt-in container.py design. Full impl = a separate tested PR (100% cov bar).
+- [G hermes ⛔ BLOCKED] "hermes" is nowhere in repo/git. Can't build it without a
+  definition. Documented the 4 possibilities + the concrete klangkc-sandbox path
+  once identified. Needs your answer (see doc "Stretch (G)").
+- [next] Commit docs to branch + refresh PR. Strategy B (reload watcher) remains
+  optional. Awaiting hermes definition.
