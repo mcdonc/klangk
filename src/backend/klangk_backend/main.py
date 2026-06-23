@@ -4,6 +4,7 @@ import logging
 import os
 import secrets
 import sys
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -173,10 +174,24 @@ async def seed_agent_user() -> None:
 # --- PID file helpers ---
 
 
+def _runtime_dir() -> Path:
+    """Per-user runtime dir for the PID file.
+
+    Prefer XDG_RUNTIME_DIR, then the Linux /run/user/<uid> location, and
+    finally a writable temp dir (macOS has no /run, and / is read-only).
+    """
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg:
+        return Path(xdg)
+    linux_run = Path(f"/run/user/{os.getuid()}")
+    if linux_run.is_dir():
+        return linux_run
+    return Path(tempfile.gettempdir())
+
+
 def _pid_file_path() -> Path:
     """Return the PID file path for this instance."""
-    run_dir = Path(f"/run/user/{os.getuid()}")
-    return run_dir / f"klangk-{container.INSTANCE_ID}.pid"
+    return _runtime_dir() / f"klangk-{container.INSTANCE_ID}.pid"
 
 
 def check_pid_file() -> int | None:
