@@ -32,7 +32,6 @@ from .client import (
     AuthError,
     KlangkClient,
     WorkspaceNotFoundError,
-    _WS_MAX_SIZE,
     _drain_stdin,
     _get_terminal_size,
     _send_ignore_closed,
@@ -42,7 +41,7 @@ from .client import (
     _ws_shell,
     reset_terminal,
 )
-from .config import CLIConfig
+from .config import CLIConfig, CLIState
 from .mount import validate_mount_spec
 from .sandbox import (
     build_all_mounts,
@@ -59,6 +58,7 @@ app = typer.Typer(
 )
 
 _cfg_cache: CLIConfig | None = None
+_state_cache: CLIState | None = None
 
 
 def _cfg() -> CLIConfig:
@@ -68,16 +68,54 @@ def _cfg() -> CLIConfig:
     return _cfg_cache
 
 
+def _state() -> CLIState:
+    global _state_cache  # pragma: no cover
+    if _state_cache is None:  # pragma: no cover
+        _state_cache = CLIState.load()  # pragma: no cover
+    return _state_cache
+
+
+_server_override: str | None = None
+
+
+@app.callback()
+def _app_callback(
+    server: str | None = typer.Option(
+        None, "--server", help="Server alias or URL"
+    ),
+) -> None:
+    global _server_override
+    if server is not None:
+        _server_override = _cfg().resolve_server(server)
+
+
+def _server_url() -> str:
+    if _server_override is not None:
+        return _server_override
+    active = _state().active_server
+    if active is not None:
+        return active
+    _err.print(
+        "[red]No server configured[/red] — run"
+        " [bold]klangkc login <server>[/bold] first,"
+        " or pass [bold]--server[/bold]."
+    )
+    raise typer.Exit(code=1)
+
+
 def _client() -> KlangkClient:  # pragma: no cover
-    return KlangkClient(_cfg())
+    return KlangkClient(_server_url(), _state().get_token(_server_url()))
+
+
+def _ws_max_size() -> int:
+    return _cfg().get_ws_max_size(_server_url())
 
 
 _err = Console(stderr=True)
 
 
 def _require_auth() -> None:
-    cfg = _cfg()
-    if not cfg.auth.token:
+    if not _state().get_token(_server_url()):
         _err.print(
             "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
         )
@@ -86,34 +124,45 @@ def _require_auth() -> None:
 
 @app.command("login")
 def login_cmd(
-    email: str | None = typer.Argument(None, help="Email address"),
-    server: str | None = typer.Option(
-        None,
-        "--server",
-        help="Klangk server URL (e.g. http://localhost:8995)",
-    ),
+    server: str = typer.Argument(..., help="Server alias or URL"),
+    user: str | None = typer.Argument(None, help="User (email or handle)"),
     password_file: str | None = typer.Option(
         None,
         "--password-file",
         help="Read password from file (use - for stdin)",
     ),
 ) -> None:
-    """Authenticate with the Klangk server."""
-    if server is None:  # pragma: no cover
-        server = _cfg().server.url
+    """Authenticate with a Klangk server."""
+    cfg = _cfg()
+    resolved_url = cfg.resolve_server(server)
+    # Default user from config if not provided on command line
+    email = user or cfg.get_user(resolved_url)
     password = None
     if password_file is not None:
         if password_file == "-":
             password = sys.stdin.readline().rstrip("\n")
         else:
             password = Path(password_file).read_text().strip()
-    login(server, email=email, password=password)
+    login(resolved_url, email=email, password=password)
 
 
 @app.command()
-def logout() -> None:
+def logout(
+    server: str | None = typer.Argument(None, help="Server alias or URL"),
+) -> None:
     """Clear stored credentials."""
-    do_logout()
+    if server is not None:
+        resolved_url = _cfg().resolve_server(server)
+    else:
+        active = _state().active_server
+        if active is None:
+            _err.print(
+                "[red]No active server[/red] — pass a server argument"
+                " or log in first."
+            )
+            raise typer.Exit(code=1)
+        resolved_url = active
+    do_logout(resolved_url)
 
 
 @app.command()
@@ -121,11 +170,14 @@ def status(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
     """Show connection info (server, user)."""
-    cfg = _cfg()
+    url = _server_url()
+    state = _state()
+    token = state.get_token(url)
+    email = state.get_email(url)
     if plain:
-        print(f"server={cfg.server.url}")
-        if cfg.auth.token:
-            print(f"user={cfg.auth.email or 'unknown'}")
+        print(f"server={url}")
+        if token:
+            print(f"user={email or 'unknown'}")
             print("status=logged_in")
         else:
             print("status=not_logged_in")
@@ -134,9 +186,9 @@ def status(
     table = Table(show_header=False, box=None, pad_edge=False)
     table.add_column(style="bold")
     table.add_column()
-    table.add_row("Server", cfg.server.url)
-    if cfg.auth.token:
-        table.add_row("User", cfg.auth.email or "unknown")
+    table.add_row("Server", url)
+    if token:
+        table.add_row("User", email or "unknown")
         table.add_row("Status", "[green]logged in[/green]")
     else:
         table.add_row("Status", "[yellow]not logged in[/yellow]")
@@ -689,8 +741,8 @@ def shell(
     # typer.models.OptionInfo instead of bool/None.  Normalize to None.
     if not isinstance(forward_agent, bool):
         forward_agent = None
-    cfg = _cfg()
-    if not cfg.auth.token:  # pragma: no cover
+    token = _state().get_token(_server_url())
+    if not token:  # pragma: no cover
         _err.print(
             "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
         )  # pragma: no cover
@@ -726,19 +778,14 @@ def shell(
             ws = workspaces[idx]
 
     # Build WebSocket URL
-    server_url = cfg.server.url.rstrip("/")
-    if server_url.startswith("http://"):
-        ws_url = server_url.replace("http://", "ws://") + "/ws"
-    elif server_url.startswith("https://"):  # pragma: no cover
-        ws_url = server_url.replace("https://", "wss://") + "/ws"
-    else:  # pragma: no cover
-        ws_url = f"ws://{server_url}/ws"
+    server_url = _server_url().rstrip("/")
+    ws_url = _build_ws_url(server_url)
 
-    token = cfg.auth.token
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
     forward_agent = _resolve_forward_agent(
-        forward_agent, config_default=cfg.forward_agent or False
+        forward_agent,
+        config_default=_cfg().get_forward_agent(_server_url()) or False,
     )
     try:
         asyncio.run(
@@ -749,6 +796,7 @@ def shell(
                 command_override=command,
                 window=terminal,
                 forward_agent=forward_agent,
+                max_size=_ws_max_size(),
             )
         )
     except websockets.InvalidStatus as e:
@@ -773,7 +821,6 @@ def _resolve_workspace_and_url(
     workspace_name: str,
 ) -> tuple:
     """Resolve a workspace by name and return (ws, ws_url, token)."""
-    cfg = _cfg()
     _require_auth()
     client = _client()
     try:
@@ -781,14 +828,9 @@ def _resolve_workspace_and_url(
     except WorkspaceNotFoundError:
         _err.print(f"[red]No workspace named[/red] '{workspace_name}'")
         raise typer.Exit(code=1) from None
-    server_url = cfg.server.url.rstrip("/")
-    if server_url.startswith("http://"):
-        ws_url = server_url.replace("http://", "ws://") + "/ws"
-    elif server_url.startswith("https://"):  # pragma: no cover
-        ws_url = server_url.replace("https://", "wss://") + "/ws"
-    else:  # pragma: no cover
-        ws_url = f"ws://{server_url}/ws"
-    return ws, ws_url, cfg.auth.token
+    server_url = _server_url().rstrip("/")
+    ws_url = _build_ws_url(server_url)
+    return ws, ws_url, _state().get_token(_server_url())
 
 
 async def _sandbox_setup(ws, config, sandbox_root, handle):
@@ -859,8 +901,8 @@ def sandbox(
     """Create or reconnect to a sandbox workspace."""
     if not isinstance(forward_agent, bool):
         forward_agent = None
-    cfg = _cfg()
-    if not cfg.auth.token:  # pragma: no cover
+    token = _state().get_token(_server_url())
+    if not token:  # pragma: no cover
         _err.print(
             "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
         )
@@ -878,7 +920,7 @@ def sandbox(
 
     client = _client()
     handle = client.get_handle()
-    server_url = cfg.server.url.rstrip("/")
+    server_url = _server_url().rstrip("/")
     ws_url = _build_ws_url(server_url)
     created = False
 
@@ -908,7 +950,8 @@ def sandbox(
 
     # Single WebSocket connection: setup (if new) then shell.
     forward_agent = _resolve_forward_agent(
-        forward_agent, config_default=cfg.forward_agent or False
+        forward_agent,
+        config_default=_cfg().get_forward_agent(_server_url()) or False,
     )
     _err.print(f"Connecting to [bold]{workspace}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
@@ -916,12 +959,13 @@ def sandbox(
         asyncio.run(
             _sandbox_connect(
                 ws_url,
-                cfg.auth.token,
+                token,
                 ws.id,
                 config=config if (created or force_setup) else None,
                 sandbox_root=sandbox_root,
                 handle=handle,
                 forward_agent=forward_agent,
+                max_size=_ws_max_size(),
             )
         )
     except websockets.InvalidStatus as e:  # pragma: no cover
@@ -949,12 +993,16 @@ async def _sandbox_connect(  # pragma: no cover
     sandbox_root=None,
     handle=None,
     forward_agent=False,
+    max_size=None,
 ):
     """Connect to workspace, run setup if needed, then shell.
 
     Uses a single WebSocket connection for everything.  If *config*
     is not None, copy files and run setup before starting the shell.
     """
+    kwargs = {}
+    if max_size is not None:
+        kwargs["max_size"] = max_size
     await _ws_shell(
         ws_url,
         token,
@@ -965,6 +1013,7 @@ async def _sandbox_connect(  # pragma: no cover
             if config
             else None
         ),
+        **kwargs,
     )
 
 
@@ -982,12 +1031,13 @@ def terminals(
 ) -> None:
     """List all terminals (own + shared) in a workspace."""
     ws, ws_url, token = _resolve_workspace_and_url(workspace)
+    max_size = _ws_max_size()
 
     # We need to start a terminal to get the window list, then also
     # get shared terminals. Use _ws_command to get each.
     async def _list() -> None:
         async with websockets.connect(
-            f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+            f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
             await _wait_workspace_ready(conn, ws.id)
 
@@ -1115,10 +1165,11 @@ def share_terminal(
 ) -> None:
     """Share a terminal with other workspace members."""
     ws, ws_url, token = _resolve_workspace_and_url(workspace)
+    max_size = _ws_max_size()
 
     async def _share() -> None:
         async with websockets.connect(
-            f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+            f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
             await _wait_workspace_ready(conn, ws.id)
 
@@ -1195,10 +1246,11 @@ def unshare_terminal(
 ) -> None:
     """Stop sharing a terminal."""
     ws, ws_url, token = _resolve_workspace_and_url(workspace)
+    max_size = _ws_max_size()
 
     async def _unshare() -> None:
         async with websockets.connect(
-            f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+            f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
             await _wait_workspace_ready(conn, ws.id)
 
@@ -1285,7 +1337,6 @@ def exec_cmd(
 
     Also usable as an rsync transport: rsync -avz -e "klangkc exec" src/ ws:/dest/
     """
-    cfg = _cfg()
     _require_auth()
 
     command = ctx.args
@@ -1300,15 +1351,13 @@ def exec_cmd(
         _err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
 
-    server_url = cfg.server.url.rstrip("/")
-    if server_url.startswith("http://"):
-        ws_url = server_url.replace("http://", "ws://") + "/ws"
-    elif server_url.startswith("https://"):  # pragma: no cover
-        ws_url = server_url.replace("https://", "wss://") + "/ws"
-    else:  # pragma: no cover
-        ws_url = f"ws://{server_url}/ws"
+    server_url = _server_url().rstrip("/")
+    ws_url = _build_ws_url(server_url)
+    token = _state().get_token(_server_url())
 
-    exit_code = asyncio.run(_ws_exec(ws_url, cfg.auth.token, ws.id, command))
+    exit_code = asyncio.run(
+        _ws_exec(ws_url, token, ws.id, command, max_size=_ws_max_size())
+    )
     raise typer.Exit(code=exit_code)
 
 

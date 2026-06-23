@@ -9,21 +9,30 @@ import pytest
 import typer
 
 from klangkc.client import WorkspaceNotFoundError
-from klangkc.config import CLIConfig
+from klangkc.config import (
+    CLIConfig,
+    CLIState,
+    ServerEntry,
+)
 from klangkc.client import Workspace
 
 
 @pytest.fixture
 def logged_in_cfg(tmp_path, monkeypatch):
-    """Config with a valid token and email pre-loaded."""
+    """Config + state with a valid token and email pre-loaded."""
     config_path = tmp_path / "cli.yaml"
+    state_path = tmp_path / "state.yaml"
     monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-    cfg = CLIConfig()
-    cfg.server.url = "http://localhost:8995"
-    cfg.auth.token = "test-token"
-    cfg.auth.email = "test@example.com"
-    cfg.save()
-    yield config_path
+    monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+    # Write a minimal cli.yaml (no servers needed for most tests)
+    config_path.write_text("")
+    # Write state.yaml with active server and credentials
+    state = CLIState()
+    state.set_credentials(
+        "http://localhost:8995", "test@example.com", "test-token"
+    )
+    state.save()
+    yield tmp_path
     # No teardown needed — each test gets a fresh tmp_path
 
 
@@ -32,10 +41,16 @@ def reset_main_state():
     """Reset module-level CLI state before and after each test."""
     import klangkc.main as _main
 
-    orig = _main._cfg_cache
+    orig_cfg = _main._cfg_cache
+    orig_state = _main._state_cache
+    orig_server = _main._server_override
     _main._cfg_cache = None
+    _main._state_cache = None
+    _main._server_override = None
     yield
-    _main._cfg_cache = orig
+    _main._cfg_cache = orig_cfg
+    _main._state_cache = orig_state
+    _main._server_override = orig_server
 
 
 @pytest.fixture
@@ -56,7 +71,10 @@ class TestMainCLI:
         from klangkc.main import login_cmd
 
         config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "new-token"}
@@ -66,19 +84,22 @@ class TestMainCLI:
                 side_effect=["u@test.com", "pw"],
             ):
                 login_cmd(
-                    email=None,
                     server="http://localhost:8995",
+                    user=None,
                     password_file=None,
                 )
-        cfg = CLIConfig.load()
-        assert cfg.auth.token == "new-token"
-        assert cfg.auth.email == "u@test.com"
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") == "new-token"
+        assert state.get_email("http://localhost:8995") == "u@test.com"
 
     def test_login_cmd_with_password_file(self, tmp_path, monkeypatch):
         from klangkc.main import login_cmd
 
         config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
         pw_file = tmp_path / "pw.txt"
         pw_file.write_text("file-pw\n")
         mock_resp = MagicMock()
@@ -86,18 +107,21 @@ class TestMainCLI:
         mock_resp.json.return_value = {"access_token": "file-token"}
         with patch("httpx.post", return_value=mock_resp):
             login_cmd(
-                email="file@test.com",
                 server="http://localhost:8995",
+                user="file@test.com",
                 password_file=str(pw_file),
             )
-        cfg = CLIConfig.load()
-        assert cfg.auth.token == "file-token"
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") == "file-token"
 
     def test_login_cmd_with_password_stdin(self, tmp_path, monkeypatch):
         from klangkc.main import login_cmd
 
         config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "stdin-token"}
@@ -105,12 +129,68 @@ class TestMainCLI:
             with patch("sys.stdin") as mock_stdin:
                 mock_stdin.readline.return_value = "stdin-pw\n"
                 login_cmd(
-                    email="stdin@test.com",
                     server="http://localhost:8995",
+                    user="stdin@test.com",
                     password_file="-",
                 )
-        cfg = CLIConfig.load()
-        assert cfg.auth.token == "stdin-token"
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") == "stdin-token"
+
+    def test_login_cmd_resolves_alias(self, tmp_path, monkeypatch):
+        from klangkc.main import login_cmd
+
+        config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text(
+            "servers:\n  prod:\n    url: http://prod:8995\n"
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"access_token": "tok"}
+        with patch("httpx.post", return_value=mock_resp):
+            with patch(
+                "klangkc.auth.Prompt.ask",
+                side_effect=["u@test.com", "pw"],
+            ):
+                login_cmd(
+                    server="prod",
+                    user=None,
+                    password_file=None,
+                )
+        state = CLIState.load()
+        assert state.get_token("http://prod:8995") == "tok"
+        assert state.active_server == "http://prod:8995"
+
+    def test_login_cmd_uses_config_default_user(self, tmp_path, monkeypatch):
+        from klangkc.main import login_cmd
+
+        config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text(
+            "servers:\n"
+            "  prod:\n"
+            "    url: http://prod:8995\n"
+            "    user: default@prod.com\n"
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"access_token": "tok"}
+        with patch("httpx.post", return_value=mock_resp):
+            with patch(
+                "klangkc.auth.Prompt.ask",
+                return_value="pw",
+            ):
+                login_cmd(
+                    server="prod",
+                    user=None,
+                    password_file=None,
+                )
+        state = CLIState.load()
+        assert state.get_email("http://prod:8995") == "default@prod.com"
 
     def test_require_auth_raises_when_not_logged_in(
         self, tmp_path, monkeypatch
@@ -119,10 +199,13 @@ class TestMainCLI:
         from klangkc import main
 
         config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        cfg = CLIConfig()
-        cfg.auth.token = None
-        cfg.save()
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        # State with active server but no token
+        state = CLIState(active_server="http://localhost:8995")
+        state.save()
 
         with pytest.raises(typer.Exit):
             main._require_auth()
@@ -132,10 +215,49 @@ class TestMainCLI:
 
         main._require_auth()  # Should not raise
 
+    def test_server_url_no_server_exits(self, tmp_path, monkeypatch):
+        """_server_url() exits when no active server and no --server."""
+        from klangkc import main
+
+        config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        CLIState().save()
+
+        with pytest.raises(typer.Exit):
+            main._server_url()
+
+    def test_server_url_uses_active_server(self, logged_in_cfg):
+        from klangkc import main
+
+        assert main._server_url() == "http://localhost:8995"
+
+    def test_server_url_override_wins(self, logged_in_cfg):
+        from klangkc import main
+
+        main._server_override = "http://override:9999"
+        assert main._server_url() == "http://override:9999"
+
+    def test_app_callback_resolves_server_alias(self, tmp_path, monkeypatch):
+        from klangkc import main
+
+        config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text(
+            "servers:\n  prod:\n    url: http://prod:8995\n"
+        )
+        CLIState().save()
+
+        main._app_callback(server="prod")
+        assert main._server_override == "http://prod:8995"
+
     def test_list_workspaces_empty(self, logged_in_cfg, monkeypatch):
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         client = MagicMock()
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = []
@@ -465,10 +587,13 @@ class TestMainCLI:
         from klangkc import main
 
         config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        cfg = CLIConfig()
-        cfg.auth.token = None
-        cfg.save()
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        # State with active server but no token
+        state = CLIState(active_server="http://localhost:8995")
+        state.save()
 
         with pytest.raises(typer.Exit):
             main.shell(None)
@@ -477,11 +602,12 @@ class TestMainCLI:
         from klangkc import main
 
         config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        cfg = CLIConfig()
-        cfg.server.url = "http://custom:1234"
-        cfg.auth.token = None
-        cfg.save()
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        state = CLIState(active_server="http://custom:1234")
+        state.save()
 
         main.status(plain=True)
         output = capsys.readouterr().out
@@ -522,10 +648,12 @@ class TestMainCLI:
         from klangkc import main
 
         config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        cfg = CLIConfig()
-        cfg.auth.token = None
-        cfg.save()
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        state = CLIState(active_server="http://localhost:8995")
+        state.save()
 
         buf = StringIO()
         with patch.object(
@@ -550,11 +678,12 @@ class TestMainCLI:
         from klangkc import main
 
         config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        cfg = CLIConfig()
-        cfg.server.url = "http://custom:1234"
-        cfg.auth.token = None
-        cfg.save()
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        state = CLIState(active_server="http://custom:1234")
+        state.save()
 
         main.status(plain=True)
         output = capsys.readouterr().out
@@ -566,15 +695,36 @@ class TestMainCLI:
         from klangkc import main
 
         with patch("httpx.post", return_value=MagicMock(status_code=200)):
-            main.logout()
-        cfg = CLIConfig.load()
-        assert cfg.auth.token is None
+            main.logout(server=None)
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") is None
+
+    def test_logout_with_server_arg(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        with patch("httpx.post", return_value=MagicMock(status_code=200)):
+            main.logout(server="http://localhost:8995")
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") is None
+
+    def test_logout_no_active_server_exits(self, tmp_path, monkeypatch):
+        from klangkc import main
+
+        config_path = tmp_path / "cli.yaml"
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        CLIState().save()
+
+        with pytest.raises(typer.Exit):
+            main.logout(server=None)
 
     def test_logout_network_error_does_not_propagate(self, logged_in_cfg):
         from klangkc import main
 
         with patch("httpx.post", side_effect=httpx.ConnectError("no route")):
-            main.logout()  # must not raise
+            main.logout(server=None)  # must not raise
 
     def test_shell_with_single_workspace_auto_selects(
         self, logged_in_cfg, monkeypatch, reset_env
@@ -597,7 +747,7 @@ class TestMainCLI:
             with patch.object(main, "_ws_shell", fake_shell):
                 os.environ["TERM"] = "xterm-256color"
                 with patch("termios.tcgetattr", return_value=None):
-                    main.shell(None)  # no args, single workspace auto-selected
+                    main.shell(None)
 
         client.resolve_workspace.assert_not_called()  # was auto-selected
 
@@ -703,11 +853,7 @@ class TestMainCLI:
             captured_kwargs.update(kwargs)
 
         # Patch _cfg to return a config with forward_agent=True
-        from klangkc.config import CLIConfig
-
-        cfg = CLIConfig()
-        cfg.auth.token = "test-token"
-        cfg.forward_agent = True
+        cfg = CLIConfig(forward_agent=True)
         with (
             patch.object(main, "_cfg", return_value=cfg),
             patch.object(main, "_client", return_value=client),
@@ -739,11 +885,7 @@ class TestMainCLI:
         async def fake_shell(*args, **kwargs):
             captured_kwargs.update(kwargs)
 
-        from klangkc.config import CLIConfig
-
-        cfg = CLIConfig()
-        cfg.auth.token = "test-token"
-        cfg.forward_agent = True
+        cfg = CLIConfig(forward_agent=True)
         with (
             patch.object(main, "_cfg", return_value=cfg),
             patch.object(main, "_client", return_value=client),
@@ -755,6 +897,58 @@ class TestMainCLI:
                 main.shell("target-ws", forward_agent=False)
 
         assert captured_kwargs["forward_agent"] is False
+
+    def test_shell_forward_agent_per_server(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        """Per-server forward-agent in config is used."""
+        from klangkc import main
+
+        ws = Workspace(
+            id="target" + "0" * 52,
+            name="target-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        captured_kwargs = {}
+
+        async def fake_shell(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        cfg = CLIConfig(
+            forward_agent=False,
+            servers={
+                "local": ServerEntry(
+                    url="http://localhost:8995", forward_agent=True
+                ),
+            },
+        )
+        with (
+            patch.object(main, "_cfg", return_value=cfg),
+            patch.object(main, "_client", return_value=client),
+            patch.object(main, "_ws_shell", fake_shell),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
+            with patch("termios.tcgetattr", return_value=None):
+                main.shell("target-ws")
+
+        assert captured_kwargs["forward_agent"] is True
+
+    def test_ws_max_size_per_server(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        cfg = CLIConfig(
+            servers={
+                "local": ServerEntry(
+                    url="http://localhost:8995", ws_max_size=999
+                ),
+            },
+        )
+        with patch.object(main, "_cfg", return_value=cfg):
+            assert main._ws_max_size() == 999
 
     def test_terminals_command(self, logged_in_cfg, monkeypatch, reset_env):
         from klangkc import main
@@ -1822,7 +2016,7 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
 
-        async def fake_exec(*args):
+        async def fake_exec(*args, **kwargs):
             return 0
 
         ctx = MagicMock()
@@ -2060,7 +2254,6 @@ class TestExportImportCLI:
     def test_export_success(self, logged_in_cfg, monkeypatch, tmp_path):
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(
             id="ws-export-id", name="my-ws", created_at="2025-01-01"
         )
@@ -2086,7 +2279,6 @@ class TestExportImportCLI:
         from pathlib import Path
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(id="ws-exp-id", name="test-ws", created_at="2025-01-01")
 
         def _fake_export(ws_id, out, on_progress=None):
@@ -2110,7 +2302,6 @@ class TestExportImportCLI:
         from pathlib import Path
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(id="ws-ow-id", name="ow-ws", created_at="2025-01-01")
 
         def _fake_export(ws_id, out, on_progress=None):
@@ -2133,7 +2324,6 @@ class TestExportImportCLI:
     def test_export_workspace_not_found(self, logged_in_cfg, monkeypatch):
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
         monkeypatch.setattr(main, "_client", lambda: client)
@@ -2144,7 +2334,6 @@ class TestExportImportCLI:
     def test_export_http_error(self, logged_in_cfg, monkeypatch, tmp_path):
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(id="ws-err-id", name="err-ws", created_at="2025-01-01")
         client = MagicMock()
         client.resolve_workspace.return_value = ws
@@ -2162,7 +2351,6 @@ class TestExportImportCLI:
     def test_import_success(self, logged_in_cfg, monkeypatch, tmp_path):
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         ws = Workspace(
             id="ws-imp-id", name="imported", created_at="2025-01-01"
         )
@@ -2188,8 +2376,6 @@ class TestExportImportCLI:
     def test_import_file_not_found(self, logged_in_cfg, monkeypatch, tmp_path):
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
-
         with pytest.raises(typer.Exit):
             main.import_workspace(
                 archive=tmp_path / "nonexistent.tar.gz", name=None
@@ -2198,7 +2384,6 @@ class TestExportImportCLI:
     def test_import_http_error(self, logged_in_cfg, monkeypatch, tmp_path):
         from klangkc import main
 
-        monkeypatch.setattr(main, "_cfg", lambda: CLIConfig.load())
         resp = MagicMock()
         resp.text = "conflict"
         resp.status_code = 409
