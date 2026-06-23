@@ -1,7 +1,10 @@
 """Tests for main.py: lifespan, seed user, static files, logfire."""
 
+import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
@@ -118,11 +121,31 @@ class TestLifespan:
                 "shutdown",
                 new_callable=AsyncMock,
             ) as mock_shutdown,
+            patch(
+                "klangk_backend.main.check_pid_file", return_value=None
+            ) as mock_check,
+            patch("klangk_backend.main.write_pid_file") as mock_write,
+            patch("klangk_backend.main.remove_pid_file") as mock_remove,
         ):
             async with main.lifespan(app):
+                mock_check.assert_called_once()
+                mock_write.assert_called_once()
                 mock_adopt.assert_awaited_once()
                 mock_start.assert_called_once()
             mock_shutdown.assert_awaited_once()
+            mock_remove.assert_called_once()
+
+    async def test_lifespan_refuses_if_pid_alive(self, db, monkeypatch):
+        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
+        app = FastAPI()
+        with (
+            patch("klangk_backend.main.check_pid_file", return_value=12345),
+            pytest.raises(SystemExit),
+        ):
+            async with main.lifespan(app):
+                pass  # pragma: no cover
 
 
 # --- Static files ---
@@ -270,3 +293,82 @@ class TestCorsOrigins:
             base_url="https://custom.logfire",
             environment="staging",
         )
+
+
+# --- PID file helpers ---
+
+
+class TestPidFile:
+    def test_check_pid_file_no_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            main, "_pid_file_path", lambda: tmp_path / "klangk-test.pid"
+        )
+        assert main.check_pid_file() is None
+
+    def test_check_pid_file_stale_pid(self, tmp_path, monkeypatch):
+        pid_file = tmp_path / "klangk-test.pid"
+        # Use a PID that (almost certainly) doesn't exist
+        pid_file.write_text("2000000")
+        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        assert main.check_pid_file() is None
+        assert not pid_file.exists()
+
+    def test_check_pid_file_own_pid(self, tmp_path, monkeypatch):
+        pid_file = tmp_path / "klangk-test.pid"
+        pid_file.write_text(str(os.getpid()))
+        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        assert main.check_pid_file() is None
+
+    def test_check_pid_file_live_pid_permission_error(
+        self, tmp_path, monkeypatch
+    ):
+        pid_file = tmp_path / "klangk-test.pid"
+        # PID 1 (init) is always alive
+        pid_file.write_text("1")
+        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        # os.kill(1, 0) raises PermissionError for non-root
+        result = main.check_pid_file()
+        assert result == 1
+
+    def test_check_pid_file_live_foreign_pid(self, tmp_path, monkeypatch):
+        """Live PID that os.kill(pid, 0) succeeds on (not our PID)."""
+        pid_file = tmp_path / "klangk-test.pid"
+        # Use a PID we know is alive and can signal (our parent process)
+        ppid = os.getppid()
+        pid_file.write_text(str(ppid))
+        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        result = main.check_pid_file()
+        assert result == ppid
+
+    def test_check_pid_file_invalid_content(self, tmp_path, monkeypatch):
+        pid_file = tmp_path / "klangk-test.pid"
+        pid_file.write_text("not-a-number")
+        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        assert main.check_pid_file() is None
+
+    def test_write_and_remove_pid_file(self, tmp_path, monkeypatch):
+        pid_file = tmp_path / "klangk-test.pid"
+        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        main.write_pid_file()
+        assert pid_file.read_text() == str(os.getpid())
+        main.remove_pid_file()
+        assert not pid_file.exists()
+
+    def test_remove_pid_file_only_own_pid(self, tmp_path, monkeypatch):
+        pid_file = tmp_path / "klangk-test.pid"
+        pid_file.write_text("99999")
+        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        main.remove_pid_file()
+        # File should still exist — not our PID
+        assert pid_file.exists()
+
+    def test_remove_pid_file_missing(self, tmp_path, monkeypatch):
+        pid_file = tmp_path / "klangk-test.pid"
+        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        # Should not raise
+        main.remove_pid_file()
+
+    def test_pid_file_path_uses_run_dir(self):
+        path = main._pid_file_path()
+        assert path.parent == Path(f"/run/user/{os.getuid()}")
+        assert f"klangk-{main.container.INSTANCE_ID}" in path.name

@@ -1,10 +1,10 @@
 """Klangk backend: FastAPI app with HTTP + WebSocket endpoints."""
 
 import logging
+import os
 import secrets
 import sys
 from contextlib import asynccontextmanager
-
 from pathlib import Path
 
 import bcrypt
@@ -170,8 +170,74 @@ async def seed_agent_user() -> None:
     logger.info("Seeded agent user '%s' (%s)", handle, email)
 
 
+# --- PID file helpers ---
+
+
+def _pid_file_path() -> Path:
+    """Return the PID file path for this instance."""
+    run_dir = Path(f"/run/user/{os.getuid()}")
+    return run_dir / f"klangk-{container.INSTANCE_ID}.pid"
+
+
+def check_pid_file() -> int | None:
+    """Check if another instance is running.
+
+    Returns the PID of the running process, or None if no live process
+    holds the PID file.  Removes stale PID files automatically.
+    """
+    path = _pid_file_path()
+    try:
+        pid = int(path.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, OverflowError):
+        # Process is dead or PID is invalid — stale PID file.
+        path.unlink(missing_ok=True)
+        return None
+    except PermissionError:
+        # Process exists but we can't signal it (different user).
+        return pid
+    # Don't treat our own PID as a conflict (e.g., after a crash that
+    # left the PID file behind and the OS recycled the PID).
+    if pid == os.getpid():
+        return None
+    return pid
+
+
+def write_pid_file() -> None:
+    """Write the current PID to the instance PID file."""
+    path = _pid_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(os.getpid()))
+
+
+def remove_pid_file() -> None:
+    """Remove the PID file (best-effort)."""
+    try:
+        path = _pid_file_path()
+        # Only remove if it contains our PID (another instance may
+        # have overwritten it after we were signalled to stop).
+        if path.read_text().strip() == str(os.getpid()):
+            path.unlink()
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    existing_pid = check_pid_file()
+    if existing_pid is not None:
+        logger.error(
+            "Another klangk instance (PID %d) is already running "
+            "for instance %s — refusing to start",
+            existing_pid,
+            container.INSTANCE_ID,
+        )
+        raise SystemExit(1)
+    write_pid_file()
+
     auth.require_secure_jwt_secret()
     plugins.load()
     await model.init_db()
@@ -186,6 +252,7 @@ async def lifespan(app: FastAPI):
     logger.info("Klangk backend started")
     yield
     await container.registry.shutdown()
+    remove_pid_file()
     await model.dispose_engine()
     logger.info("Klangk backend stopped")
 
