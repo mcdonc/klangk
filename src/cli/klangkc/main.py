@@ -1009,7 +1009,7 @@ async def _sandbox_connect(  # pragma: no cover
         token,
         workspace_id,
         forward_agent=forward_agent,
-        pre_shell=(
+        sandbox_setup=(
             (lambda ws: _sandbox_setup(ws, config, sandbox_root, handle))
             if config
             else None

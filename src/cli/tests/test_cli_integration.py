@@ -2027,10 +2027,10 @@ class TestWsExecWrapper:
         assert code == 42
 
 
-class TestPreShellHook:
-    """Test that _ws_shell calls pre_shell before terminal_start."""
+class TestSandboxSetupHook:
+    """Test that _ws_shell calls sandbox_setup before terminal_start."""
 
-    async def test_pre_shell_called(self, tmp_path):
+    async def test_sandbox_setup_called(self, tmp_path):
         from klangkc.client import _ws_shell
 
         ws_mock = MagicMock()
@@ -2045,10 +2045,10 @@ class TestPreShellHook:
         ws_mock.__aexit__ = fake_exit
         ws_mock.send = AsyncMock()
 
-        pre_shell_called = []
+        sandbox_setup_called = []
 
-        async def fake_pre_shell(ws):
-            pre_shell_called.append(True)
+        async def fake_sandbox_setup(ws):
+            sandbox_setup_called.append(True)
 
         ws_mock.recv = AsyncMock(
             side_effect=[
@@ -2081,13 +2081,13 @@ class TestPreShellHook:
                     "ws://localhost/ws",
                     "token",
                     "ws1",
-                    pre_shell=fake_pre_shell,
+                    sandbox_setup=fake_sandbox_setup,
                 )
             except Exception:
                 pass
 
-        assert pre_shell_called == [True]
-        # Verify pre_shell ran before terminal_start
+        assert sandbox_setup_called == [True]
+        # Verify sandbox_setup ran before terminal_start
         sent = [c[0][0] for c in ws_mock.send.call_args_list]
         parsed = [json.loads(s) for s in sent]
         cmds = [m.get("cmd") for m in parsed]
