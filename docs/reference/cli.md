@@ -57,8 +57,21 @@ servers:
     url: http://myhost:8995
 ```
 
-You do not need `cli.yaml` at all — you can pass raw URLs directly
-to `klangkc login`.
+You do not need to create `cli.yaml` manually. On your first
+`klangkc login`, the CLI creates one automatically using the
+hostname as the alias and the login user as the default:
+
+```bash
+klangkc login http://myhost:8995 admin@example.com
+# Creates ~/.config/klangk/cli.yaml with:
+#   servers:
+#     myhost:
+#       url: http://myhost:8995
+#       user: admin@example.com
+```
+
+Subsequent logins do not modify `cli.yaml` — you can edit it
+freely after the initial creation.
 
 #### Settings
 
