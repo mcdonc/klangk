@@ -305,7 +305,8 @@ class TestStartContainer:
         p.start_container.assert_awaited_once_with("new-cid")
         assert workspace["id"] in container.registry.states
 
-    async def test_sudo_disabled_by_default(self, workspace):
+    async def test_sudo_disabled_by_default(self, workspace, monkeypatch):
+        monkeypatch.delenv("KLANGK_ALLOW_SUDO", raising=False)
         with patch_podman() as p:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
