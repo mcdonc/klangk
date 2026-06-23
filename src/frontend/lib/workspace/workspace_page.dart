@@ -366,7 +366,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     wsClient.sendRestartContainer();
   }
 
-  void _switchToIsolated(WsClient wsClient, int index, String windowId) {
+  void _switchToIsolated(WsClient wsClient, String windowId) {
     final wasShared = _activeSharedTerminal != null;
     setState(() {
       _activeSharedTerminal = null;
@@ -380,7 +380,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // the existing tmux session, preserving all windows.
       wsClient.sendTerminalStart();
     }
-    wsClient.sendTerminalSelectWindow(index);
+    wsClient.sendTerminalSelectWindow(windowId);
   }
 
   void _joinShared(WsClient wsClient, String userId, String windowId) {
@@ -469,7 +469,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             ),
                             onTap: () => _switchToIsolated(
                               wsClient,
-                              w['index'] as int,
                               w['id'] as String? ?? '',
                             ),
                             onClose: windows.length > 1

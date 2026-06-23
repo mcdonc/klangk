@@ -308,7 +308,7 @@ class TestWsShell:
             s for s in sent if s.get("cmd") == "terminal_select_window"
         ]
         assert len(select_msgs) == 1
-        assert select_msgs[0]["index"] == 1
+        assert select_msgs[0]["window_id"] == "@1"
 
     @pytest.mark.asyncio
     async def test_ws_shell_creates_missing_own_window(self):
@@ -2219,7 +2219,7 @@ class TestWindowAutoCreate:
         select_msg = next(
             m for m in sent if m.get("cmd") == "terminal_select_window"
         )
-        assert select_msg["index"] == 1
+        assert select_msg["window_id"] == "@1"
 
     async def test_selects_existing_window(self):
         from klangkc.client import _ws_shell

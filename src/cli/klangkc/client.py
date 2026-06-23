@@ -752,7 +752,7 @@ async def _ws_shell(
                     json.dumps(
                         {
                             "cmd": "terminal_select_window",
-                            "index": match["index"],
+                            "window_id": match["id"],
                         }
                     )
                 )

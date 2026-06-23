@@ -1384,14 +1384,15 @@ class Connection:
             if session and session._tmux_session_name
             else self._tmux_session_name()
         )
-        index = msg.get("index", 0)
+        # Prefer @N window_id (stable); fall back to index for compat.
+        target: int | str = msg.get("window_id") or msg.get("index", 0)
         try:
             await terminal.select_window(
-                self.container_id, session_name, index
+                self.container_id, session_name, target
             )
             logger.info(
-                "handle_terminal_select_window: index=%s %.3fs",
-                index,
+                "handle_terminal_select_window: target=%s %.3fs",
+                target,
                 time.monotonic() - t0,
             )
         except Exception as e:
