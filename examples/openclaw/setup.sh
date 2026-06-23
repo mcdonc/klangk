@@ -78,6 +78,10 @@ cat >~/.openclaw/openclaw.json <<JSON
       }
     }
   },
+  "gateway": {
+    "port": 8000,
+    "bind": "0.0.0.0"
+  },
   "secrets": {
     "providers": {
       "klangk": {
@@ -103,9 +107,27 @@ openclaw onboard --non-interactive \
   --skip-health \
   --skip-ui
 
+# Derive the hosted app URL from Klangk env vars.
+# Container port 8000 maps to the first host port in KLANGK_PORT_MAPPINGS.
+host_port=""
+if [ -n "${KLANGK_PORT_MAPPINGS:-}" ]; then
+  # Format: 8000:9000,8001:9001,...
+  host_port=$(echo "$KLANGK_PORT_MAPPINGS" | cut -d, -f1 | cut -d: -f2)
+fi
+proto="${KLANGK_HOSTING_PROTO:-http}"
+hostname="${KLANGK_HOSTING_HOSTNAME:-localhost:8995}"
+base_path="${KLANGK_HOSTING_BASE_PATH:-}"
+workspace_id="${KLANGK_WORKSPACE_ID:-}"
+
 echo ""
 echo "node: $(node -v)"
 echo "openclaw: $(openclaw --version)"
 echo ""
 echo "Setup complete."
-echo "Run 'openclaw gateway' to start the gateway or 'openclaw onboard' to add channels."
+echo "Start the gateway with:"
+echo "  openclaw gateway"
+if [ -n "$host_port" ] && [ -n "$workspace_id" ]; then
+  echo ""
+  echo "Then open the UI at:"
+  echo "  ${proto}://${hostname}${base_path}/hosted/${workspace_id}/${host_port}/"
+fi

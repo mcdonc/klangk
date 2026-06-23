@@ -15,8 +15,17 @@ klangkc sandbox openclaw
 ```
 
 First run installs Node.js 24 (via nvm), openclaw, writes a config
-pointing at the Klangk LLM proxy, and runs a non-interactive onboard
-that installs the gateway daemon. To add messaging channels afterward:
+pointing at the Klangk LLM proxy, and runs a non-interactive onboard.
+The setup script prints the hosted app URL at the end.
+
+Inside the container, start the gateway:
+
+```bash
+openclaw gateway
+```
+
+Then open the hosted app URL printed during setup to access the
+openclaw web UI. To add messaging channels:
 
 ```bash
 openclaw onboard
@@ -30,4 +39,5 @@ openclaw onboard
 - **klangk-secret-provider** — SecretRef exec provider that reads
   the workspace JWT via `klangk-workspace-token`
 - **`~/.openclaw/openclaw.json`** — pre-seeded config using the
-  Klangk LLM proxy with dynamic token auth
+  Klangk LLM proxy with dynamic token auth, gateway bound to
+  container port 8000 for hosted app access
