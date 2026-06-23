@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import websockets
 
-from klangkc.config import CLIConfig
+from klangkc.config import CLIConfig, CLIState
 
 
 class TestWsShell:
@@ -1015,21 +1015,19 @@ class TestAuthLines:
     def test_logout_network_error_propagates(self, tmp_path, monkeypatch):
         from klangkc import auth
 
-        config_path = tmp_path / "cli.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        cfg = CLIConfig()
-        cfg.server.url = "http://localhost:8995"
-        cfg.auth.token = "tok"
-        cfg.auth.email = "x@y.com"
-        cfg.save()
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        state = CLIState()
+        state.set_credentials("http://localhost:8995", "x@y.com", "tok")
+        state.save()
 
         with patch("httpx.post", side_effect=OSError("no route")):
             with pytest.raises(OSError):
-                auth.logout()
+                auth.logout("http://localhost:8995")
 
         # Token was cleared and saved before the server call.
-        cfg2 = CLIConfig.load()
-        assert cfg2.auth.token is None
+        state2 = CLIState.load()
+        assert state2.get_token("http://localhost:8995") is None
 
 
 class TestClientLines:
@@ -1038,9 +1036,7 @@ class TestClientLines:
 
         from klangkc.client import KlangkClient
 
-        cfg = CLIConfig()
-        cfg.auth.token = "tok"
-        client = KlangkClient(cfg)
+        client = KlangkClient("http://test:8995", "tok")
 
         list_resp = MagicMock()
         list_resp.status_code = 200
@@ -1062,9 +1058,7 @@ class TestClientLines:
 
         from klangkc.client import KlangkClient
 
-        cfg = CLIConfig()
-        cfg.auth.token = "tok"
-        client = KlangkClient(cfg)
+        client = KlangkClient("http://test:8995", "tok")
 
         list_resp = MagicMock()
         list_resp.status_code = 200
@@ -1097,10 +1091,10 @@ class TestImagesCommand:
             "allowed": ["klangk", "klangk-custom"],
         }
         monkeypatch.setattr(cli_main, "_client", lambda: mock_client)
-        monkeypatch.setattr(cli_main, "_cfg", lambda: CLIConfig())
-        cfg = CLIConfig()
-        cfg.auth.token = "tok"
-        monkeypatch.setattr(cli_main, "_cfg", lambda: cfg)
+        state = CLIState()
+        state.set_credentials("http://localhost:8995", "t@t", "tok")
+        monkeypatch.setattr(cli_main, "_state", lambda: state)
+        monkeypatch.setattr(cli_main, "_server_override", None)
 
         from typer.testing import CliRunner
 
@@ -1175,18 +1169,20 @@ class TestWsExec:
 
 
 class TestShellConnectionError:
+    def _setup_shell_mocks(self, monkeypatch):
+        """Set up common mocks for shell tests."""
+        state = CLIState()
+        state.set_credentials("http://localhost:8995", "test@test.com", "fake")
+        monkeypatch.setattr("klangkc.main._state", lambda: state)
+        monkeypatch.setattr("klangkc.main._server_override", None)
+        monkeypatch.setattr("klangkc.main._cfg", lambda: CLIConfig())
+
     def test_shell_catches_connection_error(self, monkeypatch):
         """shell() catches ConnectionError from _ws_shell and exits cleanly."""
         from klangkc.main import shell
         from klangkc.client import Workspace
 
-        from klangkc.config import ServerConfig, AuthConfig
-
-        fake_cfg = CLIConfig(
-            server=ServerConfig(url="http://localhost:8995"),
-            auth=AuthConfig(token="fake", email="test@test.com"),
-        )
-        monkeypatch.setattr("klangkc.main._cfg", lambda: fake_cfg)
+        self._setup_shell_mocks(monkeypatch)
 
         fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
         monkeypatch.setattr(
@@ -1212,13 +1208,8 @@ class TestShellConnectionError:
     def _shell_with_side_effect(self, monkeypatch, side_effect):
         """Helper: run shell() with a mocked asyncio.run side_effect."""
         from klangkc.client import Workspace
-        from klangkc.config import AuthConfig, ServerConfig
 
-        fake_cfg = CLIConfig(
-            server=ServerConfig(url="http://localhost:8995"),
-            auth=AuthConfig(token="fake", email="test@test.com"),
-        )
-        monkeypatch.setattr("klangkc.main._cfg", lambda: fake_cfg)
+        self._setup_shell_mocks(monkeypatch)
 
         fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
         monkeypatch.setattr(
@@ -1892,12 +1883,8 @@ class TestWsExecPipedWithInput:
 class TestGetHandle:
     def test_returns_handle(self):
         from klangkc.client import KlangkClient
-        from klangkc.config import CLIConfig
 
-        cfg = CLIConfig()
-        cfg.server.url = "http://localhost:8995"
-        cfg.auth.token = "test-token"
-        client = KlangkClient(cfg)
+        client = KlangkClient("http://localhost:8995", "test-token")
 
         with patch.object(
             client,

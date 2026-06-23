@@ -24,7 +24,6 @@ import time as _time
 import httpx
 import websockets
 
-from .config import CLIConfig
 
 _WS_MAX_SIZE = int(os.environ.get("KLANGK_WS_MSG_SIZE_MAX", 2**24))
 
@@ -132,19 +131,20 @@ def _get_terminal_size() -> tuple[int, int]:
 
 
 class KlangkClient:
-    def __init__(self, cfg: CLIConfig):
-        self.cfg = cfg
+    def __init__(self, server_url: str, token: str | None = None):
+        self.server_url = server_url
+        self.token = token
 
     # --- HTTP helpers ---
 
     def _headers(self) -> dict[str, str]:
-        token = self.cfg.auth.token or ""
+        token = self.token or ""
         return {"Authorization": f"Bearer {token}"}
 
     def get(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "GET",
-            f"{self.cfg.server.url}{path}",
+            f"{self.server_url}{path}",
             headers=self._headers(),
             **kwargs,
         )
@@ -152,7 +152,7 @@ class KlangkClient:
     def post(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "POST",
-            f"{self.cfg.server.url}{path}",
+            f"{self.server_url}{path}",
             headers=self._headers(),
             **kwargs,
         )
@@ -160,7 +160,7 @@ class KlangkClient:
     def put(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "PUT",
-            f"{self.cfg.server.url}{path}",
+            f"{self.server_url}{path}",
             headers=self._headers(),
             **kwargs,
         )
@@ -168,7 +168,7 @@ class KlangkClient:
     def patch(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "PATCH",
-            f"{self.cfg.server.url}{path}",
+            f"{self.server_url}{path}",
             headers=self._headers(),
             **kwargs,
         )
@@ -176,7 +176,7 @@ class KlangkClient:
     def delete(self, path: str, **kwargs) -> httpx.Response:
         return _request_with_retry(
             "DELETE",
-            f"{self.cfg.server.url}{path}",
+            f"{self.server_url}{path}",
             headers=self._headers(),
             **kwargs,
         )
@@ -328,7 +328,7 @@ class KlangkClient:
         """
         with httpx.stream(
             "GET",
-            f"{self.cfg.server.url}/api/v1/workspaces/{workspace_id}/export",
+            f"{self.server_url}/api/v1/workspaces/{workspace_id}/export",
             headers=self._headers(),
             timeout=300.0,
         ) as resp:
@@ -391,7 +391,7 @@ class KlangkClient:
         with open(archive, "rb") as f:
             pf = _ProgressFile(f) if on_progress else f
             resp = httpx.post(
-                f"{self.cfg.server.url}/api/v1/workspaces/import",
+                f"{self.server_url}/api/v1/workspaces/import",
                 headers=self._headers(),
                 files={"file": (archive.name, pf, "application/gzip")},
                 params=params,
@@ -536,6 +536,7 @@ async def _ws_shell(
     window: str | None = None,
     forward_agent: bool = False,
     pre_shell=None,
+    max_size: int = _WS_MAX_SIZE,
 ) -> None:
     """Run the interactive PTY shell over WebSocket.
 
@@ -549,7 +550,7 @@ async def _ws_shell(
     ``sandbox`` to run copy/setup on the same connection.
     """
     async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+        f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
         # 1. Connect to workspace
         await _wait_workspace_ready(ws, workspace_id)
@@ -1185,13 +1186,14 @@ async def _ws_exec(
     token: str,
     workspace_id: str,
     command: list[str],
+    max_size: int = _WS_MAX_SIZE,
 ) -> int:
     """Run a command interactively, piping real stdin/stdout.
 
     Returns the remote process exit code.
     """
     async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+        f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
         await _wait_workspace_ready(ws, workspace_id)
         return await _exec_on_ws(
@@ -1205,6 +1207,7 @@ async def _ws_exec_piped(
     workspace_id: str,
     command: list[str],
     stdin_data: bytes | None = None,
+    max_size: int = _WS_MAX_SIZE,
 ) -> tuple[int, str]:
     """Run a command, optionally piping *stdin_data*, capture stdout.
 
@@ -1212,7 +1215,7 @@ async def _ws_exec_piped(
     stdin/stdout — designed for programmatic use (file copy, setup).
     """
     async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=_WS_MAX_SIZE
+        f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
         await _wait_workspace_ready(ws, workspace_id)
         stdin_buf = io.BytesIO(stdin_data) if stdin_data else None

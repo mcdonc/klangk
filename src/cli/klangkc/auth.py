@@ -15,7 +15,7 @@ import httpx
 from rich.console import Console
 from rich.prompt import Prompt
 
-from .config import CLIConfig
+from .config import CLIState, seed_config
 
 _err = Console(stderr=True)
 _out = Console()
@@ -35,7 +35,7 @@ def _fetch_config(server_url: str) -> dict | None:
 def _oidc_browser_login(  # pragma: no cover
     server_url: str,
     provider_id: str,
-    cfg: CLIConfig,
+    state: CLIState,
 ) -> None:
     """Launch browser for OIDC login, receive token via localhost callback."""
     # Find a free port
@@ -126,10 +126,9 @@ margin:0;background:#1a1a2e;color:#e0e0e0">
         except Exception:
             email = "unknown"
 
-        cfg.server.url = server_url
-        cfg.auth.token = token
-        cfg.auth.email = email
-        cfg.save()
+        state.set_credentials(server_url, email, token)
+        state.save()
+        seed_config(server_url, email)
         _out.print(f"Logged in as [bold]{email}[/bold]")
     elif error_holder[0]:
         _err.print(f"[red]Login failed:[/red] {error_holder[0]}")
@@ -144,25 +143,27 @@ def login(
     email: str | None = None,
     password: str | None = None,
 ) -> None:
-    """Prompt for credentials, store JWT in config."""
-    cfg = CLIConfig.load()
+    """Prompt for credentials, store JWT in state."""
+    state = CLIState.load()
 
-    # If we already have a token for this server, verify it first.
-    if cfg.auth.token and cfg.server.url == server_url:
-        try:
-            resp = httpx.get(
-                f"{server_url}/api/v1/workspaces",
-                headers={"Authorization": f"Bearer {cfg.auth.token}"},
-                timeout=5.0,
-            )
-            if resp.status_code == 200:
-                _out.print(
-                    f"Already logged in as"
-                    f" [bold]{cfg.auth.email or 'unknown'}[/bold]"
+    # If we already have a cached token for this user, verify it.
+    if email:
+        ss = state.servers.get(server_url)
+        cached = ss.users.get(email) if ss else None
+        if cached and cached.token:
+            try:
+                resp = httpx.get(
+                    f"{server_url}/api/v1/workspaces",
+                    headers={"Authorization": f"Bearer {cached.token}"},
+                    timeout=5.0,
                 )
-                return
-        except httpx.HTTPError:
-            pass  # Token invalid or server unreachable — fall through
+                if resp.status_code == 200:
+                    state.set_credentials(server_url, email, cached.token)
+                    state.save()
+                    _out.print(f"Already logged in as [bold]{email}[/bold]")
+                    return
+            except httpx.HTTPError:
+                pass  # Token invalid or server unreachable — fall through
 
     # Check server config for OIDC providers
     config = _fetch_config(server_url)
@@ -194,7 +195,7 @@ def login(
                         _err.print("[red]Invalid choice[/red]")
                         raise SystemExit(1)
 
-                _oidc_browser_login(server_url, provider["id"], cfg)
+                _oidc_browser_login(server_url, provider["id"], state)
                 return
 
     # Fall through to password login
@@ -214,37 +215,38 @@ def login(
             )
             if location.startswith("https://"):
                 _err.print(
-                    "[yellow]Hint:[/yellow] use https:// in the --server URL"
+                    "[yellow]Hint:[/yellow] use https:// in the server URL"
                 )
         else:
             try:
-                detail = resp.json().get("detail", resp.text)
+                detail = resp.json().get("detail", f"HTTP {resp.status_code}")
             except Exception:
-                detail = resp.text or f"HTTP {resp.status_code}"
+                detail = f"HTTP {resp.status_code}"
             _err.print(f"[red]Login failed:[/red] {detail}")
         raise SystemExit(1)
 
     token = resp.json()["access_token"]
 
-    cfg.server.url = server_url
-    cfg.auth.token = token
-    cfg.auth.email = email
-    cfg.save()
+    state.set_credentials(server_url, email, token)
+    state.save()
+    seed_config(server_url, email)
     _out.print(f"Logged in as [bold]{email}[/bold]")
 
 
-def logout() -> None:
-    """Clear stored token."""
-    cfg = CLIConfig.load()
-    if cfg.auth.token:
-        token = cfg.auth.token
-        # Clear local state first, then notify server.
-        cfg.auth.token = None
-        cfg.auth.email = None
-        cfg.save()
+def logout(server_url: str) -> None:
+    """Clear stored credentials for a server."""
+    state = CLIState.load()
+    token = state.get_token(server_url)
+
+    # Clear local state first
+    state.clear_credentials(server_url)
+    state.save()
+
+    # Then notify server
+    if token:
         try:
             httpx.post(
-                f"{cfg.server.url}/api/v1/auth/logout",
+                f"{server_url}/api/v1/auth/logout",
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=5.0,
             )
@@ -254,6 +256,4 @@ def logout() -> None:
                 " — server logout failed (network error)"
             )
             return
-    else:
-        cfg.save()
     _out.print("Logged out")

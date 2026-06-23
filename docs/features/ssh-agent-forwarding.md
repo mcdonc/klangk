@@ -41,12 +41,28 @@ To enable forwarding by default, add `forward-agent: true` to your
 CLI config file (`~/.config/klangk/cli.yaml`):
 
 ```yaml
+# Enable for all servers
 forward-agent: true
+
+# Or enable/disable per server
+servers:
+  local:
+    url: http://localhost:8995
+    forward-agent: true
+  prod:
+    url: https://klangk.example.com
+    forward-agent: false
 ```
 
-The CLI flag always takes highest precedence: `--forward-agent`
-enables forwarding and `--no-forward-agent` disables it, regardless
-of the config file setting.
+The resolution priority is:
+
+1. CLI flag (`--forward-agent` / `--no-forward-agent`) — highest
+2. Per-server setting in `cli.yaml`
+3. Global setting in `cli.yaml`
+4. Default: `false`
+
+See [CLI Configuration](../reference/cli.md#configuration) for full
+config file documentation.
 
 ## Requirements
 

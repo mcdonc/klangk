@@ -167,9 +167,8 @@ def _ensure_login(cli_config):
         [
             "klangkc",
             "login",
-            "test@example.com",
-            "--server",
             cli_config["server_url"],
+            "test@example.com",
             "--password-file",
             "-",
         ],
@@ -184,9 +183,8 @@ class TestLogin:
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 server["url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -206,9 +204,8 @@ class TestLogin:
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 server["url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -276,15 +273,15 @@ class TestWorkspaceCRUD:
 
 
 class TestDuplicate:
-    def _login(self, cli_config):
+    @staticmethod
+    def _login(cli_config):
         env = cli_config["env"]
         _run(
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 cli_config["server_url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -294,7 +291,7 @@ class TestDuplicate:
 
     def test_dup_workspace(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestDuplicate._login(cli_config)
         _run(
             ["klangkc", "create", "e2e-dup-src", "--env", "FOO=bar"],
             env=env,
@@ -320,7 +317,7 @@ class TestDuplicate:
 
     def test_dup_nonexistent(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestDuplicate._login(cli_config)
         result = _run(
             ["klangkc", "dup", "no-such-ws", "copy"],
             env=env,
@@ -330,7 +327,8 @@ class TestDuplicate:
 
 class TestExec:
     @pytest.fixture(autouse=True, scope="class")
-    def workspace(self, cli_config):
+    @staticmethod
+    def workspace(cli_config):
         _run(["klangkc", "create", "e2e-exec"], env=cli_config["env"])
         yield
         _run(["klangkc", "rm", "e2e-exec"], env=cli_config["env"])
@@ -384,7 +382,8 @@ class TestExec:
 
 class TestSync:
     @pytest.fixture(autouse=True, scope="class")
-    def workspace(self, cli_config):
+    @staticmethod
+    def workspace(cli_config):
         _run(["klangkc", "create", "e2e-sync"], env=cli_config["env"])
         yield
         _run(["klangkc", "rm", "e2e-sync"], env=cli_config["env"])
@@ -459,7 +458,8 @@ class TestSyncLarge:
     """Test syncing directories with 10+ MB of data."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def workspace(self, cli_config):
+    @staticmethod
+    def workspace(cli_config):
         _run(["klangkc", "create", "e2e-sync-large"], env=cli_config["env"])
         yield
         _run(["klangkc", "rm", "e2e-sync-large"], env=cli_config["env"])
@@ -645,15 +645,15 @@ class TestSyncLarge:
 
 
 class TestDefaultCommand:
-    def _login(self, cli_config):
+    @staticmethod
+    def _login(cli_config):
         env = cli_config["env"]
         _run(
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 cli_config["server_url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -664,7 +664,7 @@ class TestDefaultCommand:
     def test_default_command_written_to_container(self, cli_config):
         """set-command → container gets KLANGK_DEFAULT_COMMAND → .klangk-command."""
         env = cli_config["env"]
-        self._login(cli_config)
+        TestDefaultCommand._login(cli_config)
         _run(["klangkc", "create", "e2e-defcmd"], env=env)
         try:
             # Set command before container starts
@@ -702,7 +702,7 @@ class TestDefaultCommand:
     def test_default_command_bash_no_infinite_loop(self, cli_config):
         """Setting default command to bash should not cause infinite recursion."""
         env = cli_config["env"]
-        self._login(cli_config)
+        TestDefaultCommand._login(cli_config)
         _run(["klangkc", "create", "e2e-defbash"], env=env)
         try:
             _run(
@@ -737,15 +737,15 @@ class TestDefaultCommand:
 
 
 class TestMounts:
-    def _login(self, cli_config):
+    @staticmethod
+    def _login(cli_config):
         env = cli_config["env"]
         _run(
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 cli_config["server_url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -755,7 +755,7 @@ class TestMounts:
 
     def test_create_with_mount_flag(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestMounts._login(cli_config)
         try:
             result = _run(
                 [
@@ -774,7 +774,7 @@ class TestMounts:
 
     def test_edit_with_mount_flags(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestMounts._login(cli_config)
         _run(["klangkc", "create", "e2e-mount-edit"], env=env)
         try:
             result = _run(
@@ -796,7 +796,7 @@ class TestMounts:
 
     def test_edit_interactive_add_mount(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestMounts._login(cli_config)
         _run(["klangkc", "create", "e2e-mount-int"], env=env)
         try:
             # Interactive: keep name, keep image, keep command,
@@ -814,15 +814,15 @@ class TestMounts:
 
 
 class TestEnvVars:
-    def _login(self, cli_config):
+    @staticmethod
+    def _login(cli_config):
         env = cli_config["env"]
         _run(
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 cli_config["server_url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -832,7 +832,7 @@ class TestEnvVars:
 
     def test_create_with_env_flag(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestEnvVars._login(cli_config)
         try:
             result = _run(
                 [
@@ -853,7 +853,7 @@ class TestEnvVars:
 
     def test_edit_with_env_flag(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestEnvVars._login(cli_config)
         _run(["klangkc", "create", "e2e-env-edit"], env=env)
         try:
             result = _run(
@@ -873,15 +873,15 @@ class TestEnvVars:
 
 
 class TestVolumes:
-    def _login(self, cli_config):
+    @staticmethod
+    def _login(cli_config):
         env = cli_config["env"]
         _run(
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 cli_config["server_url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -891,7 +891,7 @@ class TestVolumes:
 
     def test_volumes_lifecycle(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestVolumes._login(cli_config)
 
         # Create
         result = _run(["klangkc", "volumes", "create", "e2e-vol"], env=env)
@@ -918,13 +918,13 @@ class TestVolumes:
 
     def test_volumes_rm_nonexistent(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestVolumes._login(cli_config)
         result = _run(["klangkc", "volumes", "rm", "no-such-vol"], env=env)
         assert result.returncode != 0
 
     def test_volumes_empty_list(self, cli_config):
         env = cli_config["env"]
-        self._login(cli_config)
+        TestVolumes._login(cli_config)
         result = _run(["klangkc", "volumes", "ls"], env=env)
         assert result.returncode == 0
         # May show "No volumes." or an empty table
@@ -966,15 +966,15 @@ class TestLogout:
 
 class TestExportSymlinks:
     @pytest.fixture(autouse=True)
-    def _login(self, cli_config):
+    @staticmethod
+    def _login(cli_config):
         """Ensure logged in for this test class."""
         _run(
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 cli_config["server_url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -1055,15 +1055,15 @@ class TestExportSymlinks:
 
 class TestExportImport:
     @pytest.fixture(autouse=True)
-    def _login(self, cli_config):
+    @staticmethod
+    def _login(cli_config):
         """Ensure logged in for this test class."""
         _run(
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 cli_config["server_url"],
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -1287,7 +1287,8 @@ class TestAllowedMountRoots:
     """Verify KLANGK_ALLOWED_MOUNT_ROOTS restricts bind mount sources."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def restricted_server(self, tmp_path_factory):
+    @staticmethod
+    def restricted_server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-mount-roots-")
         proc, base_url = _start_server(
             data_dir,
@@ -1303,17 +1304,16 @@ class TestAllowedMountRoots:
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 base_url,
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
             input="testpass\n",
             env=env,
         )
-        self.__class__._env = env
-        self.__class__._base_url = base_url
+        request.cls._env = env
+        request.cls._base_url = base_url
         yield
         _stop_server(proc, data_dir, "mount-roots-e2e")
 
@@ -1358,7 +1358,8 @@ class TestVolumeUserIsolation:
     """Verify that a user cannot mount another user's volume."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def two_user_server(self, tmp_path_factory):
+    @staticmethod
+    def two_user_server(tmp_path_factory, request):
         import httpx
 
         data_dir = tempfile.mkdtemp(prefix="klangk-vol-iso-")
@@ -1389,18 +1390,17 @@ class TestVolumeUserIsolation:
                 [
                     "klangkc",
                     "login",
-                    email,
-                    "--server",
                     base_url,
+                    email,
                     "--password-file",
                     "-",
                 ],
                 input=f"{password}\n",
                 env=env,
             )
-            setattr(self.__class__, attr, env)
+            setattr(request.cls, attr, env)
 
-        self.__class__._base_url = base_url
+        request.cls._base_url = base_url
         yield
         _stop_server(proc, data_dir, "vol-iso-e2e")
 
@@ -1515,7 +1515,8 @@ class TestTerminalSharing:
     """
 
     @pytest.fixture(autouse=True, scope="class")
-    def _dedicated_server(self, tmp_path_factory):
+    @staticmethod
+    def _dedicated_server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-terminal-sharing-")
         proc, base_url = _start_server(
             data_dir, "18997", "terminal-sharing-e2e"
@@ -1527,9 +1528,8 @@ class TestTerminalSharing:
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 base_url,
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -1543,7 +1543,7 @@ class TestTerminalSharing:
             env=env,
             timeout=120,
         )
-        self.__class__._env = env
+        request.cls._env = env
         yield
         _run(["klangkc", "rm", "e2e-share"], env=env)
         _stop_server(proc, data_dir, "terminal-sharing-e2e")
@@ -1666,7 +1666,8 @@ class TestWorkspaceSharing:
     """Test klangkc share/unshare/members commands."""
 
     @pytest.fixture(scope="class", autouse=True)
-    def setup(self, server, tmp_path_factory):
+    @staticmethod
+    def setup(server, tmp_path_factory, request):
         base_url = server["url"]
 
         # Register a second user
@@ -1687,9 +1688,8 @@ class TestWorkspaceSharing:
             [
                 "klangkc",
                 "login",
-                "test@example.com",
-                "--server",
                 base_url,
+                "test@example.com",
                 "--password-file",
                 "-",
             ],
@@ -1697,7 +1697,7 @@ class TestWorkspaceSharing:
             env=env,
         )
         _run(["klangkc", "create", "e2e-ws-share"], env=env)
-        self.__class__._env = env
+        request.cls._env = env
 
     @pytest.fixture(autouse=True)
     def env(self):
