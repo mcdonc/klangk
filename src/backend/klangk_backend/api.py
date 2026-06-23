@@ -47,7 +47,7 @@ from .model import (
     PRINCIPAL_USER,
     SYSTEM_AUTHENTICATED,
 )
-from .util import derive_hosting_info, resolve_env_secret
+from .util import API_PREFIX, derive_hosting_info, resolve_env_secret
 
 logger = logging.getLogger(__name__)
 
@@ -701,9 +701,7 @@ async def oidc_login(
     state = secrets.token_urlsafe(32)
 
     hostname, proto, base_path = derive_hosting_info(request.headers)
-    redirect_uri = (
-        f"{proto}://{hostname}{base_path}/auth/oidc/{provider_id}/callback"
-    )
+    redirect_uri = f"{proto}://{hostname}{base_path}{API_PREFIX}/auth/oidc/{provider_id}/callback"
 
     auth_url = await oidc.build_auth_url(
         provider, redirect_uri, state, challenge
