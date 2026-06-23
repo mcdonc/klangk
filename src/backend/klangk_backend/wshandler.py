@@ -1376,7 +1376,14 @@ class Connection:
         if not self.container_id or not self._user_home:
             return
 
-        session_name = self._tmux_session_name()
+        # Use this connection's grouped session so select-window only
+        # affects this client, not other connections to the same workspace.
+        session = self.terminal_session
+        session_name = (
+            session._tmux_session_name
+            if session and session._tmux_session_name
+            else self._tmux_session_name()
+        )
         index = msg.get("index", 0)
         try:
             await terminal.select_window(
