@@ -72,6 +72,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
   /// Tracks which shared terminal (from another user) we're viewing.
   /// null means we're on our own isolated terminal.
   Map<String, String>? _activeSharedTerminal;
+
+  /// Locally-tracked selected own-window ID.  When null, the first
+  /// window in the list is considered selected (initial state).
+  String? _selectedOwnWindowId;
   String _stopReason = '';
   List<String> _workspacePermissions = [];
   BrowserDelegate? _browserDelegate;
@@ -314,6 +318,19 @@ class _WorkspacePageState extends State<WorkspacePage> {
         !identical(wsClient.sharedTerminals, _prevSharedTerminals)) {
       _prevTerminalWindows = wsClient.terminalWindows;
       _prevSharedTerminals = wsClient.sharedTerminals;
+      // Track selected own-window: initialize on first message, or
+      // reset if the selected window was closed.
+      if (wsClient.terminalWindows.isNotEmpty) {
+        final ids =
+            wsClient.terminalWindows.map((w) => w['id'] as String?).toSet();
+        if (_selectedOwnWindowId == null) {
+          // First load — select window 0 (grouped sessions start there).
+          _selectedOwnWindowId = wsClient.terminalWindows[0]['id'] as String?;
+        } else if (!ids.contains(_selectedOwnWindowId)) {
+          // Selected window was closed — fall back to first window.
+          _selectedOwnWindowId = wsClient.terminalWindows[0]['id'] as String?;
+        }
+      }
       // Auto-join the first shared terminal for spectators (no
       // code-in-isolation) so they don't see a blank cursor.
       if (_activeSharedTerminal == null &&
@@ -348,9 +365,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
     wsClient.sendRestartContainer();
   }
 
-  void _switchToIsolated(WsClient wsClient, int index) {
+  void _switchToIsolated(WsClient wsClient, String windowId) {
     final wasShared = _activeSharedTerminal != null;
-    setState(() => _activeSharedTerminal = null);
+    setState(() {
+      _activeSharedTerminal = null;
+      _selectedOwnWindowId = windowId;
+    });
     if (wasShared) {
       // Clear stale shared terminal content before reattaching.
       _terminalKey.currentState?.clearScreen();
@@ -359,7 +379,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // the existing tmux session, preserving all windows.
       wsClient.sendTerminalStart();
     }
-    wsClient.sendTerminalSelectWindow(index);
+    wsClient.sendTerminalSelectWindow(windowId);
   }
 
   void _joinShared(WsClient wsClient, String userId, String windowId) {
@@ -433,7 +453,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             name: w['name'] as String? ?? '?',
                             tooltip: w['name'] as String? ?? '?',
                             active: _activeSharedTerminal == null &&
-                                (w['active'] as bool? ?? false),
+                                (_selectedOwnWindowId != null
+                                    ? (w['id'] as String?) ==
+                                        _selectedOwnWindowId
+                                    : (w['active'] as bool? ?? false)),
                             isShared: _isWindowShared(
                               wsClient,
                               w['id'] as String? ?? '',
@@ -443,8 +466,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
                               myUserId ?? '',
                               w['id'] as String? ?? '',
                             ),
-                            onTap: () =>
-                                _switchToIsolated(wsClient, w['index'] as int),
+                            onTap: () => _switchToIsolated(
+                              wsClient,
+                              w['id'] as String? ?? '',
+                            ),
                             onClose: windows.length > 1
                                 ? () => wsClient.sendTerminalCloseWindow(
                                       w['index'] as int,

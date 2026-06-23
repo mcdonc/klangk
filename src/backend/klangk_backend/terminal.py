@@ -96,6 +96,67 @@ def _build_environment(
 _WORKSPACE_STATE_FILE = ".workspace-state.json"
 
 
+async def _ensure_base_session(
+    container_id: str,
+    session_name: str,
+    user_home: str | None = None,
+    ssh_agent_socket: str | None = None,
+) -> None:
+    """Create the base tmux session (detached) if it doesn't exist.
+
+    Grouped sessions require a target session.  This ensures the base
+    session exists before any grouped session tries to link to it.
+    """
+    # Check if the session already exists.
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            podman.PODMAN_BIN,
+            "exec",
+            "-u",
+            CONTAINER_USER,
+            container_id,
+            "tmux",
+            "has-session",
+            "-t",
+            session_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=podman.subprocess_env(),
+        )
+        rc = await asyncio.wait_for(proc.wait(), timeout=5)
+        if rc == 0:
+            return  # already exists
+    except Exception:
+        pass  # assume it doesn't exist
+
+    # Create detached base session.
+    env_args: list[str] = []
+    if user_home is not None:
+        env_args += ["-e", f"HOME={user_home}"]
+    if ssh_agent_socket is not None:
+        env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            podman.PODMAN_BIN,
+            "exec",
+            "-u",
+            CONTAINER_USER,
+            container_id,
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            session_name,
+            *env_args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=podman.subprocess_env(),
+        )
+        await asyncio.wait_for(proc.wait(), timeout=10)
+    except Exception:
+        logger.warning("Failed to create base tmux session %s", session_name)
+
+
 def _build_shell_command(
     session_name: str | None = None,
     user_home: str | None = None,
@@ -150,8 +211,13 @@ def _build_shell_command(
             unique = f"{session_name}-{uuid.uuid4().hex[:8]}"
             session_args = ["-t", join_session, "-s", unique]
         else:
-            # Create or reattach to own session.
-            session_args = ["-A", "-s", session_name]
+            # Each connection gets a grouped session so that
+            # select-window only affects this client.  The base
+            # session is created detached if it doesn't exist yet
+            # (via _ensure_base_session), then we always create a
+            # grouped session targeting it.
+            unique = f"{session_name}-{uuid.uuid4().hex[:8]}"
+            session_args = ["-t", session_name, "-s", unique]
     cmd = [
         "env",
         *unset_args,
@@ -670,6 +736,21 @@ class TerminalSession:
     ) -> None:
         """Start a shell session via ``podman exec`` over a PTY."""
         self._running = True
+        # Ensure the base tmux session exists before building a grouped
+        # session command that targets it.  Only needed for own sessions
+        # (not joins/shared, which target a different session).
+        if (
+            self.session_name
+            and not self.join_session
+            and not self.socket_path
+            and terminal_tmux_enabled()
+        ):
+            await _ensure_base_session(
+                self.container_id,
+                self.session_name,
+                user_home=self.user_home,
+                ssh_agent_socket=self.ssh_agent_socket,
+            )
         env = _build_environment(
             command_override,
             self.user_home,
@@ -828,12 +909,10 @@ class TerminalSession:
 
         # Kill the tmux session inside the container so the client
         # doesn't stay attached after the host-side process is gone.
-        # For shared-socket sessions (-S), target the specific socket.
-        # For joiner sessions (join_session set, no socket), kill on
-        # the default server to prevent orphaned session-group members.
-        # Owner sessions (no join_session, no socket) are left alive
-        # so reconnecting users can reattach.
-        if self._tmux_session_name and (self.socket_path or self.join_session):
+        # All grouped sessions (own, join, shared) are killed — the
+        # base session persists independently.  _tmux_session_name is
+        # a unique grouped name for all connection types.
+        if self._tmux_session_name:
             try:
                 socket_args = (
                     ["-S", self.socket_path] if self.socket_path else []
