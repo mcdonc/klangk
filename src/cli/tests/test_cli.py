@@ -85,6 +85,27 @@ class TestCLIConfig:
         assert cfg.auth.token == "tok"
         assert cfg.auth.email is None
 
+    def test_load_forward_agent_true(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "cli.yaml"
+        config_path.write_text("forward-agent: true\n")
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        cfg = CLIConfig.load()
+        assert cfg.forward_agent is True
+
+    def test_load_forward_agent_false(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "cli.yaml"
+        config_path.write_text("forward-agent: false\n")
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        cfg = CLIConfig.load()
+        assert cfg.forward_agent is False
+
+    def test_load_forward_agent_absent(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "cli.yaml"
+        config_path.write_text("server:\n  url: http://localhost:8995\n")
+        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
+        cfg = CLIConfig.load()
+        assert cfg.forward_agent is None
+
 
 # --- Auth tests ---
 
