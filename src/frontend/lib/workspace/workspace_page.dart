@@ -72,6 +72,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
   /// Tracks which shared terminal (from another user) we're viewing.
   /// null means we're on our own isolated terminal.
   Map<String, String>? _activeSharedTerminal;
+
+  /// Locally-tracked selected window index. The web UI owns its tab
+  /// selection independently of tmux's active window so that other
+  /// sessions (CLI, other browser tabs) don't steal focus.
+  int? _selectedWindowIndex;
   String _stopReason = '';
   List<String> _workspacePermissions = [];
   BrowserDelegate? _browserDelegate;
@@ -177,10 +182,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
     if (!wsClient.connected) {
       debugPrint(
-          '[WorkspacePage] calling wsClient.connect(): ${DateTime.now()}');
+        '[WorkspacePage] calling wsClient.connect(): ${DateTime.now()}',
+      );
       await wsClient.connect();
       debugPrint(
-          '[WorkspacePage] wsClient.connect() returned: ${DateTime.now()}');
+        '[WorkspacePage] wsClient.connect() returned: ${DateTime.now()}',
+      );
     } else {
       debugPrint('[WorkspacePage] already connected, skipping connect()');
     }
@@ -232,7 +239,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
       final deletedUserId = msg['user_id'] as String? ?? '';
       final deletedWindow = msg['window_name'] as String? ?? '';
       final deletedWid = msg['window_id'] as String? ?? '';
-      final wasViewing = _activeSharedTerminal != null &&
+      final wasViewing =
+          _activeSharedTerminal != null &&
           _activeSharedTerminal!['user_id'] == deletedUserId &&
           _activeSharedTerminal!['window_id'] == deletedWid;
       if (wasViewing) {
@@ -323,10 +331,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         final userId = first['user_id'] as String?;
         final windowId = first['window_id'] as String?;
         if (userId != null && windowId != null) {
-          _activeSharedTerminal = {
-            'user_id': userId,
-            'window_id': windowId,
-          };
+          _activeSharedTerminal = {'user_id': userId, 'window_id': windowId};
           wsClient.sendJoinSharedTerminal(userId, windowId);
         }
       }
@@ -350,7 +355,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   void _switchToIsolated(WsClient wsClient, int index) {
     final wasShared = _activeSharedTerminal != null;
-    setState(() => _activeSharedTerminal = null);
+    setState(() {
+      _activeSharedTerminal = null;
+      _selectedWindowIndex = index;
+    });
     if (wasShared) {
       // Clear stale shared terminal content before reattaching.
       _terminalKey.currentState?.clearScreen();
@@ -364,10 +372,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   void _joinShared(WsClient wsClient, String userId, String windowId) {
     setState(
-      () => _activeSharedTerminal = {
-        'user_id': userId,
-        'window_id': windowId,
-      },
+      () => _activeSharedTerminal = {'user_id': userId, 'window_id': windowId},
     );
     // Clear the terminal so stale content from the previous session
     // doesn't linger while the join is in progress.
@@ -405,6 +410,29 @@ class _WorkspacePageState extends State<WorkspacePage> {
       '[WorkspacePage] _buildTerminalWithTabs: ${DateTime.now()} windows=${wsClient.terminalWindows.length}',
     );
     final windows = wsClient.terminalWindows;
+
+    // Resolve the locally-tracked selected window index. On first load
+    // (_selectedWindowIndex == null), seed from tmux's active flag so the
+    // user sees the window they last used. After that, only explicit tab
+    // clicks change the selection — other sessions can't steal focus.
+    var selectedIdx = _selectedWindowIndex;
+    if (selectedIdx == null && windows.isNotEmpty) {
+      selectedIdx =
+          windows.firstWhere(
+                (w) => w['active'] == true,
+                orElse: () => windows.first,
+              )['index']
+              as int? ??
+          0;
+      _selectedWindowIndex = selectedIdx;
+    }
+    // If the selected window was closed, fall back to the first window.
+    if (selectedIdx != null &&
+        windows.isNotEmpty &&
+        !windows.any((w) => w['index'] == selectedIdx)) {
+      selectedIdx = windows.first['index'] as int? ?? 0;
+      _selectedWindowIndex = selectedIdx;
+    }
     final shared = wsClient.sharedTerminals;
     // Shared terminals from OTHER users (not ours)
     final myUserId = wsClient.currentUserId;
@@ -432,8 +460,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
                           _TerminalTab(
                             name: w['name'] as String? ?? '?',
                             tooltip: w['name'] as String? ?? '?',
-                            active: _activeSharedTerminal == null &&
-                                (w['active'] as bool? ?? false),
+                            active:
+                                _activeSharedTerminal == null &&
+                                (w['index'] as int?) == selectedIdx,
                             isShared: _isWindowShared(
                               wsClient,
                               w['id'] as String? ?? '',
@@ -447,14 +476,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
                                 _switchToIsolated(wsClient, w['index'] as int),
                             onClose: windows.length > 1
                                 ? () => wsClient.sendTerminalCloseWindow(
-                                      w['index'] as int,
-                                    )
+                                    w['index'] as int,
+                                  )
                                 : null,
                             onRename: (newName) =>
                                 wsClient.sendTerminalRenameWindow(
-                              w['index'] as int,
-                              newName,
-                            ),
+                                  w['index'] as int,
+                                  newName,
+                                ),
                             onToggleShare: _hasPerm('share-terminals')
                                 ? () {
                                     final wid = w['id'] as String? ?? '';
@@ -471,7 +500,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         _TabIconButton(
                           icon: Icons.add,
                           tooltip: 'New terminal',
-                          onTap: () => wsClient.sendTerminalNewWindow(),
+                          onTap: () {
+                            // Clear selection so the seed logic picks the
+                            // newly-created (tmux-active) window when the
+                            // next terminal_windows message arrives.
+                            _selectedWindowIndex = null;
+                            wsClient.sendTerminalNewWindow();
+                          },
                         ),
                       // Shared terminals from OTHER users
                       for (final s in othersShared)
@@ -479,21 +514,25 @@ class _WorkspacePageState extends State<WorkspacePage> {
                           name: () {
                             final h = s['handle'] as String? ?? '?';
                             final w = s['window_name'] as String? ?? '?';
-                            final he =
-                                h.length > 5 ? '${h.substring(0, 5)}…' : h;
-                            final we =
-                                w.length > 3 ? '${w.substring(0, 3)}…' : w;
+                            final he = h.length > 5
+                                ? '${h.substring(0, 5)}…'
+                                : h;
+                            final we = w.length > 3
+                                ? '${w.substring(0, 3)}…'
+                                : w;
                             return '$he:$we';
                           }(),
                           tooltip:
                               '${s['handle'] ?? '?'}:${s['window_name'] ?? '?'}',
-                          active: _activeSharedTerminal != null &&
+                          active:
+                              _activeSharedTerminal != null &&
                               _activeSharedTerminal!['user_id'] ==
                                   s['user_id'] &&
                               _activeSharedTerminal!['window_id'] ==
                                   s['window_id'],
                           shared: true,
-                          readOnly: !_hasPerm('code-in-shared-terminals') &&
+                          readOnly:
+                              !_hasPerm('code-in-shared-terminals') &&
                               !_hasPerm('share-terminals'),
                           viewers: _getViewers(
                             wsClient,
@@ -871,129 +910,129 @@ class _TerminalTabState extends State<_TerminalTab> {
 
   @override
   Widget build(BuildContext context) {
-    return _maybeTooltip(Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        cursor: SystemMouseCursors.click,
-        child: SuppressBrowserContextMenu(
-          child: GestureDetector(
-            onTap: widget.onTap,
-            onSecondaryTapDown: (details) {
-              _tapPosition = details.globalPosition;
-            },
-            onSecondaryTap: _showContextMenu,
-            child: SizedBox(
-              width: 120,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: widget.active
-                      ? KColors.bgSurface
-                      : _hovered
-                          ? KColors.bgOverlay
-                          : Colors.transparent,
-                  borderRadius: BorderRadius.circular(4),
-                  border: widget.active
-                      ? Border.all(color: KColors.borderMuted, width: 0.5)
-                      : null,
-                ),
-                child: Row(
-                  children: [
-                    // Icon for other users' shared tabs (left of name)
-                    if (widget.shared) ...[
-                      Icon(
-                        widget.readOnly
-                            ? Icons.lock_outlined
-                            : Icons.edit_outlined,
-                        size: 12,
-                        color: widget.active
-                            ? KColors.accentAmber
-                            : Colors.white38,
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                    // Broadcast icon for own tabs that are actively shared
-                    // — click to unshare
-                    if (!widget.shared && widget.isShared) ...[
-                      GestureDetector(
-                        onTap: widget.onToggleShare,
-                        child: const MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: Tooltip(
-                            message: 'Unshare',
-                            child: Icon(
-                              Icons.cell_tower,
-                              size: 12,
-                              color: KColors.accentCyan,
+    return _maybeTooltip(
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          cursor: SystemMouseCursors.click,
+          child: SuppressBrowserContextMenu(
+            child: GestureDetector(
+              onTap: widget.onTap,
+              onSecondaryTapDown: (details) {
+                _tapPosition = details.globalPosition;
+              },
+              onSecondaryTap: _showContextMenu,
+              child: SizedBox(
+                width: 120,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: widget.active
+                        ? KColors.bgSurface
+                        : _hovered
+                        ? KColors.bgOverlay
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(4),
+                    border: widget.active
+                        ? Border.all(color: KColors.borderMuted, width: 0.5)
+                        : null,
+                  ),
+                  child: Row(
+                    children: [
+                      // Icon for other users' shared tabs (left of name)
+                      if (widget.shared) ...[
+                        Icon(
+                          widget.readOnly
+                              ? Icons.lock_outlined
+                              : Icons.edit_outlined,
+                          size: 12,
+                          color: widget.active
+                              ? KColors.accentAmber
+                              : Colors.white38,
+                        ),
+                        const SizedBox(width: 4),
+                      ],
+                      // Broadcast icon for own tabs that are actively shared
+                      // — click to unshare
+                      if (!widget.shared && widget.isShared) ...[
+                        GestureDetector(
+                          onTap: widget.onToggleShare,
+                          child: const MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: Tooltip(
+                              message: 'Unshare',
+                              child: Icon(
+                                Icons.cell_tower,
+                                size: 12,
+                                color: KColors.accentCyan,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                    Expanded(
-                      child: Text(
-                        widget.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: widget.active
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                          color: widget.active
-                              ? KColors.textPrimary
-                              : _hovered
-                                  ? Colors.white70
-                                  : KColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                    // Viewer count
-                    if (widget.viewers.isNotEmpty) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.visibility,
-                        size: 10,
-                        color: Colors.white38,
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        '${widget.viewers.length}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white38,
-                        ),
-                      ),
-                    ],
-                    if (widget.onClose != null) ...[
-                      const SizedBox(width: 4),
-                      MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap: widget.onClose,
-                          child: Icon(
-                            Icons.close,
-                            size: 12,
-                            color: _hovered
+                        const SizedBox(width: 4),
+                      ],
+                      Expanded(
+                        child: Text(
+                          widget.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: widget.active
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                            color: widget.active
+                                ? KColors.textPrimary
+                                : _hovered
                                 ? Colors.white70
-                                : widget.active
-                                    ? Colors.white38
-                                    : Colors.transparent,
+                                : KColors.textSecondary,
                           ),
                         ),
                       ),
+                      // Viewer count
+                      if (widget.viewers.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Icon(Icons.visibility, size: 10, color: Colors.white38),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${widget.viewers.length}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Colors.white38,
+                          ),
+                        ),
+                      ],
+                      if (widget.onClose != null) ...[
+                        const SizedBox(width: 4),
+                        MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: widget.onClose,
+                            child: Icon(
+                              Icons.close,
+                              size: 12,
+                              color: _hovered
+                                  ? Colors.white70
+                                  : widget.active
+                                  ? Colors.white38
+                                  : Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
         ),
       ),
-    ));
+    );
   }
 
   Widget _maybeTooltip(Widget child) {
