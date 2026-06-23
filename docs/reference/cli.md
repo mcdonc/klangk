@@ -128,6 +128,10 @@ klangkc logout                               # logout from active server
 klangkc logout prod                          # logout from a specific server
 klangkc status                               # show active server and user
 
+# Non-interactive login (for scripts)
+klangkc login prod admin --password-file /path/to/pwfile
+echo "secret" | klangkc login prod admin --password-file -
+
 # Working with a non-default server
 klangkc --server=prod ls                     # list workspaces on prod
 klangkc --server=prod shell my-project       # connect to shell on prod
