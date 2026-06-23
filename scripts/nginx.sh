@@ -115,6 +115,41 @@ ${CONTAINER_ACL}
 "
 fi
 
+# Dev mode (KLANGK_WEB_DEV=1): serve the app root from a live `flutter run`
+# dev server (scripts/flutterdevweb.sh) for hot reload, while keeping /api and
+# /ws on the backend. The frontend derives every API/WS URL from Uri.base (the
+# nginx origin), so the pi/browser-delegate bridge is unaffected — it still hits
+# the backend through its own location blocks below.
+if [ "${KLANGK_WEB_DEV:-0}" = "1" ]; then
+  _dev_port="${KLANGK_WEB_DEV_PORT:-8996}"
+  ROOT_UPSTREAM="http://127.0.0.1:${_dev_port}"
+  echo "nginx WEB DEV mode: / -> flutter dev server :${_dev_port}, /api+/ws -> backend :${KLANGK_PORT}" >&2
+  DEV_API_WS_BLOCK="
+    # Dev mode: app API + websocket must still reach the backend (the catch-all
+    # location / points at the flutter dev server in this mode).
+    location = /ws {
+      proxy_pass http://127.0.0.1:${KLANGK_PORT}/ws;
+      proxy_set_header Host \$http_host;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
+      proxy_read_timeout 920s;
+      proxy_send_timeout 920s;
+    }
+    location /api/ {
+      proxy_pass http://127.0.0.1:${KLANGK_PORT}/api/;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+      proxy_http_version 1.1;
+    }
+"
+else
+  ROOT_UPSTREAM="http://127.0.0.1:${KLANGK_PORT}"
+  DEV_API_WS_BLOCK=""
+fi
+
 cat >"$NGINX_STATE/nginx.conf" <<NGINX
 daemon off;
 pid /tmp/nginx.pid;
@@ -213,8 +248,9 @@ ${CONTAINER_ACL}
       return 401 '{\"error\":\"\$auth_token_error\",\"detail\":\"Workspace token \$auth_token_error\"}';
     }
 
+${DEV_API_WS_BLOCK}
     location / {
-      proxy_pass http://127.0.0.1:${KLANGK_PORT}/;
+      proxy_pass ${ROOT_UPSTREAM}/;
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;

@@ -66,7 +66,16 @@ in
 
   tasks = {
     "klangk:flutter-build" = {
-      exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh"'';
+      # In opt-in dev mode the live `flutter run` dev server
+      # (scripts/flutterdevweb.sh) owns compilation, so skip the slow release
+      # build. Default behaviour is unchanged.
+      exec = ''
+        if [ "''${KLANGK_WEB_DEV:-0}" = "1" ]; then
+          echo "KLANGK_WEB_DEV=1: skipping release build (run flutterdevweb for hot reload)."
+          exit 0
+        fi
+        exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh"
+      '';
       showOutput = true;
       execIfModified = [
         "scripts/flutterbuildweb.sh"
@@ -153,6 +162,9 @@ in
   # devenv.local.nix (mkForce/50) > .env (1000) > these (1500)
   env.KLANGK_PORT = lib.mkOverride 1500 "8997";
   env.KLANGK_NGINX_PORT = lib.mkOverride 1500 "8995";
+  # Port the opt-in `flutter run` dev server listens on (nginx proxies the app
+  # root here when KLANGK_WEB_DEV=1). Between nginx (8995) and backend (8997).
+  env.KLANGK_WEB_DEV_PORT = lib.mkOverride 1500 "8996";
   env.KLANGK_DATA_DIR = lib.mkOverride 1500 (
     config.devenv.root + "/.devenv/state/klangk/data"
   );
@@ -183,6 +195,9 @@ in
   dotenv.enable = true;
 
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
+  # Opt-in hot-reload dev server. Pair with `KLANGK_WEB_DEV=1 devenv processes
+  # up` so nginx routes the app root here while /api + /ws stay on the backend.
+  scripts.flutterdevweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterdevweb.sh" "$@"'';
   scripts.build-workspace-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh" "$@"'';
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
