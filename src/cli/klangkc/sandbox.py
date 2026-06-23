@@ -18,6 +18,7 @@ class SandboxConfig:
     # sandbox
     mount_at: str = "~/work"
     setup: str | None = None
+    setup_timeout: int = 300
     # lists
     copy: list[str] = field(default_factory=list)
     mounts: list[str] = field(default_factory=list)
@@ -41,10 +42,21 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
     workspace = raw.get("workspace") or {}
     sandbox = raw.get("sandbox") or {}
 
+    setup_timeout = sandbox.get(
+        "setup-timeout", sandbox.get("setup_timeout", 300)
+    )
+    try:
+        setup_timeout = int(setup_timeout)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"setup-timeout must be an integer, got {setup_timeout!r}"
+        )
+
     return SandboxConfig(
         image=workspace.get("image"),
         mount_at=sandbox.get("mount-at", sandbox.get("mount_at", "~/work")),
         setup=sandbox.get("setup"),
+        setup_timeout=setup_timeout,
         copy=raw.get("copy") or [],
         mounts=raw.get("mounts") or [],
         volumes=raw.get("volumes") or [],

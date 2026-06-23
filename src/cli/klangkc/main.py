@@ -871,12 +871,25 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
     if setup_cmd:
         mount_at = expand_container_path(config.mount_at, handle)
         _err.print(f"[dim]setup:[/dim] {setup_cmd}")
+        # Set GIT_SSH_COMMAND so SSH accepts new host keys automatically.
+        # Setup runs non-interactively (no TTY), so SSH cannot prompt the
+        # user for host-key confirmation; without this, git-over-SSH hangs
+        # indefinitely waiting for input that will never arrive.
+        shell_cmd = (
+            "export GIT_SSH_COMMAND="
+            "'ssh -o StrictHostKeyChecking=accept-new'"
+            f" && cd {mount_at} && bash {setup_cmd}"
+        )
+        timeout = config.setup_timeout or None
         exit_code = await _exec_on_ws(
             ws,
-            ["sh", "-c", f"cd {mount_at} && bash {setup_cmd}"],
+            ["sh", "-c", shell_cmd],
             stdout=sys.stderr.buffer,
+            timeout=timeout,
         )
-        if exit_code != 0:
+        if exit_code == 124:
+            _err.print(f"[yellow]Setup timed out after {timeout}s[/yellow]")
+        elif exit_code != 0:
             _err.print(f"[yellow]Setup exited with code {exit_code}[/yellow]")
 
 
