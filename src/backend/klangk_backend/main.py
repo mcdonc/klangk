@@ -173,10 +173,28 @@ async def seed_agent_user() -> None:
 # --- PID file helpers ---
 
 
+def _runtime_dir() -> Path:
+    """Per-user runtime dir for the PID file.
+
+    Prefer XDG_RUNTIME_DIR (set on most Linux desktops), then the Linux
+    /run/user/<uid> location, and finally ~/.klangk/run/ as a portable
+    fallback (macOS has no /run and tempfile.gettempdir() may return
+    per-process dirs under App Sandbox).
+    """
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg:
+        return Path(xdg)
+    linux_run = Path(f"/run/user/{os.getuid()}")
+    if linux_run.is_dir():
+        return linux_run
+    fallback = Path.home() / ".klangk" / "run"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 def _pid_file_path() -> Path:
     """Return the PID file path for this instance."""
-    run_dir = Path(f"/run/user/{os.getuid()}")
-    return run_dir / f"klangk-{container.INSTANCE_ID}.pid"
+    return _runtime_dir() / f"klangk-{container.INSTANCE_ID}.pid"
 
 
 def check_pid_file() -> int | None:

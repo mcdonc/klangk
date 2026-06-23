@@ -368,7 +368,33 @@ class TestPidFile:
         # Should not raise
         main.remove_pid_file()
 
-    def test_pid_file_path_uses_run_dir(self):
+    def test_pid_file_path_uses_runtime_dir(self):
         path = main._pid_file_path()
-        assert path.parent == Path(f"/run/user/{os.getuid()}")
+        assert path.parent == main._runtime_dir()
         assert f"klangk-{main.container.INSTANCE_ID}" in path.name
+
+    def test_runtime_dir_prefers_xdg(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+        assert main._runtime_dir() == tmp_path
+
+    def test_runtime_dir_linux_run_user(self, monkeypatch):
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        linux_run = Path(f"/run/user/{os.getuid()}")
+        if linux_run.is_dir():
+            assert main._runtime_dir() == linux_run
+
+    def test_runtime_dir_fallback(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        # Make /run/user/<uid> appear non-existent
+        orig_is_dir = Path.is_dir
+
+        def fake_is_dir(self):
+            if str(self).startswith("/run/user/"):
+                return False
+            return orig_is_dir(self)
+
+        monkeypatch.setattr(Path, "is_dir", fake_is_dir)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        result = main._runtime_dir()
+        assert result == tmp_path / ".klangk" / "run"
+        assert result.exists()
