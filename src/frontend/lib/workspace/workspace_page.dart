@@ -323,13 +323,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (wsClient.terminalWindows.isNotEmpty) {
         final ids =
             wsClient.terminalWindows.map((w) => w['id'] as String?).toSet();
-        if (_selectedOwnWindowId == null ||
-            !ids.contains(_selectedOwnWindowId)) {
-          final active = wsClient.terminalWindows.firstWhere(
-            (w) => w['active'] as bool? ?? false,
-            orElse: () => wsClient.terminalWindows[0],
-          );
-          _selectedOwnWindowId = active['id'] as String?;
+        if (_selectedOwnWindowId == null) {
+          // First load — select window 0 (grouped sessions start there).
+          _selectedOwnWindowId = wsClient.terminalWindows[0]['id'] as String?;
+        } else if (!ids.contains(_selectedOwnWindowId)) {
+          // Selected window was closed — fall back to first window.
+          _selectedOwnWindowId = wsClient.terminalWindows[0]['id'] as String?;
         }
       }
       // Auto-join the first shared terminal for spectators (no
