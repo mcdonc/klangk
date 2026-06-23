@@ -1,5 +1,5 @@
 sandbox:
-  mount_at: ~/sandbox-test
+  mount-at: ~/sandbox-test
   setup: setup.sh
 
 copy:

@@ -54,10 +54,10 @@ class TestLoadConfig:
                 [
                     {
                         "id": "test",
-                        "display_name": "Test",
+                        "display-name": "Test",
                         "issuer": "https://idp.example.com/",
-                        "client_id": "klangk",
-                        "client_secret": "s3cret",
+                        "client-id": "klangk",
+                        "client-secret": "s3cret",
                     }
                 ]
             )
@@ -78,10 +78,10 @@ class TestLoadConfig:
                 [
                     {
                         "id": "fs",
-                        "display_name": "File Secret",
+                        "display-name": "File Secret",
                         "issuer": "https://idp.example.com",
-                        "client_id": "klangk",
-                        "client_secret": f"file:{secret_file}",
+                        "client-id": "klangk",
+                        "client-secret": f"file:{secret_file}",
                     }
                 ]
             )
@@ -97,11 +97,11 @@ class TestLoadConfig:
                 [
                     {
                         "id": "dod",
-                        "display_name": "DoD",
+                        "display-name": "DoD",
                         "issuer": "https://sso.mil/realms/dod",
-                        "client_id": "klangk",
-                        "client_secret": "s",
-                        "ca_cert": "/etc/pki/dod-ca.pem",
+                        "client-id": "klangk",
+                        "client-secret": "s",
+                        "ca-cert": "/etc/pki/dod-ca.pem",
                     }
                 ]
             )
@@ -118,11 +118,11 @@ class TestLoadConfig:
                 [
                     {
                         "id": "dod",
-                        "display_name": "DoD",
+                        "display-name": "DoD",
                         "issuer": "https://sso.mil/realms/dod",
-                        "client_id": "klangk",
-                        "client_secret": "s",
-                        "token_validation_pem": pem,
+                        "client-id": "klangk",
+                        "client-secret": "s",
+                        "token-validation-pem": pem,
                     }
                 ]
             )
@@ -138,11 +138,11 @@ class TestLoadConfig:
                 [
                     {
                         "id": "rel",
-                        "display_name": "Rel",
+                        "display-name": "Rel",
                         "issuer": "https://idp.example.com",
-                        "client_id": "klangk",
-                        "client_secret": "s",
-                        "ca_cert": "certs/ca.pem",
+                        "client-id": "klangk",
+                        "client-secret": "s",
+                        "ca-cert": "certs/ca.pem",
                     }
                 ]
             )
@@ -159,10 +159,10 @@ class TestLoadConfig:
                 [
                     {
                         "id": "test",
-                        "display_name": "Test",
+                        "display-name": "Test",
                         "issuer": "https://idp.example.com",
-                        "client_id": "klangk",
-                        "client_secret": "s",
+                        "client-id": "klangk",
+                        "client-secret": "s",
                     }
                 ]
             )
@@ -178,17 +178,17 @@ class TestLoadConfig:
                 [
                     {
                         "id": "a",
-                        "display_name": "A",
+                        "display-name": "A",
                         "issuer": "https://a.example.com",
-                        "client_id": "klangk",
-                        "client_secret": "sa",
+                        "client-id": "klangk",
+                        "client-secret": "sa",
                     },
                     {
                         "id": "b",
-                        "display_name": "B",
+                        "display-name": "B",
                         "issuer": "https://b.example.com",
-                        "client_id": "klangk",
-                        "client_secret": "sb",
+                        "client-id": "klangk",
+                        "client-secret": "sb",
                     },
                 ]
             )
@@ -199,6 +199,35 @@ class TestLoadConfig:
         assert providers[0].id == "a"
         assert providers[1].id == "b"
 
+    def test_snake_case_fallback(self, monkeypatch, tmp_path):
+        """Legacy snake_case keys still work for backwards compat."""
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text(
+            yaml.dump(
+                [
+                    {
+                        "id": "legacy",
+                        "display_name": "Legacy",
+                        "issuer": "https://idp.example.com/",
+                        "client_id": "klangk",
+                        "client_secret": "s3cret",
+                        "ca_cert": "/etc/ca.pem",
+                        "token_validation_pem": "pem-data",
+                        "logout_redirect": True,
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert len(providers) == 1
+        assert providers[0].display_name == "Legacy"
+        assert providers[0].client_id == "klangk"
+        assert providers[0].client_secret == "s3cret"
+        assert providers[0].ca_cert == "/etc/ca.pem"
+        assert providers[0].token_validation_pem == "pem-data"
+        assert providers[0].logout_redirect is True
+
 
 class TestProviderRegistry:
     def test_init_and_lookup(self, monkeypatch, tmp_path):
@@ -208,10 +237,10 @@ class TestProviderRegistry:
                 [
                     {
                         "id": "test",
-                        "display_name": "Test",
+                        "display-name": "Test",
                         "issuer": "https://idp.example.com",
-                        "client_id": "klangk",
-                        "client_secret": "s",
+                        "client-id": "klangk",
+                        "client-secret": "s",
                     }
                 ]
             )

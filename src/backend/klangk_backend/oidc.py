@@ -60,6 +60,24 @@ _jwks_cache: dict[str, _CachedJWKS] = {}
 _providers: list[OIDCProvider] = []
 
 
+_SENTINEL = object()
+
+
+def _get(entry: dict, key: str, default: object = _SENTINEL) -> object:
+    """Look up *key* (kebab-case) with snake_case fallback for backwards compat."""
+    value = entry.get(key, _SENTINEL)
+    if value is not _SENTINEL:
+        return value
+    snake = key.replace("-", "_")
+    if snake != key:
+        value = entry.get(snake, _SENTINEL)
+        if value is not _SENTINEL:
+            return value
+    if default is not _SENTINEL:
+        return default
+    raise KeyError(key)
+
+
 def load_config() -> list[OIDCProvider]:
     """Load OIDC provider config from the JSON file specified by
     KLANGK_OIDC_CONFIG. Returns empty list if not configured.
@@ -79,22 +97,22 @@ def load_config() -> list[OIDCProvider]:
 
     providers = []
     for entry in raw:
-        secret = resolve_file_secret(entry.get("client_secret", ""))
-        # Resolve ca_cert relative to the config file's directory
-        ca_cert = entry.get("ca_cert")
+        secret = resolve_file_secret(_get(entry, "client-secret", ""))
+        # Resolve ca-cert relative to the config file's directory
+        ca_cert = _get(entry, "ca-cert", None)
         if ca_cert and not os.path.isabs(ca_cert):
             ca_cert = os.path.join(config_dir, ca_cert)
         providers.append(
             OIDCProvider(
                 id=entry["id"],
-                display_name=entry["display_name"],
+                display_name=_get(entry, "display-name"),
                 issuer=entry["issuer"].rstrip("/"),
-                client_id=entry["client_id"],
+                client_id=_get(entry, "client-id"),
                 client_secret=secret or "",
                 scopes=entry.get("scopes", "openid email profile"),
                 ca_cert=ca_cert,
-                token_validation_pem=entry.get("token_validation_pem"),
-                logout_redirect=entry.get("logout_redirect", False),
+                token_validation_pem=_get(entry, "token-validation-pem", None),
+                logout_redirect=_get(entry, "logout-redirect", False),
             )
         )
     return providers

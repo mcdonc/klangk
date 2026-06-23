@@ -1,5 +1,5 @@
 sandbox:
-  mount_at: ~/devenv-sandbox
+  mount-at: ~/devenv-sandbox
   setup: setup.sh
 
 mounts:
