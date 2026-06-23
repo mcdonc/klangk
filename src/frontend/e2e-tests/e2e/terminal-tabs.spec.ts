@@ -6,6 +6,7 @@ import { createAndOpenWorkspace, API_BASE } from "./helpers";
 // container_ready, then expose send/receive for window management commands.
 
 interface WindowInfo {
+  id: string;
   index: number;
   name: string;
   active: boolean;
@@ -336,12 +337,15 @@ test.describe("terminal tabs", () => {
         const created = await client.recvUntil(
           (m) => m.type === "terminal_windows",
         );
-        const secondIdx = (created.windows as WindowInfo[]).find(
-          (w) => w.name === "second",
-        )!.index;
+        const createdWindows = created.windows as WindowInfo[];
+        const firstWin = createdWindows.find((w) => w.index === 0)!;
+        const secondWin = createdWindows.find((w) => w.name === "second")!;
 
         // Switch back to window 0
-        client.send({ cmd: "terminal_select_window", index: 0 });
+        client.send({
+          cmd: "terminal_select_window",
+          window_id: firstWin.id,
+        });
 
         // Verify by listing windows — window 0 should be active
         client.send({ cmd: "terminal_list_windows" });
@@ -351,10 +355,13 @@ test.describe("terminal tabs", () => {
         const windows = listed.windows as WindowInfo[];
         const active = windows.find((w) => w.active);
         expect(active).toBeDefined();
-        expect(active!.index).toBe(0);
+        expect(active!.id).toBe(firstWin.id);
 
         // Switch to second window
-        client.send({ cmd: "terminal_select_window", index: secondIdx });
+        client.send({
+          cmd: "terminal_select_window",
+          window_id: secondWin.id,
+        });
         client.send({ cmd: "terminal_list_windows" });
         const listed2 = await client.recvUntil(
           (m) => m.type === "terminal_windows",
@@ -362,7 +369,7 @@ test.describe("terminal tabs", () => {
         const windows2 = listed2.windows as WindowInfo[];
         const active2 = windows2.find((w) => w.active);
         expect(active2).toBeDefined();
-        expect(active2!.index).toBe(secondIdx);
+        expect(active2!.id).toBe(secondWin.id);
       } finally {
         client.close();
       }

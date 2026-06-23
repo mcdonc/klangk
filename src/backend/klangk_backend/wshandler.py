@@ -1452,7 +1452,14 @@ class Connection:
         if not self.container_id or not self._user_home:
             return
 
-        session_name = self._tmux_session_name()
+        # Use this connection's grouped session so the active flag
+        # reflects this client's view, not the base session's.
+        session = self.terminal_session
+        session_name = (
+            session._tmux_session_name
+            if session and session._tmux_session_name
+            else self._tmux_session_name()
+        )
         try:
             windows = await terminal.list_windows(
                 self.container_id, session_name
