@@ -1,0 +1,3 @@
+sandbox:
+  mount_at: ~/haiku-rag
+  setup: setup.sh

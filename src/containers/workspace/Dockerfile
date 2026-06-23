@@ -20,6 +20,11 @@ COPY --from=plugin-hooks / /opt/klangk/hooks/
 COPY --from=plugin-extensions / /opt/klangk/pi-agent/extensions/
 COPY builtin-extensions/ /opt/klangk/pi-agent/extensions/
 
+# Install uv (fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/0.11.23/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && mv /root/.local/bin/uvx /usr/local/bin/uvx
+
 # Herdr: terminal-based agent runtime (persistent sessions, pane API)
 ARG HERDR_VERSION=0.6.6
 ARG TARGETARCH
