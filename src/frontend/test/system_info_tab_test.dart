@@ -10,7 +10,7 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 http.Client _mockClient({int versionStatus = 200}) {
   return MockClient((request) async {
-    if (request.url.path == '/version') {
+    if (request.url.path == '/api/v1/version') {
       if (versionStatus != 200) {
         return http.Response('', versionStatus);
       }
@@ -32,10 +32,7 @@ http.Client _mockClient({int versionStatus = 200}) {
     }
     if (request.url.path.contains('/api/config')) {
       return http.Response(
-        jsonEncode({
-          'login_banner_title': '',
-          'login_banner': '',
-        }),
+        jsonEncode({'login_banner_title': '', 'login_banner': ''}),
         200,
       );
     }
@@ -71,7 +68,9 @@ void main() {
     final auth = AuthService();
 
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: SystemInfoTab(auth: auth))),
+      MaterialApp(
+        home: Scaffold(body: SystemInfoTab(auth: auth)),
+      ),
     );
     // Pump a few frames to let async init + fetch complete.
     await tester.pump();
@@ -91,7 +90,9 @@ void main() {
     final auth = AuthService();
 
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: SystemInfoTab(auth: auth))),
+      MaterialApp(
+        home: Scaffold(body: SystemInfoTab(auth: auth)),
+      ),
     );
     await tester.pump();
     await tester.pump();
@@ -102,7 +103,7 @@ void main() {
 
   testWidgets('shows connection error on exception', (tester) async {
     testAuthHttpClientOverride = MockClient((request) async {
-      if (request.url.path == '/version') {
+      if (request.url.path == '/api/v1/version') {
         throw Exception('connection refused');
       }
       if (request.url.path.contains('/api/config')) {
@@ -129,7 +130,9 @@ void main() {
     final auth = AuthService();
 
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: SystemInfoTab(auth: auth))),
+      MaterialApp(
+        home: Scaffold(body: SystemInfoTab(auth: auth)),
+      ),
     );
     await tester.pump();
     await tester.pump();
@@ -140,7 +143,7 @@ void main() {
 
   testWidgets('shows no plugins loaded when list is empty', (tester) async {
     testAuthHttpClientOverride = MockClient((request) async {
-      if (request.url.path == '/version') {
+      if (request.url.path == '/api/v1/version') {
         return http.Response(
           jsonEncode({
             'version': 'dev',
@@ -175,7 +178,9 @@ void main() {
     final auth = AuthService();
 
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: SystemInfoTab(auth: auth))),
+      MaterialApp(
+        home: Scaffold(body: SystemInfoTab(auth: auth)),
+      ),
     );
     await tester.pump();
     await tester.pump();

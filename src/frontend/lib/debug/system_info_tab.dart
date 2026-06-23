@@ -28,7 +28,7 @@ class _SystemInfoTabState extends State<SystemInfoTab> {
       _error = null;
     });
     try {
-      final resp = await widget.auth.authGet('/version');
+      final resp = await widget.auth.authGet('/api/v1/version');
       if (resp.statusCode == 200) {
         setState(() {
           _info = jsonDecode(resp.body) as Map<String, dynamic>;
