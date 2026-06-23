@@ -68,11 +68,6 @@ RUN ssh-keyscan -t ed25519,ecdsa,rsa github.com >> /etc/ssh/ssh_known_hosts 2>/d
 # fd-find installs as fdfind on Debian — symlink to fd
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 
-# Install uv (fast Python package manager)
-RUN curl -LsSf https://astral.sh/uv/0.11.23/install.sh | sh \
-    && mv /root/.local/bin/uv /usr/local/bin/uv \
-    && mv /root/.local/bin/uvx /usr/local/bin/uvx
-
 # Create klangk user with fixed UID/GID 1000. The container runs with
 # --userns=keep-id:uid=1000,gid=1000 which maps the host user to
 # this UID, so files on bind mounts are owned by the host user.

@@ -8,8 +8,7 @@ if [ ! -d "$REPO_DIR" ]; then
   echo "Cloning ggozad/haiku.rag..."
   git clone git@github.com:ggozad/haiku.rag.git "$REPO_DIR"
 else
-  echo "Repo already cloned, pulling latest..."
-  git -C "$REPO_DIR" pull
+  echo "Repo already cloned, skipping."
 fi
 
 # Create virtualenv and install the package.
