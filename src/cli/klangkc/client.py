@@ -35,6 +35,38 @@ _RETRY_BACKOFF = 2.0  # seconds, doubled each retry
 _WS_CONNECT_TIMEOUT = 60  # seconds to wait for workspace_ready
 
 
+def _query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
+    """Send *data* to the local SSH agent and return its response.
+
+    Connects to the Unix socket at *sock_path*, writes *data*, then
+    reads one SSH agent protocol message (4-byte big-endian length
+    prefix followed by the message body).  Returns the full response
+    (header + body) or ``None`` on failure.
+    """
+    agent = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        agent.connect(sock_path)
+        agent.sendall(data)
+        header = b""
+        while len(header) < 4:
+            chunk = agent.recv(4 - len(header))
+            if not chunk:  # pragma: no cover
+                break
+            header += chunk
+        if len(header) < 4:  # pragma: no cover
+            return None
+        msg_len = struct.unpack(">I", header)[0]
+        body = b""
+        while len(body) < msg_len:
+            chunk = agent.recv(msg_len - len(body))
+            if not chunk:  # pragma: no cover
+                break
+            body += chunk
+        return header + body
+    finally:
+        agent.close()
+
+
 async def _wait_workspace_ready(
     ws: websockets.ClientConnection,
     workspace_id: str,
@@ -973,66 +1005,26 @@ async def _run_shell(
                     "[ssh-agent] relay: got %d bytes from queue", len(data)
                 )
             try:
-                # Connect to local agent, forward data, read response.
-                agent = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                try:
-                    agent.connect(ssh_agent_sock)
+                response = _query_local_ssh_agent(ssh_agent_sock, data)
+                if response is not None:
                     if _debug_agent:  # pragma: no cover
                         logger.info(
-                            "[ssh-agent] relay: connected to local agent"
+                            "[ssh-agent] relay: sending %d bytes back "
+                            "to backend",
+                            len(response),
                         )
-                    agent.sendall(data)
-                    if _debug_agent:  # pragma: no cover
-                        logger.info(
-                            "[ssh-agent] relay: sent %d bytes to local agent",
-                            len(data),
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "cmd": "ssh_agent_data",
+                                "data": base64.b64encode(response).decode(
+                                    "ascii"
+                                ),
+                            }
                         )
-                    # SSH agent protocol: 4-byte big-endian length prefix
-                    # followed by the message body.
-                    header = b""
-                    while len(header) < 4:
-                        chunk = agent.recv(4 - len(header))
-                        if not chunk:  # pragma: no cover
-                            break
-                        header += chunk
-                    if len(header) == 4:
-                        msg_len = struct.unpack(">I", header)[0]
-                        if _debug_agent:  # pragma: no cover
-                            logger.info(
-                                "[ssh-agent] relay: agent response header, "
-                                "body_len=%d",
-                                msg_len,
-                            )
-                        body = b""
-                        while len(body) < msg_len:
-                            chunk = agent.recv(msg_len - len(body))
-                            if not chunk:  # pragma: no cover
-                                break
-                            body += chunk
-                        response = header + body
-                        if _debug_agent:  # pragma: no cover
-                            logger.info(
-                                "[ssh-agent] relay: sending %d bytes back "
-                                "to backend",
-                                len(response),
-                            )
-                        await ws.send(
-                            json.dumps(
-                                {
-                                    "cmd": "ssh_agent_data",
-                                    "data": base64.b64encode(response).decode(
-                                        "ascii"
-                                    ),
-                                }
-                            )
-                        )
-                    elif _debug_agent:  # pragma: no cover
-                        logger.info(
-                            "[ssh-agent] relay: incomplete header (%d bytes)",
-                            len(header),
-                        )
-                finally:
-                    agent.close()
+                    )
+                elif _debug_agent:  # pragma: no cover
+                    logger.info("[ssh-agent] relay: no response from agent")
             except (OSError, ConnectionError) as e:
                 logger.warning("SSH agent relay: %s", e)
 
@@ -1047,6 +1039,7 @@ async def _exec_on_ws(
     command: list[str],
     stdin: io.RawIOBase | None = None,
     stdout: io.RawIOBase | None = None,
+    timeout: int | None = None,
 ) -> int:
     """Run a command on an already-connected WebSocket.
 
@@ -1060,6 +1053,10 @@ async def _exec_on_ws(
     *stdout*: file-like to write output to.  ``None`` discards output.
     For a real terminal pass ``sys.stdout.buffer``; for capture pass
     an ``io.BytesIO()``.
+
+    *timeout*: optional seconds; if the command doesn't finish in
+    time, it is stopped and exit code 124 is returned (matching
+    coreutils ``timeout(1)``).
 
     Returns the remote process exit code.
     """
@@ -1112,6 +1109,8 @@ async def _exec_on_ws(
                 )
         await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
 
+    agent_queue: asyncio.Queue[bytes] = asyncio.Queue()
+
     async def stdout_forward() -> None:
         nonlocal exit_code
         while True:
@@ -1130,6 +1129,10 @@ async def _exec_on_ws(
                         )
                     else:
                         stdout.write(raw)
+            elif data.get("type") == "ssh_agent_response":
+                raw = base64.b64decode(data.get("data", ""))
+                if raw:
+                    await agent_queue.put(raw)
             elif data.get("type") == "exec_exit":
                 exit_code = data.get("code", 0)
                 break
@@ -1151,6 +1154,41 @@ async def _exec_on_ws(
             if not stop.is_set():
                 await ws.send(json.dumps({"cmd": "heartbeat"}))
 
+    async def ssh_agent_relay() -> None:
+        """Relay SSH agent protocol between container and local agent.
+
+        Without this, git-over-SSH during exec sessions hangs because
+        the container's SSH process talks to the forwarded agent socket
+        (socat) which relays through the backend to us, but nobody
+        reads the response and forwards it to the real local agent.
+        """
+        local_sock = os.environ.get("SSH_AUTH_SOCK")
+        if not local_sock or not os.path.exists(local_sock):
+            return
+        while not stop.is_set():
+            try:
+                data = await asyncio.wait_for(agent_queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                response = _query_local_ssh_agent(local_sock, data)
+                if response is not None:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "cmd": "ssh_agent_data",
+                                "data": base64.b64encode(response).decode(
+                                    "ascii"
+                                ),
+                            }
+                        )
+                    )
+            except OSError:
+                logger.debug(
+                    "SSH agent relay: failed to contact local agent",
+                    exc_info=True,
+                )
+
     stdout_fd = -1
     try:
         if stdout is not None:
@@ -1162,7 +1200,19 @@ async def _exec_on_ws(
     stdout_task = asyncio.create_task(stdout_forward())
     stdin_task = asyncio.create_task(stdin_forward())
     heartbeat_task = asyncio.create_task(heartbeat_loop())
-    await stdout_task
+    agent_task = asyncio.create_task(ssh_agent_relay())
+    try:
+        if timeout is not None:
+            await asyncio.wait_for(stdout_task, timeout=timeout)
+        else:
+            await stdout_task
+    except asyncio.TimeoutError:
+        exit_code = 124  # same as coreutils timeout(1)
+        stdout_task.cancel()
+        try:
+            await stdout_task
+        except asyncio.CancelledError:
+            pass
     stop.set()
     try:
         await asyncio.wait_for(stdin_task, timeout=2)
@@ -1176,6 +1226,11 @@ async def _exec_on_ws(
     try:
         await heartbeat_task
     except asyncio.CancelledError:  # pragma: no cover
+        pass
+    agent_task.cancel()
+    try:
+        await agent_task
+    except asyncio.CancelledError:
         pass
 
     await ws.send(json.dumps({"cmd": "exec_stop"}))

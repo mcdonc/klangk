@@ -2742,7 +2742,7 @@ class TestSandboxSetup:
         ws = AsyncMock()
         exec_calls = []
 
-        async def fake_exec(ws, cmd, stdin=None, stdout=None):
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             exec_calls.append(
                 {"cmd": cmd, "stdin": stdin.read() if stdin else None}
             )
@@ -2767,7 +2767,7 @@ class TestSandboxSetup:
 
         ws = AsyncMock()
 
-        async def fake_exec(ws, cmd, stdin=None, stdout=None):
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 1  # failure
 
         with patch("klangkc.main._exec_on_ws", fake_exec):
@@ -2800,7 +2800,7 @@ class TestSandboxSetup:
         ws = AsyncMock()
         exec_calls = []
 
-        async def fake_exec(ws, cmd, stdin=None, stdout=None):
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             exec_calls.append(cmd)
             return 0
 
@@ -2809,6 +2809,72 @@ class TestSandboxSetup:
 
         assert len(exec_calls) == 1
         assert "/home/admin/project/setup.sh" in exec_calls[0][2]
+
+    async def test_setup_sets_git_ssh_command(self, tmp_path):
+        from klangkc.main import _sandbox_setup
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            mount_at="~/project",
+            setup="setup.sh",
+        )
+
+        ws = AsyncMock()
+        exec_calls = []
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
+            exec_calls.append(cmd)
+            return 0
+
+        with patch("klangkc.main._exec_on_ws", fake_exec):
+            await _sandbox_setup(ws, config, tmp_path, "admin")
+
+        shell_cmd = exec_calls[0][2]
+        assert "GIT_SSH_COMMAND=" in shell_cmd
+        assert "StrictHostKeyChecking=accept-new" in shell_cmd
+
+    async def test_setup_passes_timeout(self, tmp_path):
+        from klangkc.main import _sandbox_setup
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            mount_at="~/project",
+            setup="setup.sh",
+            setup_timeout=60,
+        )
+
+        ws = AsyncMock()
+        captured_timeout = []
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
+            captured_timeout.append(timeout)
+            return 0
+
+        with patch("klangkc.main._exec_on_ws", fake_exec):
+            await _sandbox_setup(ws, config, tmp_path, "admin")
+
+        assert captured_timeout == [60]
+
+    async def test_setup_timeout_warns(self, tmp_path, capsys):
+        from klangkc.main import _sandbox_setup
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            mount_at="~/project",
+            setup="setup.sh",
+            setup_timeout=10,
+        )
+
+        ws = AsyncMock()
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
+            return 124
+
+        with patch("klangkc.main._exec_on_ws", fake_exec):
+            await _sandbox_setup(ws, config, tmp_path, "admin")
+
+        err = capsys.readouterr().err
+        assert "timed out after 10s" in err
 
     async def test_setup_failure_warns(self, tmp_path):
         from klangkc.main import _sandbox_setup
@@ -2821,7 +2887,7 @@ class TestSandboxSetup:
 
         ws = AsyncMock()
 
-        async def fake_exec(ws, cmd, stdin=None, stdout=None):
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 1
 
         with patch("klangkc.main._exec_on_ws", fake_exec):

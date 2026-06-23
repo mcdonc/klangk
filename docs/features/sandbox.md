@@ -66,12 +66,14 @@ specified as a positional argument on the command line.
 sandbox:
   mount-at: ~/klangk
   setup: setup.sh
+  setup-timeout: 300
 ```
 
-| Field      | Required | Default  | Description                                                                                                |
-| ---------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `mount-at` | no       | `~/work` | Where the sandbox root is mounted inside the container. `~` expands to `/home/{handle}`.                   |
-| `setup`    | no       | (none)   | Script to run inside the container after creation. Relative to `mount-at`, or absolute if starts with `/`. |
+| Field           | Required | Default  | Description                                                                                                |
+| --------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `mount-at`      | no       | `~/work` | Where the sandbox root is mounted inside the container. `~` expands to `/home/{handle}`.                   |
+| `setup`         | no       | (none)   | Script to run inside the container after creation. Relative to `mount-at`, or absolute if starts with `/`. |
+| `setup-timeout` | no       | `300`    | Maximum seconds the setup script may run before being killed. Set to `0` to disable.                       |
 
 The setup script runs once — on workspace creation, not on reconnect.
 It runs as the `klangk` user inside the container. If
@@ -210,6 +212,12 @@ or re-run the setup script. This means:
 The setup script runs inside the container as the `klangk` user. It
 has access to everything that's been mounted and copied. The working
 directory is the sandbox root (the `mount-at` path).
+
+**SSH agent forwarding** is active during setup when `-A` /
+`--forward-agent` is used. This means `git clone git@github.com:...`
+and other SSH operations work in your setup script without any extra
+configuration. SSH host key checking is set to `accept-new` during
+setup (new hosts are automatically trusted on first connect).
 
 **Important:** The `klangk` user does not have sudo access by
 default. Without it, setup scripts are limited to user-space

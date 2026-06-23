@@ -1977,6 +1977,224 @@ class TestExecOnWsRealFd:
         os.close(read_fd)
         assert result == b"hello output"
 
+    async def test_ssh_agent_response_queued(self):
+        """ssh_agent_response messages are queued for the relay."""
+        import base64
+
+        from klangkc.client import _exec_on_ws
+
+        ws = AsyncMock()
+        sent = []
+        ws.send = AsyncMock(side_effect=lambda m: sent.append(m))
+
+        agent_data = base64.b64encode(b"\x00\x00\x00\x01\x0b").decode()
+        ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "ssh_agent_response", "data": agent_data}),
+                json.dumps({"type": "exec_exit", "code": 0}),
+            ]
+        )
+
+        # No real SSH_AUTH_SOCK — the relay will exit early, but the
+        # stdout_forward path still exercises the queuing branch.
+        with patch.dict(os.environ, {"SSH_AUTH_SOCK": ""}, clear=False):
+            code = await _exec_on_ws(ws, ["true"])
+
+        assert code == 0
+
+    async def test_ssh_agent_relay_forwards_to_local_agent(self):
+        """ssh_agent_relay reads from queue and talks to local agent."""
+        import base64
+        import struct
+        import tempfile
+        import threading
+
+        from klangkc.client import _exec_on_ws
+
+        # Create a fake agent socket that echoes a fixed response.
+        agent_response = struct.pack(">I", 1) + b"\x0b"  # 1-byte body
+        agent_request = b"\x00\x00\x00\x01\x01"  # request-identities
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sock_path = os.path.join(tmpdir, "agent.sock")
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(sock_path)
+            server.listen(1)
+            server.settimeout(5)
+
+            # Run the fake agent in a thread so blocking socket calls
+            # in the relay don't deadlock the event loop.
+            def serve_agent():
+                conn, _ = server.accept()
+                try:
+                    conn.recv(4096)
+                    conn.sendall(agent_response)
+                finally:
+                    conn.close()
+
+            agent_thread = threading.Thread(target=serve_agent, daemon=True)
+            agent_thread.start()
+
+            ws = AsyncMock()
+            sent = []
+
+            # Track when agent relay has sent its response.
+            relay_done = threading.Event()
+
+            async def track_send(m):
+                sent.append(m)
+                if "ssh_agent_data" in str(m):
+                    relay_done.set()
+
+            ws.send = track_send
+
+            recv_idx = 0
+
+            async def fake_recv():
+                nonlocal recv_idx
+                recv_idx += 1
+                if recv_idx == 1:
+                    return json.dumps(
+                        {
+                            "type": "ssh_agent_response",
+                            "data": base64.b64encode(agent_request).decode(),
+                        }
+                    )
+                # Wait until the relay has processed before ending.
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, relay_done.wait, 5)
+                return json.dumps({"type": "exec_exit", "code": 0})
+
+            ws.recv = fake_recv
+
+            with patch.dict(
+                os.environ, {"SSH_AUTH_SOCK": sock_path}, clear=False
+            ):
+                code = await _exec_on_ws(ws, ["true"])
+
+            agent_thread.join(timeout=2)
+            server.close()
+
+        assert code == 0
+        # The relay should have sent ssh_agent_data back.
+        agent_msgs = [
+            json.loads(s) for s in sent if "ssh_agent_data" in str(s)
+        ]
+        assert len(agent_msgs) >= 1
+
+    async def test_ssh_agent_relay_no_socket(self):
+        """Relay exits early when SSH_AUTH_SOCK is unset."""
+        from klangkc.client import _exec_on_ws
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+        ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "exec_exit", "code": 0})
+        )
+
+        with patch.dict(os.environ, {"SSH_AUTH_SOCK": ""}, clear=False):
+            code = await _exec_on_ws(ws, ["true"])
+
+        assert code == 0
+
+    async def test_ssh_agent_relay_idle_loop(self):
+        """Relay loops with no data then exits when stop is set."""
+        import tempfile
+
+        from klangkc.client import _exec_on_ws
+
+        # Create a real socket file so the relay enters the while loop,
+        # but never send ssh_agent_response — it should hit the
+        # TimeoutError/continue branch, then exit when exec finishes.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sock_path = os.path.join(tmpdir, "agent.sock")
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            srv.bind(sock_path)
+            srv.listen(1)
+
+            ws = AsyncMock()
+            ws.send = AsyncMock()
+
+            async def delayed_exit():
+                # Give the relay time to hit at least one timeout cycle.
+                await asyncio.sleep(1.5)
+                return json.dumps({"type": "exec_exit", "code": 0})
+
+            ws.recv = delayed_exit
+
+            with patch.dict(
+                os.environ, {"SSH_AUTH_SOCK": sock_path}, clear=False
+            ):
+                code = await _exec_on_ws(ws, ["true"])
+
+            srv.close()
+
+        assert code == 0
+
+    async def test_ssh_agent_relay_bad_socket(self):
+        """Relay handles OSError when local agent socket is a regular file."""
+        import base64
+        import tempfile
+
+        from klangkc.client import _exec_on_ws
+
+        # Create a regular file (not a socket) so os.path.exists()
+        # passes but socket.connect() raises OSError.
+        with tempfile.NamedTemporaryFile() as f:
+            bad_path = f.name
+
+            ws = AsyncMock()
+            sent = []
+
+            async def track_send(m):
+                sent.append(m)
+
+            ws.send = track_send
+
+            recv_idx = 0
+
+            async def fake_recv():
+                nonlocal recv_idx
+                recv_idx += 1
+                if recv_idx == 1:
+                    return json.dumps(
+                        {
+                            "type": "ssh_agent_response",
+                            "data": base64.b64encode(
+                                b"\x00\x00\x00\x01\x01"
+                            ).decode(),
+                        }
+                    )
+                # Give the relay time to hit the error path.
+                await asyncio.sleep(0.3)
+                return json.dumps({"type": "exec_exit", "code": 0})
+
+            ws.recv = fake_recv
+
+            with patch.dict(
+                os.environ,
+                {"SSH_AUTH_SOCK": bad_path},
+                clear=False,
+            ):
+                code = await _exec_on_ws(ws, ["true"])
+
+        assert code == 0
+
+    async def test_timeout_returns_124(self):
+        """When timeout expires, exit code 124 is returned."""
+        from klangkc.client import _exec_on_ws
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+
+        async def hang_forever():
+            await asyncio.sleep(3600)
+
+        ws.recv = hang_forever
+
+        code = await _exec_on_ws(ws, ["sleep", "999"], timeout=1)
+        assert code == 124
+
 
 class TestWsExecWrapper:
     """Test _ws_exec wrapper connects and delegates to _exec_on_ws."""

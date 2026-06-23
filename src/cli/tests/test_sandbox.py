@@ -58,6 +58,37 @@ class TestLoadSandboxConfig:
         assert config.mounts == ["/data:~/data:ro"]
         assert config.volumes == ["cache:/cache"]
 
+    def test_setup_timeout_default(self, sandbox_root):
+        _write_config(sandbox_root, {})
+        config = load_sandbox_config(sandbox_root)
+        assert config.setup_timeout == 300
+
+    def test_setup_timeout_custom(self, sandbox_root):
+        _write_config(
+            sandbox_root,
+            {"sandbox": {"setup-timeout": 60}},
+        )
+        config = load_sandbox_config(sandbox_root)
+        assert config.setup_timeout == 60
+
+    def test_setup_timeout_snake_case_fallback(self, sandbox_root):
+        _write_config(
+            sandbox_root,
+            {"sandbox": {"setup_timeout": 120}},
+        )
+        config = load_sandbox_config(sandbox_root)
+        assert config.setup_timeout == 120
+
+    def test_setup_timeout_invalid_raises(self, sandbox_root):
+        _write_config(
+            sandbox_root,
+            {"sandbox": {"setup-timeout": "not-a-number"}},
+        )
+        with pytest.raises(
+            ValueError, match="setup-timeout must be an integer"
+        ):
+            load_sandbox_config(sandbox_root)
+
     def test_snake_case_mount_at_fallback(self, sandbox_root):
         """Legacy mount_at key still works for backwards compat."""
         _write_config(
