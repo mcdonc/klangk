@@ -72,13 +72,17 @@ test.describe("Token expiry", () => {
       { algorithm: "HS256", expiresIn: -60 },
     );
 
-    // Write a temporary CLI config with the expired token
+    // Write temporary CLI config and state with the expired token
     const tmpHome = mkdtempSync(join(tmpdir(), "klangk-cli-e2e-"));
     const configDir = join(tmpHome, ".config", "klangk");
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, "cli.yaml"),
-      `server:\n  url: ${API_BASE}\nauth:\n  token: ${expiredToken}\n  email: ${email}\n`,
+      `servers:\n  test:\n    url: ${API_BASE}\n`,
+    );
+    writeFileSync(
+      join(configDir, "state.yaml"),
+      `active-server: "${API_BASE}"\n"${API_BASE}":\n  active-user: "${email}"\n  users:\n    "${email}":\n      token: ${expiredToken}\n`,
     );
 
     // Run klangkc shell — it should fail with a clear error
