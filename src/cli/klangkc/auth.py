@@ -218,9 +218,9 @@ def login(
                 )
         else:
             try:
-                detail = resp.json().get("detail", resp.text)
+                detail = resp.json().get("detail", f"HTTP {resp.status_code}")
             except Exception:
-                detail = resp.text or f"HTTP {resp.status_code}"
+                detail = f"HTTP {resp.status_code}"
             _err.print(f"[red]Login failed:[/red] {detail}")
         raise SystemExit(1)
 
