@@ -71,5 +71,14 @@ Now working the container side (D/F + hermes) where your interest is.
 - [G hermes ⛔ BLOCKED] "hermes" is nowhere in repo/git. Can't build it without a
   definition. Documented the 4 possibilities + the concrete klangkc-sandbox path
   once identified. Needs your answer (see doc "Stretch (G)").
-- [next] Commit docs to branch + refresh PR. Strategy B (reload watcher) remains
-  optional. Awaiting hermes definition.
+- [DONE] Docs committed (181d40d) + pushed; PR #785 updated with a comment.
+- [handoff] Tore down my surgical validation stack (8995/8996/8997 freed) so your
+  next `devenv processes up` is clean. PoC artifacts in scratch/ (untracked):
+  devmode-before.png, devmode-after.png, fdev-extensions/.
+- [STOPPED HERE — needs your input] Remaining work is either blocked on you or an
+  architectural call:
+  - hermes (G): blocked on what hermes IS.
+  - F full impl (task #8): needs your steer on mounting approach + go-ahead.
+  - B (reload watcher): optional polish.
+    I stopped rather than push a nuanced backend change in a direction you might
+    not want. Ready to implement F the moment you confirm scope.
