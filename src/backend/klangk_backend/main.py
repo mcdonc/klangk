@@ -4,7 +4,6 @@ import logging
 import os
 import secrets
 import sys
-import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -177,8 +176,10 @@ async def seed_agent_user() -> None:
 def _runtime_dir() -> Path:
     """Per-user runtime dir for the PID file.
 
-    Prefer XDG_RUNTIME_DIR, then the Linux /run/user/<uid> location, and
-    finally a writable temp dir (macOS has no /run, and / is read-only).
+    Prefer XDG_RUNTIME_DIR (set on most Linux desktops), then the Linux
+    /run/user/<uid> location, and finally ~/.klangk/run/ as a portable
+    fallback (macOS has no /run and tempfile.gettempdir() may return
+    per-process dirs under App Sandbox).
     """
     xdg = os.environ.get("XDG_RUNTIME_DIR")
     if xdg:
@@ -186,7 +187,9 @@ def _runtime_dir() -> Path:
     linux_run = Path(f"/run/user/{os.getuid()}")
     if linux_run.is_dir():
         return linux_run
-    return Path(tempfile.gettempdir())
+    fallback = Path.home() / ".klangk" / "run"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
 
 
 def _pid_file_path() -> Path:
