@@ -170,12 +170,13 @@ def status(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
     """Show connection info (server, user)."""
-    url = _server_url()
+    # status works even with no active server (unlike other commands).
+    url = _server_override or _state().active_server
     state = _state()
-    token = state.get_token(url)
-    email = state.get_email(url)
+    token = state.get_token(url) if url else None
+    email = state.get_email(url) if url else None
     if plain:
-        print(f"server={url}")
+        print(f"server={url or '(none)'}")
         if token:
             print(f"user={email or 'unknown'}")
             print("status=logged_in")
@@ -186,7 +187,7 @@ def status(
     table = Table(show_header=False, box=None, pad_edge=False)
     table.add_column(style="bold")
     table.add_column()
-    table.add_row("Server", url)
+    table.add_row("Server", url or "(none)")
     if token:
         table.add_row("User", email or "unknown")
         table.add_row("Status", "[green]logged in[/green]")
