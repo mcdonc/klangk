@@ -37,6 +37,12 @@ def _provider(**overrides):
     return oidc.OIDCProvider(**defaults)
 
 
+class TestGet:
+    def test_missing_key_raises(self):
+        with pytest.raises(KeyError, match="missing-key"):
+            oidc._get({}, "missing-key")
+
+
 class TestLoadConfig:
     def test_no_config(self, monkeypatch):
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
