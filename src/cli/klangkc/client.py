@@ -710,7 +710,44 @@ async def _ws_shell(
                     None,
                 )
                 if match is None:
-                    raise ConnectionError(f"Window '{window}' not found")
+                    # Create the window if it doesn't exist.
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "cmd": "terminal_new_window",
+                                "name": window,
+                            }
+                        )
+                    )
+                    deadline = asyncio.get_event_loop().time() + 10
+                    while True:
+                        remaining = deadline - asyncio.get_event_loop().time()
+                        if remaining <= 0:  # pragma: no cover
+                            raise asyncio.TimeoutError
+                        raw = await asyncio.wait_for(
+                            ws.recv(), timeout=remaining
+                        )
+                        msg = json.loads(raw)
+                        if msg.get("type") == "terminal_windows":
+                            new_windows = msg.get("windows", [])
+                            match = next(
+                                (
+                                    w
+                                    for w in new_windows
+                                    if w.get("name") == window
+                                ),
+                                None,
+                            )
+                            break
+                        if msg.get("type") == "terminal_output":
+                            buffered_output.append(msg.get("data", ""))
+                        if msg.get("type") == "error":
+                            raise ConnectionError(
+                                f"Failed to create window: "
+                                f"{msg.get('message')}"
+                            )
+                    if match is None:  # pragma: no cover
+                        raise ConnectionError(f"Window '{window}' not created")
                 await ws.send(
                     json.dumps(
                         {

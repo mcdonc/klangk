@@ -146,6 +146,7 @@ klangkc edit my-project                  # interactive edit (name, image, comman
 klangkc edit my-project --env FOO=bar    # set env var via flag
 klangkc dup my-project my-copy           # duplicate a workspace
 klangkc shell my-project                 # drop into bash inside the container
+klangkc shell my-project debug           # attach to the "debug" terminal window (created if it doesn't exist)
 klangkc sandbox myws                     # create/reconnect from .klangk-sandbox.yaml
 klangkc sandbox myws ~/projects/myapp    # specify sandbox root explicitly
 klangkc sandbox myws --force-setup       # re-run copy and setup on existing workspace
@@ -199,6 +200,24 @@ tildes freely in commands and text without triggering the escape.
 > also end the session, but the escape sequence is the clean way to
 > disconnect without interrupting a running process inside the
 > container.
+
+## Named terminal windows
+
+`klangkc shell` accepts an optional terminal name argument to connect to
+a specific terminal window inside the workspace:
+
+```bash
+klangkc shell my-project build    # attach to the "build" window
+klangkc shell my-project logs     # attach to the "logs" window
+```
+
+If the named window doesn't exist, it is created automatically. This
+lets you open multiple named terminals from the CLI without using the web
+UI. The new window also appears as a tab in the web UI for anyone
+viewing the workspace.
+
+Without a terminal name, `klangkc shell` connects to the currently
+active window.
 
 ## Terminal behavior differences
 
