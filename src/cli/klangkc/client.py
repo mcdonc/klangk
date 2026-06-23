@@ -535,7 +535,7 @@ async def _ws_shell(
     command_override: str | None = None,
     window: str | None = None,
     forward_agent: bool = False,
-    pre_shell=None,
+    sandbox_setup=None,
     max_size: int = _WS_MAX_SIZE,
 ) -> None:
     """Run the interactive PTY shell over WebSocket.
@@ -545,7 +545,7 @@ async def _ws_shell(
     command_override, if set, overrides the workspace default command.
     window, if set, selects a specific window by name. Use
     ``handle:window_name`` to join another user's shared window.
-    pre_shell, if set, is an async callable(ws) invoked after the
+    sandbox_setup, if set, is an async callable(ws) invoked after the
     workspace is ready but before the terminal starts.  Used by
     ``sandbox`` to run copy/setup on the same connection.
     """
@@ -554,10 +554,6 @@ async def _ws_shell(
     ) as ws:
         # 1. Connect to workspace
         await _wait_workspace_ready(ws, workspace_id)
-
-        # 1a. Run pre-shell hook (sandbox setup) if provided.
-        if pre_shell is not None:
-            await pre_shell(ws)
 
         # 2a. Start SSH agent forwarding if requested and available.
         ssh_agent_active = False
@@ -615,7 +611,12 @@ async def _ws_shell(
                     logger.info("[ssh-agent] timed out waiting for start")
                 pass  # proceed without agent forwarding
 
-        # 2b. Start terminal
+        # 2b. Run pre-shell hook (sandbox setup) after agent forwarding
+        # is active so that setup scripts can use SSH (e.g. git clone).
+        if sandbox_setup is not None:
+            await sandbox_setup(ws)
+
+        # 2c. Start terminal
         cols, rows = _get_terminal_size()
         start_msg: dict = {
             "cmd": "terminal_start",
