@@ -308,10 +308,11 @@ class TestWsShell:
             s for s in sent if s.get("cmd") == "terminal_select_window"
         ]
         assert len(select_msgs) == 1
-        assert select_msgs[0]["index"] == 1
+        assert select_msgs[0]["window_id"] == "@1"
 
     @pytest.mark.asyncio
-    async def test_ws_shell_select_own_window_not_found(self):
+    async def test_ws_shell_creates_missing_own_window(self):
+        """Missing window is auto-created via terminal_new_window."""
         from klangkc.client import _ws_shell
 
         ws_mock = MagicMock()
@@ -341,18 +342,54 @@ class TestWsShell:
                         ],
                     }
                 ),
-                json.dumps({"type": "terminal_output", "data": "$ "}),
+                # Response to terminal_new_window
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "1",
+                                "active": False,
+                            },
+                            {
+                                "id": "@1",
+                                "index": 1,
+                                "name": "nonexistent",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
-            with pytest.raises(ConnectionError, match="not found"):
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+        ):
+            try:
                 await _ws_shell(
                     "ws://localhost/ws",
                     "token",
                     "ws1",
                     window="nonexistent",
                 )
+            except Exception:
+                pass
+
+        sent = [json.loads(c[0][0]) for c in ws_mock.send.call_args_list]
+        cmds = [m.get("cmd") for m in sent]
+        assert "terminal_new_window" in cmds
+        new_msg = next(
+            m for m in sent if m.get("cmd") == "terminal_new_window"
+        )
+        assert new_msg["name"] == "nonexistent"
+        assert "terminal_select_window" in cmds
 
     @pytest.mark.asyncio
     async def test_ws_shell_join_shared_terminal(self):
@@ -1194,7 +1231,7 @@ class TestShellConnectionError:
 
         monkeypatch.setattr(
             "klangkc.main.asyncio.run",
-            MagicMock(side_effect=ConnectionError("Window 'x' not found")),
+            MagicMock(side_effect=ConnectionError("Server error")),
         )
         monkeypatch.setattr("klangkc.client._drain_stdin", lambda: None)
         monkeypatch.setattr("klangkc.client.reset_terminal", lambda: None)
@@ -2310,3 +2347,284 @@ class TestSandboxSetupHook:
         parsed = [json.loads(s) for s in sent]
         cmds = [m.get("cmd") for m in parsed]
         assert "terminal_start" in cmds
+
+
+class TestWindowAutoCreate:
+    """Test that _ws_shell creates a window when it doesn't exist."""
+
+    async def test_creates_missing_window(self):
+        from klangkc.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+
+        # First recv: workspace_ready
+        # Second recv: terminal_windows with only "bash" (no "debug")
+        # Third recv: terminal_windows after creation (includes "debug")
+        # Fourth recv: stop
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                            {
+                                "id": "@1",
+                                "index": 1,
+                                "name": "debug",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    window="debug",
+                )
+            except Exception:
+                pass
+
+        sent = [json.loads(c[0][0]) for c in ws_mock.send.call_args_list]
+        cmds = [m.get("cmd") for m in sent]
+        assert "terminal_new_window" in cmds
+        new_win_msg = next(
+            m for m in sent if m.get("cmd") == "terminal_new_window"
+        )
+        assert new_win_msg["name"] == "debug"
+        assert "terminal_select_window" in cmds
+        select_msg = next(
+            m for m in sent if m.get("cmd") == "terminal_select_window"
+        )
+        assert select_msg["window_id"] == "@1"
+
+    async def test_selects_existing_window(self):
+        from klangkc.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                            {
+                                "id": "@1",
+                                "index": 1,
+                                "name": "debug",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    window="debug",
+                )
+            except Exception:
+                pass
+
+        sent = [json.loads(c[0][0]) for c in ws_mock.send.call_args_list]
+        cmds = [m.get("cmd") for m in sent]
+        # Should select directly, not create
+        assert "terminal_new_window" not in cmds
+        assert "terminal_select_window" in cmds
+
+    async def test_create_window_buffers_output(self):
+        """terminal_output during window creation is buffered."""
+        from klangkc.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                # Output arrives during window creation wait
+                json.dumps({"type": "terminal_output", "data": "$ "}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": False,
+                            },
+                            {
+                                "id": "@1",
+                                "index": 1,
+                                "name": "build",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch("websockets.connect", return_value=ws_mock),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+        ):
+            try:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    window="build",
+                )
+            except Exception:
+                pass
+
+        sent = [json.loads(c[0][0]) for c in ws_mock.send.call_args_list]
+        cmds = [m.get("cmd") for m in sent]
+        assert "terminal_new_window" in cmds
+
+    async def test_create_window_error_response(self):
+        """Error from server during window creation raises ConnectionError."""
+        from klangkc.client import _ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "error",
+                        "message": "Failed to create window: tmux error",
+                    }
+                ),
+            ]
+        )
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with pytest.raises(ConnectionError, match="Failed to create"):
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    window="bad",
+                )

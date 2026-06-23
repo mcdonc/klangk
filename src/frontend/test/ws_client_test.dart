@@ -144,7 +144,7 @@ void main() {
       client.sendTerminalResize(120, 40);
       client.sendTerminalNewWindow();
       client.sendTerminalNewWindow(name: 'build');
-      client.sendTerminalSelectWindow(1);
+      client.sendTerminalSelectWindow('@1');
       client.sendTerminalCloseWindow(1);
       client.sendTerminalRenameWindow(0, 'test');
       client.sendTerminalListWindows();
@@ -835,7 +835,7 @@ void main() {
       client.sendTerminalInput('ls\n');
       client.sendTerminalResize(120, 40);
       client.sendTerminalNewWindow(name: 'build');
-      client.sendTerminalSelectWindow(2);
+      client.sendTerminalSelectWindow('@2');
       client.sendTerminalCloseWindow(1);
       client.sendTerminalRenameWindow(0, 'main');
       client.sendTerminalListWindows();
@@ -858,7 +858,7 @@ void main() {
       expect(msgs[3], {'cmd': 'terminal_input', 'data': 'ls\n'});
       expect(msgs[4], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
       expect(msgs[5], {'cmd': 'terminal_new_window', 'name': 'build'});
-      expect(msgs[6], {'cmd': 'terminal_select_window', 'index': 2});
+      expect(msgs[6], {'cmd': 'terminal_select_window', 'window_id': '@2'});
       expect(msgs[7], {'cmd': 'terminal_close_window', 'index': 1});
       expect(msgs[8],
           {'cmd': 'terminal_rename_window', 'index': 0, 'name': 'main'});

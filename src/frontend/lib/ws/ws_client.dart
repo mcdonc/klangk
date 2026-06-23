@@ -472,8 +472,8 @@ class WsClient extends ChangeNotifier {
     _send(msg);
   }
 
-  void sendTerminalSelectWindow(int index) {
-    _send({'cmd': 'terminal_select_window', 'index': index});
+  void sendTerminalSelectWindow(String windowId) {
+    _send({'cmd': 'terminal_select_window', 'window_id': windowId});
   }
 
   void sendTerminalCloseWindow(int index) {

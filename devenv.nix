@@ -39,6 +39,7 @@ in
       bash # explicit bash for shell scripts (CI /bin/sh may be dash)
       coreutils # GNU du (macOS BSD du lacks -b)
       docker-client
+      expect
       flutter
       git # "error: Failed to find git" during devenv:git-hooks:install
       gzip
@@ -220,6 +221,12 @@ in
   scripts.test-cli-e2e.exec = ''
     cd $DEVENV_ROOT
     exec python -m pytest src/cli/e2e-tests \
+      -v -p no:xdist --no-cov "$@"
+  '';
+
+  scripts.test-terminal-windows-e2e.exec = ''
+    cd $DEVENV_ROOT
+    exec python -m pytest src/cli/e2e-tests/test_terminal_windows_e2e.py \
       -v -p no:xdist --no-cov "$@"
   '';
 

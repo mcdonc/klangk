@@ -1349,6 +1349,21 @@ class Connection:
             self._broadcast_shared_terminals(ws_session)
         self._save_state_snapshot(ws_session)
 
+    def _notify_user_terminal_windows(self, windows: list[dict]) -> None:
+        """Send terminal_windows to all connections for this user."""
+        ws_session = state.get_session(self.workspace_id)
+        if not ws_session:
+            self.sock.send_json(
+                {"type": "terminal_windows", "windows": windows}
+            )
+            return
+        user_id = self.user["id"]
+        msg = {"type": "terminal_windows", "windows": windows}
+        for sock in list(ws_session.subscribers):
+            conn = state.connections.get(sock)
+            if conn and conn.user.get("id") == user_id:
+                sock.send_json(msg)
+
     async def handle_terminal_new_window(self, msg: dict) -> None:
         t0 = time.monotonic()
         if not self.container_id or not self._user_home:
@@ -1365,9 +1380,7 @@ class Connection:
                 time.monotonic() - t0,
             )
             self._sync_terminal_windows(windows)
-            self.sock.send_json(
-                {"type": "terminal_windows", "windows": windows}
-            )
+            self._notify_user_terminal_windows(windows)
         except Exception as e:
             send_error(self.sock, f"Failed to create window: {e}")
 
@@ -1376,15 +1389,23 @@ class Connection:
         if not self.container_id or not self._user_home:
             return
 
-        session_name = self._tmux_session_name()
-        index = msg.get("index", 0)
+        # Use this connection's grouped session so select-window only
+        # affects this client, not other connections to the same workspace.
+        session = self.terminal_session
+        session_name = (
+            session._tmux_session_name
+            if session and session._tmux_session_name
+            else self._tmux_session_name()
+        )
+        # Prefer @N window_id (stable); fall back to index for compat.
+        target: int | str = msg.get("window_id") or msg.get("index", 0)
         try:
             await terminal.select_window(
-                self.container_id, session_name, index
+                self.container_id, session_name, target
             )
             logger.info(
-                "handle_terminal_select_window: index=%s %.3fs",
-                index,
+                "handle_terminal_select_window: target=%s %.3fs",
+                target,
                 time.monotonic() - t0,
             )
         except Exception as e:
@@ -1401,9 +1422,7 @@ class Connection:
                 self.container_id, session_name, index
             )
             self._sync_terminal_windows(windows)
-            self.sock.send_json(
-                {"type": "terminal_windows", "windows": windows}
-            )
+            self._notify_user_terminal_windows(windows)
         except Exception as e:
             send_error(self.sock, f"Failed to close window: {e}")
 
@@ -1425,9 +1444,7 @@ class Connection:
                 self.container_id, session_name
             )
             self._sync_terminal_windows(windows)
-            self.sock.send_json(
-                {"type": "terminal_windows", "windows": windows}
-            )
+            self._notify_user_terminal_windows(windows)
         except Exception as e:
             send_error(self.sock, f"Failed to rename window: {e}")
 
@@ -1435,7 +1452,14 @@ class Connection:
         if not self.container_id or not self._user_home:
             return
 
-        session_name = self._tmux_session_name()
+        # Use this connection's grouped session so the active flag
+        # reflects this client's view, not the base session's.
+        session = self.terminal_session
+        session_name = (
+            session._tmux_session_name
+            if session and session._tmux_session_name
+            else self._tmux_session_name()
+        )
         try:
             windows = await terminal.list_windows(
                 self.container_id, session_name

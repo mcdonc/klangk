@@ -3655,7 +3655,7 @@ class TestTerminalWindowHandlers:
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
 
-    async def test_select_window(self):
+    async def test_select_window_by_index(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
@@ -3665,6 +3665,17 @@ class TestTerminalWindowHandlers:
         ) as mock_sel:
             await conn.handle_terminal_select_window({"index": 2})
         mock_sel.assert_called_once_with("cid", "uid", 2)
+
+    async def test_select_window_by_id(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch(
+            "klangk_backend.terminal.select_window",
+        ) as mock_sel:
+            await conn.handle_terminal_select_window({"window_id": "@3"})
+        mock_sel.assert_called_once_with("cid", "uid", "@3")
 
     async def test_select_window_error(self):
         sock = _mock_sock()

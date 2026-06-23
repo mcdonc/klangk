@@ -6,6 +6,7 @@ lifecycle/queue logic against an injected fake shell.
 """
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -101,8 +102,16 @@ class FakeShell:
             raise self._close_error
 
 
+@contextlib.contextmanager
 def _patch(fake):
-    return patch(SHELL_FACTORY, return_value=fake)
+    with (
+        patch(SHELL_FACTORY, return_value=fake),
+        patch(
+            "klangk_backend.terminal._ensure_base_session",
+            new_callable=AsyncMock,
+        ),
+    ):
+        yield
 
 
 def _drain_text(session):
@@ -220,9 +229,11 @@ class TestStart:
         tmux_tail = fake.argv[tmux_idx:]
         assert "-e" in tmux_tail
         assert "HOME=/home/alice" in tmux_tail
-        # Session named by user_id; -A reattaches on reconnect
-        assert "-A" in tmux_tail
-        assert tmux_tail[tmux_tail.index("-s") + 1] == "uid-123"
+        # Grouped session: -t targets the base session, -s is a unique name
+        assert "-t" in tmux_tail
+        assert tmux_tail[tmux_tail.index("-t") + 1] == "uid-123"
+        grouped_name = tmux_tail[tmux_tail.index("-s") + 1]
+        assert grouped_name.startswith("uid-123-")
         await s.stop()
 
     async def test_no_user_home_by_default(self):
@@ -1097,3 +1108,90 @@ class TestTerminalSessionJoin:
         assert "switch-client" not in fake.argv
         assert s.read_only is True
         await s.stop()
+
+
+class TestEnsureBaseSession:
+    async def test_session_already_exists(self):
+        """Skip creation if tmux has-session succeeds."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        proc_mock = AsyncMock()
+        proc_mock.wait = AsyncMock(return_value=0)
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc_mock,
+        ) as mock_exec:
+            await _ensure_base_session("cid", "my-session")
+        # has-session called, but new-session not called
+        assert mock_exec.call_count == 1
+        call_args = mock_exec.call_args[0]
+        assert "has-session" in call_args
+
+    async def test_session_does_not_exist(self):
+        """Create detached session when has-session fails."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        has_proc = AsyncMock()
+        has_proc.wait = AsyncMock(return_value=1)
+        new_proc = AsyncMock()
+        new_proc.wait = AsyncMock(return_value=0)
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=[has_proc, new_proc],
+        ) as mock_exec:
+            await _ensure_base_session(
+                "cid", "my-session", user_home="/home/u"
+            )
+        assert mock_exec.call_count == 2
+        new_args = mock_exec.call_args_list[1][0]
+        assert "new-session" in new_args
+        assert "-d" in new_args
+        assert "-s" in new_args
+
+    async def test_has_session_exception(self):
+        """Falls through to create if has-session raises."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        new_proc = AsyncMock()
+        new_proc.wait = AsyncMock(return_value=0)
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=[OSError("boom"), new_proc],
+        ) as mock_exec:
+            await _ensure_base_session("cid", "my-session")
+        assert mock_exec.call_count == 2
+
+    async def test_create_failure_logs_warning(self):
+        """Warning logged when new-session fails."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        has_proc = AsyncMock()
+        has_proc.wait = AsyncMock(return_value=1)
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=[has_proc, OSError("create failed")],
+        ):
+            # Should not raise
+            await _ensure_base_session("cid", "my-session")
+
+    async def test_env_args_passed(self):
+        """HOME and SSH_AUTH_SOCK are passed as -e flags."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        has_proc = AsyncMock()
+        has_proc.wait = AsyncMock(return_value=1)
+        new_proc = AsyncMock()
+        new_proc.wait = AsyncMock(return_value=0)
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=[has_proc, new_proc],
+        ) as mock_exec:
+            await _ensure_base_session(
+                "cid",
+                "my-session",
+                user_home="/home/u",
+                ssh_agent_socket="/tmp/agent.sock",
+            )
+        new_args = mock_exec.call_args_list[1][0]
+        assert "HOME=/home/u" in new_args
+        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_args
