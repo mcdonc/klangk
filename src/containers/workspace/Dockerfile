@@ -10,9 +10,6 @@ RUN npm install -g @earendil-works/pi-coding-agent@0.79.9 \
 
 # Plugin tools: flat directory, all on PATH via /opt/klangk/bin/
 ENV PATH="/opt/klangk/bin:${PATH}"
-# Let non-interactive bash shells (sandbox setup scripts, `bash -c`) source
-# the same environment as interactive shells — PATH, Pi agent config, etc.
-ENV BASH_ENV="/etc/bash.bashrc"
 COPY --from=plugin-tools / /opt/klangk/bin/
 RUN echo 'PATH="/opt/klangk/bin:${PATH}"' >> /etc/environment
 
