@@ -1,5 +1,14 @@
 {
   "name": "@klangk/hermes",
   "version": "1.0.0",
-  "description": "Hermes agent — NousResearch's terminal-based AI assistant"
+  "description": "Hermes agent — NousResearch's terminal-based AI assistant",
+  "klangk": {
+    "config": {
+      "KLANGK_HERMES_USE_LLM_PROXY": {
+        "description": "Set to 'false' to disable klangk's llm-proxy for Hermes inference",
+        "default": "true",
+        "scope": "container"
+      }
+    }
+  }
 }
