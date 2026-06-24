@@ -10,10 +10,9 @@ RUN npm install -g @earendil-works/pi-coding-agent@0.79.9 \
 
 # Plugin tools: flat directory, all on PATH via /opt/klangk/bin/
 ENV PATH="/opt/klangk/bin:${PATH}"
-# BASH_ENV is set near the end of this Dockerfile (after all RUN steps) so
-# it only affects runtime, not build-time bash invocations.  Setting it
-# earlier causes infinite recursion: every bash RUN step sources bash.bashrc,
-# which spawns more bash processes that also source bash.bashrc.
+# Let non-interactive bash shells (sandbox setup scripts, `bash -c`) source
+# the same environment as interactive shells — PATH, Pi agent config, etc.
+ENV BASH_ENV="/etc/bash.bashrc"
 COPY --from=plugin-tools / /opt/klangk/bin/
 RUN echo 'PATH="/opt/klangk/bin:${PATH}"' >> /etc/environment
 
@@ -66,10 +65,8 @@ COPY tmux.conf /etc/tmux.conf
 # Run plugin on-image-build hooks (alphabetical by plugin name).
 # These run as root at image build time for system-level config.
 RUN for f in /opt/klangk/hooks/*/on-image-build.sh; do \
-      [ -f "$f" ] || continue; \
-      echo "Running hook: $f"; \
-      chmod +x "$f" && "$f"; \
-    done
+      [ -x "$f" ] && "$f"; \
+    done 2>/dev/null; true
 
 # Fix non-root group ownership that causes crun fchownat errors with
 # --userns=keep-id. crun cannot remap groups like utmp, shadow, adm, ssh
@@ -87,9 +84,5 @@ RUN chgrp root \
 # No sudoers rule is baked into the image — the entrypoint runs as root
 # (inside the user namespace) and writes or removes /etc/sudoers.d/klangk
 # before dropping to the klangk user via gosu.
-
-# Let non-interactive bash shells (sandbox setup scripts, `bash -c`) source
-# the same environment as interactive shells — PATH, Pi agent config, etc.
-ENV BASH_ENV="/etc/bash.bashrc"
 
 ENTRYPOINT ["/opt/klangk/entrypoint.sh"]
