@@ -18,15 +18,27 @@ export PATH="/opt/klangk/bin:$PATH"
 # Default editor for git commit, crontab -e, etc.
 export EDITOR=nano
 
-# Per-user Pi agent config (extensions, settings, models, skills).
-python3 /opt/klangk/bin/klangk-setup-clankers
+# Re-entry guard for the expensive setup below (agent config + plugin hooks).
+# BASH_ENV=/etc/bash.bashrc (set in the image) makes EVERY non-interactive bash
+# source this file. A heavy process tree -- e.g. an installer at image-build
+# time that spawns thousands of bash subshells -- would otherwise re-run
+# klangk-setup-clankers + every on-shell-init hook in each one: a fork storm
+# that exhausts memory and crashes the VM. The flag is exported so children
+# inherit it and skip the section (they already have the resulting env). PATH
+# and EDITOR above stay unguarded -- cheap and idempotent.
+if [ -z "${KLANGK_BASHRC_DONE:-}" ]; then
+  export KLANGK_BASHRC_DONE=1
 
-# Run plugin on-shell-init hooks (alphabetical by plugin name).
-# These run as the klangk user on every shell open.
-for f in /opt/klangk/hooks/*/on-shell-init.sh; do
-  # shellcheck disable=SC2181
-  [ -x "$f" ] && "$f" || true
-done
+  # Per-user Pi agent config (extensions, settings, models, skills).
+  python3 /opt/klangk/bin/klangk-setup-clankers
+
+  # Run plugin on-shell-init hooks (alphabetical by plugin name).
+  # These run as the klangk user on every shell open.
+  for f in /opt/klangk/hooks/*/on-shell-init.sh; do
+    # shellcheck disable=SC2181
+    [ -x "$f" ] && "$f" || true
+  done
+fi
 
 # --- Interactive-only section --------------------------------------------
 
