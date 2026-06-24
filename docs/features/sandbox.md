@@ -297,7 +297,7 @@ the workspace is left in an inconsistent state. To recover:
 
 ## Example
 
-See the [examples/](https://github.com/mcdonc/klangk/tree/main/examples)
+See the [sandboxes/](https://github.com/mcdonc/klangk/tree/main/sandboxes)
 directory in the klangk repo for working sandbox configurations.
 
 A project that needs nix/devenv, custom dotfiles, a data directory,

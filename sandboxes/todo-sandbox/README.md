@@ -6,7 +6,7 @@ used by CI or production — only for interactive evaluation.
 ## Usage
 
 ```bash
-cd examples/sandbox
+cd sandboxes/todo-sandbox
 cp .env.example .env
 klangkc sandbox -A
 ```

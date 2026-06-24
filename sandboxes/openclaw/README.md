@@ -10,7 +10,7 @@ dynamically via an openclaw SecretRef exec provider.
 ## Usage
 
 ```bash
-cd examples/openclaw
+cd sandboxes/openclaw
 klangkc sandbox openclaw
 ```
 
