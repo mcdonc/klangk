@@ -1,6 +1,7 @@
 """Tests for container: idle timeout parsing, activity tracking, callbacks, port allocation."""
 
 import asyncio
+import os
 import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -57,6 +58,53 @@ class TestImagePullPolicy:
         with caplog.at_level("WARNING"):
             assert container.image_pull_policy() == "never"
         assert "Invalid KLANGK_IMAGE_PULL_POLICY" in caplog.text
+
+
+class TestWorkspaceDevMounts:
+    def test_flag_off_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_WORKSPACE_DEV", raising=False)
+        assert container.workspace_dev_mounts() == []
+
+    def test_flag_off_ignores_dir(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("KLANGK_WORKSPACE_DEV", raising=False)
+        monkeypatch.setenv(
+            "KLANGK_WORKSPACE_DEV_EXTENSIONS_DIR", str(tmp_path)
+        )
+        assert container.workspace_dev_mounts() == []
+
+    def test_flag_on_dir_unset_returns_empty(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_WORKSPACE_DEV", "1")
+        monkeypatch.delenv(
+            "KLANGK_WORKSPACE_DEV_EXTENSIONS_DIR", raising=False
+        )
+        assert container.workspace_dev_mounts() == []
+
+    def test_flag_on_missing_dir_warns_and_empty(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        monkeypatch.setenv("KLANGK_WORKSPACE_DEV", "true")
+        missing = tmp_path / "nope"
+        monkeypatch.setenv("KLANGK_WORKSPACE_DEV_EXTENSIONS_DIR", str(missing))
+        with caplog.at_level("WARNING"):
+            assert container.workspace_dev_mounts() == []
+        assert "is not a directory" in caplog.text
+
+    def test_flag_on_valid_dir_returns_mount(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("KLANGK_WORKSPACE_DEV", "yes")
+        ext = tmp_path / "ext"
+        ext.mkdir()
+        monkeypatch.setenv("KLANGK_WORKSPACE_DEV_EXTENSIONS_DIR", str(ext))
+        mounts = container.workspace_dev_mounts()
+        assert mounts == [
+            f"{os.path.realpath(ext)}:/home/klangk/.pi/agent/extensions:ro"
+        ]
+
+    def test_disabled_value_returns_empty(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("KLANGK_WORKSPACE_DEV", "0")
+        ext = tmp_path / "ext"
+        ext.mkdir()
+        monkeypatch.setenv("KLANGK_WORKSPACE_DEV_EXTENSIONS_DIR", str(ext))
+        assert container.workspace_dev_mounts() == []
 
 
 class TestActivityTracking:

@@ -84,6 +84,39 @@ def _is_named_volume(source: str) -> bool:
     return "/" not in source and not source.startswith(".")
 
 
+def workspace_dev_mounts() -> list[str]:
+    """Opt-in dev bind mounts for fast workspace iteration.
+
+    Enabled with ``KLANGK_WORKSPACE_DEV=1``. Mounts a host directory of Pi
+    extensions read-only into ``~/.pi/agent/extensions`` — which Pi
+    auto-discovers in addition to the image's baked extensions
+    (see ``klangk-setup-clankers.py``), so editing an extension on the host
+    takes effect on the next workspace open with **no image rebuild**, and the
+    baked builtin/plugin extensions are not hidden (additive mount).
+
+    The host source is ``KLANGK_WORKSPACE_DEV_EXTENSIONS_DIR``. Returns an empty
+    list (default/prod behaviour) when the flag is off, the dir is unset, or the
+    dir does not exist.
+    """
+    flag = util.resolve_env_secret("KLANGK_WORKSPACE_DEV", "")
+    if flag.lower() not in ("1", "true", "yes"):
+        return []
+    ext_dir = util.resolve_env_secret(
+        "KLANGK_WORKSPACE_DEV_EXTENSIONS_DIR", ""
+    )
+    if not ext_dir:
+        return []
+    ext_dir = os.path.realpath(ext_dir)
+    if not os.path.isdir(ext_dir):
+        logger.warning(
+            "KLANGK_WORKSPACE_DEV=1 but KLANGK_WORKSPACE_DEV_EXTENSIONS_DIR=%r "
+            "is not a directory; skipping dev extension mount.",
+            ext_dir,
+        )
+        return []
+    return [f"{ext_dir}:/home/klangk/.pi/agent/extensions:ro"]
+
+
 def _is_protected(source: str) -> bool:
     """True if source is a protected host path that must never be mounted.
 
@@ -541,6 +574,9 @@ class ContainerRegistry:
         if config_path:
             binds.append(f"{config_path}:/opt/klangk/config:ro")
         binds += extra_mounts or []
+        # Opt-in dev mounts (KLANGK_WORKSPACE_DEV=1): overlay host-side Pi
+        # extensions so they can be edited without rebuilding the image.
+        binds += workspace_dev_mounts()
 
         publish = [
             (host_port, CONTAINER_PORT_START + i)
