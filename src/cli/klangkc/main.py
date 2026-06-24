@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 
 import httpx
@@ -911,6 +912,12 @@ def sandbox(
         "--force-setup",
         help="Re-run copy and setup even if the workspace already exists",
     ),
+    open_mode: str = typer.Option(
+        "shell",
+        "--open",
+        "-o",
+        help="What to open after setup: shell (default), browser, or none",
+    ),
 ) -> None:
     """Create or reconnect to a sandbox workspace."""
     if not isinstance(forward_agent, bool):
@@ -962,6 +969,49 @@ def sandbox(
         _err.print(f"Workspace [bold]{workspace}[/bold] created.")
         created = True
 
+    need_setup = created or force_setup
+    open_mode = open_mode.lower()
+    if open_mode not in ("shell", "browser", "none"):
+        _err.print(
+            f"[red]Invalid --open mode:[/red] {open_mode!r}"
+            " (expected shell, browser, or none)"
+        )
+        raise typer.Exit(code=1)
+
+    if open_mode in ("browser", "none"):
+        # Run setup if needed, then open browser or just exit.
+        if need_setup:
+            _err.print(f"Connecting to [bold]{workspace}[/bold] for setup...")
+            try:
+                asyncio.run(
+                    _sandbox_setup_only(
+                        ws_url,
+                        token,
+                        ws.id,
+                        config,
+                        sandbox_root,
+                        handle,
+                        max_size=_ws_max_size(),
+                    )
+                )
+            except websockets.InvalidStatus as e:  # pragma: no cover
+                if e.response.status_code in (4001, 4002):
+                    _err.print(
+                        "[red]Session expired.[/red] Run"
+                        " [bold]klangkc login[/bold] to re-authenticate."
+                    )
+                    raise typer.Exit(code=1) from None
+                raise
+            except ConnectionError as e:
+                _err.print(f"[red]{e}[/red]")
+                raise typer.Exit(code=1) from None
+
+        if open_mode == "browser":
+            workspace_url = f"{server_url}/#/workspace/{ws.id}"
+            _err.print(f"Opening [bold]{workspace_url}[/bold]")
+            webbrowser.open(workspace_url)
+        return
+
     # Single WebSocket connection: setup (if new) then shell.
     forward_agent = _resolve_forward_agent(
         forward_agent,
@@ -975,7 +1025,7 @@ def sandbox(
                 ws_url,
                 token,
                 ws.id,
-                config=config if (created or force_setup) else None,
+                config=config if need_setup else None,
                 sandbox_root=sandbox_root,
                 handle=handle,
                 forward_agent=forward_agent,
@@ -997,6 +1047,24 @@ def sandbox(
         _drain_stdin()
         _err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
+
+
+async def _sandbox_setup_only(
+    ws_url,
+    token,
+    workspace_id,
+    config,
+    sandbox_root,
+    handle,
+    max_size=None,
+):
+    """Connect to workspace, run setup, then disconnect (no shell)."""
+    kwargs = {}
+    if max_size is not None:
+        kwargs["max_size"] = max_size
+    async with websockets.connect(f"{ws_url}?token={token}", **kwargs) as ws:
+        await _wait_workspace_ready(ws, workspace_id)
+        await _sandbox_setup(ws, config, sandbox_root, handle)
 
 
 async def _sandbox_connect(  # pragma: no cover

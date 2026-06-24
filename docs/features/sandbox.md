@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 # Sandbox
 
 `klangkc sandbox` creates and connects to a workspace using a
@@ -166,7 +168,7 @@ next shell session without recreating the workspace.
 ## Command reference
 
 ```text
-klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup]
+klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup] [--open/-o MODE]
 ```
 
 | Argument/Flag        | Default | Description                                                             |
@@ -175,6 +177,7 @@ klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup]
 | `PATH`               | `.`     | Path to the sandbox root (directory containing `.klangk-sandbox.yaml`). |
 | `--forward-agent/-A` | `false` | Forward local SSH agent into the container.                             |
 | `--force-setup`      | `false` | Re-run copy and setup steps even if the workspace exists.               |
+| `--open/-o MODE`     | `shell` | What to open after setup: `shell` (default), `browser`, or `none`.      |
 
 ### Behavior
 
@@ -191,6 +194,27 @@ klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup]
 **Subsequent runs** (workspace already exists):
 
 1. Connect to the existing workspace shell
+
+### Open modes
+
+The `--open` / `-o` flag controls what happens after the workspace is
+ready:
+
+- **`shell`** (default): Open an interactive terminal shell inside the
+  container. This is the original behavior.
+- **`browser`**: Open the workspace in your default web browser
+  (Klangk's web UI). Setup still runs if needed, but no CLI shell is
+  started.
+- **`none`**: Create the workspace and run setup, then exit. Useful for
+  provisioning workspaces in scripts or CI without opening anything.
+
+Examples:
+
+```bash
+klangkc sandbox myws -o browser      # create + open in browser
+klangkc sandbox myws -o none         # create + setup only, no shell
+klangkc sandbox myws                 # create + open shell (default)
+```
 
 The copy and setup steps only run on first creation. On reconnect,
 the command skips straight to the shell — it does not re-copy files
