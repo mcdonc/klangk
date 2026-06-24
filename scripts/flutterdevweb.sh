@@ -52,6 +52,18 @@ if [ "${KLANGK_WEB_HOT_RELOAD:-0}" = "1" ]; then
   fi
 fi
 
+# Extension-free auto-reload (KLANGK_WEB_DEV_RELOAD=1): hand the dev server to
+# the supervisor (scripts/flutter_reload_server.py), which owns the `flutter run`
+# process, restarts it on save (a plain browser reload does NOT recompile), and
+# pushes an SSE reload once it's serving again. nginx injects the EventSource
+# client. Works in any browser, no Dart Debug Extension.
+if [ "${KLANGK_WEB_DEV_RELOAD:-0}" = "1" ]; then
+  export KLANGK_WEB_FLUTTER="$FLUTTER" KLANGK_WEB_DEV_PORT="$DEV_PORT"
+  echo "Auto-reload supervisor: edit + save -> dev-server restart -> tab reloads"
+  echo "  -> browse the app at nginx :${KLANGK_NGINX_PORT:-8995} (any browser)"
+  exec python3 "$SCRIPT_DIR/flutter_reload_server.py"
+fi
+
 echo "Starting Flutter dev server on 127.0.0.1:${DEV_PORT}"
 echo "  -> with KLANGK_WEB_DEV=1, browse the app at nginx :${KLANGK_NGINX_PORT:-8995}"
 echo "  -> press R for hot restart, r for hot reload, q to quit"

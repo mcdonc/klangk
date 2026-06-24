@@ -165,6 +165,9 @@ in
   # Port the opt-in `flutter run` dev server listens on (nginx proxies the app
   # root here when KLANGK_WEB_DEV=1). Between nginx (8995) and backend (8997).
   env.KLANGK_WEB_DEV_PORT = lib.mkOverride 1500 "8996";
+  # Port for the opt-in extension-free livereload SSE server
+  # (scripts/flutter_reload_server.py), used when KLANGK_WEB_DEV_RELOAD=1.
+  env.KLANGK_WEB_DEV_RELOAD_PORT = lib.mkOverride 1500 "8994";
   env.KLANGK_DATA_DIR = lib.mkOverride 1500 (
     config.devenv.root + "/.devenv/state/klangk/data"
   );

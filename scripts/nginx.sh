@@ -145,9 +145,40 @@ if [ "${KLANGK_WEB_DEV:-0}" = "1" ]; then
       proxy_http_version 1.1;
     }
 "
+  # Extension-free auto-reload (KLANGK_WEB_DEV_RELOAD=1): proxy the livereload
+  # SSE stream (scripts/flutter_reload_server.py) and inject a tiny EventSource
+  # client into the served HTML via sub_filter. Browser-agnostic (Firefox /
+  # Safari / Chrome), no Dart Debug Extension. On a lib/** change the client
+  # reloads the tab, which makes the dev server recompile incrementally.
+  RELOAD_LOCATION=""
+  RELOAD_INJECT=""
+  if [ "${KLANGK_WEB_DEV_RELOAD:-0}" = "1" ]; then
+    _reload_port="${KLANGK_WEB_DEV_RELOAD_PORT:-8994}"
+    echo "nginx WEB DEV auto-reload: /__livereload -> :${_reload_port}, injecting EventSource client" >&2
+    RELOAD_LOCATION="
+    location = /__livereload {
+      proxy_pass http://127.0.0.1:${_reload_port};
+      proxy_http_version 1.1;
+      proxy_set_header Connection \"\";
+      proxy_buffering off;
+      proxy_cache off;
+      proxy_read_timeout 3600s;
+      chunked_transfer_encoding off;
+    }
+"
+    RELOAD_INJECT="
+      # Inject the livereload client and disable upstream compression so
+      # sub_filter can rewrite the HTML body.
+      proxy_set_header Accept-Encoding \"\";
+      sub_filter '</body>' '<script>(function(){try{var s=new EventSource(\"/__livereload\");s.onmessage=function(e){if(e.data===\"reload\")location.reload();};}catch(_){}})();</script></body>';
+      sub_filter_once on;
+"
+  fi
 else
   ROOT_UPSTREAM="http://127.0.0.1:${KLANGK_PORT}"
   DEV_API_WS_BLOCK=""
+  RELOAD_LOCATION=""
+  RELOAD_INJECT=""
 fi
 
 cat >"$NGINX_STATE/nginx.conf" <<NGINX
@@ -248,10 +279,10 @@ ${CONTAINER_ACL}
       return 401 '{\"error\":\"\$auth_token_error\",\"detail\":\"Workspace token \$auth_token_error\"}';
     }
 
-${DEV_API_WS_BLOCK}
+${DEV_API_WS_BLOCK}${RELOAD_LOCATION}
     location / {
       proxy_pass ${ROOT_UPSTREAM}/;
-      proxy_set_header Host \$http_host;
+${RELOAD_INJECT}      proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
       proxy_http_version 1.1;
