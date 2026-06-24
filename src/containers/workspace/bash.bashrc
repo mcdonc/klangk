@@ -1,45 +1,17 @@
 # shellcheck shell=bash
 # System-wide bash defaults for Klangk containers.
 # Users can override these in ~/.bashrc on the persistent home mount.
-#
-# This file is sourced in two contexts:
-#   1. Interactive shells (bash.bashrc) — full setup including terminal init
-#   2. Non-interactive shells via BASH_ENV — environment + agent config only
-#
-# The BASH_ENV mechanism lets sandbox setup scripts (which run via `sh -c`
-# → `bash -c`) get the same PATH, Pi agent config, and plugin hooks as
-# interactive shells, without needing to explicitly call setup-clankers.
-
-# --- Non-interactive-safe section (always runs) --------------------------
 
 # Plugin tools on PATH (ENV in Dockerfile is overridden by login shells).
 export PATH="/opt/klangk/bin:$PATH"
-
-# Default editor for git commit, crontab -e, etc.
-export EDITOR=nano
-
-# Per-user Pi agent config (extensions, settings, models, skills).
-python3 /opt/klangk/bin/klangk-setup-clankers
-
-# Run plugin on-shell-init hooks (alphabetical by plugin name).
-# These run as the klangk user on every shell open.
-for f in /opt/klangk/hooks/*/on-shell-init.sh; do
-  # shellcheck disable=SC2181
-  [ -x "$f" ] && "$f" || true
-done
-
-# --- Interactive-only section --------------------------------------------
-
-# Exit early for non-interactive shells (sandbox setup, cron, scripts).
-case $- in
-  *i*) ;;
-    *) return 2>/dev/null || exit 0 ;;
-esac
 
 # Keep herdr's API socket on tmpfs — virtiofs (macOS) rejects chmod on sockets.
 # Per-user with random suffix to prevent predictable-path attacks in /tmp.
 _herdr_dir=$(mktemp -d "/tmp/herdr-${KLANGK_USER_ID:-default}-XXXXXXXX")
 export HERDR_SOCKET_PATH="$_herdr_dir/herdr.sock"
+
+# Default editor for git commit, crontab -e, etc.
+export EDITOR=nano
 
 # Ignore Ctrl+C until setup is complete and any default command has started.
 trap '' INT
@@ -54,6 +26,16 @@ trap - INT
 # Change to the user's home directory (podman exec -w can't use symlinks
 # without resolving them, so we start in /home and cd here instead).
 cd "$HOME" 2>/dev/null
+
+# Per-user Pi agent config (extensions, settings, models, skills).
+python3 /opt/klangk/bin/klangk-setup-clankers
+
+# Run plugin on-shell-init hooks (alphabetical by plugin name).
+# These run as the klangk user on every shell open.
+for f in /opt/klangk/hooks/*/on-shell-init.sh; do
+  # shellcheck disable=SC2181
+  [ -x "$f" ] && "$f" || true
+done
 
 # Determine which command to exec into (if any).
 # KLANGK_CMD_OVERRIDE (set per-session via podman exec -e) takes priority.
