@@ -152,12 +152,13 @@ this. Investigated in the loop; findings + blockers tracked in `PROGRESS.md`.
 Validated against a live stack (backend :8997 + nginx-dev :8995 + `flutter run
 -d web-server` :8996), driving real Chrome through nginx :8995.
 
-| Path                                                         | Time                         | Notes                                                                                                           |
-| ------------------------------------------------------------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `flutter build web --release` (warm cache, no plugin change) | **21.3 s**                   | compile only; the `flutterbuildweb.sh` task adds plugin import + ~25 MB source-map inlining + cache-bust on top |
-| same, after a **plugin-set change**                          | minutes                      | `flutterbuildweb.sh` does `rm -rf .dart_tool/flutter_build` → full cold dart2js compile                         |
-| dev server: edit Dart + **browser refresh**                  | **~8.8 s**                   | incremental DDC recompile + app boot; **no release build runs**; needs no extension                             |
-| dev server: **hot reload/restart** (`r`/`R`)                 | sub-second–seconds, stateful | requires the **Dart Debug Extension** on the web-server device (see finding below)                              |
+| Path                                                         | Time                     | Notes                                                                                                           |
+| ------------------------------------------------------------ | ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `flutter build web --release` (warm cache, no plugin change) | **21.3 s**               | compile only; the `flutterbuildweb.sh` task adds plugin import + ~25 MB source-map inlining + cache-bust on top |
+| same, after a **plugin-set change**                          | minutes                  | `flutterbuildweb.sh` does `rm -rf .dart_tool/flutter_build` → full cold dart2js compile                         |
+| dev server: edit Dart + **browser refresh**                  | **~8.8 s**               | incremental DDC recompile + app boot; **no release build runs**; needs no extension                             |
+| dev server: **hot reload** (`r`), debug-connected browser    | **122–135 ms**, stateful | measured via `-d chrome`; same-origin needs the Dart Debug Extension (see finding)                              |
+| dev server: **hot restart** (`R`), debug-connected browser   | **249 ms**               | measured via `-d chrome`; same-origin needs the Dart Debug Extension (see finding)                              |
 
 Verified the layered routing is correct: the app loaded from the dev server
 through nginx :8995, auto-logged-in (admin2@example.com), rendered the Workspaces
@@ -165,27 +166,42 @@ list, and reached `#/workspaces` — i.e. `/api/v1/*` and `/ws` still hit the
 backend. A title edit in `workspace_list_page.dart` appeared after a plain
 refresh with no `flutter build` invocation. Screenshots in `scratch/`.
 
-### Finding: hot reload needs a debug-connected browser
+### Finding: hot reload needs the browser to be the _debug-connected_ one
 
-`flutter run -d web-server` cannot _push_ a hot restart/reload into a browser it
-doesn't control — it relies on the **Dart Debug Extension** to relay the debug
-connection. Without it, `R` times out (`Hot restart ... received 0/1 responses`).
-Two usable modes:
+Tested empirically (real Chrome, driven via the devtools MCP):
 
-- **Extension-free (default, recommended to start):** edit + refresh the tab at
-  nginx :8995. DDC recompiles incrementally (~9 s here) and the app reboots.
-  Same-origin, so API/WS/bridge all work.
-- **With the Dart Debug Extension:** install it in Chrome, open :8995, and `r`/`R`
-  give true stateful hot reload (sub-second). Still same-origin via nginx.
-- **`-d chrome` is NOT used** here: it launches a Chrome it controls (so hot
-  reload works out of the box) but pointed at :8996 directly, which makes
-  `Uri.base` = :8996 and breaks the app's API/WS calls. Same-origin via nginx is
-  worth more than out-of-the-box hot reload.
+- `flutter run -d web-server` cannot _push_ a hot restart/reload into a browser it
+  doesn't control — without the **Dart Debug Extension**, `R` times out
+  (`Hot restart ... received 0/1 responses`).
+- `flutter run -d chrome` _does_ control its browser, so hot reload/restart land
+  with **no extension**: measured **`r` = 122–135 ms** (stateful), **`R` = 249 ms**.
+  But that Chrome loads from `:8996` directly, so `Uri.base = :8996` and the app's
+  `/api/v1/config` + `/ws` hit the dev server, not the backend (observed:
+  `AuthService load config failed: ... <!doctype ...`). **Same-origin breaks.**
+- Crucially: with `-d chrome` running, a **separate** same-origin tab opened at
+  nginx `:8995` (where the app _does_ work — logged in, workspaces rendered) did
+  **not** receive the 122 ms hot reload — DDC reload only patches the
+  debug-connected browser, not an independently-loaded tab (verified by
+  screenshot). So you cannot "share" one `-d chrome` debug session with a
+  same-origin tab.
 
-This reframes **Strategy B**: for the web-server device, the no-keypress win is an
-auto-**browser-reload** watcher (watch `lib/**` → tell the tab to reload →
-incremental recompile), which works _without_ the extension. Scripting `R` only
-helps once the extension is installed.
+**Conclusion — pick two of three (extension-free / same-origin / sub-second):**
+
+| Goal                                       | How                                                     | Cost                                     |
+| ------------------------------------------ | ------------------------------------------------------- | ---------------------------------------- |
+| same-origin **+** extension-free           | `-d web-server` behind nginx, **edit + refresh**        | ~9 s, loses state                        |
+| same-origin **+** sub-second hot reload    | `-d web-server` behind nginx **+ Dart Debug Extension** | one-time extension install               |
+| extension-free **+** sub-second hot reload | `-d chrome`                                             | **not** same-origin → app's API/WS break |
+
+For klangk's app (which needs API/WS), the realistic choices are the first two.
+The shipped Strategy A is the first row. The Dart Debug Extension upgrades it to
+the second (sub-second) with no code change.
+
+This pins down **Strategy B**: scripting `R` (via `--machine` or a FIFO) only
+helps once the **Dart Debug Extension** is installed (then it's same-origin +
+sub-second). The only _extension-free_ no-keypress win is an auto-**browser-
+reload** watcher (watch `lib/**` → reload the `:8995` tab → ~9 s incremental
+recompile).
 
 ## Validation plan (full local)
 
