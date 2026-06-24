@@ -51,51 +51,12 @@ if ! grep -q '\.local/bin' ~/.bashrc 2>/dev/null; then
 fi
 export PATH="$HOME/.local/bin:$PATH"
 
-# Write openclaw config pointing at the klangk LLM proxy.
-mkdir -p ~/.openclaw
-cat >~/.openclaw/openclaw.json <<JSON
-{
-  "models": {
-    "providers": {
-      "llm-proxy": {
-        "baseUrl": "http://host.containers.internal:8995/llm-proxy",
-        "api": "openai-completions",
-        "apiKey": {
-          "source": "exec",
-          "provider": "klangk",
-          "id": "workspace-token"
-        },
-        "models": [
-          { "id": "$KLANGK_LLM_MODEL", "name": "$KLANGK_LLM_MODEL" }
-        ]
-      }
-    }
-  },
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "llm-proxy/$KLANGK_LLM_MODEL"
-      }
-    }
-  },
-  "gateway": {
-    "port": 8000,
-    "bind": "lan"
-  },
-  "secrets": {
-    "providers": {
-      "klangk": {
-        "source": "exec",
-        "command": "$HOME/.local/bin/klangk-secret-provider",
-        "passEnv": ["PATH", "HOME"]
-      }
-    }
-  }
-}
-JSON
+# Ensure Pi's models.json and clanker config are up to date.
+/opt/klangk/bin/klangk-setup-clankers
 
-# Run onboard non-interactively, skipping the model/auth provider
-# prompt (we already configured the llm-proxy provider above).
+# Run onboard non-interactively first — it creates initial config
+# and sets up auth tokens. We overwrite the config afterward so
+# onboard doesn't clobber our settings (bind, http endpoints, etc.).
 openclaw onboard --non-interactive \
   --accept-risk \
   --mode local \
@@ -106,6 +67,58 @@ openclaw onboard --non-interactive \
   --skip-search \
   --skip-health \
   --skip-ui
+
+# Write openclaw config on top of onboard's output.
+# We preserve gateway.auth (written by onboard) and merge our settings.
+python3 -c "
+import json, os
+cfg_path = os.path.expanduser('~/.openclaw/openclaw.json')
+with open(cfg_path) as f:
+    cfg = json.load(f)
+cfg['models'] = {
+    'providers': {
+        'llm-proxy': {
+            'baseUrl': 'http://host.containers.internal:8995/llm-proxy',
+            'api': 'openai-completions',
+            'apiKey': {
+                'source': 'exec',
+                'provider': 'klangk',
+                'id': 'workspace-token'
+            },
+            'models': [
+                {'id': '$KLANGK_LLM_MODEL', 'name': '$KLANGK_LLM_MODEL'}
+            ],
+        }
+    }
+}
+cfg['agents'] = cfg.get('agents', {})
+cfg['agents']['defaults'] = cfg['agents'].get('defaults', {})
+cfg['agents']['defaults']['model'] = {'primary': 'llm-proxy/$KLANGK_LLM_MODEL'}
+cfg['gateway']['port'] = 8000
+# --- Insecure overrides (disabled by default) ---
+# Uncomment all three to make the gateway reachable from outside the
+# container and able to call the LLM proxy.  These weaken openclaw's
+# default security posture:
+#   - allowPrivateNetwork: bypasses SSRF guard so the gateway can
+#     reach host.containers.internal (private IP)
+#   - bind=lan: listens on all interfaces instead of loopback only,
+#     needed for Klangk's hosted app proxy to reach the gateway
+#   - chatCompletions: exposes an OpenAI-compatible HTTP endpoint
+# cfg['models']['providers']['llm-proxy']['request'] = {'allowPrivateNetwork': True}
+# cfg['gateway']['bind'] = 'lan'
+# cfg['gateway']['http'] = {'endpoints': {'chatCompletions': {'enabled': True}}}
+cfg['secrets'] = {
+    'providers': {
+        'klangk': {
+            'source': 'exec',
+            'command': os.path.expanduser('~/.local/bin/klangk-secret-provider'),
+            'passEnv': ['PATH', 'HOME']
+        }
+    }
+}
+with open(cfg_path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+"
 
 # Derive the hosted app URL from Klangk env vars.
 # Container port 8000 maps to the first host port in KLANGK_PORT_MAPPINGS.
