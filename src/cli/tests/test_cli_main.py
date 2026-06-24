@@ -2726,6 +2726,236 @@ class TestSandboxCommand:
         assert result.exit_code == 0
         assert captured_kwargs.get("config") is not None
 
+    def test_invalid_open_mode_exits(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
+            "sandbox:\n  mount-at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+            mounts=[f"{tmp_path.resolve()}:/home/admin/test"],
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.return_value = ws
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["sandbox", "myws", str(tmp_path), "--open", "invalid"],
+            )
+        assert result.exit_code != 0
+
+    def test_open_browser_existing_workspace(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
+            "sandbox:\n  mount-at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+            mounts=[f"{tmp_path.resolve()}:/home/admin/test"],
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.return_value = ws
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch("webbrowser.open") as mock_wb_open,
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["sandbox", "myws", str(tmp_path), "--open", "browser"],
+            )
+        assert result.exit_code == 0
+        mock_wb_open.assert_called_once()
+        url = mock_wb_open.call_args[0][0]
+        assert "/#/workspace/" in url
+        assert ws.id in url
+
+    def test_open_browser_new_workspace_runs_setup(
+        self, logged_in_cfg, tmp_path
+    ):
+        from klangkc import main
+
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
+            "sandbox:\n  mount-at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("myws")
+        client.create_workspace.return_value = ws
+
+        async def fake_setup_only(*args, **kwargs):
+            pass
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(main, "_sandbox_setup_only", fake_setup_only),
+            patch("webbrowser.open") as mock_wb_open,
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["sandbox", "myws", str(tmp_path), "--open", "browser"],
+            )
+        assert result.exit_code == 0
+        mock_wb_open.assert_called_once()
+
+    def test_open_none_existing_workspace(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
+            "sandbox:\n  mount-at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+            mounts=[f"{tmp_path.resolve()}:/home/admin/test"],
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.return_value = ws
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["sandbox", "myws", str(tmp_path), "--open", "none"],
+            )
+        assert result.exit_code == 0
+
+    def test_open_none_new_workspace_runs_setup(self, logged_in_cfg, tmp_path):
+        from klangkc import main
+
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
+            "sandbox:\n  mount-at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("myws")
+        client.create_workspace.return_value = ws
+
+        async def fake_setup_only(*args, **kwargs):
+            pass
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(main, "_sandbox_setup_only", fake_setup_only),
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["sandbox", "myws", str(tmp_path), "--open", "none"],
+            )
+        assert result.exit_code == 0
+
+    def test_open_browser_setup_connection_error(
+        self, logged_in_cfg, tmp_path
+    ):
+        from klangkc import main
+
+        (tmp_path / ".klangk-sandbox.yaml").write_text(
+            "sandbox:\n  mount-at: ~/test\n"
+        )
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="myws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.get_handle.return_value = "admin"
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("myws")
+        client.create_workspace.return_value = ws
+
+        async def failing_setup(*args, **kwargs):
+            raise ConnectionError("connection refused")
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(main, "_sandbox_setup_only", failing_setup),
+        ):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["sandbox", "myws", str(tmp_path), "--open", "browser"],
+            )
+        assert result.exit_code == 1
+        assert "connection refused" in result.output
+
+
+class TestSandboxSetupOnly:
+    async def test_connects_and_runs_setup(self):
+        from pathlib import Path
+
+        from klangkc.main import _sandbox_setup_only
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(setup="setup.sh")
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "workspace_ready"})
+        )
+
+        with (
+            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.main._sandbox_setup") as mock_setup,
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            await _sandbox_setup_only(
+                "ws://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+                max_size=2**20,
+            )
+            mock_setup.assert_called_once_with(
+                mock_ws, config, Path("/tmp"), "admin"
+            )
+
 
 class TestSandboxSetup:
     async def test_copies_files(self, tmp_path):

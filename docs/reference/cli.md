@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 # CLI
 
 `klangkc` is the command-line client for Klangk. It lets you manage
@@ -150,6 +152,8 @@ klangkc shell my-project debug           # attach to the "debug" terminal window
 klangkc sandbox myws                     # create/reconnect from .klangk-sandbox.yaml
 klangkc sandbox myws ~/projects/myapp    # specify sandbox root explicitly
 klangkc sandbox myws --force-setup       # re-run copy and setup on existing workspace
+klangkc sandbox myws -o browser          # create/reconnect and open in web browser
+klangkc sandbox myws -o none             # create and run setup only, no shell or browser
 klangkc exec my-project ls /home/klangk/work         # run a command in the container
 klangkc sync ~/src my-project:/home/klangk/work      # sync files to/from the container
 klangkc rm my-project                # delete a workspace
