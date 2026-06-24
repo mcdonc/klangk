@@ -27,14 +27,29 @@ No single component is required — a plugin can be an extension + Dart UI, just
 
 ## Adding a Plugin
 
-For local development, create files directly in `$KLANGK_PLUGINS_DIR`:
+The easiest way to develop a plugin locally is to add a `path` entry
+to `plugins.yaml` pointing at your plugin directory:
+
+```yaml
+plugins:
+  - name: my-plugin
+    path: /home/user/projects/my-plugin
+```
+
+This creates a symlink in `$KLANGK_PLUGINS_DIR` pointing at your
+local directory, so edits are reflected immediately without
+re-fetching. Paths support `~`, `$ENV_VARS`, and relative paths
+(resolved from the `plugins.yaml` directory). Run `update-plugins` or
+restart `devenv up` to apply.
+
+Alternatively, create files directly in `$KLANGK_PLUGINS_DIR`:
 
 1. Create `$KLANGK_PLUGINS_DIR/<name>/extension.ts` with `pi.registerTool()`
 2. For client-side browser actions, add `klangk/pubspec.yaml` (depends on `klangk_plugin_api`) and `klangk/lib/plugin.dart` extending `ToolPlugin`
 3. For server-side scripts, add files in `$KLANGK_PLUGINS_DIR/<name>/tools/`
 4. `devenv up` rebuilds automatically when `$KLANGK_PLUGINS_DIR` changes
 
-For remote plugins, add an entry to `$KLANGK_PLUGINS_DIR/plugins.yaml` and run `update-plugins` to fetch it.
+For remote plugins, add an entry with a `git` key to `$KLANGK_PLUGINS_DIR/plugins.yaml` and run `update-plugins` to fetch it.
 
 ## Lifecycle Hooks
 

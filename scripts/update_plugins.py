@@ -3,6 +3,9 @@
 
 If plugins/ doesn't exist, creates it with a template plugins.yaml.
 If plugins/plugins.yaml exists, fetches listed plugins and writes plugins.lock.
+
+Plugins can be sourced from git repos (git: key) or local paths (path: key
+without git: key).  Local-path plugins are symlinked into the plugins directory.
 """
 
 import json
@@ -73,6 +76,11 @@ def _default_template(ref):
             "  #   git: git@github.com:user/repo.git",
             "  #   path: subdir              # optional: subdirectory within the repo",
             "  #   ref: main                 # branch, tag, or commit SHA",
+            "  #",
+            "  # Local plugins (symlinked, for development):",
+            "  # - name: my-local-plugin",
+            "  #   path: /home/user/my-local-plugin",
+            "  #   # Supports ~, $ENV_VARS, and relative paths (resolved from this file)",
             "  #",
             "  # Plugin structure:",
             "  #   extension.ts              # required: Pi extension (TypeScript)",
@@ -172,6 +180,33 @@ def fetch_plugin(plugin, plugins_dir):
     return {"name": name, "git": git_url, "path": subpath, "ref": ref, "sha": sha}
 
 
+def link_plugin(plugin, plugins_dir):
+    """Symlink a local-path plugin into plugins_dir."""
+    name = plugin["name"]
+    source = os.path.expandvars(os.path.expanduser(plugin["path"]))
+
+    # Resolve relative paths against the directory containing plugins.yaml
+    if not os.path.isabs(source):
+        source = os.path.normpath(os.path.join(os.path.dirname(YAML_PATH), source))
+
+    if not os.path.isdir(source):
+        print(f"  ERROR: local path '{source}' does not exist", file=sys.stderr)
+        return None
+
+    dest = os.path.join(plugins_dir, name)
+
+    # Remove old version (dir, symlink, or broken symlink)
+    if os.path.islink(dest) or os.path.exists(dest):
+        if os.path.islink(dest):
+            os.unlink(dest)
+        else:
+            shutil.rmtree(dest)
+
+    os.symlink(source, dest)
+    print(f"  {name}: {source} (local symlink)")
+    return {"name": name, "path": source}
+
+
 def write_lock(entries, lock_path):
     """Write the lockfile."""
     with open(lock_path, "w") as f:
@@ -233,20 +268,33 @@ def main():
     lock_map = dict(old_lock)
 
     for plugin in plugins:
-        if "git" not in plugin:
-            print(f"  SKIP: entry missing 'git' key: {plugin}", file=sys.stderr)
+        if "git" in plugin:
+            entry = fetch_plugin(plugin, PLUGINS_DIR)
+        elif "path" in plugin:
+            entry = link_plugin(plugin, PLUGINS_DIR)
+        else:
+            print(
+                f"  SKIP: entry needs 'git' or 'path' key: {plugin}",
+                file=sys.stderr,
+            )
             continue
-        entry = fetch_plugin(plugin, PLUGINS_DIR)
         if entry:
             lock_map[entry["name"]] = entry
 
     # Remove plugins that were in the old lockfile but dropped from plugins.yaml
     if not only:
-        yaml_names = {plugin_name(p) for p in config.get("plugins", []) if "git" in p}
+        yaml_names = {
+            plugin_name(p)
+            for p in config.get("plugins", [])
+            if "git" in p or "path" in p
+        }
         for name in list(lock_map):
             if name not in yaml_names:
                 plugin_dir = os.path.join(PLUGINS_DIR, name)
-                if os.path.isdir(plugin_dir):
+                if os.path.islink(plugin_dir):
+                    os.unlink(plugin_dir)
+                    print(f"  Removed {name} (no longer in plugins.yaml)")
+                elif os.path.isdir(plugin_dir):
                     shutil.rmtree(plugin_dir)
                     print(f"  Removed {name} (no longer in plugins.yaml)")
                 del lock_map[name]
