@@ -857,7 +857,7 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
         stdout_buf = io.BytesIO()
         exit_code = await _exec_on_ws(
             ws,
-            ["bash", "-c", f"mkdir -p {parent} && cat > {container_dest}"],
+            ["sh", "-c", f"mkdir -p {parent} && cat > {container_dest}"],
             stdin=io.BytesIO(src.read_bytes()),
             stdout=stdout_buf,
         )
@@ -884,7 +884,7 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
         timeout = config.setup_timeout or None
         exit_code = await _exec_on_ws(
             ws,
-            ["bash", "-c", shell_cmd],
+            ["sh", "-c", shell_cmd],
             stdout=sys.stderr.buffer,
             timeout=timeout,
         )
