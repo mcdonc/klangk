@@ -18,7 +18,13 @@ and plugins are fetched. On subsequent runs, plugins are only
 re-fetched if `plugins.yaml` has changed. You can also run
 `update-plugins` manually at any time. Plugins are declared in
 `$KLANGK_PLUGINS_DIR/plugins.yaml`. Each entry requires `name` and
-`git`; `path` and `ref` are optional:
+either `git` (for remote plugins) or `path` without `git` (for local
+plugins).
+
+### Git plugins
+
+Remote plugins are cloned from a git repository. `path` and `ref` are
+optional:
 
 ```yaml
 plugins:
@@ -26,20 +32,28 @@ plugins:
     git: git@github.com:mcdonc/klangk.git
     path: plugins/celebrate
     ref: main
-  - name: beep
-    git: git@github.com:mcdonc/klangk.git
-    path: plugins/beep
-    ref: main
 ```
+
+### Local plugins
+
+Local plugins are symlinked from a directory on disk, which is useful
+during plugin development — changes are reflected immediately without
+re-fetching:
+
+```yaml
+plugins:
+  - name: my-plugin
+    path: /home/user/projects/my-plugin
+```
+
+Paths support `~` (home directory) and `$ENV_VAR` expansion. Relative
+paths are resolved relative to the directory containing `plugins.yaml`.
 
 - `update-plugins` — fetches all plugins listed in `plugins.yaml`,
   resolves git refs to commit SHAs, writes `plugins.lock`
 - `update-plugins <name>` — fetch/update a single plugin by name
 - `plugins.lock` — records resolved commit SHAs for reproducible
   builds
-- Local plugin development: drop a directory into
-  `$KLANGK_PLUGINS_DIR` directly — the build system treats it the
-  same as a fetched plugin
 - If you are running devenv, it watches `$KLANGK_PLUGINS_DIR` to
   trigger rebuilds when plugin content or the lockfile changes
 
