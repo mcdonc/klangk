@@ -1,0 +1,3 @@
+sandbox:
+  mount-at: ~/openclaw
+  setup: setup.sh
