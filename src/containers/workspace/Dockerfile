@@ -66,7 +66,7 @@ COPY tmux.conf /etc/tmux.conf
 # These run as root at image build time for system-level config.
 RUN for f in /opt/klangk/hooks/*/on-image-build.sh; do \
       [ -x "$f" ] && "$f"; \
-    done; true
+    done 2>/dev/null; true
 
 # Fix non-root group ownership that causes crun fchownat errors with
 # --userns=keep-id. crun cannot remap groups like utmp, shadow, adm, ssh
