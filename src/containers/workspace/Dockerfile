@@ -63,11 +63,11 @@ COPY tmux.conf /etc/tmux.conf
 # These run as root at image build time for system-level config.
 # /tmp/.klangk-image-build tells bash.bashrc to bail out early so that any
 # `bash -i` spawned by plugin installers doesn't run user-session setup.
-# At runtime /tmp is a tmpfs so the marker is always absent.
+# Removed after hooks finish so it doesn't persist into the final image.
 RUN touch /tmp/.klangk-image-build \
     && for f in /opt/klangk/hooks/*/on-image-build.sh; do \
       [ -x "$f" ] && "$f"; \
-    done; true
+    done; rm -f /tmp/.klangk-image-build; true
 
 # Fix non-root group ownership that causes crun fchownat errors with
 # --userns=keep-id. crun cannot remap groups like utmp, shadow, adm, ssh

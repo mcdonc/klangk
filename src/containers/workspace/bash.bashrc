@@ -6,9 +6,9 @@
 export PATH="/opt/klangk/bin:$PATH"
 
 # Nothing below here is meaningful during image build. The Dockerfile touches
-# /tmp/.klangk-image-build before running plugin hooks; any `bash -i` spawned
-# by those hooks (e.g. hermes installer probing PATH) exits early here.
-# At runtime /tmp is a tmpfs so this file is always absent.
+# /tmp/.klangk-image-build before running plugin hooks and removes it after;
+# any `bash -i` spawned by those hooks (e.g. hermes installer probing PATH)
+# exits early here.
 [ -f /tmp/.klangk-image-build ] && return 0
 
 # Keep herdr's API socket on tmpfs — virtiofs (macOS) rejects chmod on sockets.
