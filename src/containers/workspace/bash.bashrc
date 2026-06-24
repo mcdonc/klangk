@@ -5,6 +5,12 @@
 # Plugin tools on PATH (ENV in Dockerfile is overridden by login shells).
 export PATH="/opt/klangk/bin:$PATH"
 
+# Nothing below here is meaningful during image build. The Dockerfile touches
+# /tmp/.klangk-image-build before running plugin hooks; any `bash -i` spawned
+# by those hooks (e.g. hermes installer probing PATH) exits early here.
+# At runtime /tmp is a tmpfs so this file is always absent.
+[ -f /tmp/.klangk-image-build ] && return 0
+
 # Keep herdr's API socket on tmpfs — virtiofs (macOS) rejects chmod on sockets.
 # Per-user with random suffix to prevent predictable-path attacks in /tmp.
 _herdr_dir=$(mktemp -d "/tmp/herdr-${KLANGK_USER_ID:-default}-XXXXXXXX")
@@ -13,14 +19,11 @@ export HERDR_SOCKET_PATH="$_herdr_dir/herdr.sock"
 # Default editor for git commit, crontab -e, etc.
 export EDITOR=nano
 
-# Ignore Ctrl+C until setup is complete and any default command has started.
+# Block interactive shells until the entrypoint signals that setup is done.
+# /tmp is a tmpfs, so .klangk-ready starts absent on every container boot
+# and is created by the entrypoint when setup finishes.
 trap '' INT
-
-# Wait for the entrypoint to finish setup before showing a prompt.
-# /tmp is a tmpfs, so .klangk-ready is cleared on every container start.
 while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done
-
-# Restore Ctrl+C for interactive shell.
 trap - INT
 
 # Change to the user's home directory (podman exec -w can't use symlinks

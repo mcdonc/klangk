@@ -61,7 +61,11 @@ COPY tmux.conf /etc/tmux.conf
 
 # Run plugin on-image-build hooks (alphabetical by plugin name).
 # These run as root at image build time for system-level config.
-RUN for f in /opt/klangk/hooks/*/on-image-build.sh; do \
+# /tmp/.klangk-image-build tells bash.bashrc to bail out early so that any
+# `bash -i` spawned by plugin installers doesn't run user-session setup.
+# At runtime /tmp is a tmpfs so the marker is always absent.
+RUN touch /tmp/.klangk-image-build \
+    && for f in /opt/klangk/hooks/*/on-image-build.sh; do \
       [ -x "$f" ] && "$f"; \
     done; true
 
