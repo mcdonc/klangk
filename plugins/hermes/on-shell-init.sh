@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Configure Hermes to use klangk's llm-proxy (runs on every shell open).
 # Skips if no proxy is configured (standalone mode).
 

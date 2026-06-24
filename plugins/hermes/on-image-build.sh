@@ -1,4 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Install Hermes agent (NousResearch) pinned to v2026.6.19 (0.17.0).
-# --skip-setup skips the interactive API key wizard; configured via on-shell-init.
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --branch v2026.6.19 --skip-setup
+# --non-interactive + --skip-setup: no prompts; configured via on-shell-init.
+# --skip-browser: no Playwright/Chromium (CLI-only in containers).
+set -e
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o /tmp/hermes-install.sh
+bash /tmp/hermes-install.sh \
+  --branch v2026.6.19 \
+  --non-interactive \
+  --skip-setup \
+  --skip-browser
+rm -f /tmp/hermes-install.sh
