@@ -8,7 +8,7 @@ No sudo required — uses single-user nix (no daemon).
 ## Usage
 
 ```bash
-cd examples/devenv-sandbox
+cd sandboxes/devenv-sandbox
 klangkc sandbox -A
 ```
 
