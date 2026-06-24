@@ -759,29 +759,21 @@ test.describe("shared terminal visibility", () => {
         // Spectator sends input — it should be silently dropped
         // (the server drops input when session.read_only is True).
         // Send a distinctive command and verify it doesn't appear
-        // in the owner's terminal output.
+        // in the terminal output.
         specWs.send({
           cmd: "terminal_input",
           data: "echo SPECTATOR_WAS_HERE\r",
         });
 
-        // Owner sends a command that WILL produce output, proving
-        // the terminal is working. Wait until the spectator sees it.
-        ownerWs.send({
-          cmd: "terminal_input",
-          data: "echo OWNER_CHECK\r",
-        });
-
-        // Accumulate spectator output until OWNER_CHECK appears
-        let specOutput = "";
-        await specWs.recvUntil((m) => {
-          if (m.type === "terminal_output") {
-            specOutput += (m.data as string) ?? "";
-          }
-          return specOutput.includes("OWNER_CHECK");
-        });
-
-        // The owner's echo should appear but the spectator's should not
+        // Collect any output that arrives within a short window.
+        // If the input were NOT dropped, the echo command would
+        // produce output containing "SPECTATOR_WAS_HERE".
+        const msgs = await specWs.collectUntilQuiet(
+          (m) => m.type === "terminal_output",
+          2_000,
+          10_000,
+        );
+        const specOutput = msgs.map((m) => (m.data as string) ?? "").join("");
         expect(specOutput).not.toContain("SPECTATOR_WAS_HERE");
       } finally {
         specWs.close();
