@@ -152,7 +152,7 @@ void main() {
   });
 
   group('mouse wheel on alternate screen', () {
-    testWidgets('wheel up sends Shift+PgUp to PTY on alt screen', (
+    testWidgets('wheel up sends 3 arrow-up keys to PTY on alt screen', (
       tester,
     ) async {
       final client = _MockWsClient();
@@ -174,17 +174,19 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Should have sent Shift+PgUp (ESC [5;2~) to the PTY
+      // Should have sent 3× Up arrow (ESC [A) to the PTY
       expect(
-        client.sentCommands.any((c) => c.contains('\x1b[5;2~')),
+        client.sentCommands.any((c) => c.contains('\x1b[A\x1b[A\x1b[A')),
         isTrue,
         reason:
-            'wheel up on alt screen sends Shift+PgUp to PTY for tmux scrollback',
+            'wheel up on alt screen sends 3 arrow-up keys for line-by-line scroll',
       );
       client.close();
     });
 
-    testWidgets('wheel down sends PgDn to PTY on alt screen', (tester) async {
+    testWidgets('wheel down sends 3 arrow-down keys to PTY on alt screen', (
+      tester,
+    ) async {
       final client = _MockWsClient();
       final key = GlobalKey<GhosttyTerminalState>();
       await _pumpReady(tester, client, key);
@@ -200,10 +202,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        client.sentCommands.any((c) => c.contains('\x1b[6;2~')),
+        client.sentCommands.any((c) => c.contains('\x1b[B\x1b[B\x1b[B')),
         isTrue,
         reason:
-            'wheel down on alt screen sends Shift+PgDn to PTY for tmux scrollback',
+            'wheel down on alt screen sends 3 arrow-down keys for line-by-line scroll',
       );
       client.close();
     });
