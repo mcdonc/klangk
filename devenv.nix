@@ -246,6 +246,9 @@ in
     devenv tasks run klangk:flutter-build klangk:build-workspace-image
     cd src/frontend/e2e-tests
     npm install --silent
+    # Re-create the playwright browser symlink farm now that browsers.json
+    # exists (enterShell may have skipped it if node_modules was missing).
+    source "$DEVENV_ROOT/scripts/setup-playwright-browsers.sh"
     exec npx playwright test --reporter=list "$@"
   '';
 
