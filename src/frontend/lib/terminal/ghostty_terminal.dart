@@ -364,9 +364,9 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         ),
       },
       child: Listener(
-        // On the alternate screen (tmux), convert wheel events to
-        // arrow-key sequences so tmux scrolls line-by-line in copy-mode.
-        // flterm has no local scrollback on the alt screen.
+        // On the alternate screen (tmux), convert wheel events to arrow-key
+        // sequences so tmux scrolls line-by-line in copy-mode. flterm has
+        // no local scrollback on the alt screen.
         onPointerSignal: (event) {
           if (event is PointerScrollEvent &&
               _scrollController.hasClients &&
