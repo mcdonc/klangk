@@ -28,8 +28,13 @@ Future<void> main() async {
       Uri.parse('assets/assets/libghostty-wasm32-freestanding.wasm'),
     );
   }
-  // Capture the hash before Flutter/GoRouter can consume it.
+  // Capture the hash and query string before Flutter/GoRouter can consume
+  // them. The Soliplex OAuth callback lands as ?token=...#/soliplex-auth-callback
+  // — GoRouter navigates on the hash, which clears the page-level query
+  // params from window.location.search. Capture them here and pass to the
+  // app so plugin callback routes can read them.
   final hash = getLocationHash();
+  capturePageQuery();
   final initialLocation = (hash.length > 1) ? hash.substring(1) : '/';
   runApp(
     MultiProvider(

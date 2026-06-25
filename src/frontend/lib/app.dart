@@ -179,7 +179,12 @@ class _KlangkAppState extends State<KlangkApp> {
             builder: (context, state) => route.builder(
               context,
               state.pathParameters,
-              state.uri.queryParameters,
+              // Merge page-level query params (captured before GoRouter
+              // navigation cleared them) with the hash query params.
+              // This is needed because the Soliplex OAuth callback lands
+              // as ?token=...#/callback — the token is in the page query,
+              // not the hash query.
+              {...capturedPageQuery, ...state.uri.queryParameters},
             ),
           ),
       ],

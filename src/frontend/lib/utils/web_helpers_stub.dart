@@ -19,6 +19,15 @@ Widget buildSuppressor(Widget child) => child;
 /// Stub — return empty hash in VM tests.
 String getLocationHash() => '';
 
+/// Stub — return empty query string in VM tests.
+String getLocationSearch() => '';
+
+/// Query params captured at startup (empty in VM tests).
+Map<String, String> capturedPageQuery = {};
+
+/// Stub — no-op in VM tests.
+void capturePageQuery() {}
+
 /// Stub — return empty browser ID in VM tests.
 String getBrowserId(String instanceId) => '';
 
