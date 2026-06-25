@@ -63,6 +63,13 @@ class TestHealth:
         assert resp.json() == {"status": "ok"}
 
 
+class TestEmpty:
+    async def test_empty(self, client):
+        resp = await client.get("/empty")
+        assert resp.status_code == 200
+        assert resp.text == ""
+
+
 class TestVerifyWorkspaceToken:
     async def test_valid_workspace_token(self, client):
         token = auth.create_workspace_token("ws-123")
