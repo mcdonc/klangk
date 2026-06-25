@@ -37,14 +37,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   void _resolvePermissions() {
     final auth = context.read<AuthService>();
-    _canUsers =
-        auth.hasPermission('/admin', '*') ||
+    _canUsers = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/users', 'view');
-    _canGroups =
-        auth.hasPermission('/admin', '*') ||
+    _canGroups = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/groups', 'view');
-    _canInvitations =
-        auth.hasPermission('/admin', '*') ||
+    _canInvitations = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/invitations', 'view');
   }
 
@@ -223,9 +220,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final memberIds = members.map((m) => m['id']).toSet();
-          final nonMembers = allUsers
-              .where((u) => !memberIds.contains(u['id']))
-              .toList();
+          final nonMembers =
+              allUsers.where((u) => !memberIds.contains(u['id'])).toList();
 
           return AlertDialog(
             title: Text('Members of "$groupName"'),
@@ -675,8 +671,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               backgroundColor: isPending
                   ? KColors.accentAmber
                   : status == 'accepted'
-                  ? KColors.accentGreen
-                  : KColors.textMuted,
+                      ? KColors.accentGreen
+                      : KColors.textMuted,
               child: Text(
                 initial,
                 style: const TextStyle(
@@ -728,9 +724,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   @override
   Widget build(BuildContext context) {
-    final pendingCount = _invitations
-        .where((i) => i['status'] == 'pending')
-        .length;
+    final pendingCount =
+        _invitations.where((i) => i['status'] == 'pending').length;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
     final tabTypes = _tabTypes;
@@ -856,6 +851,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _sendVerificationEmail = false;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
@@ -910,8 +906,15 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                   floatingLabelStyle: labelStyle,
                   floatingLabelBehavior: FloatingLabelBehavior.always,
                   border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscurePassword
+                        ? Icons.visibility_off
+                        : Icons.visibility),
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
+                  ),
                 ),
-                obscureText: true,
+                obscureText: _obscurePassword,
               ),
             ],
           ],
@@ -965,6 +968,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
   late final TextEditingController _emailController;
   late final TextEditingController _handleController;
   final _passwordController = TextEditingController();
+  bool _obscurePassword = true;
 
   @override
   void initState() {
@@ -1026,8 +1030,15 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 floatingLabelBehavior: FloatingLabelBehavior.always,
                 hintText: 'Leave blank to keep current',
                 border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscurePassword
+                      ? Icons.visibility_off
+                      : Icons.visibility),
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
+                ),
               ),
-              obscureText: true,
+              obscureText: _obscurePassword,
             ),
           ],
         ),

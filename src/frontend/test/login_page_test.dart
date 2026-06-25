@@ -518,6 +518,50 @@ void main() {
       expect(find.text('Invalid credentials'), findsOneWidget);
     });
 
+    testWidgets('password field is obscured by default', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final passwordField = tester.widget<EditableText>(
+        find.descendant(
+          of: find.byType(TextField).last,
+          matching: find.byType(EditableText),
+        ),
+      );
+      expect(passwordField.obscureText, isTrue);
+    });
+
+    testWidgets('eye button toggles password visibility', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      // Initially obscured
+      expect(find.byIcon(Icons.visibility_off), findsOneWidget);
+      expect(find.byIcon(Icons.visibility), findsNothing);
+
+      // Tap the eye button
+      await tester.tap(find.byIcon(Icons.visibility_off));
+      await tester.pumpAndSettle();
+
+      // Now visible
+      expect(find.byIcon(Icons.visibility), findsOneWidget);
+      expect(find.byIcon(Icons.visibility_off), findsNothing);
+
+      final passwordField = tester.widget<EditableText>(
+        find.descendant(
+          of: find.byType(TextField).last,
+          matching: find.byType(EditableText),
+        ),
+      );
+      expect(passwordField.obscureText, isFalse);
+
+      // Tap again to re-obscure
+      await tester.tap(find.byIcon(Icons.visibility));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.visibility_off), findsOneWidget);
+    });
+
     testWidgets('hides register toggle when registration disabled',
         (tester) async {
       testConfigHttpClientOverride = _configClient(registrationEnabled: false);

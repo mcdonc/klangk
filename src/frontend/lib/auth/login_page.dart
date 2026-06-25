@@ -31,6 +31,7 @@ class _LoginPageState extends State<LoginPage> {
   bool _needsVerification = false;
   bool _resending = false;
   bool _registrationEnabled = true;
+  bool _obscurePassword = true;
   List<Map<String, dynamic>> _oidcProviders = [];
   String _authModes = 'password';
 
@@ -194,11 +195,21 @@ class _LoginPageState extends State<LoginPage> {
                       const SizedBox(height: 16),
                       TextFormField(
                         controller: _passwordController,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Password',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(_obscurePassword
+                                ? Icons.visibility_off
+                                : Icons.visibility),
+                            onPressed: () {
+                              setState(() {
+                                _obscurePassword = !_obscurePassword;
+                              });
+                            },
+                          ),
                         ),
-                        obscureText: true,
+                        obscureText: _obscurePassword,
                         validator: (v) {
                           if (v == null || v.isEmpty) return 'Required';
                           if (_isRegister && v.length < 4)
