@@ -588,6 +588,43 @@ void main() {
       client.dispose();
     });
 
+    test('reconnect loop stops after 10 attempts', () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      WsClient.testBackoffOverride = (_) => Duration.zero;
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // First disconnect triggers reconnect cycle
+      channels[0].serverClose();
+      await Future.delayed(Duration.zero);
+
+      // Keep failing so attempts accumulate
+      WsClient.testChannelFactory = (_) {
+        final ch = _FakeWebSocketChannel()..failReady = true;
+        channels.add(ch);
+        return ch;
+      };
+
+      // Pump enough microtasks for 10+ reconnect cycles
+      for (var i = 0; i < 60; i++) {
+        await Future.delayed(Duration.zero);
+      }
+
+      // Loop should have stopped — no longer reconnecting
+      expect(client.reconnecting, false);
+      expect(client.reconnectAttempt, 11);
+
+      client.disconnect();
+      client.dispose();
+    });
+
     test('duplicate scheduleReconnect calls do not stack timers', () async {
       final auth = AuthService();
       await Future.delayed(Duration.zero);
