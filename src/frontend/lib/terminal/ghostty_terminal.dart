@@ -365,18 +365,18 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       },
       child: Listener(
         // On the alternate screen (tmux), convert wheel events to
-        // PgUp/PgDn key sequences so tmux can handle scrollback via
-        // copy-mode. flterm has no local scrollback on the alt screen.
+        // arrow-key sequences so tmux scrolls line-by-line in copy-mode.
+        // flterm has no local scrollback on the alt screen.
         onPointerSignal: (event) {
           if (event is PointerScrollEvent &&
               _scrollController.hasClients &&
               _scrollController.activeScreen == TerminalScreen.alternate) {
             if (event.scrollDelta.dy < 0) {
-              // Wheel up → Shift+PgUp (ESC [5;2~)
-              widget.wsClient.sendTerminalInput('\x1b[5;2~');
+              // Wheel up → 3× Up arrow (ESC [A) for ~3 lines per tick
+              widget.wsClient.sendTerminalInput('\x1b[A\x1b[A\x1b[A');
             } else if (event.scrollDelta.dy > 0) {
-              // Wheel down → Shift+PgDn (ESC [6;2~)
-              widget.wsClient.sendTerminalInput('\x1b[6;2~');
+              // Wheel down → 3× Down arrow (ESC [B) for ~3 lines per tick
+              widget.wsClient.sendTerminalInput('\x1b[B\x1b[B\x1b[B');
             }
           }
         },
