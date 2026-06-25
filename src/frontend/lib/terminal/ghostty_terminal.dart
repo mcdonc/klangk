@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flterm/flterm.dart';
-import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
@@ -363,60 +362,42 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
           onInvoke: (_) => _zoomReset(),
         ),
       },
-      child: Listener(
-        // On the alternate screen (tmux), convert wheel events to arrow-key
-        // sequences so tmux scrolls line-by-line in copy-mode. flterm has
-        // no local scrollback on the alt screen.
-        onPointerSignal: (event) {
-          if (event is PointerScrollEvent &&
-              _scrollController.hasClients &&
-              _scrollController.activeScreen == TerminalScreen.alternate) {
-            if (event.scrollDelta.dy < 0) {
-              // Wheel up → 3× Up arrow (ESC [A) for ~3 lines per tick
-              widget.wsClient.sendTerminalInput('\x1b[A\x1b[A\x1b[A');
-            } else if (event.scrollDelta.dy > 0) {
-              // Wheel down → 3× Down arrow (ESC [B) for ~3 lines per tick
-              widget.wsClient.sendTerminalInput('\x1b[B\x1b[B\x1b[B');
-            }
-          }
+      child: TerminalView(
+        controller: _terminal,
+        theme: _theme,
+        fontData: _fontData,
+        focusNode: _focusNode,
+        scrollController: _scrollController,
+        autofocus: false,
+        padding: EdgeInsets.zero,
+        // On web, let plain PgUp/PgDn on the primary screen and the browser
+        // zoom combos (Cmd/Ctrl +/-/0) reach the browser (see [_bypassKey]);
+        // on the alt screen and on native they go to the PTY as usual.
+        bypassKey: _bypassKey,
+        // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
+        // Clipboard.getData, which fails on Firefox). These override flterm's
+        // platform defaults, so paste flows solely through the native
+        // `paste` event in [installPasteListener] — one path, no double-paste.
+        //
+        // Native-only font zoom is added via [zoomShortcutsFor]; on web
+        // the browser zooms. Page-scroll keys go to the PTY where tmux
+        // handles scrollback.
+        shortcuts: {
+          ..._disableFltermPaste,
+          if (!isWebOverride) ...zoomShortcutsFor(defaultTargetPlatform),
         },
-        child: TerminalView(
-          controller: _terminal,
-          theme: _theme,
-          fontData: _fontData,
-          focusNode: _focusNode,
-          scrollController: _scrollController,
-          autofocus: false,
-          padding: EdgeInsets.zero,
-          // On web, let plain PgUp/PgDn on the primary screen and the browser
-          // zoom combos (Cmd/Ctrl +/-/0) reach the browser (see [_bypassKey]);
-          // on the alt screen and on native they go to the PTY as usual.
-          bypassKey: _bypassKey,
-          // Disable flterm's built-in Ctrl/Cmd+V paste (it reads via
-          // Clipboard.getData, which fails on Firefox). These override flterm's
-          // platform defaults, so paste flows solely through the native
-          // `paste` event in [installPasteListener] — one path, no double-paste.
-          //
-          // Native-only font zoom is added via [zoomShortcutsFor]; on web
-          // the browser zooms. Page-scroll keys go to the PTY where tmux
-          // handles scrollback; alt-screen scroll is handled in [_bypassKey].
-          shortcuts: {
-            ..._disableFltermPaste,
-            if (!isWebOverride) ...zoomShortcutsFor(defaultTargetPlatform),
+        // Keep mouse selection (drag/word/line/long-press) but drop the
+        // keyboard select-all gesture, so Ctrl+A falls through to the shell
+        // (readline beginning-of-line / tmux prefix) instead of selecting the
+        // buffer. Ctrl+C already passes through (flterm's copy is selection-
+        // conditional); copy stays on Ctrl+Shift+C and the right-click menu.
+        gestureSettings: const TerminalGestureSettings(
+          enabledSelections: {
+            SelectionGesture.drag,
+            SelectionGesture.word,
+            SelectionGesture.line,
+            SelectionGesture.longPress,
           },
-          // Keep mouse selection (drag/word/line/long-press) but drop the
-          // keyboard select-all gesture, so Ctrl+A falls through to the shell
-          // (readline beginning-of-line / tmux prefix) instead of selecting the
-          // buffer. Ctrl+C already passes through (flterm's copy is selection-
-          // conditional); copy stays on Ctrl+Shift+C and the right-click menu.
-          gestureSettings: const TerminalGestureSettings(
-            enabledSelections: {
-              SelectionGesture.drag,
-              SelectionGesture.word,
-              SelectionGesture.line,
-              SelectionGesture.longPress,
-            },
-          ),
         ),
       ),
     );
