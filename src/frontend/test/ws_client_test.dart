@@ -588,7 +588,7 @@ void main() {
       client.dispose();
     });
 
-    test('reconnect loop stops after 10 attempts', () async {
+    test('reconnect loop stops after 25 attempts', () async {
       final auth = AuthService();
       await Future.delayed(Duration.zero);
 
@@ -612,14 +612,14 @@ void main() {
         return ch;
       };
 
-      // Pump enough microtasks for 10+ reconnect cycles
-      for (var i = 0; i < 60; i++) {
+      // Pump enough microtasks for 25+ reconnect cycles
+      for (var i = 0; i < 120; i++) {
         await Future.delayed(Duration.zero);
       }
 
       // Loop should have stopped — no longer reconnecting
       expect(client.reconnecting, false);
-      expect(client.reconnectAttempt, 11);
+      expect(client.reconnectAttempt, 26);
 
       client.disconnect();
       client.dispose();

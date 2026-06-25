@@ -573,7 +573,7 @@ class WsClient extends ChangeNotifier {
     }
 
     _reconnectAttempt++;
-    if (_reconnectAttempt > 10) {
+    if (_reconnectAttempt > 25) {
       _autoReconnect = false;
       _reconnecting = false;
       notifyListeners();
