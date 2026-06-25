@@ -1,6 +1,8 @@
 import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import 'package:klangk_plugins/klangk_plugins.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
 import 'auth/auth_service.dart';
@@ -10,6 +12,14 @@ import 'utils/web_helpers_stub.dart'
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Register plugins early so their routes are available when GoRouter
+  // is created (before any workspace page is opened).
+  final registry = ToolPluginRegistry();
+  for (final plugin in createAllPlugins()) {
+    registry.register(plugin);
+  }
+
   if (kIsWeb) {
     // libghostty's VT runs as WebAssembly in the browser; load it once before
     // any terminal is built. The bundled binary must match the resolved
