@@ -572,8 +572,15 @@ class WsClient extends ChangeNotifier {
       return;
     }
 
-    _reconnecting = true;
     _reconnectAttempt++;
+    if (_reconnectAttempt > 25) {
+      _autoReconnect = false;
+      _reconnecting = false;
+      notifyListeners();
+      return;
+    }
+
+    _reconnecting = true;
     notifyListeners();
     // coverage:ignore-start
     final delay = testBackoffOverride != null
