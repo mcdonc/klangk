@@ -62,11 +62,10 @@ in
         ]
     );
 
-  # Nix playwright-driver.browsers has revision numbers that may not match
-  # the npm @playwright/test package (nix backports browser security patches).
-  # test-frontend-e2e runs setup-playwright-browsers.sh after npm install to
-  # create a symlink farm that bridges the two.
-  env.NIX_PLAYWRIGHT_BROWSERS = pkgs.playwright-driver.browsers;
+  # Point Playwright at the nix-provided browsers. The playwright.config.ts
+  # hardcodes the nix revision numbers (e.g. chromium-1223) so no remapping
+  # is needed — just set the path directly.
+  env.PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
   env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
 
   tasks = {
@@ -246,9 +245,6 @@ in
     devenv tasks run klangk:flutter-build klangk:build-workspace-image
     cd src/frontend/e2e-tests
     npm install --silent
-    # Re-create the playwright browser symlink farm now that browsers.json
-    # exists (enterShell may have skipped it if node_modules was missing).
-    source "$DEVENV_ROOT/scripts/setup-playwright-browsers.sh"
     exec npx playwright test --reporter=list "$@"
   '';
 
