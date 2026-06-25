@@ -351,8 +351,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
     if (!wsClient.connected && !_connecting && !_disconnected) {
       setState(() => _disconnected = true);
     }
-    // Rebuild when reconnecting state changes
-    if (wsClient.reconnecting) {
+    // Rebuild when reconnecting state changes (including when it stops)
+    if (_disconnected) {
       setState(() {});
     }
   }
