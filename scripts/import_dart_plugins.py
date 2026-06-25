@@ -29,7 +29,10 @@ OUTPUT = os.path.join(KLANGK_DART_PLUGINS_PKG, "lib", "klangk_plugins.dart")
 
 PLUGIN_API_DEP = {
     "klangk_plugin_api": {
-        "git": {"url": "https://github.com/mcdonc/klangk-plugin-api.git"}
+        "git": {
+            "url": "https://github.com/mcdonc/klangk-plugin-api.git",
+            "ref": "v0.1.0",
+        }
     }
 }
 
@@ -124,19 +127,9 @@ def generate_dart(plugins):
 def write_overrides_and_symlink():
     """Write pubspec_overrides.yaml at ~/.klangk/klangk/ and symlink it
     into the frontend directory so Flutter can find it."""
-    # The file-viewers stack needs the FileRenderer API, which currently lives
-    # on an unmerged branch of the plugin-api fork (mcdonc/klangk-plugin-api
-    # PR #2). Override klangk_plugin_api to that fork so the generated
-    # klangk_plugins package (which otherwise pins mcdonc) and the frontend
-    # resolve a single, FileRenderer-capable source. Drop this once PR #2 lands
-    # on mcdonc/main.
     overrides_content = (
         "dependency_overrides:\n"
         f"  klangk_plugins:\n    path: {KLANGK_DART_PLUGINS_PKG}\n"
-        "  klangk_plugin_api:\n"
-        "    git:\n"
-        "      url: https://github.com/runyaga/klangk-plugin-api.git\n"
-        "      ref: feat/file-renderer\n"
     )
     overrides_path = os.path.join(KLANGK_DART_PLUGINS_PKG, "pubspec_overrides.yaml")
     with open(overrides_path, "w") as f:

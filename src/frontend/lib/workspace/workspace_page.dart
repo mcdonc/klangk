@@ -123,10 +123,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
   void initState() {
     super.initState();
     _pluginRegistry = ToolPluginRegistry();
-    _plugins = createAllPlugins();
-    for (final plugin in _plugins) {
-      _pluginRegistry.register(plugin);
-    }
+    // Plugins are registered once in main() — reuse them here.
+    _plugins = _pluginRegistry.plugins.toList();
     _fileRenderers = buildFileRendererRegistry(_plugins);
     _fetchWorkspaceName();
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());

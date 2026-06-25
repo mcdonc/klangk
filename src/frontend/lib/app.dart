@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:provider/provider.dart';
 import 'auth/auth_service.dart';
 import 'auth/pending_redirect.dart';
+import 'utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) 'utils/web_helpers_web.dart';
 import 'theme/colors.dart';
 import 'admin/admin_users_page.dart';
 import 'auth/consent_page.dart';
@@ -65,6 +68,10 @@ class _KlangkAppState extends State<KlangkApp> {
   }
 
   GoRouter _createRouter(AuthService auth, String initialLocation) {
+    // Collect routes contributed by plugins.
+    final pluginRoutes = ToolPluginRegistry().routes;
+    final pluginPaths = pluginRoutes.map((r) => r.path).toSet();
+
     return GoRouter(
       initialLocation: initialLocation,
       refreshListenable: auth,
@@ -88,6 +95,7 @@ class _KlangkAppState extends State<KlangkApp> {
           '/accept-invite',
           '/oidc-complete',
           '/consent',
+          ...pluginPaths,
         };
         if (!isLoggedIn && !publicRoutes.contains(loc)) {
           if (loc != '/' && loc != '/workspaces') {
@@ -95,7 +103,8 @@ class _KlangkAppState extends State<KlangkApp> {
           }
           return '/login';
         }
-        if (isLoggedIn && publicRoutes.contains(loc)) {
+        if (isLoggedIn && publicRoutes.contains(loc) &&
+            !pluginPaths.contains(loc)) {
           return pendingRedirect ?? '/workspaces';
         }
         if (isLoggedIn && loc == '/') return '/workspaces';
@@ -166,6 +175,20 @@ class _KlangkAppState extends State<KlangkApp> {
           path: '/admin/users',
           builder: (context, state) => const AdminUsersPage(),
         ),
+        for (final route in pluginRoutes)
+          GoRoute(
+            path: route.path,
+            builder: (context, state) => route.builder(
+              context,
+              state.pathParameters,
+              // Merge page-level query params (captured before GoRouter
+              // navigation cleared them) with the hash query params.
+              // This is needed because the Soliplex OAuth callback lands
+              // as ?token=...#/callback — the token is in the page query,
+              // not the hash query.
+              {...capturedPageQuery, ...state.uri.queryParameters},
+            ),
+          ),
       ],
     );
   }
