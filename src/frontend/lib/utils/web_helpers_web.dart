@@ -45,6 +45,21 @@ void suppressContextMenuBriefly() {
 /// Get the browser's location hash fragment.
 String getLocationHash() => web.window.location.hash;
 
+/// Get the browser's location query string (e.g. '?token=xxx').
+String getLocationSearch() => web.window.location.search;
+
+/// Query params captured from the page URL at startup, before GoRouter
+/// navigation clears them. Plugin callback routes read from this.
+Map<String, String> capturedPageQuery = {};
+
+/// Call once from main() to snapshot the page-level query params.
+void capturePageQuery() {
+  final search = web.window.location.search;
+  if (search.length > 1) {
+    capturedPageQuery = Uri.splitQueryString(search.substring(1));
+  }
+}
+
 /// Return a stable browser tab ID from sessionStorage.
 ///
 /// Survives page refresh (same tab) but is unique per tab.

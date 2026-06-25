@@ -21,6 +21,7 @@ from starlette.background import BackgroundTask
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
+    PlainTextResponse,
     RedirectResponse,
     StreamingResponse,
 )
@@ -64,6 +65,13 @@ router = APIRouter()
 @root_router.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@root_router.get("/empty")
+async def empty():
+    """Return an empty page. Used as a lightweight OAuth callback landing URL
+    so the popup doesn't need to boot the Flutter SPA."""
+    return PlainTextResponse("")
 
 
 @router.get("/auth/verify-workspace-token")
