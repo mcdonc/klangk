@@ -62,7 +62,11 @@ in
         ]
     );
 
-  env.PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
+  # Nix playwright-driver.browsers has revision numbers that may not match
+  # the npm @playwright/test package (nix backports browser security patches).
+  # enterShell runs setup-playwright-browsers.sh to create a symlink farm
+  # that bridges the two.
+  env.NIX_PLAYWRIGHT_BROWSERS = pkgs.playwright-driver.browsers;
   env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
 
   tasks = {
@@ -372,6 +376,9 @@ in
   };
 
   enterShell = ''
+    # Create playwright browser symlink farm (nix revisions → npm revisions)
+    source "$DEVENV_ROOT/scripts/setup-playwright-browsers.sh"
+
     mkdir -p "$KLANGK_DATA_DIR"
 
     # Generate version file (used by update_plugins.py and /version endpoint)
