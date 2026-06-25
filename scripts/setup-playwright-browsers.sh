@@ -6,7 +6,7 @@
 # numbers (e.g. firefox-1522) may differ from upstream npm (firefox-1511)
 # even at the same playwright version.
 #
-# Sourced from enterShell — exports PLAYWRIGHT_BROWSERS_PATH.
+# Sourced from test-frontend-e2e after npm install — exports PLAYWRIGHT_BROWSERS_PATH.
 # Requires: NIX_PLAYWRIGHT_BROWSERS, DEVENV_STATE, DEVENV_ROOT
 
 _nix_pw="${NIX_PLAYWRIGHT_BROWSERS:-}"
