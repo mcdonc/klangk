@@ -583,6 +583,29 @@ class TestStartContainer:
         assert "KLANGK_HOSTING_PROTO=https" in env
         assert "KLANGK_HOSTING_BASE_PATH=/klangk" in env
 
+    async def test_terminal_banner_default_empty(self, workspace):
+        """Default terminal banner is empty, so env var is not passed."""
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        assert not any(e.startswith("KLANGK_TERMINAL_BANNER=") for e in env)
+
+    async def test_terminal_banner_custom(self, workspace, monkeypatch):
+        """Deployer can set a terminal banner via env var."""
+        monkeypatch.setattr(container, "TERMINAL_BANNER", "Custom warning")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        assert "KLANGK_TERMINAL_BANNER=Custom warning" in env
+
     async def test_port_allocation_on_create(self, workspace):
         with patch_podman():
             await container.registry.start_container(

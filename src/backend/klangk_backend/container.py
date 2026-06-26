@@ -24,6 +24,8 @@ def _container_dns_config() -> list[str]:
 IMAGE_NAME = util.resolve_env_secret("KLANGK_IMAGE_NAME", "klangk-workspace")
 INSTANCE_ID = util.resolve_env_secret("KLANGK_INSTANCE_ID", "default")
 
+TERMINAL_BANNER = util.resolve_env_secret("KLANGK_TERMINAL_BANNER", "")
+
 _allowed_images_env = util.resolve_env_secret("KLANGK_ALLOWED_IMAGES", "")
 ALLOWED_IMAGES: set[str] = {
     img.strip() for img in _allowed_images_env.split(",") if img.strip()
@@ -488,6 +490,8 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_HOSTING_HOSTNAME={hosting_hostname}")
         env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
+        if TERMINAL_BANNER:
+            env_vars.append(f"KLANGK_TERMINAL_BANNER={TERMINAL_BANNER}")
         allow_sudo = util.resolve_env_bool("KLANGK_ALLOW_SUDO")
 
         for k, v in plugins.container_env().items():
