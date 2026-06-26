@@ -105,7 +105,7 @@ async def stat_path(container_id: str, path: str) -> dict | None:
     path = validate_path(path)
     rc, out, _err = await podman.exec_container(
         container_id,
-        ["stat", "--format", "%F\t%s", "--", path],
+        ["stat", "-L", "--format", "%F\t%s", "--", path],
         user=EXEC_USER,
     )
     if rc != 0:
@@ -155,9 +155,17 @@ def stream_dir_tar(
 ) -> AsyncGenerator[bytes, None]:
     """Stream a directory as a tar.gz archive for download."""
     path = validate_path(path)
+    # Use sh -c with readlink to resolve symlinks before tar -C,
+    # because tar -C does not follow symlinks on all implementations.
     return podman.exec_container_stream(
         container_id,
-        ["tar", "-czf", "-", "-C", path, "."],
+        [
+            "sh",
+            "-c",
+            'dir="$(readlink -f "$1")" && tar -czf - -C "$dir" .',
+            "sh",
+            path,
+        ],
         user=EXEC_USER,
     )
 

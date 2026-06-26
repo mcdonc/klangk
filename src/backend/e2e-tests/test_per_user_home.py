@@ -439,6 +439,77 @@ class TestFileApiNavigation:
         finally:
             cleanup()
 
+    @pytest.mark.asyncio
+    async def test_download_homedir_symlink_as_tar(self, server, auth):
+        """Downloading the user's homedir (a symlink to a directory)
+        produces a non-empty .tar.gz archive."""
+        workspace_id, cleanup = create_workspace(server, auth)
+        try:
+            ws = await ws_connect(server, auth, workspace_id)
+            try:
+                # Create a file so the archive has content
+                await exec_command(
+                    ws, ["bash", "-c", "echo hello > ~/testfile.txt"]
+                )
+
+                # Get the handle
+                output = await exec_command(
+                    ws, ["bash", "-c", "basename $HOME"]
+                )
+                handle = output.strip()
+
+                url = server["url"]
+                # Verify the path exists and is a directory
+                list_resp = httpx.get(
+                    f"{url}/api/v1/workspaces/{workspace_id}/files",
+                    params={"path": f"/home/{handle}"},
+                    headers=auth["headers"],
+                    timeout=10,
+                )
+                assert list_resp.status_code == 200, (
+                    f"Listing /home/{handle} failed: {list_resp.status_code}"
+                )
+                entries = list_resp.json()
+                assert len(entries) > 0, f"/home/{handle} listing is empty"
+
+                # First verify /tmp download works (not a symlink)
+                await exec_command(
+                    ws, ["bash", "-c", "echo tmptest > /tmp/check.txt"]
+                )
+                tmp_resp = httpx.get(
+                    f"{url}/api/v1/workspaces/{workspace_id}/files/download",
+                    params={"path": "/tmp"},
+                    headers=auth["headers"],
+                    timeout=30,
+                )
+                assert tmp_resp.status_code == 200
+                assert len(tmp_resp.content) > 0, (
+                    "/tmp download is empty (streaming broken)"
+                )
+
+                # Now test the symlinked homedir
+                resp = httpx.get(
+                    f"{url}/api/v1/workspaces/{workspace_id}/files/download",
+                    params={"path": f"/home/{handle}"},
+                    headers=auth["headers"],
+                    timeout=30,
+                )
+                assert resp.status_code == 200, (
+                    f"Download failed: {resp.status_code} {resp.text}"
+                )
+                assert resp.headers["content-type"] == "application/gzip", (
+                    f"Expected tar path but got content-type: "
+                    f"{resp.headers['content-type']}"
+                )
+                assert len(resp.content) > 0, (
+                    f"Downloaded archive for /home/{handle} is empty"
+                )
+                assert resp.headers["content-type"] == "application/gzip"
+            finally:
+                await ws.close()
+        finally:
+            cleanup()
+
 
 class TestHandleChange:
     @pytest.mark.asyncio

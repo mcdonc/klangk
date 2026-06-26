@@ -322,9 +322,9 @@ async def exec_container_stream(
 ) -> AsyncGenerator[bytes, None]:
     """Stream stdout from a command inside a container.
 
-    Yields chunks of raw bytes as they arrive.  Uses ``stdout=PIPE``
-    (not temp files) so data flows incrementally.  The process is killed
-    if the generator is closed early (e.g. client disconnects).
+    Uses ``stdout=PIPE`` for true streaming without buffering to disk.
+    Unlike lifecycle commands (``podman start``), ``podman exec`` does
+    not spawn long-lived helpers, so pipe inheritance is not a problem.
     """
     args = ["exec"]
     if user:
@@ -335,7 +335,7 @@ async def exec_container_stream(
         PODMAN_BIN,
         *args,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
         env=subprocess_env(),
     )
     try:
@@ -347,7 +347,13 @@ async def exec_container_stream(
     finally:
         if proc.returncode is None:
             proc.kill()
-            await proc.wait()
+        await proc.wait()
+        stderr = await proc.stderr.read()
+        if stderr:
+            logger.warning(
+                "exec_container_stream stderr: %s",
+                stderr.decode("utf-8", errors="replace").strip(),
+            )
 
 
 async def remove_container(container_id: str, *, force: bool = True) -> None:

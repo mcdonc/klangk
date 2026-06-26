@@ -346,7 +346,8 @@ class TestStreamDirTar:
 
         assert chunks == [b"\x1f\x8b", b"tardata"]
         cmd = mock.call_args[0][1]
-        assert "tar" in cmd
+        assert cmd[0] == "sh"
+        assert "tar" in cmd[2]  # tar is in the sh -c script
         assert mock.call_args.kwargs["user"] == "klangk"
 
     async def test_stream_dir_tar_rejects_relative(self):
