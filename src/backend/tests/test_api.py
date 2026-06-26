@@ -2890,6 +2890,24 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
+    async def test_delete_file_oserror(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch(
+                "klangk_backend.files.delete_path",
+                new_callable=AsyncMock,
+                side_effect=OSError("Permission denied"),
+            ):
+                resp = await client.delete(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/usr/bin/test",
+                    headers=headers,
+                )
+            assert resp.status_code == 500
+            assert "Permission denied" in resp.json()["detail"]
+        finally:
+            self._cleanup(ws_id)
+
     async def test_rename_file(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
@@ -2953,6 +2971,28 @@ class TestFileRoutes:
                     json={"old_path": "/a.txt", "new_path": "/b.txt"},
                 )
             assert resp.status_code == 409
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_rename_file_oserror(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch(
+                "klangk_backend.files.rename_path",
+                new_callable=AsyncMock,
+                side_effect=OSError("Permission denied"),
+            ):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/rename",
+                    headers=headers,
+                    json={
+                        "old_path": "/usr/bin/a",
+                        "new_path": "/usr/bin/b",
+                    },
+                )
+            assert resp.status_code == 500
+            assert "Permission denied" in resp.json()["detail"]
         finally:
             self._cleanup(ws_id)
 
