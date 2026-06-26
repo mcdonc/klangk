@@ -6388,10 +6388,38 @@ class TestPresenceIncludesAgent:
         state.connections[sock] = conn
 
         try:
-            with patch("klangk_backend.agent.any_running", return_value=True):
+            with patch(
+                "klangk_backend.agent.is_running",
+                side_effect=lambda ws_id: ws_id == workspace["id"],
+            ):
                 users = await _get_presence_list(workspace["id"])
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID in ids
+        finally:
+            await session.remove_subscriber(sock)
+            state.connections.pop(sock, None)
+            state.sessions.pop(workspace["id"], None)
+
+    async def test_agent_not_in_presence_when_running_in_other_workspace(
+        self, user, agent_user
+    ):
+        """Agent running in a different workspace must not appear in this
+        workspace's presence list (regression for #870)."""
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        workspace = await ws_mod.create_workspace(user["id"], "pres-ws")
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock, "cid")
+        state.connections[sock] = conn
+
+        try:
+            with patch(
+                "klangk_backend.agent.is_running",
+                side_effect=lambda ws_id: ws_id == "other-workspace",
+            ):
+                users = await _get_presence_list(workspace["id"])
+            ids = [u["user_id"] for u in users]
+            assert model.AGENT_USER_ID not in ids
         finally:
             await session.remove_subscriber(sock)
             state.connections.pop(sock, None)

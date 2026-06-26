@@ -659,9 +659,9 @@ async def _get_presence_list(workspace_id: str) -> list[dict]:
                     "user_handle": conn.user.get("handle", ""),
                 }
             )
-    # Include agent only if its RPC process is alive.
+    # Include agent only if its RPC process is alive in this workspace.
 
-    if agent.any_running():
+    if agent.is_running(workspace_id):
         agent_user = await model.get_agent_user()
         users.append(
             {
