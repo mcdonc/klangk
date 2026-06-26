@@ -1295,14 +1295,17 @@ class TestStopContainer:
 
     async def test_stop_running(self):
         container.registry.track_activity("cid", "ws")
+        container.registry._workspace_locks["ws"] = asyncio.Lock()
 
         with patch_podman() as p:
             await container.registry.stop_and_remove_container("cid")
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
+        assert "ws" not in container.registry._workspace_locks
 
     async def test_stop_podman_error(self):
         container.registry.track_activity("cid", "ws")
+        container.registry._workspace_locks["ws"] = asyncio.Lock()
 
         with patch_podman(
             remove_container=AsyncMock(
@@ -1312,6 +1315,7 @@ class TestStopContainer:
             await container.registry.stop_and_remove_container("cid")
         # Should still remove from tracking
         assert "ws" not in container.registry.states
+        assert "ws" not in container.registry._workspace_locks
 
 
 class TestRemoveContainer:
@@ -1323,14 +1327,17 @@ class TestRemoveContainer:
 
     async def test_remove(self):
         container.registry.track_activity("cid", "ws")
+        container.registry._workspace_locks["ws"] = asyncio.Lock()
 
         with patch_podman() as p:
             await container.registry.stop_and_remove_container("cid")
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
+        assert "ws" not in container.registry._workspace_locks
 
     async def test_remove_podman_error(self):
         container.registry.track_activity("cid", "ws")
+        container.registry._workspace_locks["ws"] = asyncio.Lock()
 
         with patch_podman(
             remove_container=AsyncMock(
@@ -1339,6 +1346,7 @@ class TestRemoveContainer:
         ):
             await container.registry.stop_and_remove_container("cid")
         assert "ws" not in container.registry.states
+        assert "ws" not in container.registry._workspace_locks
 
 
 class TestStopUserContainers:
