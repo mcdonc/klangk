@@ -87,6 +87,9 @@ class TestListFiles:
 
         mock.assert_called_once()
         assert mock.call_args.kwargs["user"] == "klangk"
+        # -L flag dereferences symlinks so symlinked dirs show as directories
+        cmd = mock.call_args[0][1]
+        assert cmd[0:3] == ["find", "-L", "/home/work"]
         assert len(entries) == 2
         assert entries[0]["name"] == "a.txt"
         assert entries[0]["path"] == "/home/work/a.txt"
@@ -204,7 +207,7 @@ class TestListFiles:
             await files.list_files(CID)
 
         cmd = mock.call_args[0][1]
-        assert cmd[1] == "/"
+        assert cmd[2] == "/"
 
 
 class TestStatPath:

@@ -50,6 +50,7 @@ async def list_files(container_id: str, path: str = "/") -> list[dict]:
         container_id,
         [
             "find",
+            "-L",
             path,
             "-maxdepth",
             "1",
