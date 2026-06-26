@@ -46,7 +46,12 @@ from .model import (
     PRINCIPAL_USER,
     SYSTEM_AUTHENTICATED,
 )
-from .util import API_PREFIX, derive_hosting_info, resolve_env_secret
+from .util import (
+    API_PREFIX,
+    derive_hosting_info,
+    resolve_env_secret,
+    sanitize_disposition_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1278,7 +1283,7 @@ async def export_workspace(
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-    safe_name = ws_name.replace("/", "_").replace("\\", "_")
+    safe_name = sanitize_disposition_name(ws_name)
     # Rough estimate: gzip typically compresses to ~20% of original
     # for text-heavy home dirs (source code, dotfiles, configs).
     estimated_compressed = max(int(estimated_size * 0.2), 1)
@@ -1903,7 +1908,7 @@ async def download_file(
         raise HTTPException(status_code=400, detail=str(e))
     if info is None:
         raise HTTPException(status_code=404, detail="Path not found")
-    name = posixpath.basename(path) or "download"
+    name = sanitize_disposition_name(posixpath.basename(path) or "download")
     if not info["is_dir"]:
         return StreamingResponse(
             files.stream_file(cid, path),

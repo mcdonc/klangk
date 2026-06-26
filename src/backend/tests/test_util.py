@@ -4,6 +4,7 @@ from klangk_backend.util import (
     resolve_env_bool,
     resolve_env_secret,
     resolve_file_secret,
+    sanitize_disposition_name,
 )
 
 
@@ -71,3 +72,17 @@ class TestResolveFileSecret:
 
     def test_file_missing_returns_empty(self):
         assert resolve_file_secret("file:/no/such/file") == ""
+
+
+class TestSanitizeDispositionName:
+    def test_plain_name(self):
+        assert sanitize_disposition_name("file.txt") == "file.txt"
+
+    def test_strips_double_quotes(self):
+        assert sanitize_disposition_name('f"name.txt') == "fname.txt"
+
+    def test_replaces_slashes_with_underscore(self):
+        assert sanitize_disposition_name("a/b\\c") == "a_b_c"
+
+    def test_combined(self):
+        assert sanitize_disposition_name('my/"file".txt') == "my_file.txt"
