@@ -21,15 +21,24 @@ _err = Console(stderr=True)
 _out = Console()
 
 
-def _fetch_config(server_url: str) -> dict | None:
-    """Fetch /api/v1/config from the server. Returns None on failure."""
+_UNREACHABLE = "unreachable"
+
+
+def _fetch_config(server_url: str) -> dict | str | None:
+    """Fetch /api/v1/config from the server.
+
+    Returns:
+        dict — valid klangk config
+        _UNREACHABLE — server is down or unreachable
+        None — server responded but is not a klangk instance
+    """
     try:
         resp = httpx.get(f"{server_url}/api/v1/config", timeout=5.0)
         if resp.status_code == 200:
             return resp.json()
+        return None
     except httpx.HTTPError:
-        pass
-    return None
+        return _UNREACHABLE
 
 
 def _oidc_browser_login(  # pragma: no cover
@@ -165,8 +174,22 @@ def login(
             except httpx.HTTPError:
                 pass  # Token invalid or server unreachable — fall through
 
-    # Check server config for OIDC providers
+    # Probe the server to verify it's a klangk instance
     config = _fetch_config(server_url)
+    if config is None:
+        _err.print(
+            f"[red]Error:[/red] {server_url} does not appear to be a"
+            " klangk server."
+        )
+        _err.print(
+            "[yellow]Hint:[/yellow] did you forget the subpath?"
+            " (e.g. https://host/klangk)"
+        )
+        raise SystemExit(1)
+    if config == _UNREACHABLE:
+        _err.print(f"[red]Error:[/red] could not reach {server_url}")
+        raise SystemExit(1)
+
     if config:
         providers = config.get("oidc_providers", [])
         auth_modes = config.get("auth_modes", "password")
