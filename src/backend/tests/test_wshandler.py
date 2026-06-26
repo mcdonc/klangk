@@ -6116,6 +6116,47 @@ class TestTokenRenewal:
         finally:
             wshandler.state.sessions.pop(workspace["id"], None)
 
+    async def test_reset_cancels_token_renewal_task(self, user):
+        """reset() cancels the token renewal task (issue #871).
+
+        Without cancellation the renewal loop keeps running after a
+        container is killed and the session is reset, leaking a task
+        that renews tokens for a dead container forever.
+        """
+        workspace = await _create_workspace_with_acl(user["id"], "leak-ws")
+        session = wshandler.state.get_or_create_session(workspace["id"])
+        session.container_id = "test-cid"
+
+        try:
+            with (
+                patch.object(
+                    wshandler.auth,
+                    "WORKSPACE_TOKEN_EXPIRE_HOURS",
+                    0.0001,
+                ),
+                patch(
+                    "klangk_backend.terminal.set_workspace_token",
+                    new_callable=AsyncMock,
+                ) as mock_set,
+            ):
+                expiry = datetime.now(timezone.utc) + timedelta(seconds=0.1)
+                session.start_token_renewal(expiry)
+                task = session._token_renewal_task
+                assert task is not None and not task.done()
+
+                await session.reset()
+
+                assert task.done()
+                assert session._token_renewal_task is None
+                assert session.workspace_token_expiry is None
+
+            # Renewal must never fire again after reset, even if we wait.
+            calls_before = mock_set.call_count
+            await asyncio.sleep(0.3)
+            assert mock_set.call_count == calls_before
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+
 
 class TestSSHAgentDispatch:
     async def test_dispatch_ssh_agent_start(self, user):
