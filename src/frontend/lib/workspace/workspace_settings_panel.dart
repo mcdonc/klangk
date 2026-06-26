@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
@@ -372,11 +373,21 @@ class _SettingsFormState extends State<_SettingsForm> {
                         child: Row(
                           children: [
                             Expanded(
-                              child: Text(
+                              child: SelectableText(
                                 e.value,
                                 style: const TextStyle(fontSize: 13),
                               ),
                             ),
+                            IconButton(
+                              icon: const Icon(Icons.copy, size: 16),
+                              tooltip: 'Copy',
+                              onPressed: () => Clipboard.setData(
+                                ClipboardData(text: e.value),
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                            const SizedBox(width: 4),
                             IconButton(
                               icon: const Icon(Icons.close, size: 18),
                               onPressed: () =>
@@ -428,11 +439,23 @@ class _SettingsFormState extends State<_SettingsForm> {
                         child: Row(
                           children: [
                             Expanded(
-                              child: Text(
+                              child: SelectableText(
                                 '${e.value.key}=${e.value.value}',
                                 style: const TextStyle(fontSize: 13),
                               ),
                             ),
+                            IconButton(
+                              icon: const Icon(Icons.copy, size: 16),
+                              tooltip: 'Copy',
+                              onPressed: () => Clipboard.setData(
+                                ClipboardData(
+                                  text: '${e.value.key}=${e.value.value}',
+                                ),
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                            const SizedBox(width: 4),
                             IconButton(
                               icon: const Icon(Icons.close, size: 18),
                               onPressed: () =>
