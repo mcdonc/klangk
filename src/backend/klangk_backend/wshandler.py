@@ -553,9 +553,7 @@ class WebSocketState:
 
         # Clean up module-level agent state for this workspace.
         _agent_conversations.pop(workspace_id, None)
-        task = _agent_tasks.pop(workspace_id, None)
-        if task and not task.done():
-            task.cancel()
+        _cancel_agent_task(workspace_id)
         # Stop the Pi RPC subprocess so it doesn't outlive the container.
         await agent.stop_session(workspace_id)
 
@@ -2086,6 +2084,9 @@ class Connection:
             del _agent_conversations[workspace_id]
 
         if should_route and self.container_id:
+            # One agent-run slot per workspace: cancel any in-flight run
+            # so concurrent @mentions don't orphan the earlier task.
+            _cancel_agent_task(workspace_id)
             _agent_tasks[workspace_id] = asyncio.create_task(
                 _handle_agent_mention(workspace_id, self.container_id, text)
             )
@@ -2148,9 +2149,7 @@ class Connection:
         workspace_id = self.workspace_id
         if not workspace_id:
             return
-        task = _agent_tasks.pop(workspace_id, None)
-        if task and not task.done():
-            task.cancel()
+        _cancel_agent_task(workspace_id)
 
     async def handle_ui_ready(self) -> None:
         if self.workspace_id:
@@ -2419,6 +2418,29 @@ async def _addresses_other_user(text: str) -> bool:
 _agent_tasks: dict[str, asyncio.Task] = {}
 
 
+def _cancel_agent_task(workspace_id: str) -> None:
+    """Cancel and drop any in-flight agent run for a workspace.
+
+    There is a single agent-run slot per workspace, so a new run must
+    supersede (cancel) any still-running one — otherwise the earlier
+    task is orphaned and can no longer be reached by an abort.
+    """
+    task = _agent_tasks.pop(workspace_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+
+
+def _drop_agent_task_if_current(workspace_id: str) -> None:
+    """Remove the workspace's agent-task entry only if it is *this* run.
+
+    A superseding mention cancels the prior run and installs a newer
+    task, so a finishing (or cancelled) run must not pop an entry that
+    now belongs to its replacement.
+    """
+    if _agent_tasks.get(workspace_id) is asyncio.current_task():
+        _agent_tasks.pop(workspace_id, None)
+
+
 async def _handle_agent_mention(
     workspace_id: str, container_id: str, user_text: str
 ) -> None:
@@ -2488,7 +2510,7 @@ async def _handle_agent_mention(
         if session:
             session.broadcast({"type": "agent_thinking", "thinking": False})
             session.broadcast({"type": "chat_message", **sys_msg})
-        _agent_tasks.pop(workspace_id, None)
+        _drop_agent_task_if_current(workspace_id)
         return
     except Exception:
         logger.exception("Agent error for workspace %s", workspace_id)
@@ -2507,7 +2529,7 @@ async def _handle_agent_mention(
     if session:
         session.broadcast({"type": "agent_thinking", "thinking": False})
         session.broadcast({"type": "chat_message", **agent_msg})
-    _agent_tasks.pop(workspace_id, None)
+    _drop_agent_task_if_current(workspace_id)
 
 
 async def handle_websocket(websocket: WebSocket) -> None:

@@ -5572,6 +5572,62 @@ class TestChatSend:
         finally:
             await session.remove_subscriber(sock)
 
+    async def test_chat_send_mention_supersedes_prior_run(
+        self, workspace, user, agent_user
+    ):
+        """A second rapid @mention cancels the prior in-flight run, and abort
+        then reaches the latest run instead of an orphaned task."""
+        from klangk_backend.wshandler import state
+
+        sock1 = _mock_sock()
+        sock2 = _mock_sock()
+        conn1 = _base_conn(user=user, ws=sock1)
+        conn1.workspace_id = workspace["id"]
+        conn1.container_id = "cid"
+        user2 = {
+            "id": "uid-second",
+            "email": "second@test.com",
+            "handle": "second",
+        }
+        conn2 = _base_conn(user=user2, ws=sock2)
+        conn2.workspace_id = workspace["id"]
+        conn2.container_id = "cid"
+
+        session = state.get_or_create_session(workspace["id"])
+        await session.add_subscriber(sock1, "cid")
+        await session.add_subscriber(sock2, "cid")
+
+        async def slow_mention(workspace_id, container_id, text):
+            await asyncio.sleep(999)
+
+        try:
+            with patch(
+                "klangk_backend.wshandler._handle_agent_mention",
+                new=slow_mention,
+            ):
+                await conn1.handle_chat_send({"message": "@MrBoops first"})
+                task1 = wshandler._agent_tasks[workspace["id"]]
+                # A second mention from a different user must supersede
+                # task1 rather than orphaning it.
+                await conn2.handle_chat_send({"message": "@MrBoops second"})
+                task2 = wshandler._agent_tasks[workspace["id"]]
+                assert task2 is not task1
+                await asyncio.sleep(0)
+                assert task1.cancelled()
+                # abort reaches the now-current run.
+                await conn2.handle_chat_agent_abort()
+                assert workspace["id"] not in wshandler._agent_tasks
+                await asyncio.sleep(0)
+                assert task2.cancelled()
+        finally:
+            await session.remove_subscriber(sock1)
+            await session.remove_subscriber(sock2)
+            for t in list(wshandler._agent_tasks.values()):
+                if not t.done():
+                    t.cancel()
+            wshandler._agent_tasks.clear()
+            wshandler._agent_conversations.pop(workspace["id"], None)
+
     async def test_chat_history_on_connect(self, user, agent_user):
         from klangk_backend import model
 
@@ -6691,6 +6747,37 @@ class TestHandleChatAgentAbort:
         conn.workspace_id = workspace["id"]
         wshandler._agent_tasks.pop(workspace["id"], None)
         await conn.handle_chat_agent_abort()
+
+    async def test_drop_if_current_removes_own_entry(self):
+        """A finishing run drops the entry only when it is the current task."""
+        ws_id = "ws-drop-self"
+        wshandler._agent_tasks[ws_id] = asyncio.current_task()
+        try:
+            wshandler._drop_agent_task_if_current(ws_id)
+            assert ws_id not in wshandler._agent_tasks
+        finally:
+            wshandler._agent_tasks.pop(ws_id, None)
+
+    async def test_drop_if_current_keeps_other_entry(self):
+        """A superseded (older) run must not pop a newer task's entry."""
+        ws_id = "ws-drop-other"
+
+        async def other():
+            await asyncio.sleep(999)
+
+        other_task = asyncio.create_task(other())
+        wshandler._agent_tasks[ws_id] = other_task
+        try:
+            wshandler._drop_agent_task_if_current(ws_id)
+            # Entry belongs to a different task; left intact.
+            assert wshandler._agent_tasks[ws_id] is other_task
+        finally:
+            other_task.cancel()
+            try:
+                await other_task
+            except asyncio.CancelledError:
+                pass
+            wshandler._agent_tasks.pop(ws_id, None)
 
 
 class TestPresenceIncludesAgent:
