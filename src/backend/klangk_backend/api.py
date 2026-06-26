@@ -27,7 +27,6 @@ from pydantic import BaseModel
 
 from . import (
     acl,
-    agent,
     auth,
     container,
     emailsvc,
@@ -1173,7 +1172,9 @@ async def delete_workspace(
         if live_state
         else workspace.get("container_id")
     )
-    await agent.stop_session(workspace_id)
+    # reset_workspace_state (below) stops the agent session and clears
+    # shared state; the agent subprocess runs inside the container, so
+    # stopping the container kills it either way.
     if cid:
         await container.registry.stop_and_remove_container(cid)
     await wshandler.reset_workspace_state(workspace_id)
@@ -1207,7 +1208,6 @@ async def restart_workspace(
         if live_state
         else workspace.get("container_id")
     )
-    await agent.stop_session(workspace_id)
     if cid:
         await container.registry.stop_and_remove_container(cid)
     await wshandler.reset_workspace_state(workspace_id)
