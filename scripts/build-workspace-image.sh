@@ -33,32 +33,14 @@ if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plug
   python3 scripts/update_plugins.py
 fi
 
-# Stage plugin files outside the source tree
+# Stage full plugin directories outside the source tree
 STAGING="$KLANGK_PLUGINS_DIR/.docker"
 rm -rf "$STAGING"
-mkdir -p "$STAGING/extensions" "$STAGING/tools" "$STAGING/hooks"
+mkdir -p "$STAGING/plugins"
 for d in "$KLANGK_PLUGINS_DIR"/*/; do
   [ -d "$d" ] || continue
   name=$(basename "$d")
-  [ -f "$d/extension.ts" ] && cp "$d/extension.ts" "$STAGING/extensions/$name.ts"
-  # Flatten all plugin tools into a single directory (/opt/klangk/bin/)
-  if [ -d "$d/tools" ]; then
-    cp -r "$d/tools/"* "$STAGING/tools/" 2>/dev/null
-  fi
-  # Stage lifecycle hooks per-plugin (/opt/klangk/hooks/<plugin>/)
-  has_hooks=false
-  for hook in on-image-build.sh on-entrypoint.sh on-shell-init.sh; do
-    if [ -f "$d/$hook" ]; then
-      has_hooks=true
-      break
-    fi
-  done
-  if $has_hooks; then
-    mkdir -p "$STAGING/hooks/$name"
-    for hook in on-image-build.sh on-entrypoint.sh on-shell-init.sh; do
-      [ -f "$d/$hook" ] && cp "$d/$hook" "$STAGING/hooks/$name/$hook"
-    done
-  fi
+  cp -r "$d" "$STAGING/plugins/$name"
 done
 
 # Remove old containers before rebuilding so they get recreated from the new image.
@@ -84,9 +66,7 @@ done
 "$PODMAN" build \
   --pull=newer \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
-  --build-context plugin-extensions="$STAGING/extensions" \
-  --build-context plugin-tools="$STAGING/tools" \
-  --build-context plugin-hooks="$STAGING/hooks" \
+  --build-context plugins="$STAGING/plugins" \
   -t "${KLANGK_IMAGE_NAME}:latest" \
   -t "${KLANGK_IMAGE_NAME}:${VERSION}" \
   "$@" src/containers/workspace/

@@ -20,7 +20,7 @@ it to your `plugins.yaml`:
 ```yaml
 plugins:
   - name: git-credential
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/git-credential
     ref: main
 ```

@@ -2,12 +2,14 @@
 
 All plugins live in `$KLANGK_PLUGINS_DIR/<name>/` directories (defaults to `.devenv/state/klangk/plugins/`). A plugin can contain any combination of:
 
-- `extension.ts` — Pi extension with `pi.registerTool()`. Copied into the workspace image at build time.
+- `extension.ts` — Pi extension with `pi.registerTool()`. Symlinked as `<plugin-name>.ts` into the workspace image at build time.
+- `skills/` — Pi skill directories (each containing a `SKILL.md`). Symlinked as `<plugin-name>-<skill>/` into the image.
+- `prompts/` — Pi prompt templates (`.md` files). Symlinked as `<plugin-name>-<file>.md` into the image.
 - `klangk/` — Dart package for client-side browser actions:
   - `klangk/pubspec.yaml` — Package definition, depends on `klangk_plugin_api` (git)
   - `klangk/lib/plugin.dart` — Class extending `ToolPlugin` with action handlers
   - `klangk/lib/*.dart` — Supporting Dart files (widgets, utilities)
-- `tools/` — Server-side scripts and commands. Copied to `/opt/klangk/bin/` in the workspace image (on `PATH`).
+- `tools/` — Server-side scripts and commands. Available at `/opt/klangk/plugins/<name>/tools/` in the container. Plugins that need a tool on `PATH` should symlink it in their `on-image-build.sh` hook.
 - `on-image-build.sh` — Lifecycle hook: runs at image build time (see [Lifecycle Hooks](#lifecycle-hooks))
 - `on-entrypoint.sh` — Lifecycle hook: runs at container start
 - `on-shell-init.sh` — Lifecycle hook: runs on every shell open
@@ -17,10 +19,7 @@ No single component is required — a plugin can be an extension + Dart UI, just
 ## Build Integration
 
 - `scripts/import_dart_plugins.py` scans `$KLANGK_PLUGINS_DIR/*/klangk/` for plugin Dart packages and generates `$KLANGK_PLUGINS_DIR/.dart/` (the `klangk_plugins` package with path deps and `createAllPlugins()`)
-- `build-workspace-image` stages files from all plugins into `$KLANGK_PLUGINS_DIR/.docker/` and passes them via named build contexts:
-  - `plugin-extensions` — `extension.ts` files
-  - `plugin-tools` — flat directory of all `tools/*` files (installed to `/opt/klangk/bin/`)
-  - `plugin-hooks` — per-plugin lifecycle hook directories (installed to `/opt/klangk/hooks/<name>/`)
+- `build-workspace-image` copies entire plugin directories into `$KLANGK_PLUGINS_DIR/.docker/plugins/` and passes them as a single `plugins` build context. The Dockerfile copies them to `/opt/klangk/plugins/` and symlinks discoverable pieces (extensions, skills, prompts, tools) into central directories.
 - `flutterbuildweb` runs the codegen before compiling
 - `stub_dart_plugins.sh` creates a minimal stub at `$KLANGK_PLUGINS_DIR/.dart/` so `flutter pub get` works before plugins are fetched (runs automatically as part of the `klangk:update-plugins` task; skips if `pubspec_overrides.yaml` already exists)
 - Plugins are fetched automatically on `devenv up`: `klangk:init-plugins` creates `plugins.yaml` on first run, then `klangk:update-plugins` fetches plugins when `plugins.yaml` changes
@@ -94,11 +93,20 @@ Hooks execute **alphabetically by plugin name**. Within each plugin, only the re
 
 ### Container Layout
 
+The entire plugin directory is available in the container. Hooks (and any support scripts or assets they need) can be referenced via their plugin directory:
+
 ```text
-/opt/klangk/hooks/
+/opt/klangk/plugins/
   git-credential/
     on-image-build.sh
+    helper-script.sh        # accessible to hooks via $SCRIPT_DIR
   some-other-plugin/
+    extension.ts            # symlinked to /opt/klangk/pi-agent/extensions/some-other-plugin.ts
+    skills/
+      my-skill/
+        SKILL.md            # symlinked to /opt/klangk/pi-agent/skills/some-other-plugin-my-skill/
+    prompts/
+      setup.md              # symlinked to /opt/klangk/pi-agent/prompts/some-other-plugin-setup.md
     on-entrypoint.sh
     on-shell-init.sh
 ```

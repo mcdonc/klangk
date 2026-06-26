@@ -23,13 +23,15 @@ plugins).
 
 ### Git plugins
 
-Remote plugins are cloned from a git repository. `path` and `ref` are
+Remote plugins are cloned from a git repository. Both HTTPS and SSH URLs
+work (`https://github.com/...` or `git@github.com:...`), but HTTPS is
+the default since it doesn't require SSH keys. `path` and `ref` are
 optional:
 
 ```yaml
 plugins:
   - name: celebrate
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/celebrate
     ref: main
 ```

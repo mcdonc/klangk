@@ -1,26 +1,26 @@
 # Klangk plugins configuration for custom host image build.
 plugins:
   - name: celebrate
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/celebrate
     ref: main
   - name: beep
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/beep
     ref: main
   - name: pig-latin
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/pig-latin
     ref: main
   - name: word-count
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/word-count
     ref: main
   - name: browser-fetch
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/browser-fetch
     ref: main
   - name: bobdobbs
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/bobdobbs
     ref: main

@@ -60,11 +60,34 @@ def write_settings():
     # Disable thinking by default — Ctrl+T toggle doesn't work in web
     # terminals because the browser captures it.
     image_settings["defaultThinkingLevel"] = "off"
-    # Point at image extensions dir directly — Pi also auto-discovers
-    # ~/.pi/agent/extensions/ for user-installed extensions.
+    # Point at image dirs directly — Pi also auto-discovers
+    # ~/.pi/agent/{extensions,skills,prompts}/ for user-installed ones.
     image_settings["extensions"] = [str(IMAGE_DIR / "extensions")]
+    image_settings["skills"] = [str(IMAGE_DIR / "skills")]
+    image_settings["prompts"] = [str(IMAGE_DIR / "prompts")]
 
     settings_path.write_text(json.dumps(image_settings, indent=2))
+
+
+def ensure_settings_keys():
+    """Backfill new settings keys into an existing settings.json."""
+    agent = _agent_dir()
+    settings_path = agent / "settings.json"
+    if not settings_path.exists():
+        return
+    settings = json.loads(settings_path.read_text())
+    defaults = {
+        "extensions": [str(IMAGE_DIR / "extensions")],
+        "skills": [str(IMAGE_DIR / "skills")],
+        "prompts": [str(IMAGE_DIR / "prompts")],
+    }
+    changed = False
+    for key, value in defaults.items():
+        if key not in settings:
+            settings[key] = value
+            changed = True
+    if changed:
+        settings_path.write_text(json.dumps(settings, indent=2))
 
 
 def write_models():
@@ -120,8 +143,9 @@ def main():
         (agent / "settings.json").unlink(missing_ok=True)
 
     if (agent / "settings.json").exists():
-        # Already initialized — just refresh models.json (token may
-        # have changed on container restart).
+        # Already initialized — refresh models.json (token may have
+        # changed on container restart) and backfill any new keys.
+        _run_step("ensure_settings_keys", ensure_settings_keys)
         _run_step("write_models", write_models)
         return
 

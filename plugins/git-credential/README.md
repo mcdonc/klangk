@@ -11,9 +11,9 @@ session.
 ### Container side
 
 **`git-credential-klangk`** (`tools/git-credential-klangk`) is a Python
-script installed to `/opt/klangk/bin/` in the workspace image. Git calls
-it automatically because `on-image-build.sh` sets
-`git config --system credential.helper klangk` at image build time.
+script at `/opt/klangk/plugins/git-credential/tools/`, symlinked to
+`/usr/local/bin/` by `on-image-build.sh`. Git calls it automatically
+because the same hook sets `git config --system credential.helper klangk`.
 
 Git invokes the helper with one of three operations:
 

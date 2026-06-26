@@ -94,7 +94,7 @@ To add an external plugin:
 ```yaml
 plugins:
   - name: my-plugin
-    git: git@github.com:myorg/my-klangk-plugin.git
+    git: https://github.com/myorg/my-klangk-plugin.git
     ref: main
 ```
 

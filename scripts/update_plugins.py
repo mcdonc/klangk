@@ -66,14 +66,14 @@ def _default_template(ref):
     ]
     for name in _DEFAULT_PLUGINS:
         lines.append(f"  - name: {name}")
-        lines.append("    git: git@github.com:mcdonc/klangk.git")
+        lines.append("    git: https://github.com/mcdonc/klangk.git")
         lines.append(f"    path: plugins/{name}")
         lines.append(f"    ref: {ref}")
     lines.extend(
         [
-            "  # Add more plugins:",
+            "  # Add more plugins (HTTPS or SSH URLs both work):",
             "  # - name: my-plugin",
-            "  #   git: git@github.com:user/repo.git",
+            "  #   git: https://github.com/user/repo.git",
             "  #   path: subdir              # optional: subdirectory within the repo",
             "  #   ref: main                 # branch, tag, or commit SHA",
             "  #",
