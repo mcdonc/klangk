@@ -40,9 +40,10 @@ for f in /opt/klangk/plugins/*/on-shell-init.sh; do
   plugin=$(basename "$(dirname "$f")")
   label=" $plugin (on-shell-init) "
   pad=$(( (60 - ${#label}) / 2 ))
-  line=$(printf '%*s' "$pad" '' | tr ' ' '━')
+  line=$(printf '%*s' "$pad" '' | tr ' ' '-')
   printf '\033[33m%s%s%s\033[0m\n' "$line" "$label" "$line"
   "$f" || true
+  printf '\033[33m%s\033[0m\n' "$(printf '%*s' 60 '' | tr ' ' '-')"
 done
 
 # Determine which command to exec into (if any).
