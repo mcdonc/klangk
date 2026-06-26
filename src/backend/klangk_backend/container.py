@@ -702,6 +702,7 @@ class ContainerRegistry:
         if ws_id:
             self.revoke_workspace_browsers(ws_id)
             self.states.pop(ws_id, None)
+            self._workspace_locks.pop(ws_id, None)
 
     async def _notify_workspace_killed(self, workspace_id: str) -> None:
         """Call the on_workspace_killed callback, logging any errors."""
