@@ -990,6 +990,10 @@ class Connection:
         if not self.workspace_id:
             send_error(self.sock, "Not connected to a workspace")
             return
+        # Restarting affects everyone in the workspace; require admin.
+        if not await self._has_perm("admin"):
+            send_error(self.sock, "Permission denied")
+            return
 
         # Save before cleanup — cleanup clears state fields.
         workspace_id = self.workspace_id
@@ -1042,6 +1046,10 @@ class Connection:
         """Explicitly shut down the workspace container."""
         if not self.workspace_id:
             send_error(self.sock, "Not connected to a workspace")
+            return
+        # Shutting down affects everyone in the workspace; require admin.
+        if not await self._has_perm("admin"):
+            send_error(self.sock, "Permission denied")
             return
         if not self.container_id:
             send_error(self.sock, "No container running")

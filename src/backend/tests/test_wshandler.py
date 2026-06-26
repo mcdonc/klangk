@@ -3154,9 +3154,72 @@ class TestHandleRestartContainer:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Not connected" in str(c) for c in calls)
 
+    async def test_restart_no_admin_perm(self):
+        """A spectator (no admin perm) must not restart the container,
+        and must not trigger cleanup or container (re)start side effects."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.workspace_id = "ws-noadmin"
+        with (
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=False)),
+            patch.object(
+                Connection, "cleanup", new_callable=AsyncMock
+            ) as mock_cleanup,
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                new_callable=AsyncMock,
+            ) as mock_start,
+        ):
+            await conn.handle_restart_container()
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and "Permission denied" in m.get("message", "")
+            for m in sent
+        )
+        # No destructive side effects: nothing torn down or (re)started.
+        mock_cleanup.assert_not_called()
+        mock_start.assert_not_called()
+
+    async def test_restart_deny_leaves_other_connections_untouched(self, user):
+        """A spectator's denied restart must not change other users'
+        container_id or otherwise disrupt their session (issue #873)."""
+        sock1 = _mock_sock(headers={"host": "localhost:8997"})
+        sock2 = _mock_sock()
+        ws = await _create_workspace_with_acl(user["id"], "restart-deny")
+        conn1 = _base_conn(user=user, ws=sock1)
+        conn2 = _base_conn(user=user, ws=sock2)
+        conn1.workspace_id = ws["id"]
+        conn1.container_id = "cid"
+        conn2.workspace_id = ws["id"]
+        conn2.container_id = "cid"
+        wshandler.state.connections[sock1] = conn1
+        wshandler.state.connections[sock2] = conn2
+        try:
+            # conn1 is a spectator: admin denied.
+            with (
+                patch.object(
+                    conn1, "_has_perm", new=AsyncMock(return_value=False)
+                ),
+                patch.object(
+                    Connection,
+                    "start_workspace_container",
+                    new_callable=AsyncMock,
+                ) as mock_start,
+            ):
+                await conn1.handle_restart_container()
+            # Neither connection's container was touched; nothing started.
+            assert conn1.container_id == "cid"
+            assert conn2.container_id == "cid"
+            mock_start.assert_not_called()
+        finally:
+            wshandler.state.connections.pop(sock1, None)
+            wshandler.state.connections.pop(sock2, None)
+            wshandler.state.sessions.pop(ws["id"], None)
+
     async def test_restart_success(self, user):
         sock = _mock_sock(headers={"host": "localhost:8997"})
-        workspace = await ws_mod.create_workspace(user["id"], "restart-ws")
+        workspace = await _create_workspace_with_acl(user["id"], "restart-ws")
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid-old"
@@ -3210,6 +3273,9 @@ class TestHandleRestartContainer:
         conn.workspace_id = "ws-gone"
         conn.container_id = "cid-gone"
         conn.workspace = None
+        # "ws-gone" is not a real workspace; grant admin so the perm
+        # gate passes and we reach the "not found" path under test.
+        conn._has_perm = AsyncMock(return_value=True)
 
         with (
             patch.object(
@@ -3231,7 +3297,9 @@ class TestHandleRestartContainer:
     async def test_restart_fractional_timeout(self, user, monkeypatch):
         monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
         sock = _mock_sock(headers={"host": "localhost:8997"})
-        workspace = await ws_mod.create_workspace(user["id"], "restart-frac")
+        workspace = await _create_workspace_with_acl(
+            user["id"], "restart-frac"
+        )
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid-frac"
@@ -3274,7 +3342,7 @@ class TestHandleRestartContainer:
 
     async def test_restart_cleanup_error(self, user):
         sock = _mock_sock(headers={"host": "localhost:8997"})
-        workspace = await ws_mod.create_workspace(user["id"], "restart-err")
+        workspace = await _create_workspace_with_acl(user["id"], "restart-err")
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid-err"
@@ -3319,7 +3387,9 @@ class TestHandleRestartContainer:
 
     async def test_restart_cleanup_ws_disconnect(self, user):
         sock = _mock_sock(headers={"host": "localhost:8997"})
-        workspace = await ws_mod.create_workspace(user["id"], "restart-disc")
+        workspace = await _create_workspace_with_acl(
+            user["id"], "restart-disc"
+        )
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid-disc"
@@ -3365,7 +3435,7 @@ class TestHandleRestartContainer:
     async def test_restart_updates_other_connections_container_id(self, user):
         sock1 = _mock_sock(headers={"host": "localhost:8997"})
         sock2 = _mock_sock()
-        workspace = await ws_mod.create_workspace(user["id"], "restart-cid")
+        workspace = await _create_workspace_with_acl(user["id"], "restart-cid")
         conn1 = _base_conn(user=user, ws=sock1)
         conn2 = _base_conn(user=user, ws=sock2)
         conn1.workspace_id = workspace["id"]
@@ -3416,11 +3486,76 @@ class TestHandleShutdownContainer:
             for m in sent
         )
 
+    async def test_shutdown_no_admin_perm(self):
+        """A spectator (no admin perm) must not shut down the container,
+        must not stop it, and must not broadcast container_stopped."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.workspace_id = "ws-noadmin"
+        conn.container_id = "cid"
+        with (
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=False)),
+            patch.object(
+                container.registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ) as mock_stop,
+        ):
+            await conn.handle_shutdown_container()
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and "Permission denied" in m.get("message", "")
+            for m in sent
+        )
+        # No destructive side effects.
+        mock_stop.assert_not_called()
+        assert not any(
+            isinstance(m, dict)
+            and m.get("type") == "event"
+            and m.get("event", {}).get("name") == "container_stopped"
+            for m in sent
+        )
+
+    async def test_shutdown_deny_does_not_clear_other_connections(self, user):
+        """A spectator's denied shutdown must not clear other users'
+        container_id (which would disrupt their session) — issue #873."""
+        sock1 = _mock_sock()
+        sock2 = _mock_sock()
+        ws = await _create_workspace_with_acl(user["id"], "shutdown-deny")
+        conn1 = _base_conn(user=user, ws=sock1)
+        conn2 = _base_conn(user=user, ws=sock2)
+        conn1.workspace_id = ws["id"]
+        conn1.container_id = "cid"
+        conn2.workspace_id = ws["id"]
+        conn2.container_id = "cid"
+        wshandler.state.connections[sock1] = conn1
+        wshandler.state.connections[sock2] = conn2
+        try:
+            with (
+                patch.object(
+                    conn1, "_has_perm", new=AsyncMock(return_value=False)
+                ),
+                patch.object(
+                    container.registry,
+                    "stop_and_remove_container",
+                    new_callable=AsyncMock,
+                ) as mock_stop,
+            ):
+                await conn1.handle_shutdown_container()
+            # Other connection's container_id must still be set.
+            assert conn2.container_id == "cid"
+            mock_stop.assert_not_called()
+        finally:
+            wshandler.state.connections.pop(sock1, None)
+            wshandler.state.connections.pop(sock2, None)
+            wshandler.state.sessions.pop(ws["id"], None)
+
     async def test_shutdown_no_container(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.workspace_id = "ws"
         conn.container_id = None
+        conn._has_perm = AsyncMock(return_value=True)
         await conn.handle_shutdown_container()
         sent = [c[0][0] for c in sock.send_json.call_args_list]
         assert any(
