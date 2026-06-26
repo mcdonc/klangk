@@ -23,7 +23,9 @@ dependencies:
       url: https://github.com/runyaga/libghostty.git
       ref: "0.0.3.2"
       path: packages/flterm
-  libghostty: ^0.0.9
+  # Pinned to 0.0.9: version 0.0.10 removed Cursor.row/col and Selection
+  # constructor that flterm 0.0.3.2 depends on.
+  libghostty: 0.0.9
   web_socket_channel: ^3.0.0
   http: ^1.2.0
   provider: ^6.1.0
