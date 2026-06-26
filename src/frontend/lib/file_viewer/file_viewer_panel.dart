@@ -56,7 +56,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   String get _baseUrl => baseUrl;
   http.Client get _client => testHttpClientOverride ?? http.Client();
   List<Map<String, dynamic>> _entries = [];
-  String _currentPath = 'work';
+  String _currentPath = '/home/work';
   String? _selectedFile;
   bool _loading = false;
   late final FileRendererRegistry _registry;
@@ -64,25 +64,25 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// Refresh the file list for the current directory.
   void refresh() => _loadFiles();
 
-  /// Opens [path] (workspace-relative, same space as the file list) directly in
-  /// the viewer: positions the browser at the file's directory — so the path
-  /// bar's up/breadcrumbs work — and shows its content via the existing viewer.
+  /// Opens [path] (absolute container path) directly in the viewer: positions
+  /// the browser at the file's directory — so the path bar's up/breadcrumbs
+  /// work — and shows its content via the existing viewer.
   /// Used by deep-links and terminal path-clicks.
   void openFile(String path) {
     final dir =
-        path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
+        path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '/';
     setState(() {
-      _currentPath = dir;
+      _currentPath = dir.isEmpty ? '/' : dir;
       _selectedFile = path;
     });
     _loadFiles();
   }
 
-  /// Browses directory [path] (workspace-relative; empty = home root). Used by
-  /// deep-links and terminal directory-clicks.
+  /// Browses directory [path] (absolute container path). Used by deep-links
+  /// and terminal directory-clicks.
   void openDir(String path) {
     setState(() {
-      _currentPath = path.isEmpty ? '.' : path;
+      _currentPath = path.isEmpty ? '/' : path;
       _selectedFile = null;
     });
     _loadFiles();
@@ -328,7 +328,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         }
         return;
       }
-      final filename = isDir ? '$name.zip' : name;
+      final filename = isDir ? '$name.tar.gz' : name;
       downloadBytes(response.bodyBytes, filename);
     } catch (e) {
       if (mounted) {
@@ -391,25 +391,25 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   }
 
   Widget _buildBreadcrumbs() {
-    if (_currentPath == '.') {
+    if (_currentPath == '/') {
       return const Text(
-        '~',
+        '/',
         style: TextStyle(
           fontWeight: FontWeight.bold,
           color: KColors.textSecondary,
         ),
       );
     }
-    final parts = _currentPath.split('/');
+    final parts = _currentPath.split('/').where((s) => s.isNotEmpty).toList();
     final children = <InlineSpan>[];
-    // Leading "~/" goes to home root
+    // Leading "/" goes to root
     children.add(
       WidgetSpan(
         alignment: PlaceholderAlignment.middle,
         child: InkWell(
-          onTap: () => _navigateTo('.'),
+          onTap: () => _navigateTo('/'),
           child: const Text(
-            '~/',
+            '/',
             style: TextStyle(
               fontWeight: FontWeight.bold,
               color: KColors.textSecondary,
@@ -419,7 +419,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       ),
     );
     for (var i = 0; i < parts.length; i++) {
-      final path = parts.sublist(0, i + 1).join('/');
+      final path = '/${parts.sublist(0, i + 1).join('/')}';
       // Segment name — clickable to navigate into that folder
       children.add(
         WidgetSpan(
@@ -436,7 +436,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           ),
         ),
       );
-      // Trailing slash — navigates to the parent of the next segment
+      // Trailing slash
       if (i < parts.length - 1) {
         children.add(
           WidgetSpan(
@@ -477,21 +477,19 @@ class FileViewerPanelState extends State<FileViewerPanel> {
               child: Row(
                 children: [
                   InkWell(
-                    onTap: () => _navigateTo('.'),
-                    child: const Icon(Icons.folder, size: 16),
+                    onTap: () => _navigateTo('/home/work'),
+                    child: const Icon(Icons.home, size: 16),
                   ),
                   const SizedBox(width: 4),
                   Expanded(child: _buildBreadcrumbs()),
-                  if (_currentPath != '.')
+                  if (_currentPath != '/')
                     IconButton(
                       icon: const Icon(Icons.arrow_upward, size: 28),
                       onPressed: () {
-                        final parent = _currentPath.contains('/')
-                            ? _currentPath.substring(
-                                0,
-                                _currentPath.lastIndexOf('/'),
-                              )
-                            : '.';
+                        final lastSlash = _currentPath.lastIndexOf('/');
+                        final parent = lastSlash <= 0
+                            ? '/'
+                            : _currentPath.substring(0, lastSlash);
                         _navigateTo(parent);
                       },
                       iconSize: 28,

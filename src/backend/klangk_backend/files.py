@@ -1,126 +1,243 @@
-"""File operations on workspace home directories (host-side mount).
+"""File operations inside workspace containers via ``podman exec``.
 
-All path-accepting functions in this module delegate to ``resolve_path``
-which validates that the resolved path stays within the workspace root
-via ``Path.is_relative_to``.  CodeQL cannot trace this inter-procedural
-validation; the corresponding alerts are dismissed as false positives.
+All path-accepting functions validate that paths are absolute and
+normalized.  Operations run as the ``klangk`` user inside the container
+so OS-level permissions apply.  The container boundary is the primary
+sandbox; ``validate_path`` provides defense-in-depth.
 """
 
-import os
-import shutil
-from pathlib import Path
+import posixpath
+from collections.abc import AsyncGenerator
 
-from . import workspaces
+from . import podman
 
-NAME_MAX = os.pathconf("/", "PC_NAME_MAX") if hasattr(os, "pathconf") else 255
+EXEC_USER = "klangk"
+
+# 255 is the common Linux NAME_MAX; reading at import time is fine.
+NAME_MAX = 255
 
 
-def resolve_path(user_id: str, workspace_id: str, relative_path: str) -> Path:
-    """Resolve a relative path within a workspace, preventing traversal."""
-    for part in Path(relative_path).parts:
-        if len(part.encode()) > NAME_MAX:
+def validate_path(path: str) -> str:
+    """Validate and normalize an absolute container path.
+
+    Raises ``ValueError`` on any suspicious input:
+
+    * null bytes
+    * non-absolute paths
+    * path components exceeding NAME_MAX
+    * paths that still contain ``..`` after normalization (defense-in-depth;
+      normpath should collapse them, but we reject them anyway)
+    """
+    if "\0" in path:
+        raise ValueError("Null byte in path")
+    if not path.startswith("/"):
+        raise ValueError("Path must be absolute")
+    normalized = posixpath.normpath(path)
+    # normpath("//foo") → "//foo" on POSIX (implementation-defined);
+    # force a single leading slash.
+    if normalized.startswith("//") and not normalized.startswith("///"):
+        normalized = normalized[1:]
+    for part in normalized.split("/"):
+        if len(part.encode("utf-8")) > NAME_MAX:
             raise ValueError(f"Filename exceeds {NAME_MAX}-byte limit")
-    root = workspaces.get_home_host_path(user_id, workspace_id).resolve()
-    resolved = (root / relative_path).resolve()
-    if not resolved.is_relative_to(root):
-        raise ValueError("Path traversal not allowed")
-    return resolved
+    return normalized
 
 
-def list_files(
-    user_id: str, workspace_id: str, relative_path: str = "."
-) -> list[dict]:
-    """List files and directories at the given path."""
-    path = resolve_path(user_id, workspace_id, relative_path)
-    if not path.exists() or not path.is_dir():
+async def list_files(container_id: str, path: str = "/") -> list[dict]:
+    """List files and directories at the given path inside the container."""
+    path = validate_path(path)
+    rc, out, _err = await podman.exec_container(
+        container_id,
+        [
+            "find",
+            path,
+            "-maxdepth",
+            "1",
+            "-mindepth",
+            "1",
+            "-printf",
+            r"%f\t%y\t%s\t%T@\t%C@\n",
+        ],
+        user=EXEC_USER,
+    )
+    if rc != 0:
         return []
-
     entries = []
-    home = workspaces.get_home_host_path(user_id, workspace_id)
-    for entry in sorted(path.iterdir()):
-        st = entry.stat()
+    for line in out.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) != 5:
+            continue
+        name, ftype, size_str, mtime_str, ctime_str = parts
+        is_dir = ftype == "d"
+        entry_path = (
+            path.rstrip("/") + "/" + name if path != "/" else "/" + name
+        )
+        try:
+            size = int(size_str) if not is_dir else None
+        except ValueError:
+            size = None
+        try:
+            mtime = float(mtime_str)
+        except ValueError:
+            mtime = 0.0
+        try:
+            ctime = float(ctime_str)
+        except ValueError:
+            ctime = 0.0
         entries.append(
             {
-                "name": entry.name,
-                "path": str(entry.relative_to(home)),
-                "is_dir": entry.is_dir(),
-                "size": st.st_size if entry.is_file() else None,
-                "mtime": st.st_mtime,
-                "ctime": st.st_ctime,
+                "name": name,
+                "path": entry_path,
+                "is_dir": is_dir,
+                "size": size,
+                "mtime": mtime,
+                "ctime": ctime,
             }
         )
+    entries.sort(key=lambda e: e["name"])
     return entries
 
 
-def read_file(
-    user_id: str, workspace_id: str, relative_path: str
-) -> str | None:
-    """Read file contents. Returns None if file doesn't exist or is too large."""
-    path = resolve_path(user_id, workspace_id, relative_path)
-    if not path.exists() or not path.is_file():
+async def stat_path(container_id: str, path: str) -> dict | None:
+    """Stat a single path.  Returns ``{"is_dir": bool, "size": int}``
+    or ``None`` if the path does not exist."""
+    path = validate_path(path)
+    rc, out, _err = await podman.exec_container(
+        container_id,
+        ["stat", "--format", "%F\t%s", "--", path],
+        user=EXEC_USER,
+    )
+    if rc != 0:
         return None
-
-    # Limit to 1MB
-    if path.stat().st_size > 1_000_000:
+    parts = out.strip().split("\t")
+    if len(parts) != 2:
         return None
-
+    ftype, size_str = parts
+    is_dir = "directory" in ftype
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        size = int(size_str)
+    except ValueError:
+        size = 0
+    return {"is_dir": is_dir, "size": size}
+
+
+async def read_file(container_id: str, path: str) -> str | None:
+    """Read file contents as text.  Returns None if missing or > 1 MB."""
+    path = validate_path(path)
+    info = await stat_path(container_id, path)
+    if info is None or info["is_dir"]:
         return None
+    if info["size"] > 1_000_000:
+        return None
+    rc, out, _err = await podman.exec_container(
+        container_id,
+        ["cat", "--", path],
+        user=EXEC_USER,
+    )
+    if rc != 0:
+        return None
+    return out
 
 
-def delete_path(user_id: str, workspace_id: str, relative_path: str) -> str:
-    """Delete a file or directory. Returns the relative path deleted."""
-    path = resolve_path(user_id, workspace_id, relative_path)
-    if not path.exists():
+def stream_file(container_id: str, path: str) -> AsyncGenerator[bytes, None]:
+    """Stream file contents as raw bytes for download."""
+    path = validate_path(path)
+    return podman.exec_container_stream(
+        container_id,
+        ["cat", "--", path],
+        user=EXEC_USER,
+    )
+
+
+def stream_dir_tar(
+    container_id: str, path: str
+) -> AsyncGenerator[bytes, None]:
+    """Stream a directory as a tar.gz archive for download."""
+    path = validate_path(path)
+    return podman.exec_container_stream(
+        container_id,
+        ["tar", "-czf", "-", "-C", path, "."],
+        user=EXEC_USER,
+    )
+
+
+async def delete_path(container_id: str, path: str) -> str:
+    """Delete a file or directory.  Returns the path deleted."""
+    path = validate_path(path)
+    # Check existence first
+    rc, _out, _err = await podman.exec_container(
+        container_id,
+        ["test", "-e", path],
+        user=EXEC_USER,
+    )
+    if rc != 0:
         raise FileNotFoundError("Path not found")
-    if path.is_dir():
-        shutil.rmtree(path)
-    else:
-        path.unlink()
-    return str(
-        path.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
+    rc, _out, err = await podman.exec_container(
+        container_id,
+        ["rm", "-rf", "--", path],
+        user=EXEC_USER,
     )
+    if rc != 0:
+        raise OSError(f"Delete failed: {err.strip()}")
+    return path
 
 
-def rename_path(
-    user_id: str, workspace_id: str, old_path: str, new_path: str
-) -> str:
-    """Rename/move a file or directory. Returns the new relative path."""
-    src = resolve_path(user_id, workspace_id, old_path)
-    dst = resolve_path(user_id, workspace_id, new_path)
-    if not src.exists():
+async def rename_path(container_id: str, old_path: str, new_path: str) -> str:
+    """Rename/move a file or directory.  Returns the new path."""
+    old_path = validate_path(old_path)
+    new_path = validate_path(new_path)
+    # Check source exists
+    rc, _out, _err = await podman.exec_container(
+        container_id,
+        ["test", "-e", old_path],
+        user=EXEC_USER,
+    )
+    if rc != 0:
         raise FileNotFoundError("Source path not found")
-    if dst.exists():
+    # Check dest does not exist
+    rc, _out, _err = await podman.exec_container(
+        container_id,
+        ["test", "-e", new_path],
+        user=EXEC_USER,
+    )
+    if rc == 0:
         raise FileExistsError("Destination already exists")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    src.rename(dst)
-    return str(
-        dst.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
+    # Create parent directory
+    parent = posixpath.dirname(new_path)
+    await podman.exec_container(
+        container_id,
+        ["mkdir", "-p", "--", parent],
+        user=EXEC_USER,
     )
-
-
-def write_file(
-    user_id: str, workspace_id: str, relative_path: str, content: bytes
-) -> str:
-    """Write file contents. Returns the resolved relative path."""
-    path = resolve_path(user_id, workspace_id, relative_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
-    return str(
-        path.relative_to(workspaces.get_home_host_path(user_id, workspace_id))
+    # Move
+    rc, _out, err = await podman.exec_container(
+        container_id,
+        ["mv", "--", old_path, new_path],
+        user=EXEC_USER,
     )
+    if rc != 0:
+        raise OSError(f"Rename failed: {err.strip()}")
+    return new_path
 
 
-def write_file_path(
-    user_id: str, workspace_id: str, relative_path: str
-) -> Path:
-    """Resolve and prepare a file path for writing.
-
-    Creates parent directories and returns the resolved ``Path``.
-    Callers are responsible for writing data to the returned path.
-    """
-    path = resolve_path(user_id, workspace_id, relative_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+async def write_file(container_id: str, path: str, content: bytes) -> str:
+    """Write file contents.  Returns the path written."""
+    path = validate_path(path)
+    # mkdir -p + cat > file in one sh invocation.
+    # Path is passed as $1 (positional arg), never interpolated into the
+    # command string, so shell metacharacters in the path are harmless.
+    rc, _out, err = await podman.exec_container(
+        container_id,
+        [
+            "sh",
+            "-c",
+            'mkdir -p "$(dirname "$1")" && cat > "$1"',
+            "sh",
+            path,
+        ],
+        user=EXEC_USER,
+        stdin_data=content,
+    )
+    if rc != 0:
+        raise OSError(f"Write failed: {err.strip()}")
     return path

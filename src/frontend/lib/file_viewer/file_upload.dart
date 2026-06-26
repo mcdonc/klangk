@@ -92,8 +92,7 @@ class FileDropZoneState extends State<FileDropZone> {
       if (_cancelled) break;
       try {
         final bytes = await file.readAsBytes();
-        final uploadPath =
-            widget.currentPath == '.' ? path : '${widget.currentPath}/$path';
+        final uploadPath = '${widget.currentPath}/$path';
         final url =
             '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(uploadPath)}';
         final headers = <String, String>{};

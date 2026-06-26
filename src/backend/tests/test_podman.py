@@ -277,6 +277,149 @@ class TestExecContainer:
         assert err == "fail"
 
 
+class TestExecContainerWithStdin:
+    async def test_stdin_data_adds_interactive_flag(self):
+        with patch(EXEC, _exec(("ok", "", 0))) as m:
+            rc, out, err = await podman.exec_container(
+                "cid", ["cat"], stdin_data=b"hello"
+            )
+        assert _args(m) == ["exec", "-i", "cid", "cat"]
+        assert (rc, out) == (0, "ok")
+
+    async def test_timeout_passed(self):
+        with patch(EXEC, _exec(("", "", 0))):
+            await podman.exec_container("cid", ["ls"], timeout=60.0)
+
+
+class TestExecContainerBytes:
+    async def test_returns_raw_bytes(self):
+        with patch(EXEC, _exec(("binary\x00data", "", 0))) as m:
+            rc, out, err = await podman.exec_container_bytes(
+                "cid", ["cat", "/bin/x"]
+            )
+        assert _args(m) == ["exec", "cid", "cat", "/bin/x"]
+        assert rc == 0
+        assert isinstance(out, bytes)
+        assert out == b"binary\x00data"
+
+    async def test_with_user(self):
+        with patch(EXEC, _exec(("", "", 0))) as m:
+            await podman.exec_container_bytes(
+                "cid", ["cat", "/f"], user="klangk"
+            )
+        assert _args(m) == ["exec", "-u", "klangk", "cid", "cat", "/f"]
+
+    async def test_nonzero_returned(self):
+        with patch(EXEC, _exec(("", "err", 1))):
+            rc, out, err = await podman.exec_container_bytes("cid", ["false"])
+        assert rc == 1
+        assert out == b""
+        assert err == "err"
+
+    async def test_timeout(self):
+        """Verify _run_raw handles timeout the same way as _run."""
+        mock_proc = _procs(("", "", 0))[0]
+        # First call raises TimeoutError (asyncio.wait_for catches it),
+        # second call (after kill) returns normally.
+        mock_proc.wait = AsyncMock(side_effect=[asyncio.TimeoutError, 0])
+        mock_proc.kill = MagicMock()
+
+        def side_effect(*args, **kwargs):
+            sf = kwargs.get("stdout")
+            ef = kwargs.get("stderr")
+            if hasattr(sf, "write"):
+                sf.write(b"")
+            if hasattr(ef, "write"):
+                ef.write(b"")
+            return mock_proc
+
+        with patch(EXEC, AsyncMock(side_effect=side_effect)):
+            rc, out, err = await podman.exec_container_bytes(
+                "cid", ["sleep", "999"], timeout=0.001
+            )
+        assert rc == -1
+        mock_proc.kill.assert_called_once()
+
+    async def test_stdin_data(self):
+        with patch(EXEC, _exec(("ok", "", 0))) as m:
+            await podman.exec_container("cid", ["cat"], stdin_data=b"input")
+        # The -i flag is added for stdin
+        assert _args(m) == ["exec", "-i", "cid", "cat"]
+
+
+class TestRunRaw:
+    """Tests for _run_raw edge cases not covered by exec_container_bytes."""
+
+    async def test_stdin_data(self):
+        with patch(EXEC, _exec(("out", "", 0))):
+            rc, out, err = await podman._run_raw(
+                ["exec", "cid", "cat"], stdin_data=b"hello"
+            )
+        assert rc == 0
+        assert out == b"out"
+
+    async def test_check_raises_on_error(self):
+        with patch(EXEC, _exec(("", "fail", 1))):
+            with pytest.raises(podman.PodmanError):
+                await podman._run_raw(["exec", "cid", "false"], check=True)
+
+
+class TestExecContainerStream:
+    async def test_yields_chunks(self):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_stdout = AsyncMock()
+        chunks = [b"chunk1", b"chunk2", b""]
+        mock_stdout.read = AsyncMock(side_effect=chunks)
+        mock_proc.stdout = mock_stdout
+        mock_proc.wait = AsyncMock(return_value=0)
+
+        with patch(EXEC, AsyncMock(return_value=mock_proc)):
+            result = []
+            async for chunk in podman.exec_container_stream(
+                "cid", ["tar", "-czf", "-"]
+            ):
+                result.append(chunk)
+        assert result == [b"chunk1", b"chunk2"]
+
+    async def test_with_user(self):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_stdout = AsyncMock()
+        mock_stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stdout = mock_stdout
+        mock_proc.wait = AsyncMock(return_value=0)
+
+        with patch(EXEC, AsyncMock(return_value=mock_proc)) as m:
+            async for _ in podman.exec_container_stream(
+                "cid", ["cat", "/f"], user="klangk"
+            ):
+                pass
+        assert list(m.call_args.args[1:]) == [
+            "exec",
+            "-u",
+            "klangk",
+            "cid",
+            "cat",
+            "/f",
+        ]
+
+    async def test_kills_process_on_early_exit(self):
+        mock_proc = MagicMock()
+        mock_proc.returncode = None  # still running
+        mock_stdout = AsyncMock()
+        mock_stdout.read = AsyncMock(side_effect=[b"data", b"more", b"more2"])
+        mock_proc.stdout = mock_stdout
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock(return_value=-9)
+
+        with patch(EXEC, AsyncMock(return_value=mock_proc)):
+            gen = podman.exec_container_stream("cid", ["cat"])
+            await gen.__anext__()  # consume first chunk
+            await gen.aclose()  # close early — triggers finally
+        mock_proc.kill.assert_called_once()
+
+
 class TestRemoveContainer:
     async def test_force_default(self):
         with patch(EXEC, _exec(("", "", 0))) as m:

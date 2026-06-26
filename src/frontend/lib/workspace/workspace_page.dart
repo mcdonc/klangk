@@ -98,20 +98,20 @@ class _WorkspacePageState extends State<WorkspacePage> {
       pathRoot: _containerHome,
       defaultCwd: _containerCwd,
       openExternalUrl: openUrl,
-      statPath: (rel) => statWorkspacePath(
+      statPath: (path) => statWorkspacePath(
         client: http.Client(),
         baseUrl: baseUrl,
         workspaceId: widget.workspaceId,
-        rel: rel,
+        path: path,
         authToken: authToken,
       ),
-      openFile: (rel) => context.go(
+      openFile: (path) => context.go(
         '/workspace/${widget.workspaceId}'
-        '?file=${Uri.encodeQueryComponent(rel)}',
+        '?file=${Uri.encodeQueryComponent(path)}',
       ),
-      openDirectory: (rel) => context.go(
+      openDirectory: (path) => context.go(
         '/workspace/${widget.workspaceId}'
-        '?dir=${Uri.encodeQueryComponent(rel)}',
+        '?dir=${Uri.encodeQueryComponent(path)}',
       ),
     );
     unawaited(

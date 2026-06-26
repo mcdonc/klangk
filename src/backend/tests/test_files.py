@@ -1,260 +1,495 @@
-"""Tests for files: list, read, write, delete, rename, path traversal."""
+"""Tests for files: exec-based list, read, write, delete, rename, path validation."""
+
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from klangk_backend import files, workspaces as ws_mod
+from klangk_backend import files
+
+CID = "test-container-123"
+EXEC = "klangk_backend.files.podman.exec_container"
+EXEC_STREAM = "klangk_backend.files.podman.exec_container_stream"
 
 
-@pytest.fixture
-async def workspace_dir(workspace, user, temp_data_dir):
-    """Create the home directory on disk and return (user_id, workspace_id, path)."""
-    path = ws_mod.get_home_host_path(user["id"], workspace["id"])
-    path.mkdir(parents=True, exist_ok=True)
-    return user["id"], workspace["id"], path
+class TestValidatePath:
+    def test_absolute_path(self):
+        assert (
+            files.validate_path("/home/work/foo.txt") == "/home/work/foo.txt"
+        )
 
+    def test_root(self):
+        assert files.validate_path("/") == "/"
 
-class TestResolvePathTraversal:
-    async def test_normal_path(self, workspace_dir):
-        uid, wid, path = workspace_dir
-        resolved = files.resolve_path(uid, wid, "file.txt")
-        assert str(resolved).startswith(str(path))
+    def test_rejects_relative_path(self):
+        with pytest.raises(ValueError, match="absolute"):
+            files.validate_path("work/foo.txt")
 
-    async def test_traversal_rejected(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        with pytest.raises(ValueError, match="traversal"):
-            files.resolve_path(uid, wid, "../../etc/passwd")
+    def test_rejects_null_byte(self):
+        with pytest.raises(ValueError, match="Null byte"):
+            files.validate_path("/home/\x00evil")
 
-    async def test_dot_path(self, workspace_dir):
-        uid, wid, path = workspace_dir
-        resolved = files.resolve_path(uid, wid, ".")
-        assert resolved == path
+    def test_normalizes_dotdot(self):
+        assert files.validate_path("/home/work/../foo") == "/home/foo"
 
-    async def test_filename_too_long_rejected(self, workspace_dir):
-        uid, wid, _ = workspace_dir
+    def test_normalizes_double_slash(self):
+        assert files.validate_path("//home//work") == "/home/work"
+
+    def test_normalizes_dot(self):
+        assert files.validate_path("/home/./work") == "/home/work"
+
+    def test_filename_too_long(self):
         long_name = "a" * 256
         with pytest.raises(ValueError, match="limit"):
-            files.resolve_path(uid, wid, long_name)
+            files.validate_path(f"/home/{long_name}")
 
-    async def test_nested_component_too_long_rejected(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        long_name = "a" * 256
-        with pytest.raises(ValueError, match="limit"):
-            files.resolve_path(uid, wid, f"subdir/{long_name}")
-
-    async def test_255_byte_filename_accepted(self, workspace_dir):
-        uid, wid, path = workspace_dir
+    def test_255_byte_filename_ok(self):
         name = "a" * 255
-        resolved = files.resolve_path(uid, wid, name)
-        assert str(resolved).endswith(name)
+        assert files.validate_path(f"/home/{name}") == f"/home/{name}"
 
+    def test_dotdot_at_root_collapses_to_root(self):
+        assert files.validate_path("/../../etc/passwd") == "/etc/passwd"
 
-class TestWriteAndRead:
-    async def test_write_and_read_file(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "hello.txt", b"hello world")
-        content = files.read_file(uid, wid, "hello.txt")
-        assert content == "hello world"
+    def test_injection_semicolon_passes_validation(self):
+        # Semicolons are harmless in argv-based exec, so validate_path
+        # allows them — the container boundary is the sandbox.
+        result = files.validate_path("/home/; rm -rf")
+        assert result == "/home/; rm -rf"
 
-    async def test_write_nested_path(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "sub/dir/file.txt", b"nested")
-        content = files.read_file(uid, wid, "sub/dir/file.txt")
-        assert content == "nested"
+    def test_injection_dollar_passes_validation(self):
+        result = files.validate_path("/home/$(whoami)")
+        assert result == "/home/$(whoami)"
 
-    async def test_read_nonexistent(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        assert files.read_file(uid, wid, "nope.txt") is None
+    def test_injection_backtick_passes_validation(self):
+        result = files.validate_path("/home/`id`")
+        assert result == "/home/`id`"
 
-    async def test_read_large_file_returns_none(self, workspace_dir):
-        uid, wid, path = workspace_dir
-        big_file = path / "big.bin"
-        big_file.write_bytes(b"x" * 1_100_000)
-        assert files.read_file(uid, wid, "big.bin") is None
+    def test_injection_pipe_passes_validation(self):
+        result = files.validate_path("/home/file | cat /etc/shadow")
+        assert result == "/home/file | cat /etc/shadow"
 
-    async def test_read_directory_returns_none(self, workspace_dir):
-        uid, wid, path = workspace_dir
-        (path / "adir").mkdir()
-        assert files.read_file(uid, wid, "adir") is None
-
-    async def test_read_binary_with_replacement(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "bin.dat", b"\x80\x81\x82")
-        content = files.read_file(uid, wid, "bin.dat")
-        assert content is not None
-        assert "\ufffd" in content  # replacement character
-
-    async def test_read_unreadable_file_returns_none(self, workspace_dir):
-        uid, wid, path = workspace_dir
-        f = path / "noperm.txt"
-        f.write_bytes(b"secret")
-        f.chmod(0o000)
-        try:
-            assert files.read_file(uid, wid, "noperm.txt") is None
-        finally:
-            f.chmod(0o644)  # restore for cleanup
+    def test_path_starting_with_dash(self):
+        # Paths starting with - are valid; --  separator in commands
+        # prevents flag injection.
+        result = files.validate_path("/-rf")
+        assert result == "/-rf"
 
 
 class TestListFiles:
-    async def test_list_empty_dir(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        entries = files.list_files(uid, wid, ".")
+    async def test_list_files(self):
+        find_output = (
+            "a.txt\tf\t100\t1700000000.0\t1700000001.0\n"
+            "subdir\td\t4096\t1700000002.0\t1700000003.0\n"
+        )
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ) as mock:
+            entries = await files.list_files(CID, "/home/work")
+
+        mock.assert_called_once()
+        assert mock.call_args.kwargs["user"] == "klangk"
+        assert len(entries) == 2
+        assert entries[0]["name"] == "a.txt"
+        assert entries[0]["path"] == "/home/work/a.txt"
+        assert entries[0]["is_dir"] is False
+        assert entries[0]["size"] == 100
+        assert entries[1]["name"] == "subdir"
+        assert entries[1]["path"] == "/home/work/subdir"
+        assert entries[1]["is_dir"] is True
+        assert entries[1]["size"] is None
+
+    async def test_list_root(self):
+        find_output = "home\td\t4096\t1700000000.0\t1700000000.0\n"
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/")
+
+        assert entries[0]["path"] == "/home"
+
+    async def test_list_empty_dir(self):
+        with patch(EXEC, new_callable=AsyncMock, return_value=(0, "", "")):
+            entries = await files.list_files(CID, "/home/work")
+
         assert entries == []
 
-    async def test_list_with_files(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "a.txt", b"aaa")
-        files.write_file(uid, wid, "b.txt", b"bbb")
-        entries = files.list_files(uid, wid, ".")
-        names = [e["name"] for e in entries]
-        assert "a.txt" in names
-        assert "b.txt" in names
+    async def test_list_nonexistent_dir(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(1, "", "No such file")
+        ):
+            entries = await files.list_files(CID, "/no/such/dir")
 
-    async def test_list_shows_dirs(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "subdir/file.txt", b"x")
-        entries = files.list_files(uid, wid, ".")
-        dirs = [e for e in entries if e["is_dir"]]
-        assert any(d["name"] == "subdir" for d in dirs)
-
-    async def test_list_nonexistent_dir(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        entries = files.list_files(uid, wid, "no_such_dir")
         assert entries == []
 
-    async def test_list_file_as_dir(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "afile.txt", b"data")
-        entries = files.list_files(uid, wid, "afile.txt")
-        assert entries == []
+    async def test_list_sorted(self):
+        find_output = (
+            "c.txt\tf\t1\t0.0\t0.0\n"
+            "a.txt\tf\t1\t0.0\t0.0\n"
+            "b.txt\tf\t1\t0.0\t0.0\n"
+        )
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/home")
 
-    async def test_list_entry_has_size(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "sized.txt", b"12345")
-        entries = files.list_files(uid, wid, ".")
-        entry = [e for e in entries if e["name"] == "sized.txt"][0]
-        assert entry["size"] == 5
-        assert entry["is_dir"] is False
+        assert [e["name"] for e in entries] == ["a.txt", "b.txt", "c.txt"]
 
-    async def test_list_dir_entry_has_no_size(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "d/f.txt", b"x")
-        entries = files.list_files(uid, wid, ".")
-        entry = [e for e in entries if e["name"] == "d"][0]
-        assert entry["size"] is None
-        assert entry["is_dir"] is True
+    async def test_list_rejects_relative_path(self):
+        with pytest.raises(ValueError, match="absolute"):
+            await files.list_files(CID, "work")
 
-    async def test_list_entries_sorted(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "c.txt", b"c")
-        files.write_file(uid, wid, "a.txt", b"a")
-        files.write_file(uid, wid, "b.txt", b"b")
-        entries = files.list_files(uid, wid, ".")
-        names = [e["name"] for e in entries]
-        assert names == sorted(names)
+    async def test_list_skips_malformed_lines(self):
+        find_output = "good.txt\tf\t10\t0.0\t0.0\nbadline\n"
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/home")
+        assert len(entries) == 1
+        assert entries[0]["name"] == "good.txt"
 
-    async def test_list_subdirectory(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "sub/one.txt", b"1")
-        files.write_file(uid, wid, "sub/two.txt", b"2")
-        entries = files.list_files(uid, wid, "sub")
-        names = [e["name"] for e in entries]
-        assert "one.txt" in names
-        assert "two.txt" in names
+    async def test_list_handles_bad_size(self):
+        find_output = "f.txt\tf\tnotanumber\t0.0\t0.0\n"
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/home")
+        assert entries[0]["size"] is None
 
+    async def test_list_handles_bad_mtime(self):
+        find_output = "f.txt\tf\t10\tbad\t0.0\n"
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/home")
+        assert entries[0]["mtime"] == 0.0
 
-class TestDelete:
-    async def test_delete_file(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "doomed.txt", b"bye")
-        result = files.delete_path(uid, wid, "doomed.txt")
-        assert "doomed.txt" in result
-        assert files.read_file(uid, wid, "doomed.txt") is None
+    async def test_list_handles_bad_ctime(self):
+        find_output = "f.txt\tf\t10\t0.0\tbad\n"
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/home")
+        assert entries[0]["ctime"] == 0.0
 
-    async def test_delete_directory(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "dir/a.txt", b"a")
-        files.write_file(uid, wid, "dir/b.txt", b"b")
-        files.delete_path(uid, wid, "dir")
-        entries = files.list_files(uid, wid, ".")
-        names = [e["name"] for e in entries]
-        assert "dir" not in names
+    async def test_list_default_path_is_root(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, "", "")
+        ) as mock:
+            await files.list_files(CID)
 
-    async def test_delete_nonexistent(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        with pytest.raises(FileNotFoundError):
-            files.delete_path(uid, wid, "ghost.txt")
+        cmd = mock.call_args[0][1]
+        assert cmd[1] == "/"
 
 
-class TestRename:
-    async def test_rename_file(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "old.txt", b"content")
-        files.rename_path(uid, wid, "old.txt", "new.txt")
-        assert files.read_file(uid, wid, "old.txt") is None
-        assert files.read_file(uid, wid, "new.txt") == "content"
+class TestStatPath:
+    async def test_stat_file(self):
+        with patch(
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(0, "regular file\t12345", ""),
+        ):
+            info = await files.stat_path(CID, "/home/work/f.txt")
 
-    async def test_rename_to_existing_fails(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "a.txt", b"a")
-        files.write_file(uid, wid, "b.txt", b"b")
-        with pytest.raises(FileExistsError):
-            files.rename_path(uid, wid, "a.txt", "b.txt")
+        assert info == {"is_dir": False, "size": 12345}
 
-    async def test_rename_nonexistent_fails(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        with pytest.raises(FileNotFoundError):
-            files.rename_path(uid, wid, "nope.txt", "new.txt")
+    async def test_stat_directory(self):
+        with patch(
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(0, "directory\t4096", ""),
+        ):
+            info = await files.stat_path(CID, "/home/work")
 
-    async def test_rename_into_subdirectory(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "file.txt", b"data")
-        files.rename_path(uid, wid, "file.txt", "sub/file.txt")
-        assert files.read_file(uid, wid, "sub/file.txt") == "data"
+        assert info == {"is_dir": True, "size": 4096}
 
-    async def test_rename_directory(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "olddir/f.txt", b"x")
-        files.rename_path(uid, wid, "olddir", "newdir")
-        assert files.read_file(uid, wid, "newdir/f.txt") == "x"
-        entries = files.list_files(uid, wid, ".")
-        names = [e["name"] for e in entries]
-        assert "olddir" not in names
-        assert "newdir" in names
+    async def test_stat_malformed_output(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, "garbage", "")
+        ):
+            info = await files.stat_path(CID, "/home")
+        assert info is None
+
+    async def test_stat_bad_size(self):
+        with patch(
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(0, "regular file\tnotanumber", ""),
+        ):
+            info = await files.stat_path(CID, "/f.txt")
+        assert info == {"is_dir": False, "size": 0}
+
+    async def test_stat_nonexistent(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(1, "", "No such file")
+        ):
+            info = await files.stat_path(CID, "/nope")
+
+        assert info is None
+
+
+class TestReadFile:
+    async def test_read_file(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "regular file\t100", ""),  # stat
+                (0, "hello world", ""),  # cat
+            ]
+            content = await files.read_file(CID, "/home/work/hello.txt")
+
+        assert content == "hello world"
+        # cat should use -- separator
+        cat_cmd = mock.call_args_list[1][0][1]
+        assert "--" in cat_cmd
+
+    async def test_read_nonexistent(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(1, "", "No such file")
+        ):
+            content = await files.read_file(CID, "/nope.txt")
+
+        assert content is None
+
+    async def test_read_too_large(self):
+        with patch(
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(0, "regular file\t2000000", ""),
+        ):
+            content = await files.read_file(CID, "/big.bin")
+
+        assert content is None
+
+    async def test_read_directory_returns_none(self):
+        with patch(
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(0, "directory\t4096", ""),
+        ):
+            content = await files.read_file(CID, "/home/work")
+
+        assert content is None
+
+    async def test_read_cat_fails(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "regular file\t100", ""),  # stat ok
+                (1, "", "Permission denied"),  # cat fails
+            ]
+            content = await files.read_file(CID, "/home/noperm.txt")
+
+        assert content is None
+
+
+class TestStreamFile:
+    async def test_stream_file(self):
+        async def fake_stream(*a, **kw):
+            yield b"chunk1"
+            yield b"chunk2"
+
+        with patch(EXEC_STREAM, side_effect=fake_stream) as mock:
+            chunks = []
+            async for chunk in files.stream_file(CID, "/home/work/image.png"):
+                chunks.append(chunk)
+
+        assert chunks == [b"chunk1", b"chunk2"]
+        mock.assert_called_once()
+        cmd = mock.call_args[0][1]
+        assert cmd[0] == "cat"
+        assert "--" in cmd
+        assert mock.call_args.kwargs["user"] == "klangk"
+
+    async def test_stream_file_rejects_relative(self):
+        with pytest.raises(ValueError, match="absolute"):
+            async for _ in files.stream_file(CID, "relative.txt"):
+                pass  # pragma: no cover
+
+
+class TestStreamDirTar:
+    async def test_stream_dir_tar(self):
+        async def fake_stream(*a, **kw):
+            yield b"\x1f\x8b"
+            yield b"tardata"
+
+        with patch(EXEC_STREAM, side_effect=fake_stream) as mock:
+            chunks = []
+            async for chunk in files.stream_dir_tar(CID, "/home/work/mydir"):
+                chunks.append(chunk)
+
+        assert chunks == [b"\x1f\x8b", b"tardata"]
+        cmd = mock.call_args[0][1]
+        assert "tar" in cmd
+        assert mock.call_args.kwargs["user"] == "klangk"
+
+    async def test_stream_dir_tar_rejects_relative(self):
+        with pytest.raises(ValueError, match="absolute"):
+            async for _ in files.stream_dir_tar(CID, "nope"):
+                pass  # pragma: no cover
+
+
+class TestDeletePath:
+    async def test_delete_file(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "", ""),  # test -e
+                (0, "", ""),  # rm -rf
+            ]
+            result = await files.delete_path(CID, "/home/work/doomed.txt")
+
+        assert result == "/home/work/doomed.txt"
+        rm_cmd = mock.call_args_list[1][0][1]
+        assert "--" in rm_cmd
+        assert mock.call_args_list[1].kwargs["user"] == "klangk"
+
+    async def test_delete_nonexistent(self):
+        with patch(EXEC, new_callable=AsyncMock, return_value=(1, "", "")):
+            with pytest.raises(FileNotFoundError):
+                await files.delete_path(CID, "/nope.txt")
+
+    async def test_delete_rm_fails(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "", ""),  # test -e ok
+                (1, "", "Permission denied"),  # rm fails
+            ]
+            with pytest.raises(OSError, match="Permission denied"):
+                await files.delete_path(CID, "/usr/bin/important")
+
+
+class TestRenamePath:
+    async def test_rename(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "", ""),  # test -e old
+                (1, "", ""),  # test -e new (doesn't exist — good)
+                (0, "", ""),  # mkdir -p
+                (0, "", ""),  # mv
+            ]
+            result = await files.rename_path(
+                CID, "/home/work/old.txt", "/home/work/new.txt"
+            )
+
+        assert result == "/home/work/new.txt"
+        mv_cmd = mock.call_args_list[3][0][1]
+        assert "--" in mv_cmd
+
+    async def test_rename_source_missing(self):
+        with patch(EXEC, new_callable=AsyncMock, return_value=(1, "", "")):
+            with pytest.raises(FileNotFoundError):
+                await files.rename_path(CID, "/nope.txt", "/new.txt")
+
+    async def test_rename_dest_exists(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "", ""),  # test -e old — exists
+                (0, "", ""),  # test -e new — also exists
+            ]
+            with pytest.raises(FileExistsError):
+                await files.rename_path(CID, "/old.txt", "/existing.txt")
+
+    async def test_rename_mv_fails(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "", ""),  # test -e old
+                (1, "", ""),  # test -e new (doesn't exist)
+                (0, "", ""),  # mkdir -p
+                (1, "", "Cross-device link"),  # mv fails
+            ]
+            with pytest.raises(OSError, match="Cross-device"):
+                await files.rename_path(CID, "/old.txt", "/mnt/new.txt")
 
 
 class TestWriteFile:
-    async def test_write_returns_relative_path(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        result = files.write_file(uid, wid, "out.txt", b"data")
-        assert result == "out.txt"
+    async def test_write(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, "", "")
+        ) as mock:
+            result = await files.write_file(CID, "/home/work/out.txt", b"data")
 
-    async def test_write_nested_returns_full_relative_path(
-        self, workspace_dir
-    ):
-        uid, wid, _ = workspace_dir
-        result = files.write_file(uid, wid, "a/b/c.txt", b"deep")
-        assert result == "a/b/c.txt"
+        assert result == "/home/work/out.txt"
+        assert mock.call_args.kwargs["user"] == "klangk"
+        assert mock.call_args.kwargs["stdin_data"] == b"data"
+        # Path passed as $1 positional arg, not in the sh -c string
+        cmd = mock.call_args[0][1]
+        assert cmd[0] == "sh"
+        assert cmd[1] == "-c"
+        assert "/home/work/out.txt" not in cmd[2]  # not in the script
+        assert cmd[-1] == "/home/work/out.txt"  # passed as positional arg
 
-    async def test_write_overwrites_existing(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        files.write_file(uid, wid, "f.txt", b"old")
-        files.write_file(uid, wid, "f.txt", b"new")
-        assert files.read_file(uid, wid, "f.txt") == "new"
+    async def test_write_fails(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(1, "", "Read-only")
+        ):
+            with pytest.raises(OSError, match="Read-only"):
+                await files.write_file(CID, "/usr/bin/evil", b"bad")
 
-    async def test_write_traversal_rejected(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        with pytest.raises(ValueError, match="traversal"):
-            files.write_file(uid, wid, "../../evil.txt", b"bad")
+    async def test_write_rejects_relative_path(self):
+        with pytest.raises(ValueError, match="absolute"):
+            await files.write_file(CID, "relative.txt", b"data")
+
+    async def test_write_rejects_null_byte(self):
+        with pytest.raises(ValueError, match="Null byte"):
+            await files.write_file(CID, "/home/\x00evil", b"data")
 
 
-class TestWriteFilePath:
-    async def test_returns_path_and_creates_parents(self, workspace_dir):
-        uid, wid, base = workspace_dir
-        dest = files.write_file_path(uid, wid, "sub/new.txt")
-        assert dest.parent.exists()
-        assert str(dest).startswith(str(base))
+class TestExecUser:
+    """All operations must run as the klangk user."""
 
-    async def test_traversal_rejected(self, workspace_dir):
-        uid, wid, _ = workspace_dir
-        with pytest.raises(ValueError, match="traversal"):
-            files.write_file_path(uid, wid, "../../evil.txt")
+    async def test_list_runs_as_klangk(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, "", "")
+        ) as mock:
+            await files.list_files(CID, "/")
+        assert mock.call_args.kwargs["user"] == "klangk"
+
+    async def test_read_runs_as_klangk(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "regular file\t10", ""),
+                (0, "content", ""),
+            ]
+            await files.read_file(CID, "/f.txt")
+        for call in mock.call_args_list:
+            assert call.kwargs["user"] == "klangk"
+
+    async def test_delete_runs_as_klangk(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [(0, "", ""), (0, "", "")]
+            await files.delete_path(CID, "/f.txt")
+        for call in mock.call_args_list:
+            assert call.kwargs["user"] == "klangk"
+
+    async def test_rename_runs_as_klangk(self):
+        with patch(EXEC, new_callable=AsyncMock) as mock:
+            mock.side_effect = [
+                (0, "", ""),
+                (1, "", ""),
+                (0, "", ""),
+                (0, "", ""),
+            ]
+            await files.rename_path(CID, "/a.txt", "/b.txt")
+        for call in mock.call_args_list:
+            assert call.kwargs["user"] == "klangk"
+
+    async def test_write_runs_as_klangk(self):
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, "", "")
+        ) as mock:
+            await files.write_file(CID, "/f.txt", b"x")
+        assert mock.call_args.kwargs["user"] == "klangk"
+
+    async def test_stream_file_runs_as_klangk(self):
+        async def fake_stream(*a, **kw):
+            yield b"x"
+
+        with patch(EXEC_STREAM, side_effect=fake_stream) as mock:
+            async for _ in files.stream_file(CID, "/f.bin"):
+                pass
+        assert mock.call_args.kwargs["user"] == "klangk"
+
+    async def test_stream_dir_tar_runs_as_klangk(self):
+        async def fake_stream(*a, **kw):
+            yield b"x"
+
+        with patch(EXEC_STREAM, side_effect=fake_stream) as mock:
+            async for _ in files.stream_dir_tar(CID, "/dir"):
+                pass
+        assert mock.call_args.kwargs["user"] == "klangk"

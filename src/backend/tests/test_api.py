@@ -4,7 +4,6 @@ import io
 import os
 import shutil
 import tempfile
-import zipfile
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2670,325 +2669,447 @@ class TestVolumeRoutes:
 
 
 class TestFileRoutes:
+    """File endpoints now require a running container (podman exec)."""
+
+    CID = "cid-file-test"
+
     async def _create_workspace(self, client, headers):
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "file-ws"}
         )
-        return resp.json()["id"]
+        ws_id = resp.json()["id"]
+        # Simulate a running container
+        container.registry.track_activity(self.CID, ws_id)
+        return ws_id
+
+    def _cleanup(self, ws_id):
+        container.registry.states.pop(ws_id, None)
+        container.registry._cid_to_wsid.pop(self.CID, None)
 
     async def test_list_files(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files?path=.", headers=headers
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+                return_value=(0, "f.txt\tf\t10\t0.0\t0.0\n", ""),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home/work",
+                    headers=headers,
+                )
+            assert resp.status_code == 200
+            assert isinstance(resp.json(), list)
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_list_files_no_container_returns_409(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "no-ctr"}
         )
-        assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
+        ws_id = resp.json()["id"]
+        # No container tracked
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/files?path=/", headers=headers
+        )
+        assert resp.status_code == 409
+        assert "not running" in resp.json()["detail"]
 
     async def test_list_files_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/api/v1/workspaces/fake-id/files?path=.", headers=headers
+            "/api/v1/workspaces/fake-id/files?path=/", headers=headers
         )
         assert resp.status_code == 403
 
     async def test_upload_and_read(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+            ) as mock_exec:
+                # Upload: write_file calls exec once (sh -c)
+                mock_exec.return_value = (0, "", "")
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/hello.txt",
+                    headers=headers,
+                    files={
+                        "file": ("hello.txt", b"hello world", "text/plain")
+                    },
+                )
+                assert resp.status_code == 200
+                assert resp.json()["status"] == "uploaded"
 
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=hello.txt",
-            headers=headers,
-            files={"file": ("hello.txt", b"hello world", "text/plain")},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "uploaded"
-
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files/content?path=hello.txt",
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["content"] == "hello world"
+                # Read: stat + cat
+                mock_exec.side_effect = [
+                    (0, "regular file\t11", ""),  # stat
+                    (0, "hello world", ""),  # cat
+                ]
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/content?path=/home/work/hello.txt",
+                    headers=headers,
+                )
+                assert resp.status_code == 200
+                assert resp.json()["content"] == "hello world"
+        finally:
+            self._cleanup(ws_id)
 
     async def test_upload_records_activity(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        cid = "cid-upload-test"
-        await model.update_workspace_container(ws_id, cid)
-        container.registry.track_activity(cid, ws_id)
-        container.registry.states[ws_id].last_activity = 0.0
-
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=test.txt",
-            headers=headers,
-            files={"file": ("test.txt", b"data", "text/plain")},
-        )
-
-        assert container.registry.states[ws_id].last_activity > 0.0
-        container.registry.states.pop(ws_id, None)
-        container.registry._cid_to_wsid.pop(cid, None)
-
-    async def test_upload_exceeds_size_limit(self, client, user):
-        headers = await _auth_headers(client)
-        ws_id = await self._create_workspace(client, headers)
-        with patch.object(api, "FILE_UPLOAD_SIZE_MAX", 10):
-            resp = await client.post(
-                f"/api/v1/workspaces/{ws_id}/files/upload?path=big.txt",
-                headers=headers,
-                files={"file": ("big.txt", b"x" * 100, "text/plain")},
-            )
-        assert resp.status_code == 413
-        assert "limit" in resp.json()["detail"].lower()
-
-    async def test_read_nonexistent(self, client, user):
-        headers = await _auth_headers(client)
-        ws_id = await self._create_workspace(client, headers)
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files/content?path=nope.txt",
-            headers=headers,
-        )
-        assert resp.status_code == 404
+        try:
+            container.registry.states[ws_id].last_activity = 0.0
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+                return_value=(0, "", ""),
+            ):
+                await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/test.txt",
+                    headers=headers,
+                    files={"file": ("test.txt", b"data", "text/plain")},
+                )
+            assert container.registry.states[ws_id].last_activity > 0.0
+        finally:
+            self._cleanup(ws_id)
 
     async def test_upload_no_filename(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload",
-            headers=headers,
-            files={"file": ("", b"data", "application/octet-stream")},
-        )
-        assert resp.status_code in (400, 422)
+        try:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/files/upload",
+                headers=headers,
+                files={"file": ("", b"data", "application/octet-stream")},
+            )
+            assert resp.status_code in (400, 422)
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_upload_exceeds_size_limit(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch.object(api, "FILE_UPLOAD_SIZE_MAX", 10):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/big.txt",
+                    headers=headers,
+                    files={"file": ("big.txt", b"x" * 100, "text/plain")},
+                )
+            assert resp.status_code == 413
+            assert "limit" in resp.json()["detail"].lower()
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_read_nonexistent(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", "No such file"),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/content?path=/nope.txt",
+                    headers=headers,
+                )
+            assert resp.status_code == 404
+        finally:
+            self._cleanup(ws_id)
 
     async def test_upload_filename_too_long(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        long_name = "a" * 256 + ".txt"
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload",
-            headers=headers,
-            files={"file": (long_name, b"data", "application/octet-stream")},
-        )
-        assert resp.status_code == 400
-        assert "limit" in resp.json()["detail"]
+        try:
+            long_name = "a" * 256 + ".txt"
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/{long_name}",
+                headers=headers,
+                files={
+                    "file": (long_name, b"data", "application/octet-stream")
+                },
+            )
+            assert resp.status_code == 400
+            assert "limit" in resp.json()["detail"]
+        finally:
+            self._cleanup(ws_id)
 
     async def test_list_files_path_too_long(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        long_path = "a" * 256
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files?path={long_path}",
-            headers=headers,
-        )
-        assert resp.status_code == 400
+        try:
+            long_path = "/" + "a" * 256
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws_id}/files?path={long_path}",
+                headers=headers,
+            )
+            assert resp.status_code == 400
+        finally:
+            self._cleanup(ws_id)
 
     async def test_delete_file(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=doomed.txt",
-            headers=headers,
-            files={"file": ("doomed.txt", b"bye", "text/plain")},
-        )
-        resp = await client.delete(
-            f"/api/v1/workspaces/{ws_id}/files?path=doomed.txt",
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "deleted"
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+            ) as mock_exec:
+                mock_exec.side_effect = [
+                    (0, "", ""),  # test -e
+                    (0, "", ""),  # rm -rf
+                ]
+                resp = await client.delete(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home/work/doomed.txt",
+                    headers=headers,
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "deleted"
+        finally:
+            self._cleanup(ws_id)
 
     async def test_delete_nonexistent_file(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.delete(
-            f"/api/v1/workspaces/{ws_id}/files?path=ghost.txt", headers=headers
-        )
-        assert resp.status_code == 404
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", ""),
+            ):
+                resp = await client.delete(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/ghost.txt",
+                    headers=headers,
+                )
+            assert resp.status_code == 404
+        finally:
+            self._cleanup(ws_id)
 
     async def test_rename_file(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=old.txt",
-            headers=headers,
-            files={"file": ("old.txt", b"data", "text/plain")},
-        )
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/rename",
-            headers=headers,
-            json={"old_path": "old.txt", "new_path": "new.txt"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "renamed"
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+            ) as mock_exec:
+                mock_exec.side_effect = [
+                    (0, "", ""),  # test -e old
+                    (1, "", ""),  # test -e new (doesn't exist)
+                    (0, "", ""),  # mkdir -p
+                    (0, "", ""),  # mv
+                ]
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/rename",
+                    headers=headers,
+                    json={
+                        "old_path": "/home/work/old.txt",
+                        "new_path": "/home/work/new.txt",
+                    },
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "renamed"
+        finally:
+            self._cleanup(ws_id)
 
     async def test_rename_nonexistent(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/rename",
-            headers=headers,
-            json={"old_path": "nope.txt", "new_path": "new.txt"},
-        )
-        assert resp.status_code == 404
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", ""),
+            ):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/rename",
+                    headers=headers,
+                    json={"old_path": "/nope.txt", "new_path": "/new.txt"},
+                )
+            assert resp.status_code == 404
+        finally:
+            self._cleanup(ws_id)
 
     async def test_rename_to_existing(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=a.txt",
-            headers=headers,
-            files={"file": ("a.txt", b"a", "text/plain")},
-        )
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=b.txt",
-            headers=headers,
-            files={"file": ("b.txt", b"b", "text/plain")},
-        )
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/rename",
-            headers=headers,
-            json={"old_path": "a.txt", "new_path": "b.txt"},
-        )
-        assert resp.status_code == 409
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+            ) as mock_exec:
+                mock_exec.side_effect = [
+                    (0, "", ""),  # test -e old
+                    (0, "", ""),  # test -e new (exists!)
+                ]
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/rename",
+                    headers=headers,
+                    json={"old_path": "/a.txt", "new_path": "/b.txt"},
+                )
+            assert resp.status_code == 409
+        finally:
+            self._cleanup(ws_id)
 
     async def test_download_file(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
+        try:
 
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=dl.txt",
-            headers=headers,
-            files={"file": ("dl.txt", b"download me", "text/plain")},
-        )
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files/download?path=dl.txt",
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.content == b"download me"
+            async def fake_stream(*a, **kw):
+                yield b"download me"
 
-    async def test_download_directory_as_zip(self, client, user):
-        headers = await _auth_headers(client)
-        ws_id = await self._create_workspace(client, headers)
-
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=mydir/a.txt",
-            headers=headers,
-            files={"file": ("a.txt", b"aaa", "text/plain")},
-        )
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=mydir/b.txt",
-            headers=headers,
-            files={"file": ("b.txt", b"bbb", "text/plain")},
-        )
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files/download?path=mydir",
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.headers["content-type"] == "application/zip"
-
-        zf = zipfile.ZipFile(io.BytesIO(resp.content))
-        names = zf.namelist()
-        assert "a.txt" in names
-        assert "b.txt" in names
-        assert zf.read("a.txt") == b"aaa"
-
-    async def test_download_directory_zip_error_cleans_up(self, client, user):
-        headers = await _auth_headers(client)
-        ws_id = await self._create_workspace(client, headers)
-
-        await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=mydir/a.txt",
-            headers=headers,
-            files={"file": ("a.txt", b"aaa", "text/plain")},
-        )
-        with patch("klangk_backend.api.zipfile.ZipFile") as mock_zf:
-            mock_zf.side_effect = OSError("disk full")
-            with pytest.raises(OSError, match="disk full"):
-                await client.get(
-                    f"/api/v1/workspaces/{ws_id}/files/download?path=mydir",
+            with (
+                patch(
+                    "klangk_backend.files.podman.exec_container",
+                    new_callable=AsyncMock,
+                    return_value=(0, "regular file\t11", ""),
+                ),
+                patch(
+                    "klangk_backend.files.podman.exec_container_stream",
+                    side_effect=fake_stream,
+                ),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/work/dl.txt",
                     headers=headers,
                 )
+            assert resp.status_code == 200
+            assert resp.content == b"download me"
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_download_directory_as_tar(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+
+            async def fake_stream(*a, **kw):
+                yield b"\x1f\x8b"
+                yield b"tardata"
+
+            with (
+                patch(
+                    "klangk_backend.files.podman.exec_container",
+                    new_callable=AsyncMock,
+                    return_value=(0, "directory\t4096", ""),
+                ),
+                patch(
+                    "klangk_backend.files.podman.exec_container_stream",
+                    side_effect=fake_stream,
+                ),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/work/mydir",
+                    headers=headers,
+                )
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == "application/gzip"
+            assert resp.content == b"\x1f\x8btardata"
+        finally:
+            self._cleanup(ws_id)
 
     async def test_download_nonexistent(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files/download?path=nope.txt",
-            headers=headers,
-        )
-        assert resp.status_code == 404
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", "No such file"),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download?path=/nope.txt",
+                    headers=headers,
+                )
+            assert resp.status_code == 404
+        finally:
+            self._cleanup(ws_id)
 
     async def test_upload_to_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/api/v1/workspaces/fake-id/files/upload?path=f.txt",
+            "/api/v1/workspaces/fake-id/files/upload?path=/f.txt",
             headers=headers,
             files={"file": ("f.txt", b"data", "text/plain")},
         )
         assert resp.status_code == 403
 
     async def test_file_traversal_rejected(self, client, user):
+        """Relative paths are rejected (must be absolute)."""
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files/content?path=../../etc/passwd",
-            headers=headers,
-        )
-        assert resp.status_code == 400
+        try:
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws_id}/files/content?path=../../etc/passwd",
+                headers=headers,
+            )
+            assert resp.status_code == 400
+        finally:
+            self._cleanup(ws_id)
 
     async def test_list_files_traversal(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files?path=../../etc",
-            headers=headers,
-        )
-        assert resp.status_code == 400
+        try:
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws_id}/files?path=../../etc",
+                headers=headers,
+            )
+            assert resp.status_code == 400
+        finally:
+            self._cleanup(ws_id)
 
     async def test_delete_file_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.delete(
-            "/api/v1/workspaces/fake-id/files?path=f.txt", headers=headers
+            "/api/v1/workspaces/fake-id/files?path=/f.txt", headers=headers
         )
         assert resp.status_code == 403
 
     async def test_delete_file_traversal(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.delete(
-            f"/api/v1/workspaces/{ws_id}/files?path=../../etc/passwd",
-            headers=headers,
-        )
-        assert resp.status_code == 400
+        try:
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}/files?path=../../etc/passwd",
+                headers=headers,
+            )
+            assert resp.status_code == 400
+        finally:
+            self._cleanup(ws_id)
 
     async def test_rename_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/workspaces/fake-id/files/rename",
             headers=headers,
-            json={"old_path": "a", "new_path": "b"},
+            json={"old_path": "/a", "new_path": "/b"},
         )
         assert resp.status_code == 403
 
     async def test_rename_traversal(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/rename",
-            headers=headers,
-            json={"old_path": "../../etc/passwd", "new_path": "stolen"},
-        )
-        assert resp.status_code == 400
+        try:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/files/rename",
+                headers=headers,
+                json={"old_path": "../../etc/passwd", "new_path": "/stolen"},
+            )
+            assert resp.status_code == 400
+        finally:
+            self._cleanup(ws_id)
 
     async def test_download_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/api/v1/workspaces/fake-id/files/download?path=f.txt",
+            "/api/v1/workspaces/fake-id/files/download?path=/f.txt",
             headers=headers,
         )
         assert resp.status_code == 403
@@ -2996,29 +3117,54 @@ class TestFileRoutes:
     async def test_download_traversal(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.get(
-            f"/api/v1/workspaces/{ws_id}/files/download?path=../../etc/passwd",
-            headers=headers,
-        )
-        assert resp.status_code == 400
+        try:
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws_id}/files/download?path=../../etc/passwd",
+                headers=headers,
+            )
+            assert resp.status_code == 400
+        finally:
+            self._cleanup(ws_id)
 
     async def test_read_nonexistent_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/api/v1/workspaces/fake-id/files/content?path=f.txt",
+            "/api/v1/workspaces/fake-id/files/content?path=/f.txt",
             headers=headers,
         )
         assert resp.status_code == 403
 
+    async def test_upload_write_fails(self, client, user):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch(
+                "klangk_backend.files.podman.exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", "Read-only file system"),
+            ):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/usr/bin/evil",
+                    headers=headers,
+                    files={"file": ("evil", b"bad", "text/plain")},
+                )
+            assert resp.status_code == 500
+            assert "Read-only" in resp.json()["detail"]
+        finally:
+            self._cleanup(ws_id)
+
     async def test_upload_traversal(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/files/upload?path=../../etc/evil",
-            headers=headers,
-            files={"file": ("evil.txt", b"bad", "text/plain")},
-        )
-        assert resp.status_code == 400
+        try:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/files/upload?path=../../etc/evil",
+                headers=headers,
+                files={"file": ("evil.txt", b"bad", "text/plain")},
+            )
+            assert resp.status_code == 400
+        finally:
+            self._cleanup(ws_id)
 
 
 # --- Test mode endpoint ---

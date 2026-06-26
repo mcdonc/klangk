@@ -12,14 +12,12 @@ import subprocess
 import tempfile
 import time
 import uuid
-import zipfile
+import io
 
 import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from starlette.background import BackgroundTask
 from fastapi.responses import (
-    FileResponse,
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
@@ -1811,17 +1809,24 @@ async def search_users(
 # --- File endpoints ---
 
 
+def _require_container(workspace_id: str) -> str:
+    """Return the container_id for a running workspace, or raise 409."""
+    state = container.registry.get_state(workspace_id)
+    if state is None:
+        raise HTTPException(status_code=409, detail="Container not running")
+    state.record_activity()
+    return state.container_id
+
+
 @router.get("/workspaces/{workspace_id}/files")
 async def list_files(
     workspace_id: str,
-    path: str = ".",
+    path: str = "/",
     user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await model.get_workspace(workspace_id)
-    if workspace is None:  # pragma: no cover — race after ACL check
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    cid = _require_container(workspace_id)
     try:
-        return files.list_files(workspace["user_id"], workspace_id, path)
+        return await files.list_files(cid, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1832,11 +1837,9 @@ async def read_file(
     path: str,
     user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await model.get_workspace(workspace_id)
-    if workspace is None:  # pragma: no cover — race after ACL check
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    cid = _require_container(workspace_id)
     try:
-        content = files.read_file(workspace["user_id"], workspace_id, path)
+        content = await files.read_file(cid, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if content is None:
@@ -1852,11 +1855,9 @@ async def delete_file(
     path: str,
     user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await model.get_workspace(workspace_id)
-    if workspace is None:  # pragma: no cover — race after ACL check
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    cid = _require_container(workspace_id)
     try:
-        deleted = files.delete_path(workspace["user_id"], workspace_id, path)
+        deleted = await files.delete_path(cid, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError:
@@ -1875,13 +1876,9 @@ async def rename_file(
     body: RenameFileRequest,
     user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await model.get_workspace(workspace_id)
-    if workspace is None:  # pragma: no cover — race after ACL check
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    cid = _require_container(workspace_id)
     try:
-        renamed = files.rename_path(
-            workspace["user_id"], workspace_id, body.old_path, body.new_path
-        )
+        renamed = await files.rename_path(cid, body.old_path, body.new_path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError:
@@ -1899,34 +1896,29 @@ async def download_file(
     path: str,
     user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await model.get_workspace(workspace_id)
-    if workspace is None:  # pragma: no cover — race after ACL check
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    cid = _require_container(workspace_id)
     try:
-        resolved = files.resolve_path(workspace["user_id"], workspace_id, path)
+        info = await files.stat_path(cid, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if not resolved.exists():
+    if info is None:
         raise HTTPException(status_code=404, detail="Path not found")
-    if resolved.is_file():
-        return FileResponse(resolved, filename=resolved.name)
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    try:
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
-            for file_path in resolved.rglob("*"):
-                if file_path.is_file():
-                    zf.write(file_path, file_path.relative_to(resolved))
-        tmp.close()
-        return FileResponse(
-            tmp.name,
-            media_type="application/zip",
-            filename=f"{resolved.name}.zip",
-            background=BackgroundTask(os.unlink, tmp.name),
+    name = posixpath.basename(path) or "download"
+    if not info["is_dir"]:
+        return StreamingResponse(
+            files.stream_file(cid, path),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{name}"',
+            },
         )
-    except BaseException:
-        tmp.close()
-        os.unlink(tmp.name)
-        raise
+    return StreamingResponse(
+        files.stream_dir_tar(cid, path),
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}.tar.gz"',
+        },
+    )
 
 
 @router.post("/workspaces/{workspace_id}/files/upload")
@@ -1936,46 +1928,30 @@ async def upload_file(
     path: str = "",
     user: dict = Depends(acl.has_permission("files", _workspace_resource)),
 ):
-    workspace = await model.get_workspace(workspace_id)
-    if workspace is None:  # pragma: no cover — race after ACL check
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    cid = _require_container(workspace_id)
 
     filename = path if path else posixpath.basename(file.filename or "")
     if not filename:  # pragma: no cover
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    container_id = workspace.get("container_id")
-    if container_id is not None:
-        container.registry.record_activity(container_id)
+    max_upload = FILE_UPLOAD_SIZE_MAX
+    buf = io.BytesIO()
+    total = 0
+    while chunk := await file.read(1024 * 1024):
+        total += len(chunk)
+        if total > max_upload:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds {max_upload // (1024 * 1024)} MB limit",
+            )
+        buf.write(chunk)
 
     try:
-        dest = files.write_file_path(
-            workspace["user_id"], workspace_id, filename
-        )
+        saved_path = await files.write_file(cid, filename, buf.getvalue())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    max_upload = FILE_UPLOAD_SIZE_MAX
-    total = 0
-    try:
-        with open(dest, "wb") as fp:
-            while chunk := await file.read(1024 * 1024):
-                total += len(chunk)
-                if total > max_upload:
-                    fp.close()
-                    dest.unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"File exceeds {max_upload // (1024 * 1024)} MB limit",
-                    )
-                fp.write(chunk)
-    except HTTPException:
-        raise
-    except Exception:  # pragma: no cover
-        logger.exception("Upload failed for workspace %s", workspace_id)
-        dest.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail="Upload failed")
-    home = workspaces.get_home_host_path(workspace["user_id"], workspace_id)
-    saved_path = str(dest.relative_to(home))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     return {"path": saved_path, "status": "uploaded"}
 
 

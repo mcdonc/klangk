@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../terminal/terminal_link.dart' show PathKind;
 
-/// Classifies a workspace-relative [rel] path as a file, directory, or absent
+/// Classifies an absolute container [path] as a file, directory, or absent
 /// by listing its **parent directory** and reading the matching entry's
 /// `is_dir`.
 ///
@@ -18,13 +18,14 @@ Future<PathKind> statWorkspacePath({
   required http.Client client,
   required String baseUrl,
   required String workspaceId,
-  required String rel,
+  required String path,
   String? authToken,
 }) async {
-  if (rel.isEmpty) return PathKind.directory; // the home root (~)
-  final slash = rel.lastIndexOf('/');
-  final parent = slash >= 0 ? rel.substring(0, slash) : '';
-  final name = slash >= 0 ? rel.substring(slash + 1) : rel;
+  if (path == '/') return PathKind.directory;
+  final slash = path.lastIndexOf('/');
+  final parent = slash <= 0 ? '/' : path.substring(0, slash);
+  final name = path.substring(slash + 1);
+  if (name.isEmpty) return PathKind.directory;
   final uri = Uri.parse('$baseUrl/api/v1/workspaces/$workspaceId/files'
       '?path=${Uri.encodeQueryComponent(parent)}');
   try {
