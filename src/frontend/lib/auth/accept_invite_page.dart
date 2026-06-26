@@ -21,6 +21,7 @@ class _AcceptInvitePageState extends State<AcceptInvitePage> {
   final _formKey = GlobalKey<FormState>();
   bool _submitting = false;
   String? _error;
+  bool _obscurePassword = true;
 
   @override
   void initState() {
@@ -131,11 +132,18 @@ class _AcceptInvitePageState extends State<AcceptInvitePage> {
                   const SizedBox(height: 24),
                   TextFormField(
                     controller: _passwordController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Password',
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        onPressed: () => setState(
+                            () => _obscurePassword = !_obscurePassword),
+                      ),
                     ),
-                    obscureText: true,
+                    obscureText: _obscurePassword,
                     validator: (v) {
                       if (v == null || v.isEmpty) return 'Required';
                       if (v.length < 4) return 'Min 4 characters';
@@ -145,11 +153,18 @@ class _AcceptInvitePageState extends State<AcceptInvitePage> {
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _confirmController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Confirm Password',
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        onPressed: () => setState(
+                            () => _obscurePassword = !_obscurePassword),
+                      ),
                     ),
-                    obscureText: true,
+                    obscureText: _obscurePassword,
                     validator: (v) {
                       if (v != _passwordController.text) {
                         return 'Passwords do not match';

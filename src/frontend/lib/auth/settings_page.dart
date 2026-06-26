@@ -25,6 +25,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _changingPassword = false;
   String? _passwordMessage;
   bool _passwordSuccess = false;
+  bool _obscureCurrentPassword = true;
+  bool _obscureNewPassword = true;
 
   // Email change
   final _newEmailController = TextEditingController();
@@ -33,6 +35,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _changingEmail = false;
   String? _emailMessage;
   bool _emailSuccess = false;
+  bool _obscureEmailPassword = true;
 
   // Handle change
   final _newHandleController = TextEditingController();
@@ -41,6 +44,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _changingHandle = false;
   String? _handleMessage;
   bool _handleSuccess = false;
+  bool _obscureHandlePassword = true;
 
   String? _currentHandle;
 
@@ -331,8 +335,15 @@ class _SettingsPageState extends State<SettingsPage> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: Icon(_obscureCurrentPassword
+                    ? Icons.visibility_off
+                    : Icons.visibility),
+                onPressed: () => setState(
+                    () => _obscureCurrentPassword = !_obscureCurrentPassword),
+              ),
             ),
-            obscureText: true,
+            obscureText: _obscureCurrentPassword,
             validator: (v) => v == null || v.isEmpty ? 'Required' : null,
           ),
           const SizedBox(height: 12),
@@ -344,8 +355,15 @@ class _SettingsPageState extends State<SettingsPage> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: Icon(_obscureNewPassword
+                    ? Icons.visibility_off
+                    : Icons.visibility),
+                onPressed: () =>
+                    setState(() => _obscureNewPassword = !_obscureNewPassword),
+              ),
             ),
-            obscureText: true,
+            obscureText: _obscureNewPassword,
             validator: (v) {
               if (v == null || v.isEmpty) return 'Required';
               if (v.length < 4) return 'Min 4 characters';
@@ -361,8 +379,15 @@ class _SettingsPageState extends State<SettingsPage> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: Icon(_obscureNewPassword
+                    ? Icons.visibility_off
+                    : Icons.visibility),
+                onPressed: () =>
+                    setState(() => _obscureNewPassword = !_obscureNewPassword),
+              ),
             ),
-            obscureText: true,
+            obscureText: _obscureNewPassword,
             validator: (v) {
               if (v != _newPasswordController.text) {
                 return 'Passwords do not match';
@@ -453,8 +478,15 @@ class _SettingsPageState extends State<SettingsPage> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: Icon(_obscureHandlePassword
+                    ? Icons.visibility_off
+                    : Icons.visibility),
+                onPressed: () => setState(
+                    () => _obscureHandlePassword = !_obscureHandlePassword),
+              ),
             ),
-            obscureText: true,
+            obscureText: _obscureHandlePassword,
             validator: (v) => v == null || v.isEmpty ? 'Required' : null,
             onFieldSubmitted: (_) => _changeHandle(),
           ),
@@ -531,8 +563,15 @@ class _SettingsPageState extends State<SettingsPage> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: Icon(_obscureEmailPassword
+                    ? Icons.visibility_off
+                    : Icons.visibility),
+                onPressed: () => setState(
+                    () => _obscureEmailPassword = !_obscureEmailPassword),
+              ),
             ),
-            obscureText: true,
+            obscureText: _obscureEmailPassword,
             validator: (v) => v == null || v.isEmpty ? 'Required' : null,
             onFieldSubmitted: (_) => _changeEmail(),
           ),
