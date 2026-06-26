@@ -371,6 +371,75 @@ class TestBashrc:
             cleanup()
 
 
+class TestFileApiNavigation:
+    @pytest.mark.asyncio
+    async def test_list_home_shows_user_homedir_symlink_as_directory(
+        self, server, auth
+    ):
+        """Listing /home via the file API shows the user's homedir symlink
+        as a directory (not a file), so clicking it navigates correctly."""
+        workspace_id, cleanup = create_workspace(server, auth)
+        try:
+            ws = await ws_connect(server, auth, workspace_id)
+            try:
+                # Get the user's handle from $HOME
+                output = await exec_command(
+                    ws, ["bash", "-c", "basename $HOME"]
+                )
+                handle = output.strip()
+
+                # List /home via the file API
+                url = server["url"]
+                resp = httpx.get(
+                    f"{url}/api/v1/workspaces/{workspace_id}/files",
+                    params={"path": "/home"},
+                    headers=auth["headers"],
+                    timeout=10,
+                )
+                assert resp.status_code == 200
+                entries = resp.json()
+                homedir_entry = [e for e in entries if e["name"] == handle]
+                assert len(homedir_entry) == 1, (
+                    f"Expected homedir entry '{handle}' in /home listing, "
+                    f"got: {[e['name'] for e in entries]}"
+                )
+                assert homedir_entry[0]["is_dir"] is True, (
+                    f"Homedir symlink '{handle}' should appear as a "
+                    f"directory, got is_dir={homedir_entry[0]['is_dir']}"
+                )
+                assert homedir_entry[0]["path"] == f"/home/{handle}"
+            finally:
+                await ws.close()
+        finally:
+            cleanup()
+
+    @pytest.mark.asyncio
+    async def test_list_root_includes_home(self, server, auth):
+        """Listing / via the file API includes the /home directory."""
+        workspace_id, cleanup = create_workspace(server, auth)
+        try:
+            ws = await ws_connect(server, auth, workspace_id)
+            try:
+                url = server["url"]
+                resp = httpx.get(
+                    f"{url}/api/v1/workspaces/{workspace_id}/files",
+                    params={"path": "/"},
+                    headers=auth["headers"],
+                    timeout=10,
+                )
+                assert resp.status_code == 200
+                entries = resp.json()
+                names = [e["name"] for e in entries]
+                assert "home" in names
+                home_entry = [e for e in entries if e["name"] == "home"][0]
+                assert home_entry["is_dir"] is True
+                assert home_entry["path"] == "/home"
+            finally:
+                await ws.close()
+        finally:
+            cleanup()
+
+
 class TestHandleChange:
     @pytest.mark.asyncio
     async def test_change_handle_via_set_handle(self, server, auth):

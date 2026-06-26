@@ -56,7 +56,7 @@ async def list_files(container_id: str, path: str = "/") -> list[dict]:
             "-mindepth",
             "1",
             "-printf",
-            r"%f\t%y\t%s\t%T@\t%C@\n",
+            r"%f\t%Y\t%s\t%T@\t%C@\n",
         ],
         user=EXEC_USER,
     )

@@ -137,6 +137,33 @@ class TestListFiles:
         with pytest.raises(ValueError, match="absolute"):
             await files.list_files(CID, "work")
 
+    async def test_list_symlink_to_dir(self):
+        """Symlinks to directories show as is_dir=True (find -printf %Y)."""
+        find_output = "link\td\t4096\t0.0\t0.0\n"
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/home")
+        assert entries[0]["is_dir"] is True
+
+    async def test_list_symlink_to_file(self):
+        """Symlinks to files show as is_dir=False (find -printf %Y returns f)."""
+        find_output = "link\tf\t100\t0.0\t0.0\n"
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/home")
+        assert entries[0]["is_dir"] is False
+
+    async def test_list_broken_symlink(self):
+        """Broken symlinks (find -printf %Y returns N) show as is_dir=False."""
+        find_output = "broken\tN\t0\t0.0\t0.0\n"
+        with patch(
+            EXEC, new_callable=AsyncMock, return_value=(0, find_output, "")
+        ):
+            entries = await files.list_files(CID, "/home")
+        assert entries[0]["is_dir"] is False
+
     async def test_list_skips_malformed_lines(self):
         find_output = "good.txt\tf\t10\t0.0\t0.0\nbadline\n"
         with patch(
