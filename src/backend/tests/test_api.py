@@ -3629,6 +3629,44 @@ class TestAdminEndpoints:
         assert resp.status_code == 400
         assert "system agent" in resp.json()["detail"]
 
+    async def test_unlock_user(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
+        # Lock out the user
+        await model.record_failed_login(user["email"])
+        await model.set_login_lockout(
+            user["email"], "2099-01-01T00:00:00+00:00"
+        )
+        # Verify locked
+        info = await model.get_login_attempt_info(user["email"])
+        assert info["locked_until"] is not None
+        # Unlock via admin endpoint
+        resp = await client.post(
+            f"/api/v1/admin/users/{user['id']}/unlockout", headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "unlocked"
+        # Verify lockout cleared
+        info = await model.get_login_attempt_info(user["email"])
+        assert info is None
+
+    async def test_unlock_nonexistent_user(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/admin/users/nonexistent-id/unlockout", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_unlock_requires_admin(self, client, user):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+        resp = await client.post(
+            f"/api/v1/admin/users/{user['id']}/unlockout", headers=headers
+        )
+        assert resp.status_code == 403
+
 
 class TestGroupEndpoints:
     async def _admin_headers(self, client):

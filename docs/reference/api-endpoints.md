@@ -70,6 +70,21 @@ No request body.
 
 ---
 
+### POST `/api/v1/admin/users/{id}/unlockout`
+
+Reset a user's login lockout, allowing them to log in immediately after
+being locked out due to too many failed attempts.
+
+**Auth:** JWT required. User must have `admin` permission on `/`.
+
+No request body.
+
+```json
+{ "status": "unlocked" }
+```
+
+---
+
 ### GET `/api/v1/admin/acl/by-principal/group/{id}`
 
 List all ACL entries granted to a specific group across all resources.
