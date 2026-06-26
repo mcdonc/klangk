@@ -348,6 +348,17 @@ async def exec_container_stream(
         if proc.returncode is None:
             proc.kill()
         await proc.wait()
+    if proc.returncode != 0:
+        logger.warning(
+            "exec_container_stream command failed (rc=%d): %s %s",
+            proc.returncode,
+            container_id,
+            cmd,
+        )
+        raise PodmanError(
+            proc.returncode,
+            f"stream command exited with code {proc.returncode}",
+        )
 
 
 async def remove_container(container_id: str, *, force: bool = True) -> None:
