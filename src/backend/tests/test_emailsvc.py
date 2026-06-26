@@ -276,3 +276,27 @@ class TestSendInvitationEmail:
                 "admin@example.com",
             )
         mock_smtp.assert_awaited_once()
+
+    async def test_invited_by_email_html_escaped(self, monkeypatch):
+        # A crafted inviter email with HTML/marker characters must be
+        # escaped in the HTML body so it cannot inject markup or script.
+        # See https://github.com/mcdonc/klangk/issues/878
+        monkeypatch.delenv("KLANGK_SMTP_HOST", raising=False)
+        mock_sendmail = AsyncMock()
+        crafted = 'admin"><img/src=x onerror=alert(1)>@example.com'
+        with patch.object(emailsvc, "send_via_sendmail", mock_sendmail):
+            await emailsvc.send_invitation_email(
+                "invited@example.com",
+                "https://klangk.example.com/#/accept-invite?token=abc",
+                crafted,
+            )
+        msg = mock_sendmail.call_args[0][0]
+        parts = list(msg.iter_parts())
+        html_part = parts[1].get_content()
+        # The crafted payload must not form a live HTML element; angle
+        # brackets and quotes must be escaped so the email renders as
+        # inert text rather than injecting markup/script.
+        assert "<img" not in html_part
+        assert "&lt;img" in html_part
+        assert 'admin"&gt;' not in html_part
+        assert "admin&quot;&gt;" in html_part

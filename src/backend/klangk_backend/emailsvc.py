@@ -1,6 +1,7 @@
 """Email sending via SMTP or local sendmail."""
 
 import asyncio
+import html
 import logging
 import os
 import shutil
@@ -196,6 +197,11 @@ async def send_invitation_email(
     to: str, invite_url: str, invited_by_email: str
 ) -> None:
     """Send an invitation email with the given registration URL."""
+    # Escape the inviter's email for safe interpolation into the HTML
+    # body. The email validator permits characters such as '<', '>', and
+    # '"' in the local part, so an unescaped value could be used to inject
+    # markup/script into invitation emails sent to other users.
+    invited_by_html = html.escape(invited_by_email)
     text_body = (
         f"{invited_by_email} has invited you to join Klangk.\n\n"
         "Click the link below to set your password and activate "
@@ -212,7 +218,7 @@ async def send_invitation_email(
         'line-height:48px;font-size:24px">&#128062;</span>'
         '<h2 style="margin:8px 0 0">Klangk</h2>'
         "</div>"
-        f"<p><strong>{invited_by_email}</strong> has invited you to "
+        f"<p><strong>{invited_by_html}</strong> has invited you to "
         "join Klangk.</p>"
         "<p>Click the link below to set your password and activate "
         "your account:</p>"
