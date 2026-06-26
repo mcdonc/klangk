@@ -9,7 +9,7 @@ All plugins live in `$KLANGK_PLUGINS_DIR/<name>/` directories (defaults to `.dev
   - `klangk/pubspec.yaml` — Package definition, depends on `klangk_plugin_api` (git)
   - `klangk/lib/plugin.dart` — Class extending `ToolPlugin` with action handlers
   - `klangk/lib/*.dart` — Supporting Dart files (widgets, utilities)
-- `tools/` — Server-side scripts and commands. Symlinked to `/opt/klangk/bin/` in the workspace image (on `PATH`).
+- `tools/` — Server-side scripts and commands. Available at `/opt/klangk/plugins/<name>/tools/` in the container. Plugins that need a tool on `PATH` should symlink it in their `on-image-build.sh` hook.
 - `on-image-build.sh` — Lifecycle hook: runs at image build time (see [Lifecycle Hooks](#lifecycle-hooks))
 - `on-entrypoint.sh` — Lifecycle hook: runs at container start
 - `on-shell-init.sh` — Lifecycle hook: runs on every shell open

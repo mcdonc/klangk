@@ -10,7 +10,8 @@ RUN npm install -g @earendil-works/pi-coding-agent@0.79.9 \
 
 # Copy full plugin repos and symlink discoverable pieces into central dirs.
 # Extensions get <plugin>.ts, skills get <plugin>-<skill>/, prompts get
-# <plugin>-<file>.md, tools are flattened into /opt/klangk/bin/.
+# <plugin>-<file>.md.  Plugins reference their own files directly via
+# /opt/klangk/plugins/<name>/ (no tools symlinking).
 COPY --from=plugins / /opt/klangk/plugins/
 ENV PATH="/opt/klangk/bin:${PATH}"
 RUN mkdir -p /opt/klangk/bin /opt/klangk/pi-agent/extensions \
@@ -28,11 +29,6 @@ RUN mkdir -p /opt/klangk/bin /opt/klangk/pi-agent/extensions \
          if [ -d "$d/prompts" ]; then \
            for p in "$d/prompts"/*.md; do \
              [ -f "$p" ] && ln -sf "$p" /opt/klangk/pi-agent/prompts/"$name-$(basename "$p")"; \
-           done; \
-         fi; \
-         if [ -d "$d/tools" ]; then \
-           for t in "$d/tools"/*; do \
-             [ -f "$t" ] && ln -sf "$t" /opt/klangk/bin/; \
            done; \
          fi; \
        done
