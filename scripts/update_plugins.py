@@ -71,7 +71,7 @@ def _default_template(ref):
         lines.append(f"    ref: {ref}")
     lines.extend(
         [
-            "  # Add more plugins:",
+            "  # Add more plugins (HTTPS or SSH URLs both work):",
             "  # - name: my-plugin",
             "  #   git: https://github.com/user/repo.git",
             "  #   path: subdir              # optional: subdirectory within the repo",
