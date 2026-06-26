@@ -62,6 +62,15 @@ def resolve_file_secret(value: str) -> str:
     return value
 
 
+def sanitize_disposition_name(name: str) -> str:
+    """Sanitize a filename for use in a Content-Disposition header.
+
+    Strips characters that would break or inject into the header value
+    (double quotes, backslashes, path separators).
+    """
+    return name.replace("/", "_").replace("\\", "_").replace('"', "")
+
+
 _REJECT_PROXY = resolve_env_bool("KLANGK_REJECT_PROXY_HEADERS")
 
 

@@ -2984,6 +2984,39 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
+    async def test_download_file_strips_quotes_from_filename(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+
+            async def fake_stream(*a, **kw):
+                yield b"data"
+
+            with (
+                patch(
+                    "klangk_backend.files.podman.exec_container",
+                    new_callable=AsyncMock,
+                    return_value=(0, "regular file\t4", ""),
+                ),
+                patch(
+                    "klangk_backend.files.podman.exec_container_stream",
+                    side_effect=fake_stream,
+                ),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/work/f%22name.txt",
+                    headers=headers,
+                )
+            assert resp.status_code == 200
+            assert (
+                resp.headers["content-disposition"]
+                == 'attachment; filename="fname.txt"'
+            )
+        finally:
+            self._cleanup(ws_id)
+
     async def test_download_directory_as_tar(self, client, user):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
