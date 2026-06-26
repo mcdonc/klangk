@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flterm/flterm.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -146,66 +145,6 @@ void main() {
         before,
         reason:
             'scroll position must not change while the alt screen is active',
-      );
-      client.close();
-    });
-  });
-
-  group('mouse wheel on alternate screen', () {
-    testWidgets('wheel up sends 3 arrow-up keys to PTY on alt screen', (
-      tester,
-    ) async {
-      final client = _MockWsClient();
-      final key = GlobalKey<GhosttyTerminalState>();
-      await _pumpReady(tester, client, key);
-
-      // Switch to alt screen (tmux uses this)
-      client.emitTerminal('\x1b[?1049h');
-      await tester.pumpAndSettle();
-      expect(key.currentState!.scrollController.activeScreen,
-          TerminalScreen.alternate);
-      client.sentCommands.clear();
-
-      // Send wheel up event
-      final center = tester.getCenter(find.byType(TerminalView));
-      await tester.sendEventToBinding(
-        PointerScrollEvent(
-            position: center, scrollDelta: const Offset(0, -100)),
-      );
-      await tester.pumpAndSettle();
-
-      // Should have sent 3× Up arrow (ESC [A) to the PTY
-      expect(
-        client.sentCommands.any((c) => c.contains('\x1b[A\x1b[A\x1b[A')),
-        isTrue,
-        reason:
-            'wheel up on alt screen sends 3 arrow-up keys for line-by-line scroll',
-      );
-      client.close();
-    });
-
-    testWidgets('wheel down sends 3 arrow-down keys to PTY on alt screen', (
-      tester,
-    ) async {
-      final client = _MockWsClient();
-      final key = GlobalKey<GhosttyTerminalState>();
-      await _pumpReady(tester, client, key);
-
-      client.emitTerminal('\x1b[?1049h');
-      await tester.pumpAndSettle();
-      client.sentCommands.clear();
-
-      final center = tester.getCenter(find.byType(TerminalView));
-      await tester.sendEventToBinding(
-        PointerScrollEvent(position: center, scrollDelta: const Offset(0, 100)),
-      );
-      await tester.pumpAndSettle();
-
-      expect(
-        client.sentCommands.any((c) => c.contains('\x1b[B\x1b[B\x1b[B')),
-        isTrue,
-        reason:
-            'wheel down on alt screen sends 3 arrow-down keys for line-by-line scroll',
       );
       client.close();
     });

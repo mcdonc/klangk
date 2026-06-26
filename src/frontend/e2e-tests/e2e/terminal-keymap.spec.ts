@@ -151,8 +151,8 @@ test.describe("terminal keymap (web)", () => {
     request,
   }) => {
     // Verify the terminal remains responsive after scrolling. Wheel events
-    // are converted to arrow-key sequences on the alternate screen (tmux),
-    // but the exact behavior depends on how the browser delivers PointerScrollEvent.
+    // are sent to tmux as SGR mouse events (flterm encodes them natively);
+    // tmux copy-mode wheel bindings in tmux.conf control scroll speed.
     const sent = captureTerminalInput(page);
     const { cleanup } = await createAndOpenWorkspace(
       page,
