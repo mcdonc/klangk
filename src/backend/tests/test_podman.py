@@ -372,8 +372,6 @@ class TestExecContainerStream:
         mock_proc.stdout.read = AsyncMock(
             side_effect=[b"chunk1", b"chunk2", b""]
         )
-        mock_proc.stderr = AsyncMock()
-        mock_proc.stderr.read = AsyncMock(return_value=b"")
         mock_proc.wait = AsyncMock(return_value=0)
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)):
@@ -389,8 +387,6 @@ class TestExecContainerStream:
         mock_proc.returncode = 0
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.read = AsyncMock(return_value=b"")
-        mock_proc.stderr = AsyncMock()
-        mock_proc.stderr.read = AsyncMock(return_value=b"")
         mock_proc.wait = AsyncMock(return_value=0)
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)) as m:
@@ -407,20 +403,6 @@ class TestExecContainerStream:
             "/f",
         ]
 
-    async def test_logs_stderr(self):
-        mock_proc = MagicMock()
-        mock_proc.returncode = 1
-        mock_proc.stdout = AsyncMock()
-        mock_proc.stdout.read = AsyncMock(return_value=b"")
-        mock_proc.stderr = AsyncMock()
-        mock_proc.stderr.read = AsyncMock(return_value=b"some error")
-        mock_proc.wait = AsyncMock(return_value=1)
-
-        with patch(EXEC, AsyncMock(return_value=mock_proc)):
-            async for _ in podman.exec_container_stream("cid", ["false"]):
-                pass
-        # stderr was read (no assertion on logging, just coverage)
-
     async def test_kills_process_on_early_exit(self):
         mock_proc = MagicMock()
         mock_proc.returncode = None
@@ -428,8 +410,6 @@ class TestExecContainerStream:
         mock_proc.stdout.read = AsyncMock(
             side_effect=[b"data", b"more", b"more2"]
         )
-        mock_proc.stderr = AsyncMock()
-        mock_proc.stderr.read = AsyncMock(return_value=b"")
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock(return_value=-9)
 

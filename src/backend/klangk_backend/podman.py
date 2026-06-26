@@ -323,8 +323,8 @@ async def exec_container_stream(
     """Stream stdout from a command inside a container.
 
     Uses ``stdout=PIPE`` for true end-to-end streaming without buffering
-    to disk.  ``podman exec`` (unlike ``podman start``) does not spawn
-    long-lived helpers that would inherit and block the pipe.
+    to disk.  stderr is discarded to avoid pipe-buffer deadlocks (the
+    process would block if stderr fills while we only drain stdout).
     """
     args = ["exec"]
     if user:
@@ -335,7 +335,7 @@ async def exec_container_stream(
         PODMAN_BIN,
         *args,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
         env=subprocess_env(),
     )
     try:
@@ -348,12 +348,6 @@ async def exec_container_stream(
         if proc.returncode is None:
             proc.kill()
         await proc.wait()
-        stderr = await proc.stderr.read()
-        if stderr:
-            logger.warning(
-                "exec_container_stream stderr: %s",
-                stderr.decode("utf-8", errors="replace").strip(),
-            )
 
 
 async def remove_container(container_id: str, *, force: bool = True) -> None:
