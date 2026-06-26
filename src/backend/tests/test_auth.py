@@ -178,6 +178,21 @@ class TestLogin:
             )
         assert exc_info.value.status_code == 401
 
+    async def test_login_oidc_only_user_no_password_hash(self, db):
+        """OIDC-only users have no password hash; login must return 401
+        (Invalid credentials) rather than crashing with a 500."""
+        await model.create_user(
+            "oidc@example.com", None, verified=True, provider="oidc"
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.login(
+                auth.LoginRequest(
+                    email="oidc@example.com", password="anything"
+                )
+            )
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid credentials"
+
     async def test_login_unverified(self, db):
         import bcrypt
 

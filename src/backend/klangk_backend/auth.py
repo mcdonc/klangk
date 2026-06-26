@@ -229,8 +229,12 @@ async def login(req: LoginRequest) -> TokenResponse:
             raise HTTPException(status_code=429, detail=msg)
 
     user = await model.get_user_by_email(req.email)
-    if user is None or not verify_password(
-        req.password, user["password_hash"]
+    # OIDC-only users have no password hash; treat that as invalid
+    # credentials rather than letting verify_password crash on None.
+    if (
+        user is None
+        or not user.get("password_hash")
+        or not verify_password(req.password, user["password_hash"])
     ):
         if LOGIN_LOCKOUT_FAILURES > 0:
             await model.record_failed_login(req.email)
