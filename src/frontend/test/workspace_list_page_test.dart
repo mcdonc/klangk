@@ -1546,5 +1546,64 @@ void main() {
       expect(find.textContaining('Key cannot'), findsNothing);
       expect(find.text('A=1'), findsOneWidget);
     });
+
+    testWidgets('copy button appears and works for mount', (tester) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('New Workspace'));
+      await tester.pumpAndSettle();
+
+      // No copy buttons initially
+      expect(find.byTooltip('Copy'), findsNothing);
+
+      // Add a mount
+      await tester.enterText(find.byType(TextField).at(2), '/src:/work');
+      await tester.tap(find.byIcon(Icons.add).at(1));
+      await tester.pumpAndSettle();
+
+      // Copy button appears for the mount
+      expect(find.byTooltip('Copy'), findsOneWidget);
+
+      // Tap copy button — exercises the Clipboard.setData call
+      await tester.tap(find.byTooltip('Copy').first);
+      await tester.pump();
+    });
+
+    testWidgets('copy button appears and works for env var', (tester) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('New Workspace'));
+      await tester.pumpAndSettle();
+
+      // Add an env var
+      await tester.enterText(find.byType(TextField).at(3), 'FOO=bar');
+      await tester.tap(find.byIcon(Icons.add).at(2));
+      await tester.pumpAndSettle();
+
+      // Copy button appears for the env var
+      expect(find.byTooltip('Copy'), findsOneWidget);
+
+      // Tap copy button — exercises the Clipboard.setData call
+      await tester.tap(find.byTooltip('Copy').first);
+      await tester.pump();
+    });
   });
 }
