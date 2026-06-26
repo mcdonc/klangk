@@ -911,7 +911,7 @@ class TestWorkspaceRoutes:
                 new_callable=AsyncMock,
             ) as mock_rm,
             patch.object(
-                api.agent,
+                wshandler.agent,
                 "stop_session",
                 new_callable=AsyncMock,
             ) as mock_stop_agent,

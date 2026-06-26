@@ -2978,6 +2978,15 @@ class TestResetWorkspaceState:
             if not task.done():
                 task.cancel()
 
+    async def test_reset_stops_agent_session(self):
+        """reset_workspace stops the Pi RPC subprocess via agent.stop_session."""
+        ws_id = "ws-agent-stop"
+        with patch(
+            "klangk_backend.agent.stop_session", new_callable=AsyncMock
+        ) as mock_stop:
+            await reset_workspace_state(ws_id)
+            mock_stop.assert_awaited_once_with(ws_id)
+
 
 class TestRemoveSessionLocked:
     async def test_removes_session(self):
@@ -3460,6 +3469,39 @@ class TestHandleShutdownContainer:
             ), "container_stopped not sent to subscriber"
 
         wshandler.state.sessions.pop(ws["id"], None)
+
+    async def test_shutdown_stops_agent_session(self, user):
+        """handle_shutdown_container stops the agent RPC subprocess."""
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        ws = await _create_workspace_with_acl(user["id"], "shutdown-agent")
+        conn.workspace_id = ws["id"]
+        conn.container_id = "cid"
+
+        session = wshandler.state.get_or_create_session(ws["id"])
+        await session.add_subscriber(sock, "cid")
+
+        # The on_workspace_killed callback also routes to reset_workspace,
+        # so disable it here to measure only the explicit teardown call.
+        old_cb = container.registry.on_workspace_killed
+        container.registry.on_workspace_killed = None
+        try:
+            with (
+                patch.object(
+                    container.registry,
+                    "stop_and_remove_container",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "klangk_backend.agent.stop_session",
+                    new_callable=AsyncMock,
+                ) as mock_stop,
+            ):
+                await conn.handle_shutdown_container()
+            mock_stop.assert_awaited_once_with(ws["id"])
+        finally:
+            container.registry.on_workspace_killed = old_cb
+            wshandler.state.sessions.pop(ws["id"], None)
 
     async def test_shutdown_clears_other_connections_container_id(self, user):
         sock1 = _mock_sock()

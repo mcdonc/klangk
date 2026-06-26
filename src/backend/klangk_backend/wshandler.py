@@ -545,6 +545,8 @@ class WebSocketState:
         task = _agent_tasks.pop(workspace_id, None)
         if task and not task.done():
             task.cancel()
+        # Stop the Pi RPC subprocess so it doesn't outlive the container.
+        await agent.stop_session(workspace_id)
 
     async def logout_user(self, user_id: str) -> None:
         """Stop containers for a logging-out user, skipping any that
@@ -1064,6 +1066,9 @@ class Connection:
             logger.warning("Error stopping container: %s", e)
 
         await container.registry._notify_workspace_killed(workspace_id)
+
+        # Stop the Pi RPC subprocess now that its container is gone.
+        await agent.stop_session(workspace_id)
 
         # Notify subscribers AFTER the container is fully stopped, so
         # reconnecting clients don't find a half-dead container.
