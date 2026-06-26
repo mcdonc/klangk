@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from fastapi import Depends, HTTPException
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import ExpiredSignatureError, JWTError, jwt
 from pydantic import BaseModel
@@ -211,7 +212,17 @@ async def register(
     validate_password_length(req.password)
 
     password_hash = hash_password(req.password)
-    user = await model.create_user(req.email, password_hash, verified=verified)
+    # The duplicate-email pre-check above is not atomic with the
+    # INSERT, so two concurrent registrations can both pass it and
+    # one hits the UNIQUE constraint. Catch that and return the same
+    # opaque error as the pre-check (avoids user enumeration and an
+    # unhandled HTTP 500).
+    try:
+        user = await model.create_user(
+            req.email, password_hash, verified=verified
+        )
+    except SAIntegrityError:
+        raise HTTPException(status_code=400, detail="Registration failed")
     token = None
     if verified:
         token = create_token(user["id"], user["email"])

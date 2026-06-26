@@ -3,12 +3,14 @@
 import os
 import pytest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
 
 from klangk_backend import auth, model
 from klangk_backend.exceptions import ConfigurationError
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 
 class TestPasswordHashing:
@@ -119,6 +121,25 @@ class TestRegister:
                 )
             )
         assert exc_info.value.status_code == 400
+
+    async def test_register_race_integrity_error(self, db):
+        """If a concurrent registration wins the UNIQUE constraint,
+        the loser must get a clean 400 rather than an unhandled 500
+        (regression for #877)."""
+        with patch(
+            "klangk_backend.model.create_user",
+            side_effect=SAIntegrityError(
+                "statement", {}, Exception("UNIQUE constraint failed")
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await auth.register(
+                    auth.RegisterRequest(
+                        email="race@example.com", password="pass1234"
+                    )
+                )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Registration failed"
 
     async def test_register_invalid_email(self, db):
         with pytest.raises(HTTPException) as exc_info:
