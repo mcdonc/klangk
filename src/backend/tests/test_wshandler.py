@@ -4548,7 +4548,7 @@ class TestShareWindowHandlers:
                 "klangk_backend.acl.check_permission", return_value=True
             ):
                 await conn.handle_delete_shared_terminal(
-                    {"user_id": "nobody", "window_id": "@99"}
+                    {"user_id": user["id"], "window_id": "@99"}
                 )
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             assert any(
@@ -4556,6 +4556,77 @@ class TestShareWindowHandlers:
             )
         finally:
             wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_delete_shared_terminal_other_user_denied(
+        self, user, temp_data_dir
+    ):
+        """A collaborator may not delete another user's terminal
+        (regression for #874)."""
+        other = await model.create_user(
+            "other@example.com", "x", verified=True
+        )
+        # Workspace owned by `other`; caller is neither the terminal
+        # owner nor the workspace owner.
+        workspace = await model.create_workspace(other["id"], "ws-other")
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = workspace["id"]
+        session = wshandler.state.get_or_create_session(workspace["id"])
+        session.terminal_windows[other["id"]] = [
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
+        ]
+        try:
+            with patch(
+                "klangk_backend.acl.check_permission", return_value=True
+            ):
+                await conn.handle_delete_shared_terminal(
+                    {"user_id": other["id"], "window_id": "@0"}
+                )
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(
+                "permission" in c.get("message", "").lower() for c in calls
+            )
+            # Window is untouched.
+            assert len(session.terminal_windows[other["id"]]) == 1
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock, None)
+
+    async def test_delete_shared_terminal_workspace_owner_can_delete_others(
+        self, user, temp_data_dir
+    ):
+        """The workspace owner may delete another member's terminal."""
+        other = await model.create_user(
+            "other@example.com", "x", verified=True
+        )
+        # Workspace owned by the caller (`user`).
+        workspace = await model.create_workspace(user["id"], "ws-mine")
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = workspace["id"]
+        session = wshandler.state.get_or_create_session(workspace["id"])
+        session.terminal_windows[other["id"]] = [
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
+        ]
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch("klangk_backend.terminal.kill_joiner_sessions"),
+                patch("klangk_backend.terminal.close_window", return_value=[]),
+            ):
+                await conn.handle_delete_shared_terminal(
+                    {"user_id": other["id"], "window_id": "@0"}
+                )
+            assert session.terminal_windows[other["id"]] == []
+        finally:
+            wshandler.state.sessions.pop(workspace["id"], None)
+            wshandler.state.connections.pop(sock, None)
 
     async def test_delete_shared_terminal_error(self, user):
         sock = _mock_sock()
@@ -4604,7 +4675,7 @@ class TestShareWindowHandlers:
         conn.workspace_id = "no-session"
         with patch("klangk_backend.acl.check_permission", return_value=True):
             await conn.handle_delete_shared_terminal(
-                {"user_id": "x", "window_id": "@99"}
+                {"user_id": user["id"], "window_id": "@99"}
             )
         # Early return — no crash
 

@@ -1767,6 +1767,15 @@ class Connection:
         if not owner_user_id or not window_id:
             send_error(self.sock, "user_id and window_id required")
             return
+        # Only the terminal's owner — or the workspace owner — may
+        # delete it. The owner_user_id comes from the client and must
+        # not be trusted blindly, otherwise any collaborator with the
+        # share-terminals permission could close other users' windows.
+        if owner_user_id != self.user["id"]:
+            workspace = await model.get_workspace_by_id(self.workspace_id)
+            if workspace is None or workspace["user_id"] != self.user["id"]:
+                send_error(self.sock, "Permission denied")
+                return
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
