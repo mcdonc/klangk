@@ -8,16 +8,34 @@ RUN npm install -g @earendil-works/pi-coding-agent@0.79.9 \
     && mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills \
     && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:@demigodmode/pi-web-agent@1.5.0
 
-# Plugin tools: flat directory, all on PATH via /opt/klangk/bin/
+# Copy full plugin repos and symlink discoverable pieces into central dirs.
+# Extensions get <plugin>.ts, skills get <plugin>-<skill>/, prompts get
+# <plugin>-<file>.md, tools are flattened into /opt/klangk/bin/.
+COPY --from=plugins / /opt/klangk/plugins/
 ENV PATH="/opt/klangk/bin:${PATH}"
-COPY --from=plugin-tools / /opt/klangk/bin/
-RUN echo 'PATH="/opt/klangk/bin:${PATH}"' >> /etc/environment
-
-# Plugin lifecycle hooks: /opt/klangk/hooks/<plugin>/{on-image-build,on-entrypoint,on-shell-init}.sh
-COPY --from=plugin-hooks / /opt/klangk/hooks/
-
-# Pi extensions from plugins and builtins (changes when plugins change)
-COPY --from=plugin-extensions / /opt/klangk/pi-agent/extensions/
+RUN mkdir -p /opt/klangk/bin /opt/klangk/pi-agent/extensions \
+             /opt/klangk/pi-agent/skills /opt/klangk/pi-agent/prompts \
+    && echo 'PATH="/opt/klangk/bin:${PATH}"' >> /etc/environment \
+    && for d in /opt/klangk/plugins/*/; do \
+         [ -d "$d" ] || continue; \
+         name=$(basename "$d"); \
+         [ -f "$d/extension.ts" ] && ln -sf "$d/extension.ts" /opt/klangk/pi-agent/extensions/"$name.ts"; \
+         if [ -d "$d/skills" ]; then \
+           for s in "$d/skills"/*/; do \
+             [ -d "$s" ] && ln -sf "$s" /opt/klangk/pi-agent/skills/"$name-$(basename "$s")"; \
+           done; \
+         fi; \
+         if [ -d "$d/prompts" ]; then \
+           for p in "$d/prompts"/*.md; do \
+             [ -f "$p" ] && ln -sf "$p" /opt/klangk/pi-agent/prompts/"$name-$(basename "$p")"; \
+           done; \
+         fi; \
+         if [ -d "$d/tools" ]; then \
+           for t in "$d/tools"/*; do \
+             [ -f "$t" ] && ln -sf "$t" /opt/klangk/bin/; \
+           done; \
+         fi; \
+       done
 COPY builtin-extensions/ /opt/klangk/pi-agent/extensions/
 
 # Install uv (fast Python package manager)
@@ -65,8 +83,14 @@ COPY tmux.conf /etc/tmux.conf
 # `bash -i` spawned by plugin installers doesn't run user-session setup.
 # Removed after hooks finish so it doesn't persist into the final image.
 RUN touch /tmp/.klangk-image-build \
-    && for f in /opt/klangk/hooks/*/on-image-build.sh; do \
-      [ -x "$f" ] && "$f"; \
+    && for f in /opt/klangk/plugins/*/on-image-build.sh; do \
+      [ -x "$f" ] || continue; \
+      plugin=$(basename "$(dirname "$f")"); \
+      label=" $plugin (on-image-build) "; \
+      pad=$(( (60 - ${#label}) / 2 )); \
+      line=$(printf '%*s' "$pad" '' | tr ' ' '━'); \
+      printf '\033[33m%s%s%s\033[0m\n' "$line" "$label" "$line"; \
+      "$f"; \
     done; rm -f /tmp/.klangk-image-build; true
 
 # Fix non-root group ownership that causes crun fchownat errors with

@@ -28,18 +28,14 @@ if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plug
   python3 scripts/update_plugins.py
 fi
 
-# Stage plugin files outside the source tree
+# Stage full plugin directories outside the source tree
 STAGING="$KLANGK_PLUGINS_DIR/.docker"
 rm -rf "$STAGING"
-mkdir -p "$STAGING/extensions" "$STAGING/tools"
+mkdir -p "$STAGING/plugins"
 for d in "$KLANGK_PLUGINS_DIR"/*/; do
   [ -d "$d" ] || continue
   name=$(basename "$d")
-  [ -f "$d/extension.ts" ] && cp "$d/extension.ts" "$STAGING/extensions/$name.ts"
-  if [ -d "$d/tools" ]; then
-    mkdir -p "$STAGING/tools/$name"
-    cp -r "$d/tools/"* "$STAGING/tools/$name/" 2>/dev/null
-  fi
+  cp -r "$d" "$STAGING/plugins/$name"
 done
 
 # Remove old containers before rebuilding so they get recreated from the new image.
@@ -52,8 +48,7 @@ fi
 "$PODMAN" build \
   --pull=newer \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
-  --build-context plugin-extensions="$STAGING/extensions" \
-  --build-context plugin-tools="$STAGING/tools" \
+  --build-context plugins="$STAGING/plugins" \
   -t "${KLANGK_IMAGE_NAME}" "$@" src/containers/workspace/
 
 echo "$CURRENT_HASH" >"$STAMP"

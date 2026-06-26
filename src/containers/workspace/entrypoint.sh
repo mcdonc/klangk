@@ -8,8 +8,14 @@ set -e
 
 # Run plugin on-entrypoint hooks (alphabetical by plugin name).
 # These run once per container start, as root (inside userns).
-for f in /opt/klangk/hooks/*/on-entrypoint.sh; do
-  [ -x "$f" ] && "$f" || true
+for f in /opt/klangk/plugins/*/on-entrypoint.sh; do
+  [ -x "$f" ] || continue
+  plugin=$(basename "$(dirname "$f")")
+  label=" $plugin (on-entrypoint) "
+  pad=$(((60 - ${#label}) / 2))
+  line=$(printf '%*s' "$pad" '' | tr ' ' '━')
+  printf '\033[33m%s%s%s\033[0m\n' "$line" "$label" "$line"
+  "$f" || true
 done
 
 # Create the workspace token directory.
