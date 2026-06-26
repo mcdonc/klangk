@@ -33,6 +33,12 @@ cd "$HOME" 2>/dev/null
 # Per-user Pi agent config (extensions, settings, models, skills).
 python3 /opt/klangk/bin/klangk-setup-clankers
 
+# Display terminal banner if configured (deployers override via
+# KLANGK_TERMINAL_BANNER env var; empty string disables it).
+if [ -n "${KLANGK_TERMINAL_BANNER:-}" ]; then
+  printf '\033[33m%s\033[0m\n' "$KLANGK_TERMINAL_BANNER"
+fi
+
 # Run plugin on-shell-init hooks (alphabetical by plugin name).
 # These run as the klangk user on every shell open.
 for f in /opt/klangk/plugins/*/on-shell-init.sh; do

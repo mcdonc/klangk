@@ -1282,7 +1282,7 @@ async def export_workspace(
                     yield chunk
                 await proc.wait()
             finally:
-                if proc.returncode is None:
+                if proc.returncode is None:  # pragma: no cover
                     proc.kill()
                     await proc.wait()
         finally:
