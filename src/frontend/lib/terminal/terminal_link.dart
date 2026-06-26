@@ -21,18 +21,18 @@ final class ExternalUrl extends TerminalLinkTarget {
   String toString() => 'ExternalUrl($url)';
 }
 
-/// A workspace-relative file path to open in the file viewer.
+/// An absolute container path to open in the file viewer.
 final class WorkspaceFile extends TerminalLinkTarget {
-  const WorkspaceFile(this.relativePath);
-  final String relativePath;
+  const WorkspaceFile(this.path);
+  final String path;
 
   @override
   bool operator ==(Object other) =>
-      other is WorkspaceFile && other.relativePath == relativePath;
+      other is WorkspaceFile && other.path == path;
   @override
-  int get hashCode => relativePath.hashCode;
+  int get hashCode => path.hashCode;
   @override
-  String toString() => 'WorkspaceFile($relativePath)';
+  String toString() => 'WorkspaceFile($path)';
 }
 
 /// The token is neither an http(s) URL nor a file under the workspace root.
@@ -46,21 +46,18 @@ final _urlPattern = RegExp(r'^https?://');
 ///
 /// [uri] is the cell's OSC 8 hyperlink (if any); [pwd] is the OSC 7 working
 /// directory (`file://host/abs`, a bare path, or empty); [workspaceRoot] is the
-/// container path files resolve under (e.g. `/home/work`).
+/// container path files resolve under (e.g. `/home/alice`).
 ///
 /// Security: only `http(s)` URLs open externally — every other OSC 8 scheme
 /// (`javascript:`, `data:`, `file://`, …) is ignored.
 ///
-/// Path resolution uses two roots because the file API addresses files
-/// relative to the container **home**, while the shell's working directory is a
-/// subdir of it:
+/// Path resolution:
 /// - [defaultCwd] is where a *relative* token resolves when [pwd] (OSC 7) is
-///   absent — the shell's cwd, e.g. `/home/work`.
-/// - [pathRoot] is stripped to produce the file-API path — the home, e.g.
-///   `/home`, so a file under `work/` yields `work/...`.
+///   absent — the user's home directory, e.g. `/home/alice`.
+/// - [pathRoot] is the home directory (e.g. `/home/alice`), used for `~`
+///   expansion.
 ///
-/// The resolved path must land inside [pathRoot], else [NoLink] (rejects
-/// `../` escapes).
+/// Returns absolute container paths (e.g. `/home/alice/foo.txt`).
 TerminalLinkTarget classifyTerminalLink({
   required String token,
   String? uri,
@@ -70,8 +67,8 @@ TerminalLinkTarget classifyTerminalLink({
 }) {
   if (uri != null && _urlPattern.hasMatch(uri)) return ExternalUrl(uri);
   if (_urlPattern.hasMatch(token)) return ExternalUrl(token);
-  final rel = _toWorkspaceRelative(token, pwd, pathRoot, defaultCwd);
-  return rel == null ? const NoLink() : WorkspaceFile(rel);
+  final abs = _toAbsolutePath(token, pwd, pathRoot, defaultCwd);
+  return abs == null ? const NoLink() : WorkspaceFile(abs);
 }
 
 /// Whether a workspace-relative path is a file, a directory, or absent.
@@ -90,7 +87,7 @@ class TerminalLinkActions {
     this.maxTailWords = 6,
   });
 
-  /// File-API path root (the container home) — stripped to produce `work/...`.
+  /// Home directory root (e.g. `/home`), used for `~` expansion.
   final String pathRoot;
 
   /// Shell cwd that relative tokens resolve against when OSC 7 is absent.
@@ -99,14 +96,14 @@ class TerminalLinkActions {
   /// Opens an external `http(s)` URL (e.g. `window.open` / url_launcher).
   final void Function(String url) openExternalUrl;
 
-  /// Classifies [relativePath] as a file, directory, or absent (file-API).
-  final Future<PathKind> Function(String relativePath) statPath;
+  /// Classifies an absolute container [path] as a file, directory, or absent.
+  final Future<PathKind> Function(String path) statPath;
 
-  /// Opens the in-app file view for a file [relativePath].
-  final void Function(String relativePath) openFile;
+  /// Opens the in-app file view for a file at absolute container [path].
+  final void Function(String path) openFile;
 
-  /// Opens the file browser at a directory [relativePath].
-  final void Function(String relativePath) openDirectory;
+  /// Opens the file browser at a directory at absolute container [path].
+  final void Function(String path) openDirectory;
 
   /// Cap on how many whitespace-separated words of the tail to try (bounds the
   /// number of stat calls when extending across spaces).
@@ -152,11 +149,11 @@ class TerminalLinkActions {
         defaultCwd: defaultCwd,
       );
       if (target is! WorkspaceFile) continue;
-      switch (await statPath(target.relativePath)) {
+      switch (await statPath(target.path)) {
         case PathKind.file:
-          bestFile = target.relativePath;
+          bestFile = target.path;
         case PathKind.directory:
-          bestDir = target.relativePath;
+          bestDir = target.path;
         case PathKind.none:
           break;
       }
@@ -169,7 +166,7 @@ class TerminalLinkActions {
   }
 }
 
-String? _toWorkspaceRelative(
+String? _toAbsolutePath(
   String token,
   String pwd,
   String pathRoot,
@@ -191,13 +188,7 @@ String? _toWorkspaceRelative(
     }
     raw = '$base/$token';
   }
-  // Normalizing collapses `./` and `..`; the prefix check then rejects anything
-  // that escaped the path root (e.g. `../../etc/passwd`).
-  final abs = _normalizePosix(raw);
-  final root = _normalizePosix(pathRoot);
-  if (abs == root) return '';
-  if (abs.startsWith('$root/')) return abs.substring(root.length + 1);
-  return null;
+  return _normalizePosix(raw);
 }
 
 /// Collapses `.`/`..`/empty segments in an absolute posix path (callers always

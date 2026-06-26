@@ -1,6 +1,5 @@
 import { test, expect } from "@playwright/test";
-import AdmZip from "adm-zip";
-import { API_BASE, registerUser } from "./helpers";
+import { API_BASE, registerUser, connectContainer } from "./helpers";
 
 test.describe("API", () => {
   test("index.html has cache-busted flutter_bootstrap.js", async ({
@@ -74,13 +73,17 @@ test.describe("API", () => {
       data: { name: `e2e-file-ops-${Date.now()}` },
     });
     const workspaceId = (await wsResp.json()).id;
+
+    // Start the container via WebSocket (file API requires a running container)
+    await connectContainer(workspaceId, token);
+
     const fileName = "playwright-test.txt";
     const renamedName = "playwright-renamed.txt";
     const fileContent = "hello from playwright e2e tests";
 
     // Upload
     const uploadResp = await request.post(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=work/${fileName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/work/${fileName}`,
       {
         headers,
         multipart: {
@@ -96,7 +99,7 @@ test.describe("API", () => {
 
     // Verify upload in listing
     let listResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
       { headers },
     );
     let files = await listResp.json();
@@ -105,7 +108,7 @@ test.describe("API", () => {
 
     // Verify content
     const readResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/${fileName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/${fileName}`,
       { headers },
     );
     expect(readResp.ok()).toBeTruthy();
@@ -117,13 +120,16 @@ test.describe("API", () => {
       `${API_BASE}/api/v1/workspaces/${workspaceId}/files/rename`,
       {
         headers,
-        data: { old_path: `work/${fileName}`, new_path: `work/${renamedName}` },
+        data: {
+          old_path: `/home/work/${fileName}`,
+          new_path: `/home/work/${renamedName}`,
+        },
       },
     );
     expect(renameResp.ok()).toBeTruthy();
 
     listResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
       { headers },
     );
     files = await listResp.json();
@@ -133,13 +139,13 @@ test.describe("API", () => {
 
     // Delete
     const deleteResp = await request.delete(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work/${renamedName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work/${renamedName}`,
       { headers },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     listResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
       { headers },
     );
     files = await listResp.json();
@@ -152,7 +158,7 @@ test.describe("API", () => {
     });
   });
 
-  test("folder upload and zip download round-trip", async ({ request }) => {
+  test("folder upload and tar.gz download round-trip", async ({ request }) => {
     const { token, headers } = await registerUser(
       request,
       `folder-${Date.now()}@test.example.com`,
@@ -162,6 +168,10 @@ test.describe("API", () => {
       data: { name: `e2e-folder-${Date.now()}` },
     });
     const workspaceId = (await wsResp.json()).id;
+
+    // Start the container via WebSocket (file API requires a running container)
+    await connectContainer(workspaceId, token);
+
     const folder = "test-folder";
 
     const testFiles: Record<string, string> = {
@@ -173,7 +183,7 @@ test.describe("API", () => {
     // Upload each file into the folder structure
     for (const [filePath, content] of Object.entries(testFiles)) {
       const resp = await request.post(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=work/${encodeURIComponent(filePath)}`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/work/${encodeURIComponent(filePath)}`,
         {
           headers,
           multipart: {
@@ -190,7 +200,7 @@ test.describe("API", () => {
 
     // Verify folder appears in listing
     const listResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
       { headers },
     );
     expect(listResp.ok()).toBeTruthy();
@@ -198,31 +208,38 @@ test.describe("API", () => {
     const names = entries.map((e: any) => e.name);
     expect(names).toContain(folder);
 
-    // Download folder as zip
+    // Download folder as tar.gz
     const dlResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=work/${encodeURIComponent(folder)}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=/home/work/${encodeURIComponent(folder)}`,
       { headers },
     );
     expect(dlResp.ok()).toBeTruthy();
-    const zipBuf = Buffer.from(await dlResp.body());
+    expect(dlResp.headers()["content-type"]).toBe("application/gzip");
+    const tarBuf = Buffer.from(await dlResp.body());
+    expect(tarBuf.length).toBeGreaterThan(0);
 
-    // Parse zip and verify contents match
-    const zip = new AdmZip(zipBuf);
-    const zipEntries = zip.getEntries();
-    const zipFiles: Record<string, string> = {};
-    for (const entry of zipEntries) {
-      if (!entry.isDirectory) {
-        zipFiles[entry.entryName] = entry.getData().toString("utf8");
-      }
-    }
+    // Extract tar.gz to a temp dir and verify contents
+    const fs = await import("fs");
+    const os = await import("os");
+    const path = await import("path");
+    const { execSync } = await import("child_process");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-tar-"));
+    const tarPath = path.join(tmpDir, "download.tar.gz");
+    fs.writeFileSync(tarPath, tarBuf);
+    execSync(`tar -xzf ${tarPath} -C ${tmpDir}`);
 
-    // Zip paths are relative to the downloaded folder
-    expect(zipFiles["readme.txt"]).toBe(testFiles[`${folder}/readme.txt`]);
-    expect(zipFiles["data.csv"]).toBe(testFiles[`${folder}/data.csv`]);
-    expect(zipFiles["sub/nested.txt"]).toBe(
-      testFiles[`${folder}/sub/nested.txt`],
+    // Tar paths are relative to the downloaded folder (./readme.txt etc.)
+    expect(fs.readFileSync(path.join(tmpDir, "readme.txt"), "utf8")).toBe(
+      testFiles[`${folder}/readme.txt`],
     );
-    expect(Object.keys(zipFiles)).toHaveLength(3);
+    expect(fs.readFileSync(path.join(tmpDir, "data.csv"), "utf8")).toBe(
+      testFiles[`${folder}/data.csv`],
+    );
+    expect(
+      fs.readFileSync(path.join(tmpDir, "sub", "nested.txt"), "utf8"),
+    ).toBe(testFiles[`${folder}/sub/nested.txt`]);
+    // Clean up temp dir
+    fs.rmSync(tmpDir, { recursive: true, force: true });
 
     // Clean up workspace
     await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
@@ -239,7 +256,7 @@ test.describe("API", () => {
     expect(wsResp.status()).toBe(401);
 
     const filesResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/fake-id/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/fake-id/files?path=/home/work`,
       { headers },
     );
     expect(filesResp.status()).toBe(401);
@@ -283,9 +300,13 @@ test.describe("API", () => {
     expect(respB.ok()).toBeTruthy();
     const wsB = await respB.json();
 
+    // Start containers for both workspaces (file API requires a running container)
+    await connectContainer(wsA.id, token);
+    await connectContainer(wsB.id, token);
+
     // Upload a file to workspace A only
     const uploadResp = await request.post(
-      `${API_BASE}/api/v1/workspaces/${wsA.id}/files/upload?path=work/only-in-a.txt`,
+      `${API_BASE}/api/v1/workspaces/${wsA.id}/files/upload?path=/home/work/only-in-a.txt`,
       {
         headers,
         multipart: {
@@ -301,7 +322,7 @@ test.describe("API", () => {
 
     // Verify file exists in A
     const filesA = await request.get(
-      `${API_BASE}/api/v1/workspaces/${wsA.id}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${wsA.id}/files?path=/home/work`,
       { headers },
     );
     const namesA = (await filesA.json()).map((e: any) => e.name);
@@ -309,7 +330,7 @@ test.describe("API", () => {
 
     // Verify file does NOT exist in B
     const filesB = await request.get(
-      `${API_BASE}/api/v1/workspaces/${wsB.id}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${wsB.id}/files?path=/home/work`,
       { headers },
     );
     const namesB = (await filesB.json()).map((e: any) => e.name);
@@ -496,7 +517,10 @@ test.describe("API", () => {
     // Register two users
     const ownerEmail = `share-owner-${Date.now()}@test.example.com`;
     const memberEmail = `share-member-${Date.now()}@test.example.com`;
-    const { headers: ownerHeaders } = await registerUser(request, ownerEmail);
+    const { token: ownerToken, headers: ownerHeaders } = await registerUser(
+      request,
+      ownerEmail,
+    );
     const { headers: memberHeaders } = await registerUser(request, memberEmail);
 
     // Create a workspace as owner
@@ -508,9 +532,12 @@ test.describe("API", () => {
     const workspace = await wsResp.json();
     const workspaceId = workspace.id;
 
+    // Start the container via WebSocket (file API requires a running container)
+    await connectContainer(workspaceId, ownerToken);
+
     // Upload a file so we can test access
     const uploadResp = await request.post(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=work/shared.txt`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/work/shared.txt`,
       {
         headers: ownerHeaders,
         multipart: {
@@ -535,7 +562,7 @@ test.describe("API", () => {
 
     // Member cannot access the workspace files before sharing
     const preShareFiles = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
       { headers: memberHeaders },
     );
     expect(preShareFiles.ok()).toBeFalsy();
@@ -563,7 +590,7 @@ test.describe("API", () => {
 
     // Member can now access workspace files
     const postShareFiles = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
       { headers: memberHeaders },
     );
     expect(postShareFiles.ok()).toBeTruthy();
@@ -587,7 +614,7 @@ test.describe("API", () => {
 
     // Member can no longer access workspace files
     const postUnshareFiles = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
       { headers: memberHeaders },
     );
     expect(postUnshareFiles.ok()).toBeFalsy();
@@ -930,9 +957,12 @@ test.describe("API", () => {
     const workspace = await createResp.json();
     const workspaceId = workspace.id;
 
+    // Start the container via WebSocket (file API requires a running container)
+    await connectContainer(workspaceId, adminToken);
+
     const testContent = "hello from export test";
     const uploadResp = await request.post(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=work/testfile.txt`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/work/testfile.txt`,
       {
         headers: adminHeaders,
         multipart: {
@@ -984,9 +1014,12 @@ test.describe("API", () => {
     expect(imported.name).toBe(wsName);
     expect(imported.id).not.toBe(workspaceId); // new workspace
 
+    // Start the container for the imported workspace to verify the file
+    await connectContainer(imported.id, adminToken);
+
     // Verify the file survived the round-trip
     const fileResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${imported.id}/files/content?path=work/testfile.txt`,
+      `${API_BASE}/api/v1/workspaces/${imported.id}/files/content?path=/home/work/testfile.txt`,
       { headers: adminHeaders },
     );
     expect(fileResp.ok()).toBeTruthy();

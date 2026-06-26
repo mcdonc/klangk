@@ -885,6 +885,7 @@ class Connection:
                 "userId": self.user["id"],
                 "ports": ports,
                 "defaultCommand": workspace.get("default_command"),
+                "userHome": self._user_home,
             }
         )
         # Send chat history to the connecting user

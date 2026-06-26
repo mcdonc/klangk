@@ -1467,6 +1467,7 @@ class TestHandleWorkspaceConnect:
         assert len(ready) == 1
         assert ready[0]["workspaceId"] == workspace["id"]
         assert ready[0]["defaultCommand"] is None
+        assert "userHome" in ready[0]
         # Integer timeout (default 30m) should show as "30m" not "30.0m"
         assert "30m" in conn.pending_status_msg
 
@@ -5550,8 +5551,8 @@ class TestPresence:
             leaves = [c for c in calls1 if c.get("type") == "presence_leave"]
             assert len(leaves) == 0  # not yet
 
-            # Wait for the debounce to fire
-            await asyncio.sleep(0.1)
+            # Wait for the debounce to fire (generous margin for slow CI)
+            await asyncio.sleep(0.5)
 
             calls1 = [c[0][0] for c in sock1.send_json.call_args_list]
             leaves = [c for c in calls1 if c.get("type") == "presence_leave"]

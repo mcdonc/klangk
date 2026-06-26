@@ -38,14 +38,14 @@ test.describe("file-viewers/markdown", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/readme.md",
+        "/home/work/readme.md",
         MD,
         headers,
         "text/markdown",
       );
       // Backing content via API.
       const api = await request.get(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/readme.md`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/readme.md`,
         { headers },
       );
       expect((await api.json()).content).toContain("# Heading One");
@@ -77,7 +77,7 @@ test.describe("file-viewers/markdown", () => {
       "fv-md-download",
     );
     try {
-      await seedFile(request, workspaceId, "work/dl.md", MD, headers);
+      await seedFile(request, workspaceId, "/home/work/dl.md", MD, headers);
       await openFilesTab(page);
       await clickFileRow(page, 0);
 
@@ -86,7 +86,7 @@ test.describe("file-viewers/markdown", () => {
       // "download" event in CI).
       const dl = await request.get(
         `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
-          "work/dl.md",
+          "/home/work/dl.md",
         )}`,
         { headers },
       );
@@ -109,7 +109,7 @@ test.describe("file-viewers/markdown", () => {
       "fv-md-nav",
     );
     try {
-      await seedFile(request, workspaceId, "work/nav.md", MD, headers);
+      await seedFile(request, workspaceId, "/home/work/nav.md", MD, headers);
       await openFilesTab(page);
       await clickFileRow(page, 0);
 

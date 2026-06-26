@@ -37,6 +37,7 @@ class WsClient extends ChangeNotifier {
   String? _currentWorkspaceId;
   String? _currentUserId;
   String? _defaultCommand;
+  String? _userHome;
   bool _connected = false;
   bool _connecting = false;
   Timer? _heartbeatTimer;
@@ -143,6 +144,7 @@ class WsClient extends ChangeNotifier {
   String? get currentWorkspaceId => _currentWorkspaceId;
   String? get currentUserId => _currentUserId;
   String? get defaultCommand => _defaultCommand;
+  String? get userHome => _userHome;
 
   void updateAuth(AuthService auth) {
     _auth = auth;
@@ -272,6 +274,7 @@ class WsClient extends ChangeNotifier {
             _currentWorkspaceId = json['workspaceId'] as String?;
             _currentUserId = json['userId'] as String?;
             _defaultCommand = json['defaultCommand'] as String?;
+            _userHome = json['userHome'] as String?;
             _reconnecting = false;
             _reconnectAttempt = 0;
             _reconnectStartedAt = null;
@@ -355,6 +358,7 @@ class WsClient extends ChangeNotifier {
         _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
         _defaultCommand = null;
+        _userHome = null;
         final code = _channel?.closeCode;
         notifyListeners();
         if (code == 4001 || code == 4002) {

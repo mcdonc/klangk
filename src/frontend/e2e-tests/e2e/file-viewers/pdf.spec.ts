@@ -37,7 +37,7 @@ test.describe("file-viewers/pdf", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/doc.pdf",
+        "/home/work/doc.pdf",
         PDF,
         headers,
         "application/pdf",
@@ -71,7 +71,7 @@ test.describe("file-viewers/pdf", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/dl.pdf",
+        "/home/work/dl.pdf",
         PDF,
         headers,
         "application/pdf",
@@ -84,7 +84,7 @@ test.describe("file-viewers/pdf", () => {
       // "download" event in CI).
       const dl = await request.get(
         `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
-          "work/dl.pdf",
+          "/home/work/dl.pdf",
         )}`,
         { headers },
       );
@@ -108,7 +108,7 @@ test.describe("file-viewers/pdf", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/nav.pdf",
+        "/home/work/nav.pdf",
         PDF,
         headers,
         "application/pdf",

@@ -36,7 +36,7 @@ test.describe("file-viewers/video", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/clip.mp4",
+        "/home/work/clip.mp4",
         MP4,
         headers,
         "video/mp4",
@@ -70,7 +70,7 @@ test.describe("file-viewers/video", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/raw.mp4",
+        "/home/work/raw.mp4",
         MP4,
         headers,
         "video/mp4",
@@ -99,7 +99,7 @@ test.describe("file-viewers/video", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/dl.mp4",
+        "/home/work/dl.mp4",
         MP4,
         headers,
         "video/mp4",
@@ -113,7 +113,7 @@ test.describe("file-viewers/video", () => {
       // anchor download does not reliably surface to Playwright in CI.
       const dl = await request.get(
         `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
-          "work/dl.mp4",
+          "/home/work/dl.mp4",
         )}`,
         { headers },
       );
@@ -134,7 +134,7 @@ test.describe("file-viewers/video", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/nav.mp4",
+        "/home/work/nav.mp4",
         MP4,
         headers,
         "video/mp4",

@@ -137,6 +137,73 @@ async def _run(
     return rc, out, err
 
 
+async def _run_raw(
+    args: list[str],
+    *,
+    check: bool = True,
+    stdin_data: bytes | None = None,
+    timeout: float | None = 30.0,
+) -> tuple[int, bytes, str]:
+    """Like ``_run`` but returns raw stdout bytes (for binary data)."""
+    cmd_label = f"podman {args[0]}" if args else "podman"
+    t0 = time.monotonic()
+    with (
+        tempfile.TemporaryFile() as out_f,
+        tempfile.TemporaryFile() as err_f,
+    ):
+        t1 = time.monotonic()
+        proc = await asyncio.create_subprocess_exec(
+            PODMAN_BIN,
+            *args,
+            stdin=(
+                asyncio.subprocess.PIPE if stdin_data is not None else None
+            ),
+            stdout=out_f,
+            stderr=err_f,
+            env=subprocess_env(),
+        )
+        t2 = time.monotonic()
+        if stdin_data is not None:
+            proc.stdin.write(stdin_data)
+            await proc.stdin.drain()
+            proc.stdin.close()
+        timed_out = False
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
+            logger.warning(
+                "podman-timeout: %s exceeded %.1fs — killing",
+                cmd_label,
+                timeout,
+            )
+            proc.kill()
+            await proc.wait()
+        t3 = time.monotonic()
+        out_f.seek(0)
+        err_f.seek(0)
+        out_bytes = out_f.read()
+        err = err_f.read().decode("utf-8", errors="replace")
+    rc = proc.returncode or 0
+    if timed_out:
+        rc = -1
+        err = err or f"{cmd_label} timed out after {timeout}s"
+    elapsed = t3 - t0
+    logger.info(
+        "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",
+        cmd_label,
+        t1 - t0,
+        t2 - t1,
+        t3 - t2,
+        elapsed,
+    )
+    if elapsed > 2.0 and err.strip():  # pragma: no cover
+        logger.info("podman-timing: %s stderr: %s", cmd_label, err.strip())
+    if check and rc != 0:
+        raise PodmanError(_classify(err), err.strip() or f"podman {args[0]}")
+    return rc, out_bytes, err
+
+
 # --- Containers ---
 
 
@@ -211,17 +278,76 @@ async def exec_container(
     cmd: list[str],
     *,
     user: str | None = None,
+    stdin_data: bytes | None = None,
+    timeout: float | None = 30.0,
 ) -> tuple[int, str, str]:
     """Run a command inside a running container.
 
     Returns ``(returncode, stdout, stderr)``.
     """
     args = ["exec"]
+    if stdin_data is not None:
+        args.append("-i")
     if user:
         args += ["-u", user]
     args.append(container_id)
     args.extend(cmd)
-    return await _run(args, check=False)
+    return await _run(
+        args, check=False, stdin_data=stdin_data, timeout=timeout
+    )
+
+
+async def exec_container_bytes(
+    container_id: str,
+    cmd: list[str],
+    *,
+    user: str | None = None,
+    timeout: float | None = 30.0,
+) -> tuple[int, bytes, str]:
+    """Like ``exec_container`` but returns raw stdout bytes (for binary data)."""
+    args = ["exec"]
+    if user:
+        args += ["-u", user]
+    args.append(container_id)
+    args.extend(cmd)
+    return await _run_raw(args, check=False, timeout=timeout)
+
+
+async def exec_container_stream(
+    container_id: str,
+    cmd: list[str],
+    *,
+    user: str | None = None,
+    chunk_size: int = 64 * 1024,
+) -> AsyncGenerator[bytes, None]:
+    """Stream stdout from a command inside a container.
+
+    Uses ``stdout=PIPE`` for true end-to-end streaming without buffering
+    to disk.  stderr is discarded to avoid pipe-buffer deadlocks (the
+    process would block if stderr fills while we only drain stdout).
+    """
+    args = ["exec"]
+    if user:
+        args += ["-u", user]
+    args.append(container_id)
+    args.extend(cmd)
+    proc = await asyncio.create_subprocess_exec(
+        PODMAN_BIN,
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+        env=subprocess_env(),
+    )
+    try:
+        while True:
+            chunk = await proc.stdout.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
 
 
 async def remove_container(container_id: str, *, force: bool = True) -> None:

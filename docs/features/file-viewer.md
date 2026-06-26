@@ -10,17 +10,27 @@ Click the **Files** tab in the workspace to open.
 
 ## Browsing
 
-The file browser shows the contents of the workspace's `/home/work`
-directory. Click a directory to enter it, or click a file to preview
-its contents.
+The file browser starts at `/home/work` but can navigate the entire
+container filesystem. Click a directory to enter it, or click a file
+to preview its contents.
 
-- **Path bar** at the top shows the current directory with clickable
-  breadcrumbs. Click `/` to return to the root, or use the up-arrow
-  button to go up one level.
+- **Path bar** at the top shows the current absolute path with
+  clickable breadcrumbs. Click any segment to navigate to that
+  directory, or use the up-arrow button to go up one level.
+- **Home button** (house icon) returns to `/home/work`.
+- **Navigate to root** — click the leading `/` in the breadcrumbs or
+  use the up-arrow repeatedly to reach `/`. From there you can browse
+  shared bind-mounted directories (e.g. `/mnt/data`), system
+  directories, or any other part of the container filesystem.
 - **File sizes** are shown next to each entry.
 - **Auto-refresh** — the file list refreshes automatically when Pi
   creates, edits, or deletes files, and when you switch to the Files
   tab.
+
+!!! note
+The file browser requires a running container. If the container is
+stopped (e.g. due to idle timeout), start it by switching to the
+Terminal tab first.
 
 ## Uploading Files
 
@@ -37,9 +47,9 @@ Uploads go into the currently viewed directory (not always root).
 
 Right-click a file or folder to open the context menu:
 
-- **Download** — downloads the file directly
-- **Download folder** — downloads the folder as a `.zip` archive
-  (zipped on the fly by the backend)
+- **Download** — downloads the file directly (streamed)
+- **Download folder** — downloads the folder as a `.tar.gz` archive
+  (streamed from the container)
 
 ## File Preview
 

@@ -26,7 +26,11 @@ MockClient _client() => MockClient((req) async {
       if (req.url.path.contains('/files')) {
         return http.Response(
           jsonEncode([
-            {'name': 'note.txt', 'path': 'docs/note.txt', 'is_dir': false},
+            {
+              'name': 'note.txt',
+              'path': '/home/docs/note.txt',
+              'is_dir': false
+            },
           ]),
           200,
         );
@@ -48,6 +52,7 @@ Widget _ide(GlobalKey<FileViewerPanelState> fvKey, WsClient ws, String? file,
               wsClient: ws,
               workspaceId: 'ws-1',
               authToken: 'tok',
+              userHome: '/home/tester',
             ),
             terminal: const SizedBox(),
             initialFile: file,
@@ -69,7 +74,7 @@ void main() {
     testHttpClientOverride = _client();
     final fvKey = GlobalKey<FileViewerPanelState>();
     final ws = _MockWsClient();
-    await tester.pumpWidget(_ide(fvKey, ws, 'docs/note.txt'));
+    await tester.pumpWidget(_ide(fvKey, ws, '/home/docs/note.txt'));
     await tester.pumpAndSettle();
     expect(find.textContaining('ide body'), findsOneWidget);
     ws.close();
@@ -95,7 +100,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('ide body'), findsNothing);
     // Same tree, new initialFile → IdeLayout.didUpdateWidget fires.
-    await tester.pumpWidget(_ide(fvKey, ws, 'docs/note.txt'));
+    await tester.pumpWidget(_ide(fvKey, ws, '/home/docs/note.txt'));
     await tester.pumpAndSettle();
     expect(find.textContaining('ide body'), findsOneWidget);
     ws.close();
@@ -107,7 +112,7 @@ void main() {
     testHttpClientOverride = _client();
     final fvKey = GlobalKey<FileViewerPanelState>();
     final ws = _MockWsClient();
-    await tester.pumpWidget(_ide(fvKey, ws, null, dir: 'docs'));
+    await tester.pumpWidget(_ide(fvKey, ws, null, dir: '/home/docs'));
     await tester.pumpAndSettle();
     // Breadcrumb segment proves openDirectory('docs') ran; no file content.
     expect(find.text('docs'), findsOneWidget);
@@ -125,7 +130,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('docs'), findsNothing);
     // Same tree, new initialDir → IdeLayout.didUpdateWidget fires.
-    await tester.pumpWidget(_ide(fvKey, ws, null, dir: 'docs'));
+    await tester.pumpWidget(_ide(fvKey, ws, null, dir: '/home/docs'));
     await tester.pumpAndSettle();
     expect(find.text('docs'), findsOneWidget);
     ws.close();

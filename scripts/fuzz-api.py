@@ -137,6 +137,56 @@ def fuzz_password(rng: random.Random) -> str:
     return rng.choice(choices)
 
 
+def fuzz_path(rng: random.Random) -> str:
+    """Return a random file path — sometimes malicious."""
+    generators = [
+        # normal absolute path
+        lambda: (
+            "/home/work/"
+            + "".join(rng.choices(string.ascii_lowercase, k=rng.randint(1, 10)))
+            + ".txt"
+        ),
+        # root
+        lambda: "/",
+        # relative (should be rejected)
+        lambda: "../../etc/passwd",
+        # null byte
+        lambda: "/home/\x00evil",
+        # very long component
+        lambda: "/" + "a" * rng.randint(200, 500),
+        # shell metacharacters
+        lambda: "/home/; rm -rf /",
+        lambda: "/home/$(whoami)",
+        lambda: "/home/`id`",
+        lambda: "/home/file | cat /etc/shadow",
+        # flag injection
+        lambda: "/-rf",
+        lambda: "/--help",
+        # newlines
+        lambda: "/home/file\nworld",
+        # empty
+        lambda: "",
+        # deep nesting
+        lambda: "/" + "/".join("d" for _ in range(rng.randint(10, 100))),
+        # unicode
+        lambda: (
+            "/home/"
+            + "".join(
+                chr(rng.randint(0x0100, 0xFFFF)) for _ in range(rng.randint(1, 20))
+            )
+        ),
+        # spaces
+        lambda: "/home/my file (1).txt",
+        # dot segments
+        lambda: "/home/./work/../../../etc/shadow",
+        # double slash
+        lambda: "//home//work",
+        # just a dot
+        lambda: ".",
+    ]
+    return rng.choice(generators)()
+
+
 def fuzz_uuid(rng: random.Random) -> str:
     choices = [
         str(uuid.uuid4()),
@@ -154,6 +204,7 @@ def fuzz_body(rng: random.Random, schema: dict[str, str]) -> dict:
     generators = {
         "email": fuzz_email,
         "password": fuzz_password,
+        "path": fuzz_path,
         "string": fuzz_string,
         "uuid": fuzz_uuid,
         "int": fuzz_int,
@@ -179,6 +230,7 @@ def fuzz_query(rng: random.Random, params: dict[str, str]) -> dict:
     """Build fuzzed query parameters."""
     result = {}
     generators = {
+        "path": fuzz_path,
         "string": fuzz_string,
         "uuid": fuzz_uuid,
         "int": fuzz_int,
@@ -343,37 +395,37 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         "GET",
         f"{P}/workspaces/{{workspace_id}}/files",
         None,
-        {"path": "string"},
+        {"path": "path"},
     ),
     (
         "GET",
         f"{P}/workspaces/{{workspace_id}}/files/content",
         None,
-        {"path": "string"},
+        {"path": "path"},
     ),
     (
         "DELETE",
         f"{P}/workspaces/{{workspace_id}}/files",
         None,
-        {"path": "string"},
+        {"path": "path"},
     ),
     (
         "POST",
         f"{P}/workspaces/{{workspace_id}}/files/rename",
-        {"old_path": "string", "new_path": "string"},
+        {"old_path": "path", "new_path": "path"},
         None,
     ),
     (
         "GET",
         f"{P}/workspaces/{{workspace_id}}/files/download",
         None,
-        {"path": "string"},
+        {"path": "path"},
     ),
     (
         "POST",
         f"{P}/workspaces/{{workspace_id}}/files/upload",
         None,
-        {"path": "string"},
+        {"path": "path"},
     ),  # multipart upload
     # Images and volumes
     ("GET", f"{P}/images", None, None),
