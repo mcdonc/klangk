@@ -1,4 +1,4 @@
-"""Tests for the klangk CLI."""
+"""Tests for the klangkc CLI."""
 
 import asyncio
 import json
