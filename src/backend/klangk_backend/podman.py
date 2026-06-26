@@ -338,11 +338,13 @@ async def exec_container_stream(
         stderr=asyncio.subprocess.DEVNULL,
         env=subprocess_env(),
     )
+    yielded = False
     try:
         while True:
             chunk = await proc.stdout.read(chunk_size)
             if not chunk:
                 break
+            yielded = True
             yield chunk
     finally:
         if proc.returncode is None:
@@ -355,10 +357,14 @@ async def exec_container_stream(
             container_id,
             cmd,
         )
-        raise PodmanError(
-            proc.returncode,
-            f"stream command exited with code {proc.returncode}",
-        )
+        # Only abort the stream if no data was produced; if data was
+        # yielded the response is already in-flight and may be valid
+        # (e.g. tar exits 1 when files change during archiving).
+        if not yielded:
+            raise PodmanError(
+                proc.returncode,
+                f"stream command exited with code {proc.returncode}",
+            )
 
 
 async def remove_container(container_id: str, *, force: bool = True) -> None:

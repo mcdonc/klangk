@@ -419,7 +419,19 @@ class TestExecContainerStream:
             await gen.aclose()
         mock_proc.kill.assert_called_once()
 
-    async def test_raises_on_nonzero_exit(self):
+    async def test_raises_on_nonzero_exit_no_output(self):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.wait = AsyncMock(return_value=1)
+
+        with patch(EXEC, AsyncMock(return_value=mock_proc)):
+            with pytest.raises(podman.PodmanError):
+                async for _ in podman.exec_container_stream("cid", ["cat"]):
+                    pass
+
+    async def test_nonzero_exit_with_output_does_not_raise(self):
         mock_proc = MagicMock()
         mock_proc.returncode = 1
         mock_proc.stdout = AsyncMock()
@@ -427,9 +439,10 @@ class TestExecContainerStream:
         mock_proc.wait = AsyncMock(return_value=1)
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)):
-            with pytest.raises(podman.PodmanError):
-                async for _ in podman.exec_container_stream("cid", ["cat"]):
-                    pass
+            chunks = []
+            async for chunk in podman.exec_container_stream("cid", ["tar"]):
+                chunks.append(chunk)
+        assert chunks == [b"partial"]
 
 
 class TestRemoveContainer:
