@@ -84,9 +84,10 @@ RUN touch /tmp/.klangk-image-build \
       plugin=$(basename "$(dirname "$f")"); \
       label=" $plugin (on-image-build) "; \
       pad=$(( (60 - ${#label}) / 2 )); \
-      line=$(printf '%*s' "$pad" '' | tr ' ' '━'); \
+      line=$(printf '%*s' "$pad" '' | tr ' ' '-'); \
       printf '\033[33m%s%s%s\033[0m\n' "$line" "$label" "$line"; \
       "$f"; \
+      printf '\033[33m%s\033[0m\n' "$(printf '%*s' 60 '' | tr ' ' '-')"; \
     done; rm -f /tmp/.klangk-image-build; true
 
 # Fix non-root group ownership that causes crun fchownat errors with
