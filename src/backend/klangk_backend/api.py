@@ -2243,6 +2243,18 @@ async def update_user(
     return {"status": "updated"}
 
 
+@router.post("/admin/users/{user_id}/unlockout")
+async def unlock_user(
+    user_id: str, admin: dict = Depends(acl.has_permission("admin"))
+):
+    """Reset a user's login lockout so they can log in immediately."""
+    user = await model.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    await model.clear_login_attempts(user["email"])
+    return {"status": "unlocked"}
+
+
 # --- Group management endpoints ---
 
 
