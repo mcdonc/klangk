@@ -541,10 +541,12 @@ Headers: `Content-Disposition: attachment; filename="<name>.tar.gz"`,
 
 ### GET `/api/v1/workspaces/{id}/files`
 
-List files and directories inside the workspace container.
+List files and directories inside the workspace container. Requires a
+running container (returns 409 if stopped).
 
 **Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`. Query param: `path` (default `.`).
+`/workspaces/{id}`. Query param: `path` (absolute container path,
+default `/`).
 
 No request body.
 
@@ -552,7 +554,7 @@ No request body.
 [
   {
     "name": "README.md",
-    "path": "work/README.md",
+    "path": "/home/work/README.md",
     "is_dir": false,
     "size": 1024,
     "mtime": 1704067200.0,
@@ -565,10 +567,11 @@ No request body.
 
 ### GET `/api/v1/workspaces/{id}/files/content`
 
-Read the contents of a file inside the workspace container.
+Read the contents of a file inside the workspace container. Requires a
+running container (returns 409 if stopped).
 
 **Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`. Query param: `path`.
+`/workspaces/{id}`. Query param: `path` (absolute container path).
 
 No request body.
 
@@ -581,13 +584,14 @@ No request body.
 ### GET `/api/v1/workspaces/{id}/files/download`
 
 Download a file or directory from the workspace container. Single files
-are returned directly; directories are zipped.
+are streamed directly; directories are streamed as `.tar.gz` archives.
+Requires a running container (returns 409 if stopped).
 
 **Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`. Query param: `path`.
+`/workspaces/{id}`. Query param: `path` (absolute container path).
 
-No request body. Returns `FileResponse` (single file) or `.zip` archive
-(directory).
+No request body. Returns a streamed `application/octet-stream` (single
+file) or `application/gzip` (directory archive).
 
 ---
 
@@ -1193,16 +1197,17 @@ Clone an existing workspace's configuration into a new workspace.
 ### POST `/api/v1/workspaces/{id}/files/rename`
 
 Rename or move a file or directory inside the workspace container.
+Requires a running container (returns 409 if stopped).
 
 **Auth:** JWT required. User must have `files` permission on
 `/workspaces/{id}`.
 
 ```json
-{ "old_path": "src/old.py", "new_path": "src/new.py" }
+{ "old_path": "/home/work/old.py", "new_path": "/home/work/new.py" }
 ```
 
 ```json
-{ "path": "src/new.py", "status": "renamed" }
+{ "path": "/home/work/new.py", "status": "renamed" }
 ```
 
 ---
@@ -1210,13 +1215,14 @@ Rename or move a file or directory inside the workspace container.
 ### POST `/api/v1/workspaces/{id}/files/upload`
 
 Upload a file into the workspace container. Default 500 MB limit.
+Requires a running container (returns 409 if stopped).
 
 **Auth:** JWT required. User must have `files` permission on
 `/workspaces/{id}`. Multipart form: `file` (upload), optional `path`
-form field.
+query param (absolute container path).
 
 ```json
-{ "path": "uploads/file.txt", "status": "uploaded" }
+{ "path": "/home/work/uploads/file.txt", "status": "uploaded" }
 ```
 
 ---
@@ -1444,8 +1450,9 @@ No request body.
 
 ### DELETE `/api/v1/workspaces/{id}/files`
 
-Delete a file or directory inside the workspace container. Query param:
-`path`.
+Delete a file or directory inside the workspace container. Requires a
+running container (returns 409 if stopped). Query param: `path`
+(absolute container path).
 
 **Auth:** JWT required. User must have `files` permission on
 `/workspaces/{id}`.
