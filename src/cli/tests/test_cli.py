@@ -443,7 +443,7 @@ class TestCLIState:
 class TestAuth:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: None)
+        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
 
     def test_login_success(self, tmp_path, monkeypatch):
         state_path = tmp_path / "state.yaml"
@@ -664,10 +664,19 @@ class TestOIDCCLILogin:
             result = _fetch_config("http://localhost:8995")
         assert result == {"auth_modes": "both"}
 
-    def test_fetch_config_failure(self, monkeypatch):
-        from klangkc.auth import _fetch_config
+    def test_fetch_config_unreachable(self, monkeypatch):
+        from klangkc.auth import _UNREACHABLE, _fetch_config
 
         with patch("httpx.get", side_effect=httpx.ConnectError("fail")):
+            result = _fetch_config("http://localhost:8995")
+        assert result == _UNREACHABLE
+
+    def test_fetch_config_not_klangk(self, monkeypatch):
+        from klangkc.auth import _fetch_config
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        with patch("httpx.get", return_value=mock_resp):
             result = _fetch_config("http://localhost:8995")
         assert result is None
 
@@ -773,10 +782,7 @@ class TestOIDCCLILogin:
 
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
-        monkeypatch.setattr(
-            "klangkc.auth._fetch_config",
-            lambda _: None,
-        )
+        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
         mock_resp = MagicMock()
         mock_resp.status_code = 301
         mock_resp.headers = {"location": "https://example.com/auth/login"}
@@ -796,10 +802,7 @@ class TestOIDCCLILogin:
 
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
-        monkeypatch.setattr(
-            "klangkc.auth._fetch_config",
-            lambda _: None,
-        )
+        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
         mock_resp = MagicMock()
         mock_resp.status_code = 403
         mock_resp.json.side_effect = Exception("no body")
@@ -810,6 +813,36 @@ class TestOIDCCLILogin:
         ):
             auth.login(
                 "http://localhost:8995",
+                email="u@test.com",
+                password="pw",
+            )
+
+    def test_login_not_klangk_server(self, tmp_path, monkeypatch):
+        """Non-klangk server shows helpful error with subpath hint."""
+        from klangkc import auth
+
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: None)
+        with pytest.raises(SystemExit):
+            auth.login(
+                "http://example.com",
+                email="u@test.com",
+                password="pw",
+            )
+
+    def test_login_server_unreachable(self, tmp_path, monkeypatch):
+        """Unreachable server shows connection error, not subpath hint."""
+        from klangkc import auth
+
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr(
+            "klangkc.auth._fetch_config", lambda _: auth._UNREACHABLE
+        )
+        with pytest.raises(SystemExit):
+            auth.login(
+                "http://example.com",
                 email="u@test.com",
                 password="pw",
             )
@@ -1581,7 +1614,7 @@ class TestRunShell:
 class TestMisc:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: None)
+        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
 
     def test_auth_error_message(self):
         err = AuthError("Session expired — run `klangkc login`")
