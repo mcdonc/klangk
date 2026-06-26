@@ -1267,14 +1267,19 @@ async def export_workspace(
             proc = await asyncio.create_subprocess_exec(
                 *tar_args,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
-            while True:
-                chunk = await proc.stdout.read(_CHUNK_SIZE)
-                if not chunk:
-                    break
-                yield chunk
-            await proc.wait()
+            try:
+                while True:
+                    chunk = await proc.stdout.read(_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    yield chunk
+                await proc.wait()
+            finally:
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
