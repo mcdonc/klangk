@@ -175,6 +175,17 @@ class WorkspaceSession:
         self.subscribers.clear()
         self.browser_subscribers.clear()
         self.terminal_windows.clear()
+        # Cancel the token renewal loop so it doesn't keep renewing
+        # tokens for a container that has been killed or reset.
+        task = self._token_renewal_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._token_renewal_task = None
+        self.workspace_token_expiry = None
 
     async def add_subscriber(
         self, sock: SafeWebSocket, container_id: str
