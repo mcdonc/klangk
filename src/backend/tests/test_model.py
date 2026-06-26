@@ -415,6 +415,35 @@ class TestPortAllocations:
         ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
         assert ports == [9000, 9002, 9004]
 
+    async def test_find_and_allocate_raises_when_exhausted(
+        self, workspace, monkeypatch
+    ):
+        """Exhausting the port range fails fast instead of looping forever."""
+        # Every port at/after start is treated as in-use; asking for any
+        # ports from a start of MAX_PORT guarantees immediate exhaustion.
+        monkeypatch.setattr(model, "_port_in_use", lambda p: True)
+        with pytest.raises(ValueError):
+            await model.find_and_allocate_ports(
+                workspace["id"], 1, model.MAX_PORT
+            )
+
+    async def test_find_and_allocate_respects_max_port(
+        self, workspace, user, monkeypatch
+    ):
+        """The scan never exceeds MAX_PORT and raises if it can't fulfil."""
+        # Only the last two ports are free; requesting two succeeds, three raises.
+        free = {model.MAX_PORT - 1, model.MAX_PORT}
+        monkeypatch.setattr(model, "_port_in_use", lambda p: p not in free)
+        ports = await model.find_and_allocate_ports(
+            workspace["id"], 2, model.MAX_PORT - 1
+        )
+        assert ports == [model.MAX_PORT - 1, model.MAX_PORT]
+        ws2 = await model.create_workspace(user["id"], "ws-max")
+        with pytest.raises(ValueError):
+            await model.find_and_allocate_ports(
+                ws2["id"], 3, model.MAX_PORT - 1
+            )
+
 
 class TestPortInUse:
     def test_free_port(self):

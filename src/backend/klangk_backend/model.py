@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -1305,6 +1306,11 @@ async def add_port_allocations(workspace_id: str, ports: list[int]) -> None:
             )
 
 
+# Highest valid TCP port.  find_and_allocate_ports will not scan past
+# this, so an exhausted range fails fast instead of looping forever.
+MAX_PORT = 65535
+
+
 def _port_in_use(port: int) -> bool:
     """Check if a port is bound at the OS level."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -1313,6 +1319,29 @@ def _port_in_use(port: int) -> bool:
             return False
         except OSError:
             return True
+
+
+def _scan_free_ports(start: int, count: int, used: set[int]) -> list[int]:
+    """Find ``count`` free ports at or after ``start``.
+
+    Skips ports already in ``used`` (DB-allocated) and ports reported as
+    bound by the OS.  This is synchronous because it performs blocking
+    ``socket.bind()`` checks; ``find_and_allocate_ports`` runs it in an
+    executor so the event loop is not stalled.  Raises ``ValueError`` if
+    fewer than ``count`` free ports are available before ``MAX_PORT``.
+    """
+    ports: list[int] = []
+    port = start
+    while len(ports) < count:
+        if port > MAX_PORT:
+            raise ValueError(
+                f"Could not allocate {count} free ports starting at "
+                f"{start}: exhausted at {MAX_PORT}"
+            )
+        if port not in used and not _port_in_use(port):
+            ports.append(port)
+        port += 1
+    return ports
 
 
 async def find_and_allocate_ports(
@@ -1324,12 +1353,12 @@ async def find_and_allocate_ports(
         rows = await cursor.fetchall()
         used = {row["port"] for row in rows}
 
-        ports = []
-        port = start
-        while len(ports) < count:
-            if port not in used and not _port_in_use(port):
-                ports.append(port)
-            port += 1
+        # The socket.bind() probe inside _scan_free_ports blocks, so run
+        # the scan in the default executor to avoid stalling the loop.
+        loop = asyncio.get_running_loop()
+        ports = await loop.run_in_executor(
+            None, _scan_free_ports, start, count, used
+        )
 
         for p in ports:
             await db.execute(
