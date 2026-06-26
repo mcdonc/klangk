@@ -43,9 +43,6 @@ def temp_data_dir(tmp_path, monkeypatch):
     wm.WORKSPACES_ROOT = tmp_path / "workspaces"
     # Clear agent caches so each test starts fresh.
     us.clear_agent_cache()
-    import klangk_backend.wshandler as wsh
-
-    wsh._agent_mention_re = None
     return tmp_path
 
 

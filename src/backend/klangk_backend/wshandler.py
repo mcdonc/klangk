@@ -2376,21 +2376,22 @@ class Connection:
 # interjected: True after a different human spoke
 _agent_conversations: dict[str, dict] = {}
 
-# Lazily compiled after agent user is seeded.
-_agent_mention_re: re.Pattern | None = None
-
+# _ANY_MENTION_RE matches any @mention; the agent-specific regex is
+# compiled fresh per call (see _get_agent_mention_re).
 _ANY_MENTION_RE = re.compile(r"(?:^|(?<=\s))@\S+")
 
 
 def _get_agent_mention_re(handle: str) -> re.Pattern:
-    """Return the compiled agent mention regex, caching it."""
-    global _agent_mention_re
-    if _agent_mention_re is None:
-        _agent_mention_re = re.compile(
-            r"(?:^|(?<=\s))@" + re.escape(handle) + r"(?:\s|$)",
-            re.IGNORECASE,
-        )
-    return _agent_mention_re
+    """Return the compiled agent mention regex for *handle*.
+
+    The agent's handle can change at runtime (DB update), so this is
+    compiled fresh on every call rather than cached. Regex compilation
+    is cheap, and caching would return a stale pattern after a rename.
+    """
+    return re.compile(
+        r"(?:^|(?<=\s))@" + re.escape(handle) + r"(?:\s|$)",
+        re.IGNORECASE,
+    )
 
 
 async def _mentions_agent(text: str) -> bool:

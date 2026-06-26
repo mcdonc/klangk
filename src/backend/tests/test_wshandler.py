@@ -5116,6 +5116,32 @@ class TestMentionsAgent:
         assert not await _mentions_agent("MrBoops without at sign")
         assert not await _mentions_agent("@MrBoopsy partial match")
 
+    async def test_follows_agent_handle_rename(self, agent_user):
+        """Detection must track a renamed agent handle, not a stale cache.
+
+        Regression test for #875: the compiled mention regex was cached
+        permanently and ignored handle changes, so @mentions kept using
+        the old handle forever.
+        """
+        import klangk_backend.model as us
+        from klangk_backend.wshandler import _mentions_agent
+
+        # Sanity: original handle is detected before the rename.
+        assert await _mentions_agent("@MrBoops hello")
+
+        # Rename the agent handle in the DB and drop the cached user.
+        async with us.transaction() as db:
+            await db.execute(
+                "UPDATE users SET handle = ? WHERE id = ?",
+                ("RenamedBot", us.AGENT_USER_ID),
+            )
+        us.clear_agent_cache()
+
+        # New handle is now detected ...
+        assert await _mentions_agent("@RenamedBot hello")
+        # ... and the stale old handle no longer matches.
+        assert not await _mentions_agent("@MrBoops hello")
+
 
 class TestAddressesOtherUser:
     async def test_starts_with_other_mention(self, agent_user):
