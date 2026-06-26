@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import AdmZip from "adm-zip";
 import { API_BASE, registerUser, connectContainer } from "./helpers";
 
 test.describe("API", () => {
@@ -159,7 +158,7 @@ test.describe("API", () => {
     });
   });
 
-  test("folder upload and zip download round-trip", async ({ request }) => {
+  test("folder upload and tar.gz download round-trip", async ({ request }) => {
     const { token, headers } = await registerUser(
       request,
       `folder-${Date.now()}@test.example.com`,
@@ -209,31 +208,38 @@ test.describe("API", () => {
     const names = entries.map((e: any) => e.name);
     expect(names).toContain(folder);
 
-    // Download folder as zip
+    // Download folder as tar.gz
     const dlResp = await request.get(
       `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=/home/work/${encodeURIComponent(folder)}`,
       { headers },
     );
     expect(dlResp.ok()).toBeTruthy();
-    const zipBuf = Buffer.from(await dlResp.body());
+    expect(dlResp.headers()["content-type"]).toBe("application/gzip");
+    const tarBuf = Buffer.from(await dlResp.body());
+    expect(tarBuf.length).toBeGreaterThan(0);
 
-    // Parse zip and verify contents match
-    const zip = new AdmZip(zipBuf);
-    const zipEntries = zip.getEntries();
-    const zipFiles: Record<string, string> = {};
-    for (const entry of zipEntries) {
-      if (!entry.isDirectory) {
-        zipFiles[entry.entryName] = entry.getData().toString("utf8");
-      }
-    }
+    // Extract tar.gz to a temp dir and verify contents
+    const fs = await import("fs");
+    const os = await import("os");
+    const path = await import("path");
+    const { execSync } = await import("child_process");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-tar-"));
+    const tarPath = path.join(tmpDir, "download.tar.gz");
+    fs.writeFileSync(tarPath, tarBuf);
+    execSync(`tar -xzf ${tarPath} -C ${tmpDir}`);
 
-    // Zip paths are relative to the downloaded folder
-    expect(zipFiles["readme.txt"]).toBe(testFiles[`${folder}/readme.txt`]);
-    expect(zipFiles["data.csv"]).toBe(testFiles[`${folder}/data.csv`]);
-    expect(zipFiles["sub/nested.txt"]).toBe(
-      testFiles[`${folder}/sub/nested.txt`],
+    // Tar paths are relative to the downloaded folder (./readme.txt etc.)
+    expect(fs.readFileSync(path.join(tmpDir, "readme.txt"), "utf8")).toBe(
+      testFiles[`${folder}/readme.txt`],
     );
-    expect(Object.keys(zipFiles)).toHaveLength(3);
+    expect(fs.readFileSync(path.join(tmpDir, "data.csv"), "utf8")).toBe(
+      testFiles[`${folder}/data.csv`],
+    );
+    expect(
+      fs.readFileSync(path.join(tmpDir, "sub", "nested.txt"), "utf8"),
+    ).toBe(testFiles[`${folder}/sub/nested.txt`]);
+    // Clean up temp dir
+    fs.rmSync(tmpDir, { recursive: true, force: true });
 
     // Clean up workspace
     await request.delete(`${API_BASE}/api/v1/workspaces/${workspaceId}`, {
