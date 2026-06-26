@@ -102,7 +102,15 @@ test.describe("files screenshots", () => {
       workspace = await createResp.json();
     }
 
-    // Seed some files for the screenshot
+    // Navigate to workspace (starts the container)
+    await page.goto(`${BASE_URL}/#/workspace/${workspace.id}`, {
+      waitUntil: "load",
+    });
+    await waitForFlutter(page);
+    await dismissAccessibility(page);
+    await page.waitForTimeout(10000);
+
+    // Seed some files for the screenshot (must happen after container starts)
     const seedFile = async (path: string, content: string) => {
       await request.post(
         `${BASE_URL}/workspaces/${workspace.id}/files/upload?path=${encodeURIComponent(path)}`,
@@ -120,19 +128,14 @@ test.describe("files screenshots", () => {
     };
 
     await seedFile(
-      "work/hello.py",
+      "/home/work/hello.py",
       'def greet(name):\n    return f"Hello, {name}!"\n\nif __name__ == "__main__":\n    print(greet("world"))\n',
     );
-    await seedFile("work/README.md", "# My Project\n\nA demo workspace.\n");
-    await seedFile("work/notes.txt", "TODO: add more features\n");
-
-    // Navigate to workspace
-    await page.goto(`${BASE_URL}/#/workspace/${workspace.id}`, {
-      waitUntil: "load",
-    });
-    await waitForFlutter(page);
-    await dismissAccessibility(page);
-    await page.waitForTimeout(10000);
+    await seedFile(
+      "/home/work/README.md",
+      "# My Project\n\nA demo workspace.\n",
+    );
+    await seedFile("/home/work/notes.txt", "TODO: add more features\n");
 
     // Click Files tab (2nd of 5 tabs)
     const tabWidth = width / 5;

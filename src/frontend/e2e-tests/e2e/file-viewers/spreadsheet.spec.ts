@@ -38,7 +38,7 @@ test.describe("file-viewers/spreadsheet", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/book.xlsx",
+        "/home/work/book.xlsx",
         XLSX,
         headers,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -72,7 +72,7 @@ test.describe("file-viewers/spreadsheet", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/raw.xlsx",
+        "/home/work/raw.xlsx",
         XLSX,
         headers,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -101,7 +101,7 @@ test.describe("file-viewers/spreadsheet", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/dl.xlsx",
+        "/home/work/dl.xlsx",
         XLSX,
         headers,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -115,7 +115,7 @@ test.describe("file-viewers/spreadsheet", () => {
       // anchor download does not reliably surface to Playwright in CI.
       const dl = await request.get(
         `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
-          "work/dl.xlsx",
+          "/home/work/dl.xlsx",
         )}`,
         { headers },
       );
@@ -139,7 +139,7 @@ test.describe("file-viewers/spreadsheet", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/nav.xlsx",
+        "/home/work/nav.xlsx",
         XLSX,
         headers,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -156,7 +156,7 @@ test.describe("file-viewers/spreadsheet", () => {
 
       const after = await request.get(
         `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
-          "work/nav.xlsx",
+          "/home/work/nav.xlsx",
         )}`,
         { headers },
       );

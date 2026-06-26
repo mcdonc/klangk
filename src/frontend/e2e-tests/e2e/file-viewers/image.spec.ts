@@ -35,7 +35,7 @@ test.describe("file-viewers/image", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/pic.png",
+        "/home/work/pic.png",
         PNG,
         headers,
         "image/png",
@@ -70,7 +70,7 @@ test.describe("file-viewers/image", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/dl.png",
+        "/home/work/dl.png",
         PNG,
         headers,
         "image/png",
@@ -83,7 +83,7 @@ test.describe("file-viewers/image", () => {
       // "download" event in CI).
       const dl = await request.get(
         `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
-          "work/dl.png",
+          "/home/work/dl.png",
         )}`,
         { headers },
       );
@@ -107,7 +107,7 @@ test.describe("file-viewers/image", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/nav.png",
+        "/home/work/nav.png",
         PNG,
         headers,
         "image/png",

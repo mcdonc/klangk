@@ -322,9 +322,9 @@ async def exec_container_stream(
 ) -> AsyncGenerator[bytes, None]:
     """Stream stdout from a command inside a container.
 
-    Uses ``stdout=PIPE`` for true streaming without buffering to disk.
-    Unlike lifecycle commands (``podman start``), ``podman exec`` does
-    not spawn long-lived helpers, so pipe inheritance is not a problem.
+    Uses ``stdout=PIPE`` for true end-to-end streaming without buffering
+    to disk.  ``podman exec`` (unlike ``podman start``) does not spawn
+    long-lived helpers that would inherit and block the pipe.
     """
     args = ["exec"]
     if user:

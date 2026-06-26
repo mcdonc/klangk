@@ -37,7 +37,7 @@ test.describe("file-viewers/code-edit", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/edit.dart",
+        "/home/work/edit.dart",
         "// original\n",
         headers,
       );
@@ -65,7 +65,7 @@ test.describe("file-viewers/code-edit", () => {
 
       // The decisive check: the file now contains the edit.
       const api = await request.get(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/edit.dart`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/edit.dart`,
         { headers },
       );
       expect(api.ok()).toBeTruthy();
@@ -88,7 +88,7 @@ test.describe("file-viewers/code-edit", () => {
       await seedFile(
         request,
         workspaceId,
-        "work/m.dart",
+        "/home/work/m.dart",
         "void main() {}\n",
         headers,
       );
@@ -113,7 +113,7 @@ test.describe("file-viewers/code-edit", () => {
 
       // The unsaved edit-mode buffer was local — the file is unchanged.
       const api = await request.get(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=work/m.dart`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/m.dart`,
         { headers },
       );
       expect((await api.json()).content).toContain("void main()");

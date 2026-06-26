@@ -199,7 +199,7 @@ export function vp(page: Page) {
 
 /** Seed a file into a workspace via the files API. `content` may be a string
  *  (text files) or a Buffer (binary — images, pdfs). `path` is workspace-
- *  relative (e.g. "work/readme.md"). The upload is synchronous, so the file is
+ *  absolute (e.g. "/home/work/readme.md"). The upload is synchronous, so the file is
  *  immediately listable/readable when this resolves. */
 export async function seedFile(
   request: APIRequestContext,
@@ -394,6 +394,57 @@ export function dockerContainersForWorkspace(workspaceId: string): string[] {
     { encoding: "utf-8", env: podmanEnv() },
   );
   return output.trim().split("\n").filter(Boolean);
+}
+
+/** Connect to a workspace via WebSocket to start the container, then
+ *  close the connection.  Returns once container_ready has been received.
+ *  Use this in API-only tests that need a running container but don't
+ *  open a browser page. */
+export async function connectContainer(
+  workspaceId: string,
+  token: string,
+  timeout = 120_000,
+): Promise<void> {
+  const wsBase = API_BASE.replace(/^http/, "ws");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const WS = require("ws");
+  const ws: any = await new Promise((resolve, reject) => {
+    const socket = new WS(`${wsBase}/ws?token=${token}`);
+    socket.on("open", () => resolve(socket));
+    socket.on("error", reject);
+  });
+
+  // Send workspace_connect
+  ws.send(JSON.stringify({ cmd: "workspace_connect", workspaceId }));
+
+  // Wait for workspace_ready, then send ui_ready, then wait for container_ready
+  let phase: "workspace_ready" | "container_ready" = "workspace_ready";
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Container did not start within ${timeout}ms`)),
+      timeout,
+    );
+    ws.on("message", (data: Buffer | string) => {
+      const msg = JSON.parse(data.toString());
+      if (phase === "workspace_ready" && msg.type === "workspace_ready") {
+        phase = "container_ready";
+        ws.send(JSON.stringify({ cmd: "ui_ready" }));
+      } else if (phase === "container_ready" && msg.type === "event") {
+        const event = msg.event || {};
+        if (event.type === "CUSTOM" && event.name === "container_ready") {
+          clearTimeout(timer);
+          resolve();
+        }
+      }
+    });
+    ws.on("error", (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+
+  // Close the WebSocket — the container stays running
+  ws.close();
 }
 
 // Layout coordinates at 1280x720:
