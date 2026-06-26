@@ -21,6 +21,23 @@ class _MockWsClient extends WsClient {
   void close() => _controller.close();
 }
 
+FileViewerPanel buildPanel({
+  required _MockWsClient wsClient,
+  GlobalKey<FileViewerPanelState>? key,
+  String workspaceId = 'ws-1',
+  String authToken = 'token',
+  String userHome = '/home/tester',
+  FileRendererRegistry? registry,
+}) =>
+    FileViewerPanel(
+      key: key,
+      wsClient: wsClient,
+      workspaceId: workspaceId,
+      authToken: authToken,
+      userHome: userHome,
+      registry: registry,
+    );
+
 void main() {
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
@@ -45,18 +62,14 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
       expect(find.text('home'), findsOneWidget);
-      expect(find.text('work'), findsOneWidget);
+      expect(find.text('tester'), findsOneWidget);
       expect(find.byIcon(Icons.refresh), findsOneWidget);
       expect(find.byIcon(Icons.home), findsOneWidget);
       client.close();
@@ -68,12 +81,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              key: key,
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(key: key, wsClient: client),
           ),
         ),
       );
@@ -90,11 +98,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -111,13 +115,13 @@ void main() {
             jsonEncode([
               {
                 'name': 'hello.txt',
-                'path': '/home/work/hello.txt',
+                'path': '/home/tester/hello.txt',
                 'is_dir': false,
                 'size': 11
               },
               {
                 'name': 'src',
-                'path': '/home/work/src',
+                'path': '/home/tester/src',
                 'is_dir': true,
                 'size': null
               },
@@ -132,11 +136,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -149,25 +149,25 @@ void main() {
 
     testWidgets('clicking folder navigates into it', (tester) async {
       testHttpClientOverride = MockClient((request) async {
-        final path = request.url.queryParameters['path'] ?? '/home/work';
-        if (path == '/home/work') {
+        final path = request.url.queryParameters['path'] ?? '/home/tester';
+        if (path == '/home/tester') {
           return http.Response(
             jsonEncode([
               {
                 'name': 'subdir',
-                'path': '/home/work/subdir',
+                'path': '/home/tester/subdir',
                 'is_dir': true,
                 'size': null
               },
             ]),
             200,
           );
-        } else if (path == '/home/work/subdir') {
+        } else if (path == '/home/tester/subdir') {
           return http.Response(
             jsonEncode([
               {
                 'name': 'inner.txt',
-                'path': '/home/work/subdir/inner.txt',
+                'path': '/home/tester/subdir/inner.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -182,11 +182,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -206,7 +202,7 @@ void main() {
         if (request.url.path.contains('/content')) {
           return http.Response(
             jsonEncode({
-              'path': '/home/work/test.txt',
+              'path': '/home/tester/test.txt',
               'content': 'file content here'
             }),
             200,
@@ -217,7 +213,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'test.txt',
-                'path': '/home/work/test.txt',
+                'path': '/home/tester/test.txt',
                 'is_dir': false,
                 'size': 17
               },
@@ -232,11 +228,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -258,7 +250,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'big.txt',
-                'path': '/home/work/big.txt',
+                'path': '/home/tester/big.txt',
                 'is_dir': false,
                 'size': 1024
               },
@@ -273,11 +265,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -294,13 +282,13 @@ void main() {
             jsonEncode([
               {
                 'name': 'mydir',
-                'path': '/home/work/mydir',
+                'path': '/home/tester/mydir',
                 'is_dir': true,
                 'size': null
               },
               {
                 'name': 'myfile',
-                'path': '/home/work/myfile',
+                'path': '/home/tester/myfile',
                 'is_dir': false,
                 'size': 10
               },
@@ -315,11 +303,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -336,11 +320,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -358,11 +338,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -380,11 +356,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FileViewerPanel(
-              wsClient: client,
-              workspaceId: 'ws-1',
-              authToken: 'token',
-            ),
+            body: buildPanel(wsClient: client),
           ),
         ),
       );
@@ -406,7 +378,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'readme.txt',
-                'path': '/home/work/readme.txt',
+                'path': '/home/tester/readme.txt',
                 'is_dir': false,
                 'size': 11
               },
@@ -423,11 +395,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -456,7 +424,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'doomed.txt',
-                'path': '/home/work/doomed.txt',
+                'path': '/home/tester/doomed.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -473,11 +441,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -513,7 +477,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'old.txt',
-                'path': '/home/work/old.txt',
+                'path': '/home/tester/old.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -530,11 +494,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -576,7 +536,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'data.csv',
-                'path': '/home/work/data.csv',
+                'path': '/home/tester/data.csv',
                 'is_dir': false,
                 'size': 100
               },
@@ -593,11 +553,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -627,7 +583,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'mydir',
-                'path': '/home/work/mydir',
+                'path': '/home/tester/mydir',
                 'is_dir': true,
                 'size': null
               },
@@ -644,11 +600,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -671,12 +623,12 @@ void main() {
       testHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/files')) {
           requestedPath = request.url.queryParameters['path'] ?? '';
-          if (requestedPath == '/home/work/subdir') {
+          if (requestedPath == '/home/tester/subdir') {
             return http.Response(
               jsonEncode([
                 {
                   'name': 'inner.txt',
-                  'path': '/home/work/subdir/inner.txt',
+                  'path': '/home/tester/subdir/inner.txt',
                   'is_dir': false,
                   'size': 5
                 },
@@ -688,7 +640,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'subdir',
-                'path': '/home/work/subdir',
+                'path': '/home/tester/subdir',
                 'is_dir': true,
                 'size': null
               },
@@ -705,11 +657,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -740,7 +688,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'file.txt',
-                'path': '/home/work/file.txt',
+                'path': '/home/tester/file.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -757,11 +705,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -793,7 +737,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'old.txt',
-                'path': '/home/work/old.txt',
+                'path': '/home/tester/old.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -810,11 +754,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -851,7 +791,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'data.csv',
-                'path': '/home/work/data.csv',
+                'path': '/home/tester/data.csv',
                 'is_dir': false,
                 'size': 100
               },
@@ -868,11 +808,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -903,7 +839,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'readme.txt',
-                'path': '/home/work/readme.txt',
+                'path': '/home/tester/readme.txt',
                 'is_dir': false,
                 'size': 12
               },
@@ -920,11 +856,7 @@ void main() {
             body: SizedBox(
               width: 800,
               height: 600,
-              child: FileViewerPanel(
-                wsClient: client,
-                workspaceId: 'ws-1',
-                authToken: 'token',
-              ),
+              child: buildPanel(wsClient: client),
             ),
           ),
         ),
@@ -952,7 +884,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'keep.txt',
-                'path': '/home/work/keep.txt',
+                'path': '/home/tester/keep.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -968,10 +900,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       final center = tester.getCenter(find.text('keep.txt'));
@@ -994,7 +923,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'file.txt',
-                'path': '/home/work/file.txt',
+                'path': '/home/tester/file.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -1010,10 +939,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       final center = tester.getCenter(find.text('file.txt'));
@@ -1036,7 +962,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'old.txt',
-                'path': '/home/work/old.txt',
+                'path': '/home/tester/old.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -1052,10 +978,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       final center = tester.getCenter(find.text('old.txt'));
@@ -1082,7 +1005,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'data.csv',
-                'path': '/home/work/data.csv',
+                'path': '/home/tester/data.csv',
                 'is_dir': false,
                 'size': 100
               },
@@ -1098,10 +1021,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       final center = tester.getCenter(find.text('data.csv'));
@@ -1122,13 +1042,13 @@ void main() {
           return http.Response('', 200);
         }
         if (request.url.path.contains('/files')) {
-          final path = request.url.queryParameters['path'] ?? '/home/work';
-          if (path == '/home/work/subdir') {
+          final path = request.url.queryParameters['path'] ?? '/home/tester';
+          if (path == '/home/tester/subdir') {
             return http.Response(
               jsonEncode([
                 {
                   'name': 'inner.txt',
-                  'path': '/home/work/subdir/inner.txt',
+                  'path': '/home/tester/subdir/inner.txt',
                   'is_dir': false,
                   'size': 5
                 },
@@ -1140,7 +1060,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'subdir',
-                'path': '/home/work/subdir',
+                'path': '/home/tester/subdir',
                 'is_dir': true,
                 'size': null
               },
@@ -1156,10 +1076,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       // Navigate into subdir
@@ -1180,7 +1097,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       // The rename should preserve the subdir/ prefix
-      expect(renamePath, '/home/work/subdir/renamed.txt');
+      expect(renamePath, '/home/tester/subdir/renamed.txt');
       client.close();
     });
 
@@ -1188,13 +1105,13 @@ void main() {
       var lastPath = '';
       testHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/files')) {
-          lastPath = request.url.queryParameters['path'] ?? '/home/work';
-          if (lastPath == '/home/work/a/b') {
+          lastPath = request.url.queryParameters['path'] ?? '/home/tester';
+          if (lastPath == '/home/tester/a/b') {
             return http.Response(
               jsonEncode([
                 {
                   'name': 'file.txt',
-                  'path': '/home/work/a/b/file.txt',
+                  'path': '/home/tester/a/b/file.txt',
                   'is_dir': false,
                   'size': 5
                 },
@@ -1202,12 +1119,12 @@ void main() {
               200,
             );
           }
-          if (lastPath == '/home/work/a') {
+          if (lastPath == '/home/tester/a') {
             return http.Response(
               jsonEncode([
                 {
                   'name': 'b',
-                  'path': '/home/work/a/b',
+                  'path': '/home/tester/a/b',
                   'is_dir': true,
                   'size': null
                 },
@@ -1219,7 +1136,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'a',
-                'path': '/home/work/a',
+                'path': '/home/tester/a',
                 'is_dir': true,
                 'size': null
               },
@@ -1235,10 +1152,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       // Navigate deep: . -> a -> a/b
@@ -1251,7 +1165,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.arrow_upward));
       await tester.pumpAndSettle();
 
-      expect(lastPath, '/home/work/a');
+      expect(lastPath, '/home/tester/a');
       client.close();
     });
 
@@ -1259,13 +1173,13 @@ void main() {
       var lastPath = '';
       testHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/files')) {
-          lastPath = request.url.queryParameters['path'] ?? '/home/work';
-          if (lastPath == '/home/work/sub') {
+          lastPath = request.url.queryParameters['path'] ?? '/home/tester';
+          if (lastPath == '/home/tester/sub') {
             return http.Response(
               jsonEncode([
                 {
                   'name': 'deep',
-                  'path': '/home/work/sub/deep',
+                  'path': '/home/tester/sub/deep',
                   'is_dir': true,
                   'size': null
                 },
@@ -1273,12 +1187,12 @@ void main() {
               200,
             );
           }
-          if (lastPath == '/home/work/sub/deep') {
+          if (lastPath == '/home/tester/sub/deep') {
             return http.Response(
               jsonEncode([
                 {
                   'name': 'leaf.txt',
-                  'path': '/home/work/sub/deep/leaf.txt',
+                  'path': '/home/tester/sub/deep/leaf.txt',
                   'is_dir': false,
                   'size': 1
                 },
@@ -1290,7 +1204,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'sub',
-                'path': '/home/work/sub',
+                'path': '/home/tester/sub',
                 'is_dir': true,
                 'size': null
               },
@@ -1306,10 +1220,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       // Navigate deep
@@ -1322,7 +1233,7 @@ void main() {
       await tester.tap(find.text('sub'));
       await tester.pumpAndSettle();
 
-      expect(lastPath, '/home/work/sub');
+      expect(lastPath, '/home/tester/sub');
       client.close();
     });
 
@@ -1338,7 +1249,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'old.txt',
-                'path': '/home/work/old.txt',
+                'path': '/home/tester/old.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -1354,10 +1265,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       final center = tester.getCenter(find.text('old.txt'));
@@ -1387,7 +1295,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'keep.txt',
-                'path': '/home/work/keep.txt',
+                'path': '/home/tester/keep.txt',
                 'is_dir': false,
                 'size': 5
               },
@@ -1403,10 +1311,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       final center = tester.getCenter(find.text('keep.txt'));
@@ -1425,13 +1330,13 @@ void main() {
       var lastPath = '';
       testHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/files')) {
-          lastPath = request.url.queryParameters['path'] ?? '/home/work';
-          if (lastPath == '/home/work/sub') {
+          lastPath = request.url.queryParameters['path'] ?? '/home/tester';
+          if (lastPath == '/home/tester/sub') {
             return http.Response(
               jsonEncode([
                 {
                   'name': 'file.txt',
-                  'path': '/home/work/sub/file.txt',
+                  'path': '/home/tester/sub/file.txt',
                   'is_dir': false,
                   'size': 1
                 },
@@ -1443,7 +1348,7 @@ void main() {
             jsonEncode([
               {
                 'name': 'sub',
-                'path': '/home/work/sub',
+                'path': '/home/tester/sub',
                 'is_dir': true,
                 'size': null
               },
@@ -1459,10 +1364,7 @@ void main() {
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: FileViewerPanel(
-                      wsClient: client,
-                      workspaceId: 'ws-1',
-                      authToken: 'token')))));
+                  child: buildPanel(wsClient: client)))));
       await tester.pumpAndSettle();
 
       // Navigate into subdir

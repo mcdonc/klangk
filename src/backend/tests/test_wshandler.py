@@ -1467,6 +1467,7 @@ class TestHandleWorkspaceConnect:
         assert len(ready) == 1
         assert ready[0]["workspaceId"] == workspace["id"]
         assert ready[0]["defaultCommand"] is None
+        assert "userHome" in ready[0]
         # Integer timeout (default 30m) should show as "30m" not "30.0m"
         assert "30m" in conn.pending_status_msg
 

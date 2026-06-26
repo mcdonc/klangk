@@ -51,12 +51,8 @@ class WorkspacePage extends StatefulWidget {
 }
 
 class _WorkspacePageState extends State<WorkspacePage> {
-  // TODO(config): hoist these container paths into workspace/container config.
-  // They must match the container layout (the file API is relative to the
-  // home; the shell cwd is `work/` under it). Containers may be configured
-  // differently, so hardcoding is a stopgap — follow-up PR.
-  static const _containerHome = '/home';
-  static const _containerCwd = '/home/work';
+  // Fallback if userHome isn't provided by the backend.
+  static const _defaultHome = '/';
   final _terminalKey = GlobalKey<GhosttyTerminalState>();
   final _fileViewerKey = GlobalKey<FileViewerPanelState>();
   final _chatKey = GlobalKey<WorkspaceChatState>();
@@ -94,9 +90,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
     ({String token, String? uri, String pwd, String tail}) e,
   ) {
     final authToken = context.read<AuthService>().token;
+    final wsClient = context.read<WsClient>();
+    final userHome = wsClient.userHome ?? _defaultHome;
     final actions = TerminalLinkActions(
-      pathRoot: _containerHome,
-      defaultCwd: _containerCwd,
+      pathRoot: userHome,
+      defaultCwd: userHome,
       openExternalUrl: openUrl,
       statPath: (path) => statWorkspacePath(
         client: http.Client(),
@@ -637,6 +635,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
               wsClient: wsClient,
               workspaceId: widget.workspaceId,
               authToken: authToken,
+              userHome: wsClient.userHome,
               registry: _fileRenderers,
             ),
             terminal: _buildTerminalWithTabs(wsClient),

@@ -35,6 +35,11 @@ class FileViewerPanel extends StatefulWidget {
   final String workspaceId;
   final String? authToken;
 
+  /// The user's home directory inside the container (e.g. `/home/admin`).
+  /// The home button navigates here; this is also the initial directory.
+  /// Defaults to `/` if not provided.
+  final String? userHome;
+
   /// Registry of file renderers. When null, the built-in renderers are used.
   /// `workspace_page` builds one (builtins + plugin renderers) and passes it
   /// in; tests inject custom registries to exercise the mode switcher.
@@ -45,6 +50,7 @@ class FileViewerPanel extends StatefulWidget {
     required this.wsClient,
     required this.workspaceId,
     this.authToken,
+    this.userHome,
     this.registry,
   });
 
@@ -56,7 +62,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   String get _baseUrl => baseUrl;
   http.Client get _client => testHttpClientOverride ?? http.Client();
   List<Map<String, dynamic>> _entries = [];
-  String _currentPath = '/home/work';
+  late String _currentPath = widget.userHome ?? '/';
   String? _selectedFile;
   bool _loading = false;
   late final FileRendererRegistry _registry;
@@ -477,7 +483,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
               child: Row(
                 children: [
                   InkWell(
-                    onTap: () => _navigateTo('/home/work'),
+                    onTap: () => _navigateTo(widget.userHome ?? '/'),
                     child: const Icon(Icons.home, size: 16),
                   ),
                   const SizedBox(width: 4),

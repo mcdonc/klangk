@@ -46,18 +46,18 @@ final _urlPattern = RegExp(r'^https?://');
 ///
 /// [uri] is the cell's OSC 8 hyperlink (if any); [pwd] is the OSC 7 working
 /// directory (`file://host/abs`, a bare path, or empty); [workspaceRoot] is the
-/// container path files resolve under (e.g. `/home/work`).
+/// container path files resolve under (e.g. `/home/alice`).
 ///
 /// Security: only `http(s)` URLs open externally — every other OSC 8 scheme
 /// (`javascript:`, `data:`, `file://`, …) is ignored.
 ///
 /// Path resolution:
 /// - [defaultCwd] is where a *relative* token resolves when [pwd] (OSC 7) is
-///   absent — the shell's cwd, e.g. `/home/work`.
-/// - [pathRoot] is the home directory root (e.g. `/home`), used for `~`
+///   absent — the user's home directory, e.g. `/home/alice`.
+/// - [pathRoot] is the home directory (e.g. `/home/alice`), used for `~`
 ///   expansion.
 ///
-/// Returns absolute container paths (e.g. `/home/work/foo.txt`).
+/// Returns absolute container paths (e.g. `/home/alice/foo.txt`).
 TerminalLinkTarget classifyTerminalLink({
   required String token,
   String? uri,

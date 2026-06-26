@@ -111,7 +111,7 @@ void main() {
         await tester.pumpWidget(buildDropZone(
           key: key,
           workspaceId: 'my-ws',
-          currentPath: '/home/work/src/lib',
+          currentPath: '/home/tester/src/lib',
         ));
 
         final file = makeFile('hello.dart', [10, 20]);
@@ -121,7 +121,7 @@ void main() {
 
         expect(capturedUrl, contains('/api/v1/workspaces/my-ws/files/upload'));
         expect(capturedUrl,
-            contains('path=%2Fhome%2Fwork%2Fsrc%2Flib%2Fhello.dart'));
+            contains('path=%2Fhome%2Ftester%2Fsrc%2Flib%2Fhello.dart'));
       });
 
       testWidgets('root path does not prefix with dot', (tester) async {
@@ -135,7 +135,7 @@ void main() {
 
         await tester.pumpWidget(buildDropZone(
           key: key,
-          currentPath: '/home/work',
+          currentPath: '/home/tester',
         ));
 
         final file = makeFile('root.txt', [1]);
@@ -143,7 +143,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 600));
 
-        expect(capturedUrl, contains('path=%2Fhome%2Fwork%2Froot.txt'));
+        expect(capturedUrl, contains('path=%2Fhome%2Ftester%2Froot.txt'));
       });
 
       testWidgets('sends auth header when token present', (tester) async {

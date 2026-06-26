@@ -985,12 +985,14 @@ void main() {
         'workspaceId': 'ws-42',
         'userId': 'user-42',
         'defaultCommand': 'pi',
+        'userHome': '/home/alice',
       });
       await Future.delayed(Duration.zero);
 
       expect(client.currentWorkspaceId, 'ws-42');
       expect(client.currentUserId, 'user-42');
       expect(client.defaultCommand, 'pi');
+      expect(client.userHome, '/home/alice');
       expect(notified, isTrue);
     });
 

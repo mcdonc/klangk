@@ -52,11 +52,12 @@ void main() {
         headers = r.headers;
       });
       expect(
-          await stat('/home/work/research/a.pdf', client: c, authToken: 'tok'),
+          await stat('/home/tester/research/a.pdf',
+              client: c, authToken: 'tok'),
           PathKind.file);
       expect(seen.path, '/api/v1/workspaces/ws1/files');
-      expect(
-          seen.queryParameters['path'], '/home/work/research'); // parent listed
+      expect(seen.queryParameters['path'],
+          '/home/tester/research'); // parent listed
       expect(headers['Authorization'], 'Bearer tok');
     });
 
@@ -64,7 +65,7 @@ void main() {
       final c = listing([
         {'name': 'sub', 'is_dir': true},
       ]);
-      expect(await stat('/home/work/sub', client: c), PathKind.directory);
+      expect(await stat('/home/tester/sub', client: c), PathKind.directory);
     });
 
     test('a .pdf that is actually a directory → directory (the live bug)',
@@ -72,7 +73,8 @@ void main() {
       final c = listing([
         {'name': 't2_rag_benchmark.pdf', 'is_dir': true},
       ]);
-      expect(await stat('/home/work/research/t2_rag_benchmark.pdf', client: c),
+      expect(
+          await stat('/home/tester/research/t2_rag_benchmark.pdf', client: c),
           PathKind.directory);
     });
 
@@ -80,7 +82,7 @@ void main() {
       final c = listing([
         {'name': 'other', 'is_dir': false},
       ]);
-      expect(await stat('/home/work/missing.txt', client: c), PathKind.none);
+      expect(await stat('/home/tester/missing.txt', client: c), PathKind.none);
     });
 
     test('top-level name lists the root', () async {
@@ -96,29 +98,29 @@ void main() {
       final c = listing([
         {'name': 'a (1).pdf', 'is_dir': false},
       ]);
-      expect(await stat('/home/work/a (1).pdf', client: c), PathKind.file);
+      expect(await stat('/home/tester/a (1).pdf', client: c), PathKind.file);
     });
 
     test('special chars (%) in the name', () async {
       final c = listing([
         {'name': 'a%b.txt', 'is_dir': false},
       ]);
-      expect(await stat('/home/work/a%b.txt', client: c), PathKind.file);
+      expect(await stat('/home/tester/a%b.txt', client: c), PathKind.file);
     });
 
     test('non-200 → none', () async {
-      expect(await stat('/home/work/x', client: listing([], status: 404)),
+      expect(await stat('/home/tester/x', client: listing([], status: 404)),
           PathKind.none);
     });
 
     test('non-list body → none', () async {
       final c = MockClient((_) async => http.Response('{"oops":1}', 200));
-      expect(await stat('/home/work/x', client: c), PathKind.none);
+      expect(await stat('/home/tester/x', client: c), PathKind.none);
     });
 
     test('network error → none', () async {
       final c = MockClient((_) async => throw Exception('down'));
-      expect(await stat('/home/work/x', client: c), PathKind.none);
+      expect(await stat('/home/tester/x', client: c), PathKind.none);
     });
 
     test('omits auth header when no token', () async {
@@ -126,7 +128,7 @@ void main() {
       final c = listing([
         {'name': 'a', 'is_dir': false},
       ], onReq: (r) => headers = r.headers);
-      await stat('/home/work/a', client: c);
+      await stat('/home/tester/a', client: c);
       expect(headers.containsKey('Authorization'), isFalse);
     });
 

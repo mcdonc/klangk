@@ -2,9 +2,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/terminal/terminal_link.dart';
 
 void main() {
-  // The file API uses absolute container paths. The shell cwd is `/home/work`.
-  const home = '/home';
-  const cwd = '/home/work';
+  // The file API uses absolute container paths.
+  // pathRoot is the user's home (for ~ expansion); cwd is also the home.
+  const home = '/home/tester';
+  const cwd = '/home/tester';
   TerminalLinkTarget classify(String token, {String? uri, String pwd = ''}) =>
       classifyTerminalLink(
         token: token,
@@ -29,29 +30,29 @@ void main() {
     test('non-http OSC 8 schemes never open externally (token used as path)',
         () {
       expect(classify('label', uri: 'javascript:alert(1)'),
-          const WorkspaceFile('/home/work/label'));
+          const WorkspaceFile('/home/tester/label'));
       expect(classify('readme.md', uri: 'file:///etc/passwd'),
-          const WorkspaceFile('/home/work/readme.md'));
+          const WorkspaceFile('/home/tester/readme.md'));
     });
 
     test('relative path resolves under cwd → absolute path', () {
       expect(classify('./research/ch01.md'),
-          const WorkspaceFile('/home/work/research/ch01.md'));
+          const WorkspaceFile('/home/tester/research/ch01.md'));
       expect(classify('research/ch01.md'),
-          const WorkspaceFile('/home/work/research/ch01.md'));
+          const WorkspaceFile('/home/tester/research/ch01.md'));
     });
 
-    test('~ expansion: home, work dir, files under work and at home', () {
-      expect(classify('~'), const WorkspaceFile('/home'));
-      expect(classify('~/work'), const WorkspaceFile('/home/work'));
-      expect(classify('~/work/file.txt'),
-          const WorkspaceFile('/home/work/file.txt'));
-      expect(classify('~/file.txt'), const WorkspaceFile('/home/file.txt'));
+    test('~ expansion: home dir and files under it', () {
+      expect(classify('~'), const WorkspaceFile('/home/tester'));
+      expect(
+          classify('~/file.txt'), const WorkspaceFile('/home/tester/file.txt'));
+      expect(classify('~/sub/file.txt'),
+          const WorkspaceFile('/home/tester/sub/file.txt'));
     });
 
     test('absolute path stays absolute', () {
-      expect(classify('/home/work/a/b.md'),
-          const WorkspaceFile('/home/work/a/b.md'));
+      expect(classify('/home/tester/a/b.md'),
+          const WorkspaceFile('/home/tester/a/b.md'));
       expect(classify('/home/file.txt'), const WorkspaceFile('/home/file.txt'));
     });
 
@@ -63,8 +64,8 @@ void main() {
 
     test('relative path resolves against the OSC 7 pwd', () {
       expect(
-        classify('x.md', pwd: 'file://host/home/work/sub'),
-        const WorkspaceFile('/home/work/sub/x.md'),
+        classify('x.md', pwd: 'file://host/home/tester/sub'),
+        const WorkspaceFile('/home/tester/sub/x.md'),
       );
     });
 
@@ -125,37 +126,37 @@ void main() {
     });
 
     test('existing file → openFile', () async {
-      stat['/home/work/a.md'] = PathKind.file;
+      stat['/home/tester/a.md'] = PathKind.file;
       await build().handle(token: './a.md', pwd: '', tail: './a.md');
-      expect(files, ['/home/work/a.md']);
+      expect(files, ['/home/tester/a.md']);
     });
 
     test('filename with spaces → greedy-extend to the longest existing file',
         () async {
-      stat['/home/work/a (1).pdf'] = PathKind.file;
+      stat['/home/tester/a (1).pdf'] = PathKind.file;
       await build().handle(token: './a', pwd: '', tail: './a (1).pdf');
-      expect(files, ['/home/work/a (1).pdf']);
+      expect(files, ['/home/tester/a (1).pdf']);
     });
 
     test('directory → openDirectory', () async {
-      stat['/home/work'] = PathKind.directory;
-      await build().handle(token: '~/work', pwd: '', tail: '~/work');
-      expect(dirs, ['/home/work']);
+      stat['/home/tester/sub'] = PathKind.directory;
+      await build().handle(token: '~/sub', pwd: '', tail: '~/sub');
+      expect(dirs, ['/home/tester/sub']);
       expect(files, isEmpty);
     });
 
     test('home (~) → browse the home dir', () async {
-      stat['/home'] = PathKind.directory;
+      stat['/home/tester'] = PathKind.directory;
       await build().handle(token: '~', pwd: '', tail: '~');
-      expect(dirs, ['/home']);
+      expect(dirs, ['/home/tester']);
     });
 
     test('prefers the longest existing file over a shorter directory',
         () async {
-      stat['/home/work/a'] = PathKind.directory;
-      stat['/home/work/a b.md'] = PathKind.file;
+      stat['/home/tester/a'] = PathKind.directory;
+      stat['/home/tester/a b.md'] = PathKind.file;
       await build().handle(token: './a', pwd: '', tail: './a b.md');
-      expect(files, ['/home/work/a b.md']);
+      expect(files, ['/home/tester/a b.md']);
       expect(dirs, isEmpty);
     });
 
@@ -173,7 +174,7 @@ void main() {
     });
 
     test('greedy is bounded by maxTailWords', () async {
-      stat['/home/work/a b c d'] = PathKind.file;
+      stat['/home/tester/a b c d'] = PathKind.file;
       final actions = TerminalLinkActions(
         pathRoot: home,
         defaultCwd: cwd,
