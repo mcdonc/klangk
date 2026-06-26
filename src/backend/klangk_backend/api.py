@@ -1862,6 +1862,8 @@ async def delete_file(
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Path not found")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     return {"path": deleted, "status": "deleted"}
 
 
@@ -1887,6 +1889,8 @@ async def rename_file(
         raise HTTPException(
             status_code=409, detail="Destination already exists"
         )
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     return {"path": renamed, "status": "renamed"}
 
 
