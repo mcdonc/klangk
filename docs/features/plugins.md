@@ -29,7 +29,7 @@ optional:
 ```yaml
 plugins:
   - name: celebrate
-    git: git@github.com:mcdonc/klangk.git
+    git: https://github.com/mcdonc/klangk.git
     path: plugins/celebrate
     ref: main
 ```
