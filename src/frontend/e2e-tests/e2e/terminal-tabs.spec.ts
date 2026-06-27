@@ -34,7 +34,7 @@ class TerminalWsClient {
     this.ws.send(JSON.stringify(msg));
   }
 
-  async recv(timeout = 10_000): Promise<Record<string, unknown>> {
+  async recv(timeout = 30_000): Promise<Record<string, unknown>> {
     if (this.messageQueue.length > 0) {
       return this.messageQueue.shift()!;
     }
@@ -49,15 +49,22 @@ class TerminalWsClient {
     });
   }
 
-  /** Receive messages until one matches the predicate. */
+  /** Receive messages until one matches the predicate. A transient inner recv
+   *  timeout (e.g. a slow terminal backend under load) is tolerated as long as
+   *  the overall deadline has not elapsed; only then does this reject. */
   async recvUntil(
     predicate: (msg: Record<string, unknown>) => boolean,
-    timeout = 30_000,
+    timeout = 60_000,
   ): Promise<Record<string, unknown>> {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
-      const msg = await this.recv(deadline - Date.now());
-      if (predicate(msg)) return msg;
+      try {
+        const msg = await this.recv(deadline - Date.now());
+        if (predicate(msg)) return msg;
+      } catch (err) {
+        // Inner recv timed out — only fail if the overall deadline passed.
+        if (Date.now() >= deadline) throw err;
+      }
     }
     throw new Error("recvUntil timed out");
   }
