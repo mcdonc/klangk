@@ -940,11 +940,7 @@ class TestWorkspaceRoutes:
         headers = await _auth_headers(client)
         resp = await client.get("/api/v1/workspaces", headers=headers)
         assert resp.status_code == 200
-        assert resp.json() == {
-            "items": [],
-            "has_more": False,
-            "next_offset": None,
-        }
+        assert resp.json() == []
 
     async def test_list_pagination(self, client, user):
         headers = await _auth_headers(client)
@@ -1266,7 +1262,7 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 200
         resp = await client.get("/api/v1/workspaces", headers=headers)
-        match = [w for w in resp.json()["items"] if w["id"] == ws_id]
+        match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["name"] == "renamed"
         assert match[0]["default_command"] == "pi"
 
@@ -1484,10 +1480,41 @@ class TestWorkspaceSharingRoutes:
             "/api/v1/workspaces/shared", headers=other_headers
         )
         assert resp.status_code == 200
-        shared = resp.json()["items"]
+        shared = resp.json()
         assert len(shared) >= 1
         assert any(w["id"] == ws_id for w in shared)
         assert any(w["owner_email"] == "testuser@example.com" for w in shared)
+
+    async def test_list_shared_no_params_returns_bare_list(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/workspaces/shared", headers=headers)
+        assert resp.status_code == 200
+        # Backward-compatible: no pagination params -> bare list, not envelope.
+        assert isinstance(resp.json(), list)
+
+    async def test_list_shared_pagination_returns_envelope(self, client, user):
+        headers = await _auth_headers(client)
+        await self._create_other_user()
+        other_headers = await self._other_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "shared-pg"}
+        )
+        ws_id = resp.json()["id"]
+        await client.post(
+            f"/api/v1/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        # Paginated request -> envelope shape.
+        resp = await client.get(
+            "/api/v1/workspaces/shared?limit=10&offset=0",
+            headers=other_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert isinstance(body, dict)
+        assert "items" in body and "has_more" in body
+        assert any(w["id"] == ws_id for w in body["items"])
 
     async def test_get_members_empty(self, client, user):
         headers = await _auth_headers(client)
@@ -5430,7 +5457,7 @@ class TestWorkspaceExportImport:
 
         # Fetch the workspace to check env
         resp = await client.get("/api/v1/workspaces", headers=headers)
-        workspaces_list = resp.json()["items"]
+        workspaces_list = resp.json()
         imported = next(w for w in workspaces_list if w["id"] == ws["id"])
         env = imported.get("env", {})
         assert "MY_VAR" in env
@@ -5488,7 +5515,7 @@ class TestWorkspaceExportImport:
 
         # Workspace should have been cleaned up
         resp = await client.get("/api/v1/workspaces", headers=headers)
-        names = [w["name"] for w in resp.json()["items"]]
+        names = [w["name"] for w in resp.json()]
         assert "fail-extract" not in names
 
     async def test_import_invalid_json_in_metadata(self, client, user):
@@ -5555,7 +5582,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 400
 
         resp = await client.get("/api/v1/workspaces", headers=headers)
-        names = [w["name"] for w in resp.json()["items"]]
+        names = [w["name"] for w in resp.json()]
         assert "timeout-test" not in names
 
     async def test_import_path_traversal_rejected(self, client, user):
@@ -5589,7 +5616,7 @@ class TestWorkspaceExportImport:
 
         # Workspace should have been cleaned up
         resp = await client.get("/api/v1/workspaces", headers=headers)
-        names = [w["name"] for w in resp.json()["items"]]
+        names = [w["name"] for w in resp.json()]
         assert "traversal-test" not in names
 
 
