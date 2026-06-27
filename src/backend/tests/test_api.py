@@ -463,6 +463,32 @@ class TestResendVerification:
             "unverified@example.com", password_hash, verified=False
         )
 
+    def test_prune_timestamps_evicts_expired_keeps_recent(self):
+        """_prune_timestamps drops entries older than the cooldown only."""
+        import time
+
+        now = time.time()
+        cooldown = 60
+        ts = {
+            "old@a.com": now - cooldown - 5,  # expired
+            "edge@a.com": now - cooldown - 1,  # expired
+            "fresh@a.com": now - 10,  # within window
+            "recent@a.com": now,  # within window
+        }
+        api._prune_timestamps(ts, cooldown, now)
+        assert "old@a.com" not in ts
+        assert "edge@a.com" not in ts
+        assert "fresh@a.com" in ts
+        assert "recent@a.com" in ts
+
+    def test_prune_timestamps_empty_dict(self):
+        """Pruning an empty dict is a no-op."""
+        import time
+
+        ts: dict[str, float] = {}
+        api._prune_timestamps(ts, 60, time.time())
+        assert ts == {}
+
     async def test_resend_success(self, client, db):
         await self._create_unverified_user()
         with patch.object(
@@ -540,6 +566,44 @@ class TestResendVerification:
         assert resp2.status_code == 429
         api._resend_timestamps.pop("unverified@example.com", None)
 
+    async def test_resend_prunes_expired_entries(self, client, db):
+        # Stale rate-limit state from parallel test workers
+        api._resend_timestamps.clear()
+        await self._create_unverified_user()
+        with patch.object(
+            api.emailsvc, "send_verification_email", new_callable=AsyncMock
+        ):
+            resp1 = await client.post(
+                "/api/v1/auth/resend-verification",
+                json={
+                    "email": "unverified@example.com",
+                    "password": "testpass",
+                },
+            )
+            assert resp1.status_code == 200
+            # Backdate the entry past the cooldown window.
+            import time
+
+            api._resend_timestamps["unverified@example.com"] = (
+                time.time() - api.RESEND_COOLDOWN_SECONDS - 1
+            )
+            # Also seed an unrelated expired address to confirm it is evicted.
+            api._resend_timestamps["stale@example.com"] = (
+                time.time() - api.RESEND_COOLDOWN_SECONDS - 1
+            )
+            resp2 = await client.post(
+                "/api/v1/auth/resend-verification",
+                json={
+                    "email": "unverified@example.com",
+                    "password": "testpass",
+                },
+            )
+        # Expired entry no longer rate-limits, and unrelated stale entry
+        # was swept on access.
+        assert resp2.status_code == 200
+        assert "stale@example.com" not in api._resend_timestamps
+        api._resend_timestamps.clear()
+
 
 class TestForgotPassword:
     async def _create_user(self):
@@ -589,6 +653,34 @@ class TestForgotPassword:
             )
         assert resp2.status_code == 429
         api._reset_timestamps.pop("forgot@example.com", None)
+
+    async def test_forgot_prunes_expired_entries(self, client, db):
+        api._reset_timestamps.clear()
+        await self._create_user()
+        with patch.object(
+            api.emailsvc, "send_password_reset_email", new_callable=AsyncMock
+        ):
+            resp1 = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+            assert resp1.status_code == 200
+            # Backdate the entry and seed an unrelated expired address.
+            import time
+
+            api._reset_timestamps["forgot@example.com"] = (
+                time.time() - api.RESET_COOLDOWN_SECONDS - 1
+            )
+            api._reset_timestamps["stale@example.com"] = (
+                time.time() - api.RESET_COOLDOWN_SECONDS - 1
+            )
+            resp2 = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+        assert resp2.status_code == 200
+        assert "stale@example.com" not in api._reset_timestamps
+        api._reset_timestamps.clear()
 
 
 class TestResetPassword:

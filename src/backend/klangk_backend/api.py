@@ -287,6 +287,23 @@ async def verify_email(token: str):
     return {"status": "verified", "access_token": access_token}
 
 
+def _prune_timestamps(
+    timestamps: dict[str, float], cooldown_seconds: float, now: float
+) -> None:
+    """Evict rate-limit entries older than their cooldown window.
+
+    The resend/reset rate-limit dicts are keyed by email and gain an
+    entry on every request. Without eviction they grow without bound
+    and retain raw email addresses (PII) for the process lifetime,
+    long past the short cooldown window they're needed for. Opportunistically
+    sweeping expired entries on each access bounds both size and retention.
+    """
+    cutoff = now - cooldown_seconds
+    expired = [email for email, ts in timestamps.items() if ts < cutoff]
+    for email in expired:
+        del timestamps[email]
+
+
 _resend_timestamps: dict[str, float] = {}
 RESEND_COOLDOWN_SECONDS = 60
 
@@ -307,6 +324,7 @@ async def resend_verification(
 
     # Rate limit: one resend per email per minute
     now = time.time()
+    _prune_timestamps(_resend_timestamps, RESEND_COOLDOWN_SECONDS, now)
     last = _resend_timestamps.get(req.email, 0)
     if now - last < RESEND_COOLDOWN_SECONDS:
         raise HTTPException(
@@ -346,6 +364,7 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
 
     # Rate limit: one reset email per address per minute
     now = time.time()
+    _prune_timestamps(_reset_timestamps, RESET_COOLDOWN_SECONDS, now)
     last = _reset_timestamps.get(req.email, 0)
     if now - last < RESET_COOLDOWN_SECONDS:
         raise HTTPException(
