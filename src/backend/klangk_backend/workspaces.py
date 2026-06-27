@@ -372,23 +372,13 @@ async def populate_home_skel(
     container runs Ubuntu, which always has it.
     """
     home = f"/home/.users/{user_id}"
-    argv = [
-        "exec",
-        "-u",
-        "klangk",
-        container_id,
-        "/opt/klangk/bin/klangk-setup-home",
-        home,
-    ]
     try:
-        proc = await asyncio.create_subprocess_exec(
-            podman.PODMAN_BIN,
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=podman.subprocess_env(),
+        await podman.exec_container(
+            container_id,
+            ["/opt/klangk/bin/klangk-setup-home", home],
+            user="klangk",
+            timeout=10,
         )
-        await asyncio.wait_for(proc.communicate(), timeout=10)
     except Exception:
         logger.warning(
             "Failed to populate skel for user %s in %s",
