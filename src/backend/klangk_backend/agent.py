@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 from . import container, model, podman, workspaces
 
@@ -508,8 +509,45 @@ async def stop_session(workspace_id: str) -> None:
         await session.stop()
 
 
+def _ephemeral_system_message(
+    workspace_id: str,
+    agent_email: str,
+    agent_handle: str,
+    text: str,
+) -> dict:
+    """Build a transient agent presence system message for live broadcast.
+
+    Mirrors the shape returned by [model.add_chat_message] so the frontend
+    renders it the same as a persisted system message, but is never written
+    to chat history — agent presence transitions (disconnect/reconnect) are
+    driven by container lifecycle (idle-stop, restart, crash) and would
+    otherwise pollute history with stale, unbalanced "has disconnected"
+    entries.  ``id`` is a synthetic prefix so the frontend can dedupe;
+    ``created_at`` is empty (the frontend tolerates that).
+    """
+    return {
+        "id": f"ephemeral-agent-{workspace_id}-{int(time.monotonic() * 1000)}",
+        "workspace_id": workspace_id,
+        "user_id": model.AGENT_USER_ID,
+        "user_email": agent_email,
+        "user_handle": agent_handle,
+        "message": text,
+        "message_type": model.MSG_SYSTEM,
+        "created_at": "",
+        "mentions": [],
+    }
+
+
 async def _broadcast_agent_disconnect(workspace_id: str) -> None:
-    """Broadcast a disconnect system message when the agent process dies."""
+    """Broadcast a disconnect system message when the agent process dies.
+
+    Ephemeral only — sent to currently-connected subscribers, never written
+    to chat history.  The agent subprocess lives inside the workspace
+    container, so it dies on every container idle-stop / restart; persisting
+    "has disconnected" made those lifecycle events linger in chat history
+    and surface as a stale leading message on the next visit, with no
+    symmetric persisted "has connected" to balance them.
+    """
     if not workspace_id:
         return
     # Workspace may have been deleted — skip if gone.
@@ -517,12 +555,11 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
         return
     agent_handle = await model.agent_handle()
     agent_email = await model.agent_email()
-    sys_msg = await model.add_chat_message(
+    sys_msg = _ephemeral_system_message(
         workspace_id,
-        model.AGENT_USER_ID,
         agent_email,
+        agent_handle,
         f"{agent_handle} has disconnected",
-        message_type=model.MSG_SYSTEM,
     )
     session = (
         _get_workspace_session(workspace_id)
@@ -543,7 +580,10 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
 
 
 async def _broadcast_agent_reconnect(workspace_id: str) -> None:
-    """Broadcast a reconnect system message after auto-restart."""
+    """Broadcast a reconnect system message after auto-restart.
+
+    Ephemeral only — see [_broadcast_agent_disconnect].
+    """
     if not workspace_id:
         return
     # Workspace may have been deleted — skip if gone.
@@ -551,12 +591,11 @@ async def _broadcast_agent_reconnect(workspace_id: str) -> None:
         return
     agent_handle = await model.agent_handle()
     agent_email = await model.agent_email()
-    sys_msg = await model.add_chat_message(
+    sys_msg = _ephemeral_system_message(
         workspace_id,
-        model.AGENT_USER_ID,
         agent_email,
+        agent_handle,
         f"{agent_handle} has reconnected",
-        message_type=model.MSG_SYSTEM,
     )
     session = (
         _get_workspace_session(workspace_id)

@@ -842,10 +842,6 @@ class TestMonitorProcess:
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
-                return_value={
-                    "id": "msg-1",
-                    "message": "MrBoops has disconnected",
-                },
             ) as mock_chat,
             patch(
                 "klangk_backend.agent._get_workspace_session"
@@ -856,9 +852,16 @@ class TestMonitorProcess:
 
             await _broadcast_agent_disconnect("ws-mon")
 
-            mock_chat.assert_awaited_once()
-            assert "disconnected" in mock_chat.call_args[0][3]
+            # Presence transitions must NOT be persisted to chat history
+            # (they'd linger as stale "has disconnected" on the next visit).
+            mock_chat.assert_not_awaited()
+            # Still broadcast live to connected subscribers: agent_thinking,
+            # the ephemeral chat_message, and presence_leave.
             assert mock_session.broadcast.call_count == 3
+            chat_broadcast = mock_session.broadcast.call_args_list[1][0][0]
+            assert chat_broadcast["type"] == "chat_message"
+            assert "disconnected" in chat_broadcast["message"]
+            assert chat_broadcast["message_type"] == model.MSG_SYSTEM
 
     async def test_broadcast_no_workspace(self):
         from klangk_backend.agent import _broadcast_agent_disconnect
@@ -1100,7 +1103,6 @@ class TestMonitorProcess:
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
-                return_value={"id": "m1", "message": "reconnected"},
             ) as mock_chat,
             patch(
                 "klangk_backend.agent._get_workspace_session"
@@ -1111,9 +1113,13 @@ class TestMonitorProcess:
 
             await _broadcast_agent_reconnect("ws-rc")
 
-            mock_chat.assert_awaited_once()
-            assert "reconnected" in mock_chat.call_args[0][3]
+            # Reconnect is ephemeral too — never persisted.
+            mock_chat.assert_not_awaited()
             assert mock_session.broadcast.call_count == 2
+            chat_broadcast = mock_session.broadcast.call_args_list[0][0][0]
+            assert chat_broadcast["type"] == "chat_message"
+            assert "reconnected" in chat_broadcast["message"]
+            assert chat_broadcast["message_type"] == model.MSG_SYSTEM
 
     async def test_broadcast_reconnect_no_workspace(self):
         from klangk_backend.agent import _broadcast_agent_reconnect
