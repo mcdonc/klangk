@@ -22,6 +22,9 @@ String getLocationHash() => '';
 /// Stub — return empty query string in VM tests.
 String getLocationSearch() => '';
 
+/// Stub — no User-Agent outside the browser.
+String getUserAgent() => '';
+
 /// Query params captured at startup (empty in VM tests).
 Map<String, String> capturedPageQuery = {};
 
