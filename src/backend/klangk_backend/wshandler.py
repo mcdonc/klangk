@@ -1502,6 +1502,36 @@ class Connection:
             f"/workspaces/{self.workspace_id}", principals, perm
         )
 
+    def _find_window(
+        self,
+        ws_session: WorkspaceSession,
+        user_id: str,
+        window_id: str,
+        *,
+        shared: bool = False,
+        error_msg: str = "Window not found",
+    ) -> dict | None:
+        """Look up a terminal window by id, sending an error if absent.
+
+        Returns the matching window dict, or None after sending
+        *error_msg* to the socket.  When *shared* is True, only
+        windows already marked shared are considered (used when
+        joining another user's terminal).
+        """
+        windows = ws_session.terminal_windows.get(user_id, [])
+        match = next(
+            (
+                w
+                for w in windows
+                if w.get("id") == window_id and (not shared or w.get("shared"))
+            ),
+            None,
+        )
+        if match is None:
+            send_error(self.sock, error_msg)
+            return None
+        return match
+
     async def handle_share_window(self, msg: dict) -> None:
         """Mark one of the user's own windows as shared."""
         if not self.container_id or not self._user_home:
@@ -1517,10 +1547,8 @@ class Connection:
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
-        windows = ws_session.terminal_windows.get(user_id, [])
-        match = next((w for w in windows if w.get("id") == window_id), None)
+        match = self._find_window(ws_session, user_id, window_id)
         if match is None:
-            send_error(self.sock, "Window not found")
             return
         match["shared"] = True
         self._broadcast_shared_terminals(ws_session)
@@ -1543,10 +1571,8 @@ class Connection:
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
-        windows = ws_session.terminal_windows.get(user_id, [])
-        match = next((w for w in windows if w.get("id") == window_id), None)
+        match = self._find_window(ws_session, user_id, window_id)
         if match is None:
-            send_error(self.sock, "Window not found")
             return
         match["shared"] = False
         # Kick spectators/collaborators
@@ -1590,17 +1616,14 @@ class Connection:
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
-        owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
-        match = next(
-            (
-                w
-                for w in owner_windows
-                if w.get("id") == window_id and w.get("shared")
-            ),
-            None,
+        match = self._find_window(
+            ws_session,
+            owner_user_id,
+            window_id,
+            shared=True,
+            error_msg="Shared terminal not found",
         )
         if match is None:
-            send_error(self.sock, "Shared terminal not found")
             return
         window_name = match["name"]
 
@@ -1790,13 +1813,13 @@ class Connection:
         ws_session = state.get_session(self.workspace_id)
         if not ws_session:
             return
-        owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
-        match = next(
-            (w for w in owner_windows if w.get("id") == window_id),
-            None,
+        match = self._find_window(
+            ws_session,
+            owner_user_id,
+            window_id,
+            error_msg="Terminal not found",
         )
         if match is None:
-            send_error(self.sock, "Terminal not found")
             return
         window_name = match["name"]
         try:
@@ -1809,6 +1832,7 @@ class Connection:
         except Exception as e:
             send_error(self.sock, f"Failed to delete shared terminal: {e}")
             return
+        owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
         owner_windows[:] = [
             w for w in owner_windows if w.get("id") != window_id
         ]
