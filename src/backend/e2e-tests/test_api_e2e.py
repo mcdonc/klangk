@@ -537,7 +537,7 @@ class TestWorkspaceSharingACL:
 
         # User B cannot see it in shared list yet
         resp = api.get("/api/v1/workspaces/shared", headers=user_b["headers"])
-        assert not any(w["id"] == ws_id for w in resp.json())
+        assert not any(w["id"] == ws_id for w in resp.json()["items"])
 
         # User A shares with user B
         resp = api.post(
@@ -550,7 +550,7 @@ class TestWorkspaceSharingACL:
 
         # User B now sees it in shared list
         resp = api.get("/api/v1/workspaces/shared", headers=user_b["headers"])
-        shared = resp.json()
+        shared = resp.json()["items"]
         assert any(w["id"] == ws_id for w in shared)
         shared_ws = next(w for w in shared if w["id"] == ws_id)
         assert shared_ws["owner_email"] == user_a["email"]
@@ -604,7 +604,7 @@ class TestWorkspaceSharingACL:
 
         # Verify B sees it
         resp = api.get("/api/v1/workspaces/shared", headers=user_b["headers"])
-        assert any(w["id"] == ws_id for w in resp.json())
+        assert any(w["id"] == ws_id for w in resp.json()["items"])
 
         # Unshare
         resp = api.delete(
@@ -615,7 +615,7 @@ class TestWorkspaceSharingACL:
 
         # B no longer sees it
         resp = api.get("/api/v1/workspaces/shared", headers=user_b["headers"])
-        assert not any(w["id"] == ws_id for w in resp.json())
+        assert not any(w["id"] == ws_id for w in resp.json()["items"])
 
     def test_members_list(self, api, user_a, user_b):
         """Owner can list workspace members."""

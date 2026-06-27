@@ -1000,7 +1000,7 @@ class TestExportSymlinks:
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = httpx.get(f"{server['url']}/api/v1/workspaces", headers=headers)
-        ws = [w for w in resp.json() if w["name"] == "e2e-symlink"][0]
+        ws = [w for w in resp.json()["items"] if w["name"] == "e2e-symlink"][0]
         ws_id = ws["id"]
 
         # Find the user directory — it's the only subdirectory of workspaces/
@@ -1168,7 +1168,11 @@ class TestExportImport:
                 headers=headers,
                 timeout=30,
             )
-            ws = [w for w in resp.json() if w["name"] == "export-symlink"][0]
+            ws = [
+                w
+                for w in resp.json()["items"]
+                if w["name"] == "export-symlink"
+            ][0]
             ws_id = ws["id"]
             ws_root = Path(server["data_dir"]) / "workspaces"
             user_dirs = [d for d in ws_root.iterdir() if d.is_dir()]
@@ -1244,7 +1248,7 @@ class TestExportImport:
             )
             imported = [
                 w
-                for w in resp.json()
+                for w in resp.json()["items"]
                 if w["name"] == "export-symlink-imported"
             ][0]
             imported_home = user_dirs[0] / "home" / imported["id"]
