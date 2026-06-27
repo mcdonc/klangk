@@ -164,33 +164,42 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
     Returns the list of created archive paths (may be empty).
     After successful archival the user's data directory is removed.
     """
-    user_workspaces = await model.list_workspaces(user_id)
     user_dir = _safe_path(user_id)  # lgtm[py/path-injection]
     if not user_dir.exists():
         return []
-
     safe_email = _sanitize_filename(email)
+
+    # Page through every workspace (list_workspaces paginates).
     archives: list[Path] = []
-
-    for ws in user_workspaces:
-        ws_name = _sanitize_filename(ws["name"])
-        archive_name = f"{user_id}-{safe_email}-{ws_name}.tar.gz"
-        try:
-            archive_path = _safe_path(archive_name)  # lgtm[py/path-injection]
-        except ValueError:
-            logger.error(
-                "Archive path traversal blocked for workspace %s", ws["name"]
-            )
-            continue
-
-        home_dir = home_path(user_id, ws["id"])
-        metadata = workspace_metadata(ws)
-
-        if await build_workspace_archive(metadata, home_dir, archive_path):
-            logger.info(
-                "Archived workspace %s to %s", ws["name"], archive_path
-            )
-            archives.append(archive_path)
+    offset = 0
+    while True:
+        page = await model.list_workspaces(user_id, offset=offset)
+        user_workspaces = page["items"]
+        if not user_workspaces:
+            break
+        for ws in user_workspaces:
+            ws_name = _sanitize_filename(ws["name"])
+            archive_name = f"{user_id}-{safe_email}-{ws_name}.tar.gz"
+            try:
+                archive_path = _safe_path(
+                    archive_name
+                )  # lgtm[py/path-injection]
+            except ValueError:
+                logger.error(
+                    "Archive path traversal blocked for workspace %s",
+                    ws["name"],
+                )
+                continue
+            home_dir = home_path(user_id, ws["id"])
+            metadata = workspace_metadata(ws)
+            if await build_workspace_archive(metadata, home_dir, archive_path):
+                logger.info(
+                    "Archived workspace %s to %s", ws["name"], archive_path
+                )
+                archives.append(archive_path)
+        if not page["has_more"]:
+            break
+        offset = page["next_offset"]
 
     # Remove the user's data directory after all archives are created.
     if archives:
@@ -268,8 +277,10 @@ async def create_workspace(
     return workspace
 
 
-async def list_workspaces(user_id: str) -> list[dict]:
-    return await model.list_workspaces(user_id)
+async def list_workspaces(
+    user_id: str, limit: int = 10, offset: int = 0
+) -> dict:
+    return await model.list_workspaces(user_id, limit, offset)
 
 
 async def get_workspace(

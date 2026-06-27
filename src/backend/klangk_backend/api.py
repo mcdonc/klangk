@@ -16,7 +16,14 @@ import io
 
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
@@ -921,13 +928,21 @@ async def oidc_callback(
 
 
 @router.get("/workspaces")
-async def list_workspaces(user: dict = Depends(auth.get_current_user)):
-    return await workspaces.list_workspaces(user["id"])
+async def list_workspaces(
+    user: dict = Depends(auth.get_current_user),
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    return await workspaces.list_workspaces(user["id"], limit, offset)
 
 
 @router.get("/workspaces/shared")
-async def list_shared_workspaces(user: dict = Depends(auth.get_current_user)):
-    return await model.list_shared_workspaces(user["id"])
+async def list_shared_workspaces(
+    user: dict = Depends(auth.get_current_user),
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    return await model.list_shared_workspaces(user["id"], limit, offset)
 
 
 class CreateWorkspaceRequest(BaseModel):

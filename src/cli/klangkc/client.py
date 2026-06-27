@@ -227,42 +227,74 @@ class KlangkClient:
         resp.raise_for_status()
         return resp.json()["handle"]
 
-    def list_workspaces(self) -> list[Workspace]:
-        resp = self.get("/api/v1/workspaces")
-        self._check_auth(resp)
-        resp.raise_for_status()
-        raw = resp.json()
-        return [
-            Workspace(
-                id=w["id"],
-                name=w["name"],
-                created_at=w["created_at"],
-                image=w.get("image"),
-                default_command=w.get("default_command"),
-                mounts=w.get("mounts"),
-                env=w.get("env"),
-            )
-            for w in raw
-        ]
+    def list_workspaces(
+        self,
+        limit: int = 10,
+        offset: int = 0,
+        all_pages: bool = False,
+    ) -> list[Workspace]:
+        """List workspaces owned by the current user.
 
-    def list_shared_workspaces(self) -> list[Workspace]:
-        resp = self.get("/api/v1/workspaces/shared")
-        self._check_auth(resp)
-        resp.raise_for_status()
-        raw = resp.json()
-        return [
-            Workspace(
-                id=w["id"],
-                name=w["name"],
-                created_at=w["created_at"],
-                image=w.get("image"),
-                default_command=w.get("default_command"),
-                mounts=w.get("mounts"),
-                env=w.get("env"),
-                owner_email=w.get("owner_email"),
-            )
-            for w in raw
-        ]
+        By default returns a single page (10 items). Pass ``all_pages=True``
+        to page through every workspace.
+        """
+        return self._list_paginated(
+            "/api/v1/workspaces",
+            limit=limit,
+            offset=offset,
+            all_pages=all_pages,
+            shared=False,
+        )
+
+    def list_shared_workspaces(
+        self,
+        limit: int = 10,
+        offset: int = 0,
+        all_pages: bool = False,
+    ) -> list[Workspace]:
+        """List workspaces shared with the current user."""
+        return self._list_paginated(
+            "/api/v1/workspaces/shared",
+            limit=limit,
+            offset=offset,
+            all_pages=all_pages,
+            shared=True,
+        )
+
+    def _list_paginated(
+        self,
+        path: str,
+        *,
+        limit: int,
+        offset: int,
+        all_pages: bool,
+        shared: bool,
+    ) -> list[Workspace]:
+        workspaces: list[Workspace] = []
+        while True:
+            resp = self.get(path, params={"limit": limit, "offset": offset})
+            self._check_auth(resp)
+            resp.raise_for_status()
+            body = resp.json()
+            for w in body["items"]:
+                workspaces.append(self._workspace_from_json(w, shared=shared))
+            if not all_pages or not body.get("has_more"):
+                break
+            offset = body["next_offset"]
+        return workspaces
+
+    @staticmethod
+    def _workspace_from_json(w: dict, *, shared: bool) -> Workspace:
+        return Workspace(
+            id=w["id"],
+            name=w["name"],
+            created_at=w["created_at"],
+            image=w.get("image"),
+            default_command=w.get("default_command"),
+            mounts=w.get("mounts"),
+            env=w.get("env"),
+            owner_email=w.get("owner_email") if shared else None,
+        )
 
     def create_workspace(
         self,
@@ -297,7 +329,9 @@ class KlangkClient:
 
         Raises WorkspaceNotFoundError if not found.
         """
-        all_ws = self.list_workspaces() + self.list_shared_workspaces()
+        all_ws = self.list_workspaces(
+            all_pages=True
+        ) + self.list_shared_workspaces(all_pages=True)
         match = next((w for w in all_ws if w.name == name), None)
         if match is None:
             raise WorkspaceNotFoundError(name)

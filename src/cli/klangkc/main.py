@@ -203,12 +203,26 @@ def list_workspaces(
     shared: bool = typer.Option(
         False, "--shared", help="Include workspaces shared with you"
     ),
+    limit: int = typer.Option(
+        10, "--limit", help="Max workspaces to list per section"
+    ),
+    all_workspaces: bool = typer.Option(
+        False, "--all", help="List every workspace (follow pagination)"
+    ),
 ) -> None:
-    """List all workspaces."""
+    """List workspaces.
+
+    Lists one page at a time (default 10). Pass --all to page through
+    every workspace.
+    """
     _require_auth()
     client = _client()
-    workspaces = client.list_workspaces()
-    shared_workspaces = client.list_shared_workspaces() if shared else []
+    workspaces = client.list_workspaces(limit=limit, all_pages=all_workspaces)
+    shared_workspaces = (
+        client.list_shared_workspaces(limit=limit, all_pages=all_workspaces)
+        if shared
+        else []
+    )
     if not workspaces and not shared_workspaces:
         typer.echo("No workspaces found.")
         return
@@ -760,7 +774,7 @@ def shell(
             _err.print(f"[red]No workspace named[/red] '{workspace}'")
             raise typer.Exit(code=1) from None
     else:
-        workspaces = client.list_workspaces()
+        workspaces = client.list_workspaces(all_pages=True)
         if not workspaces:
             typer.echo("No workspaces found — create one with klangkc create.")
             raise typer.Exit(code=1)
