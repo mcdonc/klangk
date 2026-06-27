@@ -54,9 +54,33 @@ class WorkspaceListPage extends StatefulWidget {
   State<WorkspaceListPage> createState() => _WorkspaceListPageState();
 }
 
+/// Mutable pagination state for one list section (owned or shared).
+/// Held as a field so owned/shared advance independently — each has its
+/// own cursor and its own "load more" control.
+class _Section {
+  _Section({this.isShared = false});
+
+  final bool isShared;
+  List<Map<String, dynamic>> workspaces = [];
+  bool hasMore = false;
+  int? nextOffset;
+  bool loadingMore = false;
+
+  /// API path for this section, paginated at [offset].
+  String path(int offset) {
+    final base = isShared ? '/api/v1/workspaces/shared' : '/api/v1/workspaces';
+    return '$base?limit=${_WorkspaceListPageState._pageSize}&offset=$offset';
+  }
+}
+
 class _WorkspaceListPageState extends State<WorkspaceListPage> {
-  List<Map<String, dynamic>> _workspaces = [];
-  List<Map<String, dynamic>> _sharedWorkspaces = [];
+  static const int _pageSize = 10;
+
+  /// Per-section pagination state. Owned and shared lists come from
+  /// different queries with independent cursors, so each section tracks
+  /// its own list + has_more + next_offset + loading-more flag.
+  final _Section _owned = _Section();
+  final _Section _shared = _Section(isShared: true);
   Map<String, List<Map<String, dynamic>>> _workspaceMembers = {};
   bool _loading = true;
   StreamSubscription<void>? _workspacesChangedSub;
@@ -83,93 +107,94 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
 
   AuthService get _auth => context.read<AuthService>();
 
-  /// Silent refresh: re-fetches workspaces without showing the loading
-  /// spinner or error snackbars.  Driven by `workspaces_changed` WS events.
-  Future<void> _refreshWorkspaces() async {
+  /// Parse a paginated envelope response into its items + cursors.
+  static ({List<Map<String, dynamic>> items, bool hasMore, int? nextOffset})
+      _parseEnvelope(String body) {
+    final json = jsonDecode(body) as Map<String, dynamic>;
+    final items = (json['items'] as List).cast<Map<String, dynamic>>();
+    return (
+      items: items,
+      hasMore: json['has_more'] == true,
+      nextOffset:
+          json['next_offset'] is int ? json['next_offset'] as int : null,
+    );
+  }
+
+  /// Fetch one page for [section] at [offset]. Returns the parsed page or
+  /// null on failure. Caller handles members + state.
+  Future<({List<Map<String, dynamic>> items, bool hasMore, int? nextOffset})?>
+      _fetchPage(_Section section, int offset) async {
     try {
-      final response = await _auth.authGet('/api/v1/workspaces');
-      if (response.statusCode != 200 || !mounted) return;
-      final data = jsonDecode(response.body) as List;
-      final workspaces = data.cast<Map<String, dynamic>>();
-      final members = <String, List<Map<String, dynamic>>>{};
-      await Future.wait(
-        workspaces.map((ws) async {
-          final id = ws['id'] as String;
-          try {
-            final resp = await _auth.authGet('/api/v1/workspaces/$id/members');
-            if (resp.statusCode == 200) {
-              members[id] = List<Map<String, dynamic>>.from(
-                jsonDecode(resp.body) as List,
-              );
-            }
-          } catch (_) {} // coverage:ignore-line
-        }),
-      );
-      List<Map<String, dynamic>> shared = [];
-      try {
-        final sharedResp = await _auth.authGet('/api/v1/workspaces/shared');
-        if (sharedResp.statusCode == 200) {
-          shared = List<Map<String, dynamic>>.from(
-            jsonDecode(sharedResp.body) as List,
-          );
-        }
-      } catch (_) {} // coverage:ignore-line
-      if (mounted) {
-        setState(() {
-          _workspaces = workspaces;
-          _sharedWorkspaces = shared;
-          _workspaceMembers = members;
-        });
-      }
-    } catch (_) {} // coverage:ignore-line
+      final resp = await _auth.authGet(section.path(offset));
+      if (resp.statusCode != 200) return null;
+      return _parseEnvelope(resp.body);
+    } catch (_) {
+      return null;
+    } // coverage:ignore-line
+  }
+
+  /// Fetch members for the given workspaces only (bounded to a page so
+  /// we never fan out N+1 across the whole list). Merges into the cache.
+  Future<void> _fetchMembers(List<Map<String, dynamic>> workspaces) async {
+    final members = <String, List<Map<String, dynamic>>>{};
+    await Future.wait(
+      workspaces.map((ws) async {
+        final id = ws['id'] as String;
+        try {
+          final resp = await _auth.authGet('/api/v1/workspaces/$id/members');
+          if (resp.statusCode == 200) {
+            members[id] = List<Map<String, dynamic>>.from(
+              jsonDecode(resp.body) as List,
+            );
+          }
+        } catch (_) {} // coverage:ignore-line
+      }),
+    );
+    if (mounted) {
+      setState(() {
+        _workspaceMembers = {..._workspaceMembers, ...members};
+      });
+    }
+  }
+
+  /// Replace a section with its first page. Returns true on success.
+  Future<bool> _loadFirstPage(_Section section) async {
+    final page = await _fetchPage(section, 0);
+    if (page == null) return false;
+    await _fetchMembers(page.items);
+    if (!mounted) return false;
+    setState(() {
+      section.workspaces = page.items;
+      section.hasMore = page.hasMore;
+      section.nextOffset = page.nextOffset;
+    });
+    return true;
+  }
+
+  /// Silent refresh: re-fetch the first page of each section without
+  /// showing the loading spinner or error snackbars. Driven by
+  /// `workspaces_changed` WS events — the set changed, so reset each
+  /// section to its first page rather than refetching every loaded page.
+  Future<void> _refreshWorkspaces() async {
+    await _loadFirstPage(_owned);
+    if (!mounted) return;
+    await _loadFirstPage(_shared);
   }
 
   Future<void> _loadWorkspaces() async {
     setState(() => _loading = true);
     try {
-      final response = await _auth.authGet('/api/v1/workspaces');
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as List;
-        final workspaces = data.cast<Map<String, dynamic>>();
-        // Fetch members for each workspace in parallel
-        final members = <String, List<Map<String, dynamic>>>{};
-        await Future.wait(
-          workspaces.map((ws) async {
-            final id = ws['id'] as String;
-            try {
-              final resp = await _auth.authGet(
-                '/api/v1/workspaces/$id/members',
-              );
-              if (resp.statusCode == 200) {
-                members[id] = List<Map<String, dynamic>>.from(
-                  jsonDecode(resp.body) as List,
-                );
-              }
-            } catch (e) {
-              // coverage:ignore-start
-              debugPrint('[WorkspaceListPage] fetch members failed: $e');
-            } // coverage:ignore-end
-          }),
-        );
-        // Fetch shared workspaces
-        List<Map<String, dynamic>> shared = [];
-        try {
-          final sharedResp = await _auth.authGet('/api/v1/workspaces/shared');
-          if (sharedResp.statusCode == 200) {
-            shared = List<Map<String, dynamic>>.from(
-              jsonDecode(sharedResp.body) as List,
-            );
-          }
-        } catch (e) {
-          // coverage:ignore-start
-          debugPrint('[WorkspaceListPage] fetch shared workspaces failed: $e');
-        } // coverage:ignore-end
-        setState(() {
-          _workspaces = workspaces;
-          _sharedWorkspaces = shared;
-          _workspaceMembers = members;
-        });
+      final ownedOk = await _loadFirstPage(_owned);
+      if (!ownedOk) {
+        throw Exception('owned workspaces load failed');
       }
+      if (!mounted) return;
+      try {
+        await _loadFirstPage(_shared);
+      } catch (e) {
+        // coverage:ignore-start
+        debugPrint('[WorkspaceListPage] fetch shared workspaces failed: $e');
+      } // coverage:ignore-end
     } catch (e) {
       debugPrint('Failed to load workspaces: $e');
       if (mounted) {
@@ -183,6 +208,32 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Append the next page of [section] (owned or shared). No-op when
+  /// already loading, when there's no next page, or on fetch failure.
+  Future<void> _loadMore(_Section section) async {
+    if (section.loadingMore || !section.hasMore || section.nextOffset == null) {
+      return;
+    }
+    setState(() => section.loadingMore = true);
+    try {
+      final page = await _fetchPage(section, section.nextOffset!);
+      if (page != null) {
+        await _fetchMembers(page.items);
+        if (mounted) {
+          setState(() {
+            section.workspaces = [...section.workspaces, ...page.items];
+            section.hasMore = page.hasMore;
+            section.nextOffset = page.nextOffset;
+          });
+        }
+      }
+    } catch (_) {
+    } // coverage:ignore-line
+    finally {
+      if (mounted) setState(() => section.loadingMore = false);
     }
   }
 
@@ -749,11 +800,36 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     }
   }
 
+  Widget _loadMoreButton(
+    String label, {
+    required bool enabled,
+    required bool loading,
+    required VoidCallback onPressed,
+  }) {
+    if (!enabled) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: loading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : TextButton.icon(
+                onPressed: onPressed,
+                icon: const Icon(Icons.expand_more, size: 18),
+                label: Text(label),
+              ),
+      ),
+    );
+  }
+
   Widget _buildWorkspacesList() {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_workspaces.isEmpty && _sharedWorkspaces.isEmpty) {
+    if (_owned.workspaces.isEmpty && _shared.workspaces.isEmpty) {
       return const Center(
         child: Text('No workspaces yet. Create one to get started.'),
       );
@@ -761,7 +837,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (_workspaces.isNotEmpty)
+        if (_owned.workspaces.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
@@ -793,7 +869,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     ],
                   ),
                 ),
-                ..._workspaces.asMap().entries.map((e) {
+                ..._owned.workspaces.asMap().entries.map((e) {
                   final i = e.key;
                   final ws = e.value;
                   final wsMembers = _workspaceMembers[ws['id'] as String] ?? [];
@@ -855,10 +931,16 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     ),
                   );
                 }),
+                _loadMoreButton(
+                  'Load more workspaces',
+                  enabled: _owned.hasMore,
+                  loading: _owned.loadingMore,
+                  onPressed: () => _loadMore(_owned),
+                ),
               ],
             ),
           ),
-        if (_sharedWorkspaces.isNotEmpty)
+        if (_shared.workspaces.isNotEmpty)
           Container(
             decoration: BoxDecoration(
               border: Border.all(color: KColors.borderDefault),
@@ -889,7 +971,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     ],
                   ),
                 ),
-                ..._sharedWorkspaces.asMap().entries.map(
+                ..._shared.workspaces.asMap().entries.map(
                       (e) => Material(
                         color: e.key.isEven
                             ? Colors.white.withValues(alpha: 0.03)
@@ -911,6 +993,12 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                         ),
                       ),
                     ),
+                _loadMoreButton(
+                  'Load more shared workspaces',
+                  enabled: _shared.hasMore,
+                  loading: _shared.loadingMore,
+                  onPressed: () => _loadMore(_shared),
+                ),
               ],
             ),
           ),
