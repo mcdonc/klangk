@@ -1110,6 +1110,47 @@ class TestWorkspaceRoutes:
         acl = await model.get_acl_entries(f"/workspaces/{ws_id}")
         assert len(acl) == 0
 
+    async def test_create_notifies_creator(self, client, user):
+        headers = await _auth_headers(client)
+        with patch.object(
+            wshandler.state,
+            "notify_user_workspaces_changed",
+        ) as mock_notify:
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "notify-create"},
+            )
+        assert resp.status_code == 200
+        mock_notify.assert_called_once_with(user["id"])
+
+    async def test_delete_notifies_deleter_and_owner(self, client, user):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "notify-delete"},
+        )
+        ws_id = create_resp.json()["id"]
+
+        with (
+            patch.object(
+                api.container.registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                wshandler.state,
+                "notify_user_workspaces_changed",
+            ) as mock_notify,
+        ):
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}", headers=headers
+            )
+        assert resp.status_code == 200
+        # Deleter is the owner here, so exactly one notify call for them.
+        mock_notify.assert_called_once_with(user["id"])
+
     async def test_restart_workspace(self, client, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
@@ -1439,6 +1480,50 @@ class TestWorkspaceSharingRoutes:
         )
         assert len(resp.json()) == 1
         assert resp.json()[0]["email"] == "other@example.com"
+
+    async def test_add_member_notifies_owner_and_target(self, client, user):
+        headers = await _auth_headers(client)
+        other = await self._create_other_user()
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        with patch.object(
+            wshandler.state, "notify_user_workspaces_changed"
+        ) as mock_notify:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/members",
+                headers=headers,
+                json={"email": "other@example.com"},
+            )
+        assert resp.status_code == 200
+        notified = {call.args[0] for call in mock_notify.call_args_list}
+        assert notified == {user["id"], other["id"]}
+
+    async def test_remove_member_notifies_owner_and_removed(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        other = await self._create_other_user()
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        await client.post(
+            f"/api/v1/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        with patch.object(
+            wshandler.state, "notify_user_workspaces_changed"
+        ) as mock_notify:
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}/members/{other['id']}",
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        notified = {call.args[0] for call in mock_notify.call_args_list}
+        assert notified == {user["id"], other["id"]}
 
     async def test_add_member_not_found(self, client, user):
         headers = await _auth_headers(client)
@@ -4716,6 +4801,37 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "from-archive"
+
+    async def test_import_notifies_importer(self, client, user):
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "notify-import"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        with patch.object(
+            wshandler.state, "notify_user_workspaces_changed"
+        ) as mock_notify:
+            resp = await client.post(
+                "/api/v1/workspaces/import",
+                headers=headers,
+                files={
+                    "file": (
+                        "archive.tar.gz",
+                        buf.getvalue(),
+                        "application/gzip",
+                    )
+                },
+            )
+        assert resp.status_code == 200
+        mock_notify.assert_called_once_with(user["id"])
 
     async def test_import_duplicate_name(self, client, user):
         headers = await self._user_headers(client)

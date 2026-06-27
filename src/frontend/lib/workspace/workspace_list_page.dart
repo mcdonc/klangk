@@ -7,6 +7,7 @@ import '../theme/colors.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
+import '../ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../utils/page_title.dart';
 import '../utils/web_helpers_stub.dart'
@@ -58,15 +59,70 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   List<Map<String, dynamic>> _sharedWorkspaces = [];
   Map<String, List<Map<String, dynamic>>> _workspaceMembers = {};
   bool _loading = true;
+  StreamSubscription<void>? _workspacesChangedSub;
 
   @override
   void initState() {
     super.initState();
     setPageTitle('Workspaces');
     _loadWorkspaces();
+    // Refresh the list whenever the backend signals the user's workspace
+    // set changed (created/deleted/shared/unshared via CLI, API, or
+    // another tab).  The WS connection is hoisted to login in WsClient.
+    final wsClient = context.read<WsClient>();
+    _workspacesChangedSub = wsClient.workspacesChanged.listen((_) {
+      _refreshWorkspaces();
+    });
+  }
+
+  @override
+  void dispose() {
+    _workspacesChangedSub?.cancel();
+    super.dispose();
   }
 
   AuthService get _auth => context.read<AuthService>();
+
+  /// Silent refresh: re-fetches workspaces without showing the loading
+  /// spinner or error snackbars.  Driven by `workspaces_changed` WS events.
+  Future<void> _refreshWorkspaces() async {
+    try {
+      final response = await _auth.authGet('/api/v1/workspaces');
+      if (response.statusCode != 200 || !mounted) return;
+      final data = jsonDecode(response.body) as List;
+      final workspaces = data.cast<Map<String, dynamic>>();
+      final members = <String, List<Map<String, dynamic>>>{};
+      await Future.wait(
+        workspaces.map((ws) async {
+          final id = ws['id'] as String;
+          try {
+            final resp = await _auth.authGet('/api/v1/workspaces/$id/members');
+            if (resp.statusCode == 200) {
+              members[id] = List<Map<String, dynamic>>.from(
+                jsonDecode(resp.body) as List,
+              );
+            }
+          } catch (_) {} // coverage:ignore-line
+        }),
+      );
+      List<Map<String, dynamic>> shared = [];
+      try {
+        final sharedResp = await _auth.authGet('/api/v1/workspaces/shared');
+        if (sharedResp.statusCode == 200) {
+          shared = List<Map<String, dynamic>>.from(
+            jsonDecode(sharedResp.body) as List,
+          );
+        }
+      } catch (_) {} // coverage:ignore-line
+      if (mounted) {
+        setState(() {
+          _workspaces = workspaces;
+          _sharedWorkspaces = shared;
+          _workspaceMembers = members;
+        });
+      }
+    } catch (_) {} // coverage:ignore-line
+  }
 
   Future<void> _loadWorkspaces() async {
     setState(() => _loading = true);
@@ -308,37 +364,37 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     Text('Mounts', style: labelStyle),
                     const SizedBox(height: 8),
                     ...mounts.asMap().entries.map(
-                      (e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: SelectableText(
-                                e.value,
-                                style: const TextStyle(fontSize: 13),
-                              ),
+                          (e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: SelectableText(
+                                    e.value,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.copy, size: 16),
+                                  tooltip: 'Copy',
+                                  onPressed: () => Clipboard.setData(
+                                    ClipboardData(text: e.value),
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: () => setDialogState(
+                                      () => mounts.removeAt(e.key)),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.copy, size: 16),
-                              tooltip: 'Copy',
-                              onPressed: () => Clipboard.setData(
-                                ClipboardData(text: e.value),
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                            const SizedBox(width: 4),
-                            IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () =>
-                                  setDialogState(() => mounts.removeAt(e.key)),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
                     if (mountError != null) ...[
                       Text(
                         mountError!,
@@ -374,40 +430,40 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                     Text('Environment Variables', style: labelStyle),
                     const SizedBox(height: 8),
                     ...envVars.entries.toList().asMap().entries.map(
-                      (e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: SelectableText(
-                                '${e.value.key}=${e.value.value}',
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.copy, size: 16),
-                              tooltip: 'Copy',
-                              onPressed: () => Clipboard.setData(
-                                ClipboardData(
-                                  text: '${e.value.key}=${e.value.value}',
+                          (e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: SelectableText(
+                                    '${e.value.key}=${e.value.value}',
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
                                 ),
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
+                                IconButton(
+                                  icon: const Icon(Icons.copy, size: 16),
+                                  tooltip: 'Copy',
+                                  onPressed: () => Clipboard.setData(
+                                    ClipboardData(
+                                      text: '${e.value.key}=${e.value.value}',
+                                    ),
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: () => setDialogState(
+                                    () => envVars.remove(e.value.key),
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 4),
-                            IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () => setDialogState(
-                                () => envVars.remove(e.value.key),
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
                     if (envError != null) ...[
                       Text(
                         envError!,
@@ -576,8 +632,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                         } else {
                           String detail;
                           try {
-                            detail =
-                                (jsonDecode(resp.body) as Map)['detail']
+                            detail = (jsonDecode(resp.body) as Map)['detail']
                                     as String? ??
                                 '${resp.statusCode}';
                           } catch (_) {
@@ -835,26 +890,27 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   ),
                 ),
                 ..._sharedWorkspaces.asMap().entries.map(
-                  (e) => Material(
-                    color: e.key.isEven
-                        ? Colors.white.withValues(alpha: 0.03)
-                        : Colors.transparent,
-                    child: ListTile(
-                      leading: const Icon(
-                        Icons.terminal,
-                        size: 20,
-                        color: KColors.accentBlue,
+                      (e) => Material(
+                        color: e.key.isEven
+                            ? Colors.white.withValues(alpha: 0.03)
+                            : Colors.transparent,
+                        child: ListTile(
+                          leading: const Icon(
+                            Icons.terminal,
+                            size: 20,
+                            color: KColors.accentBlue,
+                          ),
+                          title: Text(e.value['name'] as String),
+                          subtitle: Text(
+                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
+                          ),
+                          // coverage:ignore-start
+                          onTap: () =>
+                              context.go('/workspace/${e.value['id']}'),
+                          // coverage:ignore-end
+                        ),
                       ),
-                      title: Text(e.value['name'] as String),
-                      subtitle: Text(
-                        '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
-                      ),
-                      // coverage:ignore-start
-                      onTap: () => context.go('/workspace/${e.value['id']}'),
-                      // coverage:ignore-end
                     ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -871,25 +927,25 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       ),
       floatingActionButton:
           context.watch<AuthService>().hasPermission('/workspaces', 'create')
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FloatingActionButton.small(
-                  heroTag: 'import',
-                  onPressed: _showImportDialog, // coverage:ignore-line
-                  tooltip: 'Import Workspace',
-                  child: const Icon(Icons.upload),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton(
-                  heroTag: 'create',
-                  onPressed: _createWorkspace,
-                  tooltip: 'New Workspace',
-                  child: const Icon(Icons.add),
-                ),
-              ],
-            )
-          : null,
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FloatingActionButton.small(
+                      heroTag: 'import',
+                      onPressed: _showImportDialog, // coverage:ignore-line
+                      tooltip: 'Import Workspace',
+                      child: const Icon(Icons.upload),
+                    ),
+                    const SizedBox(height: 12),
+                    FloatingActionButton(
+                      heroTag: 'create',
+                      onPressed: _createWorkspace,
+                      tooltip: 'New Workspace',
+                      child: const Icon(Icons.add),
+                    ),
+                  ],
+                )
+              : null,
       body: _buildWorkspacesList(),
     );
   }

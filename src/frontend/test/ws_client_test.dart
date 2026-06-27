@@ -105,6 +105,78 @@ void main() {
       expect(client.connected, isFalse);
       client.dispose();
     });
+
+    test('connects on logged-in transition', () async {
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+      final channel = _FakeWebSocketChannel();
+      WsClient.testChannelFactory = (_) => channel;
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(auth.isLoggedIn, isTrue);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await Future.delayed(Duration.zero);
+      expect(client.connected, isTrue);
+      WsClient.testChannelFactory = null;
+      client.dispose();
+    });
+
+    test('does not reconnect on every auth rebuild when already logged in',
+        () async {
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+      final channel = _FakeWebSocketChannel();
+      WsClient.testChannelFactory = (_) => channel;
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth); // logged-out -> logged-in: connects
+      await Future.delayed(Duration.zero);
+      expect(client.connected, isTrue);
+
+      // A second updateAuth with the same logged-in state must not drop /
+      // re-open the connection.
+      client.updateAuth(auth);
+      await Future.delayed(Duration.zero);
+      expect(client.connected, isTrue);
+      WsClient.testChannelFactory = null;
+      client.dispose();
+    });
+  });
+
+  group('WsClient.workspacesChanged', () {
+    test('fires on workspaces_changed message', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+
+      var fired = 0;
+      client.workspacesChanged.listen((_) => fired++);
+
+      channel.serverSend({'type': 'workspaces_changed'});
+      await Future.delayed(Duration.zero);
+
+      expect(fired, 1);
+      client.dispose();
+    });
+
+    test('does not fire for unrelated messages', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+
+      var fired = 0;
+      client.workspacesChanged.listen((_) => fired++);
+
+      channel.serverSend({'type': 'terminal_output', 'data': 'x'});
+      await Future.delayed(Duration.zero);
+
+      expect(fired, 0);
+      client.dispose();
+    });
   });
 
   group('WsClient.disconnect', () {
@@ -647,21 +719,31 @@ void main() {
       client.dispose();
     });
 
-    test('no auto-reconnect before workspace connected', () async {
+    test('auto-reconnects after server close even without a workspace',
+        () async {
+      // After hoisting the WS to login, _autoReconnect is true on login, so
+      // the connection reopens after a server close even when no workspace
+      // was joined (so the list page keeps receiving workspaces_changed).
       final auth = AuthService();
       await Future.delayed(Duration.zero);
 
       final client = WsClient();
       client.updateAuth(auth);
       await client.connect();
-      // Don't call connectWorkspace — _autoReconnect stays false
+      // Don't call connectWorkspace — _autoReconnect is already true from
+      // the login transition.
 
       channels[0].serverClose();
-      await Future.delayed(Duration.zero);
 
-      expect(client.reconnecting, isFalse);
-      expect(channels.length, 1);
+      // Backoff is Duration.zero; pump the event loop until the reconnect
+      // completes (opens a fresh channel).
+      for (var i = 0; i < 10 && channels.length < 2; i++) {
+        await Future.delayed(Duration.zero);
+      }
+      expect(channels.length, 2); // a fresh channel was opened
+      expect(client.connected, isTrue);
 
+      client.disconnect();
       client.dispose();
     });
 

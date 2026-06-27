@@ -580,6 +580,26 @@ class WebSocketState:
             )
             await self.reset_workspace(ws["id"])
 
+    def notify_user_workspaces_changed(self, user_id: str) -> None:
+        """Send ``workspaces_changed`` to all of a user's connections.
+
+        The frontend re-fetches its workspace list on receipt, so the
+        list page reflects creates/deletes made via CLI, API, or another
+        tab without a manual refresh.  Fire-and-forget like the other
+        per-connection sends; a dead socket is simply discarded.
+        """
+        message = {"type": "workspaces_changed"}
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") != user_id:
+                continue
+            try:
+                sock.send_json(message)
+            except _WS_ERRORS:
+                dead.append(sock)
+        for sock in dead:
+            self.connections.pop(sock, None)
+
     def handle_browser_response(
         self, msg: dict, sender: SafeWebSocket | None = None
     ) -> None:

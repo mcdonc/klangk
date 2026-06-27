@@ -56,6 +56,11 @@ class WsClient extends ChangeNotifier {
   /// Set to false during intentional disconnects.
   bool _autoReconnect = false;
 
+  /// In-flight connect() future, so concurrent connect calls coalesce onto a
+  /// single attempt rather than the second no-op-ing while the first is
+  /// still pending (which used to race with updateAuth's auto-connect).
+  Future<void>? _connectFuture;
+
   /// Max backoff duration in seconds.  Kept low because the HTTP pre-check
   /// is cheap and fast — we just need to detect when the server is back.
   static const int _maxBackoffSeconds = 5;
@@ -89,6 +94,7 @@ class WsClient extends ChangeNotifier {
   final _chatController = StreamController<Map<String, dynamic>>.broadcast();
   final _sharedTerminalDeletedController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _workspacesChangedController = StreamController<void>.broadcast();
   final _debugLogController = StreamController<WsDebugEntry>.broadcast();
 
   Stream<String> get errors => _errorController.stream;
@@ -128,6 +134,10 @@ class WsClient extends ChangeNotifier {
   Stream<Map<String, dynamic>> get sharedTerminalDeleted =>
       _sharedTerminalDeletedController.stream;
 
+  /// Fires when the backend signals the user's workspace set changed
+  /// (created/deleted/shared/unshared), so the list page can re-fetch.
+  Stream<void> get workspacesChanged => _workspacesChangedController.stream;
+
   /// Debug log of all WebSocket messages (sent and received).
   Stream<WsDebugEntry> get debugLog => _debugLogController.stream;
   bool get connected => _connected;
@@ -137,9 +147,19 @@ class WsClient extends ChangeNotifier {
   String? get userHome => _userHome;
 
   void updateAuth(AuthService auth) {
+    final wasLoggedIn = _auth?.isLoggedIn ?? false;
     _auth = auth;
     if (!auth.isLoggedIn && _connected) {
       disconnect();
+      return;
+    }
+    // Hoist the WebSocket to open on login (not on workspace entry) so
+    // the workspace list can receive `workspaces_changed` events. Only
+    // kick off a connect on the logged-out -> logged-in transition to
+    // avoid reconnecting on every auth-state rebuild.
+    if (auth.isLoggedIn && !wasLoggedIn) {
+      _autoReconnect = true;
+      connect();
     }
   }
 
@@ -175,6 +195,12 @@ class WsClient extends ChangeNotifier {
 
   Future<void> connect() async {
     debugPrint('[WsClient] connect() enter: ${DateTime.now()}');
+    // Coalesce: if a connect is already in flight, await it rather than
+    // no-op-ing (which would race callers that fire connect() back-to-back,
+    // e.g. updateAuth's auto-connect followed by an explicit connect()).
+    if (_connectFuture != null) {
+      return _connectFuture;
+    }
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     if (_connected || _connecting || _auth?.token == null) {
@@ -184,19 +210,25 @@ class WsClient extends ChangeNotifier {
     }
 
     _connecting = true;
+    _connectFuture = _doConnect();
     try {
-      debugPrint('[WsClient] _waitForServer() start: ${DateTime.now()}');
-      final serverUp = await _waitForServer();
-      debugPrint(
-          '[WsClient] _waitForServer() done: serverUp=$serverUp ${DateTime.now()}');
-      if (!serverUp) {
-        return;
-      }
-
-      return await _connectWs();
+      return await _connectFuture;
     } finally {
       _connecting = false;
+      _connectFuture = null;
     }
+  }
+
+  Future<void> _doConnect() async {
+    debugPrint('[WsClient] _waitForServer() start: ${DateTime.now()}');
+    final serverUp = await _waitForServer();
+    debugPrint(
+        '[WsClient] _waitForServer() done: serverUp=$serverUp ${DateTime.now()}');
+    if (!serverUp) {
+      return;
+    }
+
+    return await _connectWs();
   }
 
   /// Open a WebSocket and wait for it to be ready.  Firefox's
@@ -334,6 +366,8 @@ class WsClient extends ChangeNotifier {
           } else if (type == 'shared_terminal_deleted') {
             _sharedTerminalDeletedController.add(json);
             notifyListeners();
+          } else if (type == 'workspaces_changed') {
+            _workspacesChangedController.add(null);
           } else if (type == 'event') {
             _customEventController.add(json);
           }
@@ -408,7 +442,15 @@ class WsClient extends ChangeNotifier {
   }
 
   void disconnectWorkspace() {
-    _cancelReconnect();
+    // Stop any pending reconnect attempt and clear the workspace we were
+    // in, but keep auto-reconnect enabled: after hoisting the WS to
+    // login it must survive leaving a workspace so the list page keeps
+    // receiving `workspaces_changed` events.
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnecting = false;
+    _reconnectAttempt = 0;
+    _pendingWorkspaceId = null;
     _stopHeartbeat();
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
@@ -622,6 +664,7 @@ class WsClient extends ChangeNotifier {
     _chatHistoryPageController.close();
     _customEventController.close();
     _sharedTerminalDeletedController.close();
+    _workspacesChangedController.close();
     _debugLogController.close();
     super.dispose();
   }

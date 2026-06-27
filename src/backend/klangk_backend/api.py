@@ -1113,6 +1113,7 @@ async def create_workspace(
         if group_name.startswith("owners-"):
             await model.add_user_to_group(user["id"], group["id"])
 
+    wshandler.state.notify_user_workspaces_changed(user["id"])
     return ws
 
 
@@ -1207,6 +1208,10 @@ async def delete_workspace(
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
+    # Capture shared members before we tear down ACL entries, so we can
+    # notify them (and the owner/deleter) that the workspace is gone.
+    members = await model.get_workspace_members(workspace_id)
+
     # Prefer the live container_id from the registry (tracks the currently
     # running container) over the DB value (may be stale if the container
     # was already stopped by idle timeout).
@@ -1230,6 +1235,13 @@ async def delete_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found")
     # Clean up ACL entries for this workspace
     await model.delete_acl_entries_for_resource(f"/workspaces/{workspace_id}")
+    # Notify the deleter, the owner, and any shared members so their
+    # workspace list refreshes (members were fetched above, before the
+    # resource's ACL entries were removed).
+    member_ids = {m["id"] for m in members}
+    member_ids.update({user["id"], workspace["user_id"]})
+    for uid in member_ids:
+        wshandler.state.notify_user_workspaces_changed(uid)
     return {"status": "deleted"}
 
 
@@ -1493,6 +1505,7 @@ async def import_workspace(
     finally:
         os.unlink(tmp.name)
 
+    wshandler.state.notify_user_workspaces_changed(user["id"])
     return ws
 
 
@@ -1582,6 +1595,8 @@ async def add_workspace_member(
         user_id=target["id"],
     )
     await _broadcast_workspace_members(workspace_id)
+    wshandler.state.notify_user_workspaces_changed(user["id"])
+    wshandler.state.notify_user_workspaces_changed(target["id"])
     return {
         "status": "shared",
         "user_id": target["id"],
@@ -1610,6 +1625,8 @@ async def remove_workspace_member(
         entry["position"] = i
     await model.replace_acl_entries(resource, remaining)
     await _broadcast_workspace_members(workspace_id)
+    wshandler.state.notify_user_workspaces_changed(user["id"])
+    wshandler.state.notify_user_workspaces_changed(member_id)
     return {"status": "removed"}
 
 
