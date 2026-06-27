@@ -416,6 +416,96 @@ class TestAgentSession:
 
         assert result == "I had nothing to say."
 
+    async def _run_successful_prompt(self, session):
+        """Drive send_prompt to a successful completion."""
+        events = [
+            _ACK,
+            {"type": "agent_start"},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "ok",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
+        proc = AsyncMock()
+        proc.returncode = None
+        proc.stdin = AsyncMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_data(stdout_data.encode())
+        proc.stdout.feed_eof()
+        proc.stderr = asyncio.StreamReader()
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            result = await session.send_prompt("test")
+        assert result == "ok"
+
+    async def test_send_prompt_resets_restart_state(self):
+        """A successful prompt clears the restart counter so transient past
+        deaths can't accumulate and permanently disable the agent."""
+        session = _make_session("ws-reset")
+        # Two prior restarts: one more death (without a recovery) would
+        # brick the agent. _gave_up stays False — once it's True,
+        # _ensure_started raises before a prompt can ever run.
+        session._restart_attempts = 2
+
+        await self._run_successful_prompt(session)
+
+        assert session._restart_attempts == 0
+        assert session._gave_up is False
+
+    async def test_recovery_then_death_still_restarts(self):
+        """3 deaths -> successful recovery -> a 4th death must still restart,
+        not permanently give up (the bug from #895)."""
+        from klangk_backend import model
+
+        session = _make_session("ws-recover")
+        _agents["ws-recover"] = session
+        # Simulate 3 prior deaths: counter near the limit (one more death
+        # would brick the agent without the reset).
+        session._restart_attempts = 2
+
+        # Recovery: a prompt completes successfully, clearing the counter.
+        await self._run_successful_prompt(session)
+        assert session._restart_attempts == 0
+
+        # A 4th death arrives. The monitor must restart (counter goes 0->1,
+        # gave_up stays False) rather than permanently giving up.
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock()
+        mock_proc.stderr = asyncio.StreamReader()
+        mock_proc.stderr.feed_eof()
+        session._proc = mock_proc
+
+        with (
+            patch.object(
+                model,
+                "add_chat_message",
+                new_callable=AsyncMock,
+                return_value={"id": "m1", "message": "msg"},
+            ),
+            patch(
+                "klangk_backend.agent._get_workspace_session",
+                return_value=MagicMock(),
+            ),
+            patch.object(
+                session,
+                "_ensure_started",
+                new_callable=AsyncMock,
+            ) as mock_start,
+            patch(
+                "klangk_backend.agent.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
+            await session._monitor_process(mock_proc)
+
+            mock_start.assert_awaited_once()
+            assert session._restart_attempts == 1
+            assert session._gave_up is False
+
     async def test_malformed_jsonl_skipped(self):
         """Non-JSON lines are silently skipped."""
         lines = [

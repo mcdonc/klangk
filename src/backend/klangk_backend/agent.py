@@ -283,6 +283,14 @@ class AgentSession:
                     raise AgentProcessDied(
                         f"Agent process exited with code {proc.returncode}"
                     )
+                # A prompt completed end-to-end: the process is healthy,
+                # so recent restart failures no longer count against the
+                # limit. Resetting here keeps the restart counter a
+                # measure of *recent* failures rather than lifetime ones,
+                # so a few transient deaths spread over a long-running
+                # workspace can't permanently disable the agent.
+                self._restart_attempts = 0
+                self._gave_up = False
                 return response
             except asyncio.CancelledError:  # pragma: no cover
                 self._send_abort(proc)
