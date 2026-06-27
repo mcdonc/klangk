@@ -942,6 +942,44 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    async def test_list_pagination(self, client, user):
+        headers = await _auth_headers(client)
+        for name in ["ws-a", "ws-b", "ws-c"]:
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": name},
+            )
+        page1 = await client.get(
+            "/api/v1/workspaces?limit=2&offset=0", headers=headers
+        )
+        assert page1.status_code == 200
+        body1 = page1.json()
+        assert len(body1["items"]) == 2
+        assert body1["has_more"] is True
+        assert body1["next_offset"] == 2
+        page2 = await client.get(
+            f"/api/v1/workspaces?limit=2&offset={body1['next_offset']}",
+            headers=headers,
+        )
+        assert page2.status_code == 200
+        body2 = page2.json()
+        assert len(body2["items"]) == 1
+        assert body2["has_more"] is False
+        assert body2["next_offset"] is None
+
+    async def test_list_pagination_rejects_invalid_limit(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/workspaces?limit=0", headers=headers)
+        assert resp.status_code == 422
+
+    async def test_list_pagination_rejects_invalid_offset(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/v1/workspaces?offset=-1", headers=headers
+        )
+        assert resp.status_code == 422
+
     async def test_create_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -1446,6 +1484,37 @@ class TestWorkspaceSharingRoutes:
         assert len(shared) >= 1
         assert any(w["id"] == ws_id for w in shared)
         assert any(w["owner_email"] == "testuser@example.com" for w in shared)
+
+    async def test_list_shared_no_params_returns_bare_list(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/workspaces/shared", headers=headers)
+        assert resp.status_code == 200
+        # Backward-compatible: no pagination params -> bare list, not envelope.
+        assert isinstance(resp.json(), list)
+
+    async def test_list_shared_pagination_returns_envelope(self, client, user):
+        headers = await _auth_headers(client)
+        await self._create_other_user()
+        other_headers = await self._other_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "shared-pg"}
+        )
+        ws_id = resp.json()["id"]
+        await client.post(
+            f"/api/v1/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        # Paginated request -> envelope shape.
+        resp = await client.get(
+            "/api/v1/workspaces/shared?limit=10&offset=0",
+            headers=other_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert isinstance(body, dict)
+        assert "items" in body and "has_more" in body
+        assert any(w["id"] == ws_id for w in body["items"])
 
     async def test_get_members_empty(self, client, user):
         headers = await _auth_headers(client)
@@ -4585,6 +4654,17 @@ class TestArchiveUserData:
         names = {a.name for a in result}
         assert any("ws-one" in n for n in names)
         assert any("ws-two" in n for n in names)
+
+    async def test_archive_paginates_more_than_one_page(self, user):
+        """Archival pages through every workspace when there are >10."""
+        for i in range(12):
+            ws = await model.create_workspace(user["id"], f"ws-{i:02d}")
+            home = ws_mod.home_path(user["id"], ws["id"])
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "file.txt").write_text("data")
+
+        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        assert len(result) == 12
 
     async def test_archive_no_data_dir(self, user):
         """Returns empty list if user has no data directory."""

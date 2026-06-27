@@ -1160,16 +1160,26 @@ async def create_workspace(
         }
 
 
-async def list_workspaces(user_id: str) -> list[dict]:
+async def list_workspaces(
+    user_id: str, limit: int = 10, offset: int = 0
+) -> dict:
+    """List a page of workspaces owned by ``user_id``, newest first.
+
+    Returns a pagination envelope:
+    ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
+    Ordering is ``created_at, id`` so offset pagination is deterministic
+    even when rows share a timestamp.
+    """
     async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, container_id, image, default_command,"
             " mounts, env, created_at FROM workspaces"
-            " WHERE user_id = ? ORDER BY created_at",
-            (user_id,),
+            " WHERE user_id = ? ORDER BY created_at, id"
+            " LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
         )
         rows = await cursor.fetchall()
-        return [
+        items = [
             {
                 "id": row["id"],
                 "name": row["name"],
@@ -1182,13 +1192,23 @@ async def list_workspaces(user_id: str) -> list[dict]:
             }
             for row in rows
         ]
+        has_more = len(items) == limit
+        return {
+            "items": items,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        }
 
 
-async def list_shared_workspaces(user_id: str) -> list[dict]:
-    """List workspaces shared with (but not owned by) this user via ACL.
+async def list_shared_workspaces(
+    user_id: str, limit: int = 10, offset: int = 0
+) -> dict:
+    """List a page of workspaces shared with (not owned by) this user.
 
-    Finds workspaces where the user has access through either a direct
-    user-level ACE or a group-level ACE on ``/workspaces/{id}``.
+    Access is granted through either a direct user-level ACE or a
+    group-level ACE on ``/workspaces/{id}``. Returns a pagination
+    envelope: ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
+    Ordering is ``created_at, id`` so offset pagination is deterministic.
     """
     async with transaction() as db:
         group_ids = await get_user_group_ids(user_id)
@@ -1211,11 +1231,12 @@ async def list_shared_workspaces(user_id: str) -> list[dict]:
             f"    (ae.principal_type = {PRINCIPAL_USER} AND ae.user_id = ?)"
             f"    {group_clause}"
             "   )"
-            " ORDER BY w.created_at",
-            (ACTION_ALLOW, user_id, user_id, *group_ids),
+            " ORDER BY w.created_at, w.id"
+            " LIMIT ? OFFSET ?",
+            (ACTION_ALLOW, user_id, user_id, *group_ids, limit, offset),
         )
         rows = await cursor.fetchall()
-        return [
+        items = [
             {
                 "id": row["id"],
                 "name": row["name"],
@@ -1229,6 +1250,12 @@ async def list_shared_workspaces(user_id: str) -> list[dict]:
             }
             for row in rows
         ]
+        has_more = len(items) == limit
+        return {
+            "items": items,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        }
 
 
 async def get_workspace(

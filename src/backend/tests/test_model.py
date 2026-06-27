@@ -206,10 +206,39 @@ class TestWorkspaces:
     async def test_list_workspaces(self, user):
         await model.create_workspace(user["id"], "ws1")
         await model.create_workspace(user["id"], "ws2")
-        workspaces = await model.list_workspaces(user["id"])
-        names = [ws["name"] for ws in workspaces]
+        result = await model.list_workspaces(user["id"])
+        names = [ws["name"] for ws in result["items"]]
         assert "ws1" in names
         assert "ws2" in names
+        assert result["has_more"] is False
+        assert result["next_offset"] is None
+
+    async def test_list_workspaces_pagination(self, user):
+        for i in range(3):
+            await model.create_workspace(user["id"], f"ws{i}")
+        # Page size 2: first page has 2 items and signals more.
+        page1 = await model.list_workspaces(user["id"], limit=2, offset=0)
+        assert len(page1["items"]) == 2
+        assert page1["has_more"] is True
+        assert page1["next_offset"] == 2
+        # Second page returns the remaining item, no more.
+        page2 = await model.list_workspaces(
+            user["id"], limit=2, offset=page1["next_offset"]
+        )
+        assert len(page2["items"]) == 1
+        assert page2["has_more"] is False
+        assert page2["next_offset"] is None
+        # No overlap between pages.
+        page1_ids = {ws["id"] for ws in page1["items"]}
+        page2_ids = {ws["id"] for ws in page2["items"]}
+        assert page1_ids.isdisjoint(page2_ids)
+
+    async def test_list_workspaces_offset_beyond_end(self, user):
+        await model.create_workspace(user["id"], "only")
+        result = await model.list_workspaces(user["id"], offset=10)
+        assert result["items"] == []
+        assert result["has_more"] is False
+        assert result["next_offset"] is None
 
     async def test_get_workspace(self, workspace, user):
         found = await model.get_workspace(workspace["id"], user["id"])
@@ -322,15 +351,37 @@ class TestWorkspaceSharing:
     async def test_list_shared_workspaces(self, workspace, user):
         other = await model.create_user("other@example.com", "hash")
         await self._share(workspace["id"], other["id"])
-        shared = await model.list_shared_workspaces(other["id"])
-        assert len(shared) == 1
-        assert shared[0]["id"] == workspace["id"]
-        assert shared[0]["name"] == "test-workspace"
-        assert shared[0]["owner_email"] == user["email"]
+        result = await model.list_shared_workspaces(other["id"])
+        assert len(result["items"]) == 1
+        assert result["items"][0]["id"] == workspace["id"]
+        assert result["items"][0]["name"] == "test-workspace"
+        assert result["items"][0]["owner_email"] == user["email"]
+        assert result["has_more"] is False
+        assert result["next_offset"] is None
 
     async def test_list_shared_workspaces_empty(self, user):
-        shared = await model.list_shared_workspaces(user["id"])
-        assert shared == []
+        result = await model.list_shared_workspaces(user["id"])
+        assert result["items"] == []
+        assert result["has_more"] is False
+        assert result["next_offset"] is None
+
+    async def test_list_shared_workspaces_pagination(self, user):
+        other = await model.create_user("sharer@example.com", "hash")
+        for i in range(3):
+            ws = await model.create_workspace(user["id"], f"shared{i}")
+            await self._share(ws["id"], other["id"])
+        page1 = await model.list_shared_workspaces(
+            other["id"], limit=2, offset=0
+        )
+        assert len(page1["items"]) == 2
+        assert page1["has_more"] is True
+        assert page1["next_offset"] == 2
+        page2 = await model.list_shared_workspaces(
+            other["id"], limit=2, offset=page1["next_offset"]
+        )
+        assert len(page2["items"]) == 1
+        assert page2["has_more"] is False
+        assert page2["next_offset"] is None
 
 
 class TestSearchUsers:
@@ -521,8 +572,8 @@ class TestDefaultCommand:
     async def test_list_includes_mounts(self, user):
         mounts = ["/tmp/test:/work/test"]
         await model.create_workspace(user["id"], "mount-list", mounts=mounts)
-        wss = await model.list_workspaces(user["id"])
-        match = [w for w in wss if w["name"] == "mount-list"]
+        result = await model.list_workspaces(user["id"])
+        match = [w for w in result["items"] if w["name"] == "mount-list"]
         assert match[0]["mounts"] == mounts
 
     async def test_update_ignores_unknown_fields(self, workspace, user):
@@ -539,8 +590,8 @@ class TestDefaultCommand:
         await model.create_workspace(
             user["id"], "cmd-ws", default_command="pi"
         )
-        wss = await model.list_workspaces(user["id"])
-        match = [w for w in wss if w["name"] == "cmd-ws"]
+        result = await model.list_workspaces(user["id"])
+        match = [w for w in result["items"] if w["name"] == "cmd-ws"]
         assert len(match) == 1
         assert match[0]["default_command"] == "pi"
 

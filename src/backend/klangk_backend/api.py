@@ -16,7 +16,14 @@ import io
 
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
@@ -937,13 +944,41 @@ async def oidc_callback(
 
 
 @router.get("/workspaces")
-async def list_workspaces(user: dict = Depends(auth.get_current_user)):
-    return await workspaces.list_workspaces(user["id"])
+async def list_workspaces(
+    user: dict = Depends(auth.get_current_user),
+    limit: int | None = Query(None, ge=1, le=100),
+    offset: int | None = Query(None, ge=0),
+):
+    """List workspaces owned by the user.
+
+    Without ``limit``/``offset`` (backward-compatible) returns a bare list.
+    With pagination params returns an envelope
+    ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
+    """
+    if limit is None and offset is None:
+        return (await workspaces.list_workspaces(user["id"]))["items"]
+    result = await workspaces.list_workspaces(
+        user["id"], limit=limit or 10, offset=offset or 0
+    )
+    return result
 
 
 @router.get("/workspaces/shared")
-async def list_shared_workspaces(user: dict = Depends(auth.get_current_user)):
-    return await model.list_shared_workspaces(user["id"])
+async def list_shared_workspaces(
+    user: dict = Depends(auth.get_current_user),
+    limit: int | None = Query(None, ge=1, le=100),
+    offset: int | None = Query(None, ge=0),
+):
+    """List workspaces shared with the user.
+
+    Without ``limit``/``offset`` (backward-compatible) returns a bare list.
+    With pagination params returns an envelope (see ``list_workspaces``).
+    """
+    if limit is None and offset is None:
+        return (await model.list_shared_workspaces(user["id"]))["items"]
+    return await model.list_shared_workspaces(
+        user["id"], limit=limit or 10, offset=offset or 0
+    )
 
 
 class CreateWorkspaceRequest(BaseModel):

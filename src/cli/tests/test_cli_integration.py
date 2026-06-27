@@ -1077,9 +1077,17 @@ class TestClientLines:
 
         list_resp = MagicMock()
         list_resp.status_code = 200
-        list_resp.json.return_value = [
-            {"id": "ws1", "name": "ws1", "created_at": "2025-01-01T00:00:00Z"}
-        ]
+        list_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "ws1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         del_resp = MagicMock()
         del_resp.status_code = 500
         del_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
@@ -1099,13 +1107,17 @@ class TestClientLines:
 
         list_resp = MagicMock()
         list_resp.status_code = 200
-        list_resp.json.return_value = [
-            {
-                "id": "ws1",
-                "name": "ws1",
-                "created_at": "2025-01-01T00:00:00Z",
-            }
-        ]
+        list_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "ws1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         restart_resp = MagicMock()
         restart_resp.status_code = 200
 
@@ -1116,6 +1128,48 @@ class TestClientLines:
                 client.restart_workspace("ws1")
 
         mock_post.assert_called_once_with("/api/v1/workspaces/ws1/restart")
+
+    def test_list_workspaces_all_pages_traverses_pagination(self):
+        from klangkc.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+
+        page1 = MagicMock()
+        page1.status_code = 200
+        page1.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "ws1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": True,
+            "next_offset": 10,
+        }
+        page2 = MagicMock()
+        page2.status_code = 200
+        page2.json.return_value = {
+            "items": [
+                {
+                    "id": "ws2",
+                    "name": "ws2",
+                    "created_at": "2025-01-02T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
+
+        with patch.object(
+            client, "get", side_effect=[page1, page2]
+        ) as mock_get:
+            workspaces = client.list_workspaces(all_pages=True)
+
+        assert [w.id for w in workspaces] == ["ws1", "ws2"]
+        # Second request must carry the next_offset from page 1.
+        assert mock_get.call_count == 2
+        assert mock_get.call_args_list[1].kwargs["params"]["offset"] == 10
 
 
 class TestImagesCommand:

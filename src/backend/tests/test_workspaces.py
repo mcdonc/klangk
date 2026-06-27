@@ -51,7 +51,7 @@ class TestCreateWorkspace:
 
         # DB record should have been cleaned up
         result = await ws_mod.list_workspaces(user["id"])
-        assert all(ws["name"] != "boom" for ws in result)
+        assert all(ws["name"] != "boom" for ws in result["items"])
 
         # Name should be reusable (proves full cleanup)
         ws = await ws_mod.create_workspace(user["id"], "boom")
@@ -61,16 +61,20 @@ class TestCreateWorkspace:
 class TestListWorkspaces:
     async def test_list_empty(self, user):
         result = await ws_mod.list_workspaces(user["id"])
-        assert result == []
+        assert result == {
+            "items": [],
+            "has_more": False,
+            "next_offset": None,
+        }
 
     async def test_list_multiple(self, user):
         await ws_mod.create_workspace(user["id"], "ws-a")
         await ws_mod.create_workspace(user["id"], "ws-b")
         result = await ws_mod.list_workspaces(user["id"])
-        names = [ws["name"] for ws in result]
+        names = [ws["name"] for ws in result["items"]]
         assert "ws-a" in names
         assert "ws-b" in names
-        assert len(result) == 2
+        assert len(result["items"]) == 2
 
 
 class TestGetWorkspace:

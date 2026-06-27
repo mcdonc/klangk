@@ -1009,18 +1009,22 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995", "valid-token")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = [
-            {
-                "id": "ws1",
-                "name": "alpha",
-                "created_at": "2025-01-01T00:00:00Z",
-            },
-            {
-                "id": "ws2",
-                "name": "beta",
-                "created_at": "2025-06-15T12:00:00Z",
-            },
-        ]
+        mock_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "alpha",
+                    "created_at": "2025-01-01T00:00:00Z",
+                },
+                {
+                    "id": "ws2",
+                    "name": "beta",
+                    "created_at": "2025-06-15T12:00:00Z",
+                },
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         with patch.object(client, "get", return_value=mock_resp):
             workspaces = client.list_workspaces()
         assert len(workspaces) == 2
@@ -1031,14 +1035,18 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995", "valid-token")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = [
-            {
-                "id": "ws1",
-                "name": "shared-alpha",
-                "created_at": "2025-01-01T00:00:00Z",
-                "owner_email": "owner@example.com",
-            },
-        ]
+        mock_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "shared-alpha",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "owner_email": "owner@example.com",
+                },
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         with patch.object(client, "get", return_value=mock_resp):
             workspaces = client.list_shared_workspaces()
         assert len(workspaces) == 1
@@ -1063,7 +1071,11 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = []
+        mock_resp.json.return_value = {
+            "items": [],
+            "has_more": False,
+            "next_offset": None,
+        }
         with patch.object(client, "get", return_value=mock_resp):
             with pytest.raises(WorkspaceNotFoundError):
                 client.delete_workspace("nonexistent")
@@ -1072,13 +1084,17 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995", "token")
         list_resp = MagicMock()
         list_resp.status_code = 200
-        list_resp.json.return_value = [
-            {
-                "id": "ws-to-delete",
-                "name": "gone",
-                "created_at": "2025-01-01T00:00:00Z",
-            }
-        ]
+        list_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws-to-delete",
+                    "name": "gone",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         del_resp = MagicMock()
         del_resp.status_code = 204
         with patch.object(client, "get", return_value=list_resp):
@@ -1094,12 +1110,24 @@ class TestKlangkClient:
         """Return (owned_resp, shared_resp) mocks for resolve_workspace."""
         owned = MagicMock()
         owned.status_code = 200
-        owned.json.return_value = [
-            {"id": "ws-1", "name": "my-ws", "created_at": "2025-01-01"}
-        ]
+        owned.json.return_value = {
+            "items": [
+                {
+                    "id": "ws-1",
+                    "name": "my-ws",
+                    "created_at": "2025-01-01",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         shared = MagicMock()
         shared.status_code = 200
-        shared.json.return_value = []
+        shared.json.return_value = {
+            "items": [],
+            "has_more": False,
+            "next_offset": None,
+        }
         return owned, shared
 
     def test_list_workspace_members(self):
@@ -1156,18 +1184,22 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = [
-            {
-                "id": "ws1",
-                "name": "alpha",
-                "created_at": "2025-01-01T00:00:00Z",
-            },
-            {
-                "id": "ws2",
-                "name": "beta",
-                "created_at": "2025-01-01T00:00:00Z",
-            },
-        ]
+        mock_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "alpha",
+                    "created_at": "2025-01-01T00:00:00Z",
+                },
+                {
+                    "id": "ws2",
+                    "name": "beta",
+                    "created_at": "2025-01-01T00:00:00Z",
+                },
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         with patch.object(client, "get", return_value=mock_resp):
             ws = client.resolve_workspace("beta")
         assert ws.id == "ws2"
@@ -1176,13 +1208,17 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = [
-            {
-                "id": "ws1",
-                "name": "alpha",
-                "created_at": "2025-01-01T00:00:00Z",
-            }
-        ]
+        mock_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "alpha",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         with patch.object(client, "get", return_value=mock_resp):
             with pytest.raises(WorkspaceNotFoundError):
                 client.resolve_workspace("nonexistent")
@@ -1191,9 +1227,17 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995", "token")
         list_resp = MagicMock()
         list_resp.status_code = 200
-        list_resp.json.return_value = [
-            {"id": "ws1", "name": "ws1", "created_at": "2025-01-01T00:00:00Z"}
-        ]
+        list_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "ws1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         del_resp = MagicMock()
         del_resp.status_code = 401
         with patch.object(client, "get", return_value=list_resp):
@@ -1205,9 +1249,17 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995", "token")
         list_resp = MagicMock()
         list_resp.status_code = 200
-        list_resp.json.return_value = [
-            {"id": "ws1", "name": "ws1", "created_at": "2025-01-01T00:00:00Z"}
-        ]
+        list_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "ws1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
         del_resp = MagicMock()
         del_resp.status_code = 500
         del_resp.raise_for_status.side_effect = httpx.HTTPStatusError(

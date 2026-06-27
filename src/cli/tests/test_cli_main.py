@@ -359,6 +359,42 @@ class TestMainCLI:
         assert "my-workspace" in output
         assert "2025-01-01" in output
 
+    def test_list_workspaces_all_passes_pagination_flag(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangkc import main
+
+        client = MagicMock()
+        client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = []
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        main.list_workspaces(limit=10, all_workspaces=True, shared=True)
+
+        client.list_workspaces.assert_called_once_with(
+            limit=10, all_pages=True
+        )
+        client.list_shared_workspaces.assert_called_once_with(
+            limit=10, all_pages=True
+        )
+
+    def test_list_workspaces_limit_forwarded(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = []
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        main.list_workspaces(limit=50, all_workspaces=False, shared=True)
+
+        client.list_workspaces.assert_called_once_with(
+            limit=50, all_pages=False
+        )
+        client.list_shared_workspaces.assert_called_once_with(
+            limit=50, all_pages=False
+        )
+
     def test_create_workspace(self, logged_in_cfg, monkeypatch):
         from io import StringIO
 
