@@ -7,6 +7,7 @@ import os
 import posixpath
 import secrets
 import shutil
+from typing import Literal
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 import subprocess
 import tempfile
@@ -948,18 +949,28 @@ async def list_workspaces(
     user: dict = Depends(auth.get_current_user),
     limit: int | None = Query(None, ge=1, le=100),
     offset: int | None = Query(None, ge=0),
+    sort: Literal["name", "created"] = Query("created"),
+    order: Literal["asc", "desc"] = Query("desc"),
+    q: str | None = Query(None),
 ):
     """List workspaces owned by the user.
 
     Without ``limit``/``offset`` (backward-compatible) returns a bare list.
     With pagination params returns an envelope
     ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
+    ``sort`` (``name``/``created``), ``order`` (``asc``/``desc``) and ``q``
+    (name substring) apply in both shapes.
     """
-    if limit is None and offset is None:
-        return (await workspaces.list_workspaces(user["id"]))["items"]
     result = await workspaces.list_workspaces(
-        user["id"], limit=limit or 10, offset=offset or 0
+        user["id"],
+        limit=limit or 10,
+        offset=offset or 0,
+        sort=sort,
+        order=order,
+        q=q,
     )
+    if limit is None and offset is None:
+        return result["items"]
     return result
 
 
@@ -968,17 +979,26 @@ async def list_shared_workspaces(
     user: dict = Depends(auth.get_current_user),
     limit: int | None = Query(None, ge=1, le=100),
     offset: int | None = Query(None, ge=0),
+    sort: Literal["name", "created"] = Query("created"),
+    order: Literal["asc", "desc"] = Query("desc"),
+    q: str | None = Query(None),
 ):
     """List workspaces shared with the user.
 
     Without ``limit``/``offset`` (backward-compatible) returns a bare list.
     With pagination params returns an envelope (see ``list_workspaces``).
     """
-    if limit is None and offset is None:
-        return (await model.list_shared_workspaces(user["id"]))["items"]
-    return await model.list_shared_workspaces(
-        user["id"], limit=limit or 10, offset=offset or 0
+    result = await model.list_shared_workspaces(
+        user["id"],
+        limit=limit or 10,
+        offset=offset or 0,
+        sort=sort,
+        order=order,
+        q=q,
     )
+    if limit is None and offset is None:
+        return result["items"]
+    return result
 
 
 class CreateWorkspaceRequest(BaseModel):

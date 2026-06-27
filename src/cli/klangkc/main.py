@@ -209,17 +209,45 @@ def list_workspaces(
     all_workspaces: bool = typer.Option(
         False, "--all", help="List every workspace (follow pagination)"
     ),
+    sort: str = typer.Option(
+        "created",
+        "--sort",
+        help="Sort by 'created' or 'name'",
+    ),
+    order: str = typer.Option(
+        "desc",
+        "--order",
+        help="Sort direction: 'asc' or 'desc'",
+    ),
+    filter: str = typer.Option(
+        None,
+        "--filter",
+        help="Substring filter on workspace name",
+    ),
 ) -> None:
     """List workspaces.
 
     Lists one page at a time (default 10). Pass --all to page through
-    every workspace.
+    every workspace. Sort with --sort/--order and filter by name substring
+    with --filter.
     """
     _require_auth()
     client = _client()
-    workspaces = client.list_workspaces(limit=limit, all_pages=all_workspaces)
+    workspaces = client.list_workspaces(
+        limit=limit,
+        all_pages=all_workspaces,
+        sort=sort,
+        order=order,
+        q=filter,
+    )
     shared_workspaces = (
-        client.list_shared_workspaces(limit=limit, all_pages=all_workspaces)
+        client.list_shared_workspaces(
+            limit=limit,
+            all_pages=all_workspaces,
+            sort=sort,
+            order=order,
+            q=filter,
+        )
         if shared
         else []
     )

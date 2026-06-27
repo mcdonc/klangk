@@ -1171,6 +1171,24 @@ class TestClientLines:
         assert mock_get.call_count == 2
         assert mock_get.call_args_list[1].kwargs["params"]["offset"] == 10
 
+    def test_list_workspaces_sort_order_q_forwarded(self):
+        from klangkc.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "items": [],
+            "has_more": False,
+            "next_offset": None,
+        }
+        with patch.object(client, "get", return_value=resp) as mock_get:
+            client.list_workspaces(sort="name", order="asc", q="gamma")
+        params = mock_get.call_args.kwargs["params"]
+        assert params["sort"] == "name"
+        assert params["order"] == "asc"
+        assert params["q"] == "gamma"
+
 
 class TestImagesCommand:
     def test_images_lists_allowed(self, monkeypatch):
