@@ -13,6 +13,13 @@ import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_frontend/widgets/klangk_logo.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
+/// Wrap a workspace list in the pagination envelope returned by the API.
+dynamic _envelope(dynamic items) => {
+      'items': items,
+      'has_more': false,
+      'next_offset': null,
+    };
+
 /// A WsClient whose workspacesChanged stream can be driven from tests.
 class _MockWsClient extends WsClient {
   final StreamController<void> _workspacesChanged =
@@ -67,10 +74,10 @@ void main() {
   http.Client defaultMockClient() {
     return withPermissions((request) async {
       if (request.url.path == '/api/v1/workspaces') {
-        return http.Response(jsonEncode([]), 200);
+        return http.Response(jsonEncode(_envelope([])), 200);
       }
       if (request.url.path == '/api/v1/workspaces/shared') {
-        return http.Response(jsonEncode([]), 200);
+        return http.Response(jsonEncode(_envelope([])), 200);
       }
       return http.Response('Not found', 404);
     });
@@ -143,13 +150,13 @@ void main() {
                   {'id': 'ws-1', 'name': 'appeared', 'created_at': ''}
                 ]
               : [];
-          return http.Response(jsonEncode(list), 200);
+          return http.Response(jsonEncode(_envelope(list)), 200);
         }
         if (request.url.path == '/api/v1/workspaces/ws-1/members') {
           return http.Response(jsonEncode([]), 200);
         }
         if (request.url.path == '/api/v1/workspaces/shared') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -184,10 +191,10 @@ void main() {
       testAuthHttpClientOverride = withPermissions(
         (request) async {
           if (request.url.path == '/api/v1/workspaces') {
-            return http.Response(jsonEncode([]), 200);
+            return http.Response(jsonEncode(_envelope([])), 200);
           }
           if (request.url.path == '/api/v1/workspaces/shared') {
-            return http.Response(jsonEncode([]), 200);
+            return http.Response(jsonEncode(_envelope([])), 200);
           }
           return http.Response('Not found', 404);
         },
@@ -220,7 +227,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'Project A',
@@ -233,7 +240,7 @@ void main() {
                 'container_id': null,
                 'created_at': '2026-06-02 09:00:00'
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -255,14 +262,14 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'Shared Project',
                 'container_id': null,
                 'created_at': '2026-01-15 14:30:00',
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -293,20 +300,20 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'My Project',
                 'container_id': null,
                 'created_at': '2026-01-15 14:30:00',
               },
-            ]),
+            ])),
             200,
           );
         }
         if (request.url.path == '/api/v1/workspaces/shared') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-shared-1',
                 'name': 'Team Project',
@@ -321,7 +328,7 @@ void main() {
                 'created_at': '2026-03-01 10:00:00',
                 'owner_email': 'bob@example.com',
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -342,15 +349,149 @@ void main() {
       expect(find.byIcon(Icons.terminal), findsNWidgets(3));
     });
 
+    testWidgets('load more appends next page and hides when done',
+        (tester) async {
+      // Page 1: 1 workspace, signals more. Page 2 (offset=10): 1 more,
+      // no more. The mock branches on the offset query param.
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          final offset = int.parse(
+            request.url.queryParameters['offset'] ?? '0',
+          );
+          if (offset == 0) {
+            return http.Response(
+              jsonEncode({
+                'items': [
+                  {
+                    'id': 'ws-1',
+                    'name': 'First',
+                    'container_id': null,
+                    'created_at': '2026-01-01',
+                  },
+                ],
+                'has_more': true,
+                'next_offset': 10,
+              }),
+              200,
+            );
+          }
+          return http.Response(
+            jsonEncode({
+              'items': [
+                {
+                  'id': 'ws-2',
+                  'name': 'Second',
+                  'container_id': null,
+                  'created_at': '2026-02-01',
+                },
+              ],
+              'has_more': false,
+              'next_offset': null,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/ws-1/members' ||
+            request.url.path == '/api/v1/workspaces/ws-2/members') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      // First page rendered, "Load more" shown.
+      expect(find.text('First'), findsOneWidget);
+      expect(find.text('Second'), findsNothing);
+      expect(find.text('Load more workspaces'), findsOneWidget);
+
+      // Tap load more → second page appended, control disappears.
+      await tester.tap(find.text('Load more workspaces'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('First'), findsOneWidget);
+      expect(find.text('Second'), findsOneWidget);
+      expect(find.text('Load more workspaces'), findsNothing);
+    });
+
+    testWidgets('load more works for the shared section', (tester) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          final offset = int.parse(
+            request.url.queryParameters['offset'] ?? '0',
+          );
+          if (offset == 0) {
+            return http.Response(
+              jsonEncode({
+                'items': [
+                  {
+                    'id': 'sh-1',
+                    'name': 'Shared First',
+                    'container_id': null,
+                    'created_at': '2026-01-01',
+                    'owner_email': 'a@example.com',
+                  },
+                ],
+                'has_more': true,
+                'next_offset': 10,
+              }),
+              200,
+            );
+          }
+          return http.Response(
+            jsonEncode({
+              'items': [
+                {
+                  'id': 'sh-2',
+                  'name': 'Shared Second',
+                  'container_id': null,
+                  'created_at': '2026-02-01',
+                  'owner_email': 'b@example.com',
+                },
+              ],
+              'has_more': false,
+              'next_offset': null,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/workspaces/sh-1/members' ||
+            request.url.path == '/api/v1/workspaces/sh-2/members') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Shared First'), findsOneWidget);
+      expect(find.text('Load more shared workspaces'), findsOneWidget);
+
+      await tester.tap(find.text('Load more shared workspaces'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Shared First'), findsOneWidget);
+      expect(find.text('Shared Second'), findsOneWidget);
+      expect(find.text('Load more shared workspaces'), findsNothing);
+    });
+
     testWidgets('shows only shared section when no owned workspaces',
         (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces/shared') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-s1',
                 'name': 'Guest Project',
@@ -358,7 +499,7 @@ void main() {
                 'created_at': '2026-03-01 08:00:00',
                 'owner_email': 'owner@example.com',
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -378,7 +519,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'No Date',
@@ -403,7 +544,7 @@ void main() {
                 'container_id': null,
                 'created_at': '2026-03-01 00:15:00'
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -422,7 +563,7 @@ void main() {
     testWidgets('shows empty state when no workspaces', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -437,14 +578,14 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'Test WS',
                 'container_id': null,
                 'created_at': '2026-01-01'
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -469,7 +610,7 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
       // Complete the request so the test can clean up
-      completer.complete(http.Response(jsonEncode([]), 200));
+      completer.complete(http.Response(jsonEncode(_envelope([])), 200));
       await tester.pumpAndSettle();
     });
 
@@ -488,14 +629,14 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'My Project',
                 'container_id': null,
                 'created_at': '2026-03-15'
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -512,7 +653,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -532,7 +673,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -551,7 +692,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -572,14 +713,14 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'To Delete',
                 'container_id': null,
                 'created_at': '2026-01-01'
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -602,14 +743,14 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'Keep Me',
                 'container_id': null,
                 'created_at': '2026-01-01'
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -633,14 +774,14 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'WS 1',
                 'container_id': null,
                 'created_at': '2026-01-01'
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -662,7 +803,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -680,18 +821,18 @@ void main() {
             request.method == 'GET') {
           if (postCalled) {
             return http.Response(
-              jsonEncode([
+              jsonEncode(_envelope([
                 {
                   'id': 'ws-new',
                   'name': 'New WS',
                   'container_id': null,
                   'created_at': '2026-05-21',
                 },
-              ]),
+              ])),
               200,
             );
           }
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -729,7 +870,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -760,17 +901,17 @@ void main() {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
           if (deleteCalled) {
-            return http.Response(jsonEncode([]), 200);
+            return http.Response(jsonEncode(_envelope([])), 200);
           }
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'Doomed',
                 'container_id': null,
                 'created_at': '2026-01-01',
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -805,14 +946,14 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-42',
                 'name': 'Nav Test',
                 'container_id': null,
                 'created_at': '2026-01-01',
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -866,7 +1007,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions(
         (request) async {
           if (request.url.path == '/api/v1/workspaces') {
-            return http.Response(jsonEncode([]), 200);
+            return http.Response(jsonEncode(_envelope([])), 200);
           }
           return http.Response('Not found', 404);
         },
@@ -895,7 +1036,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions(
         (request) async {
           if (request.url.path == '/api/v1/workspaces') {
-            return http.Response(jsonEncode([]), 200);
+            return http.Response(jsonEncode(_envelope([])), 200);
           }
           return http.Response('Not found', 404);
         },
@@ -918,18 +1059,18 @@ void main() {
             request.method == 'GET') {
           if (postCalled) {
             return http.Response(
-              jsonEncode([
+              jsonEncode(_envelope([
                 {
                   'id': 'ws-sub',
                   'name': 'Submitted',
                   'container_id': null,
                   'created_at': '2026-05-21',
                 },
-              ]),
+              ])),
               200,
             );
           }
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -967,7 +1108,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/images' && request.method == 'GET') {
           return http.Response(
@@ -1025,7 +1166,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -1069,18 +1210,18 @@ void main() {
             request.method == 'GET') {
           if (postCalled) {
             return http.Response(
-              jsonEncode([
+              jsonEncode(_envelope([
                 {
                   'id': 'ws-cmd2',
                   'name': 'CmdSubmit',
                   'container_id': null,
                   'created_at': '2026-05-28',
                 },
-              ]),
+              ])),
               200,
             );
           }
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -1118,7 +1259,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -1146,14 +1287,14 @@ void main() {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
           return http.Response(
-            jsonEncode([
+            jsonEncode(_envelope([
               {
                 'id': 'ws-1',
                 'name': 'Doomed',
                 'container_id': null,
                 'created_at': '2026-01-01',
               },
-            ]),
+            ])),
             200,
           );
         }
@@ -1180,7 +1321,7 @@ void main() {
       var logoutCalled = false;
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/auth/logout') {
           logoutCalled = true;
@@ -1223,7 +1364,7 @@ void main() {
     testWidgets('logout with oidc redirect calls navigateTo', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/auth/logout') {
           return http.Response(
@@ -1270,7 +1411,7 @@ void main() {
     testWidgets('title tap navigates to home', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -1322,7 +1463,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions(
         (request) async {
           if (request.url.path == '/api/v1/workspaces') {
-            return http.Response(jsonEncode([]), 200);
+            return http.Response(jsonEncode(_envelope([])), 200);
           }
           return http.Response('Not found', 404);
         },
@@ -1375,7 +1516,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -1441,7 +1582,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -1485,7 +1626,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -1534,7 +1675,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'POST') {
@@ -1591,7 +1732,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -1626,7 +1767,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -1657,7 +1798,7 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(jsonEncode(_envelope([])), 200);
         }
         return http.Response('Not found', 404);
       });
