@@ -4913,6 +4913,95 @@ class TestShareWindowHandlers:
         assert not await conn._has_perm("view")
 
 
+class TestFindWindow:
+    """Direct tests for the extracted _find_window helper (#899).
+
+    Locks its contract independently of the handlers that call it.
+    In particular the shared=True branch, where a window that exists
+    but is not shared must be rejected — previously covered, if at
+    all, only incidentally through the join handlers.
+    """
+
+    def _setup(self, user, windows):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        session = wshandler.state.get_or_create_session("ws-find")
+        if windows is not None:
+            session.terminal_windows[user["id"]] = windows
+        return sock, conn, session
+
+    def _messages(self, sock):
+        return [c[0][0] for c in sock.send_json.call_args_list]
+
+    async def test_found_returns_window(self, user):
+        sock, conn, session = self._setup(
+            user, [{"id": "@0", "name": "a", "shared": False}]
+        )
+        try:
+            assert (
+                conn._find_window(session, user["id"], "@0")
+                == (session.terminal_windows[user["id"]][0])
+            )
+            assert self._messages(sock) == []
+        finally:
+            wshandler.state.sessions.pop("ws-find", None)
+
+    async def test_not_found_sends_error_and_returns_none(self, user):
+        sock, conn, session = self._setup(user, [])
+        try:
+            assert conn._find_window(session, user["id"], "@99") is None
+            assert self._messages(sock) == [
+                {"type": "error", "message": "Window not found"}
+            ]
+        finally:
+            wshandler.state.sessions.pop("ws-find", None)
+
+    async def test_shared_true_finds_shared_window(self, user):
+        sock, conn, session = self._setup(
+            user, [{"id": "@0", "name": "a", "shared": True}]
+        )
+        try:
+            found = conn._find_window(session, user["id"], "@0", shared=True)
+            assert found is not None
+            assert found["name"] == "a"
+        finally:
+            wshandler.state.sessions.pop("ws-find", None)
+
+    async def test_shared_true_rejects_unshared_window(self, user):
+        """A present-but-unshared window is treated as not found."""
+        sock, conn, session = self._setup(
+            user, [{"id": "@0", "name": "a", "shared": False}]
+        )
+        try:
+            assert (
+                conn._find_window(session, user["id"], "@0", shared=True)
+                is None
+            )
+            assert self._messages(sock) == [
+                {"type": "error", "message": "Window not found"}
+            ]
+        finally:
+            wshandler.state.sessions.pop("ws-find", None)
+
+    async def test_custom_error_message(self, user):
+        sock, conn, session = self._setup(user, [])
+        try:
+            assert (
+                conn._find_window(
+                    session,
+                    user["id"],
+                    "@99",
+                    error_msg="Shared terminal not found",
+                )
+                is None
+            )
+            assert self._messages(sock) == [
+                {"type": "error", "message": "Shared terminal not found"}
+            ]
+        finally:
+            wshandler.state.sessions.pop("ws-find", None)
+
+
 class TestFractionalTimeout:
     async def test_fractional_timeout_display(
         self, user, monkeypatch, agent_user
