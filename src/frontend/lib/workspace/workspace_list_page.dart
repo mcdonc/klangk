@@ -74,7 +74,7 @@ class _Section {
 }
 
 class _WorkspaceListPageState extends State<WorkspaceListPage> {
-  static const int _pageSize = 10;
+  static const int _pageSize = 5;
 
   /// Per-section pagination state. Owned and shared lists come from
   /// different queries with independent cursors, so each section tracks
@@ -837,6 +837,69 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (_shared.workspaces.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              border: Border.all(color: KColors.borderDefault),
+              borderRadius: BorderRadius.circular(8),
+              color: KColors.bgSurface,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.folder_shared,
+                        size: 18,
+                        color: KColors.textSecondary,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Shared with Me',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: KColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                ..._shared.workspaces.asMap().entries.map(
+                      (e) => Material(
+                        color: e.key.isEven
+                            ? Colors.white.withValues(alpha: 0.03)
+                            : Colors.transparent,
+                        child: ListTile(
+                          leading: const Icon(
+                            Icons.terminal,
+                            size: 20,
+                            color: KColors.accentBlue,
+                          ),
+                          title: Text(e.value['name'] as String),
+                          subtitle: Text(
+                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
+                          ),
+                          // coverage:ignore-start
+                          onTap: () =>
+                              context.go('/workspace/${e.value['id']}'),
+                          // coverage:ignore-end
+                        ),
+                      ),
+                    ),
+                _loadMoreButton(
+                  'Load more shared workspaces',
+                  enabled: _shared.hasMore,
+                  loading: _shared.loadingMore,
+                  onPressed: () => _loadMore(_shared),
+                ),
+              ],
+            ),
+          ),
         if (_owned.workspaces.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(bottom: 16),
@@ -936,68 +999,6 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   enabled: _owned.hasMore,
                   loading: _owned.loadingMore,
                   onPressed: () => _loadMore(_owned),
-                ),
-              ],
-            ),
-          ),
-        if (_shared.workspaces.isNotEmpty)
-          Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: KColors.borderDefault),
-              borderRadius: BorderRadius.circular(8),
-              color: KColors.bgSurface,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.folder_shared,
-                        size: 18,
-                        color: KColors.textSecondary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Shared with Me',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: KColors.textPrimary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                ..._shared.workspaces.asMap().entries.map(
-                      (e) => Material(
-                        color: e.key.isEven
-                            ? Colors.white.withValues(alpha: 0.03)
-                            : Colors.transparent,
-                        child: ListTile(
-                          leading: const Icon(
-                            Icons.terminal,
-                            size: 20,
-                            color: KColors.accentBlue,
-                          ),
-                          title: Text(e.value['name'] as String),
-                          subtitle: Text(
-                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
-                          ),
-                          // coverage:ignore-start
-                          onTap: () =>
-                              context.go('/workspace/${e.value['id']}'),
-                          // coverage:ignore-end
-                        ),
-                      ),
-                    ),
-                _loadMoreButton(
-                  'Load more shared workspaces',
-                  enabled: _shared.hasMore,
-                  loading: _shared.loadingMore,
-                  onPressed: () => _loadMore(_shared),
                 ),
               ],
             ),
