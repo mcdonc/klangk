@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -88,6 +89,37 @@ def _base_conn(user=None, ws=None):
             "handle": "testuser",
         }
     return Connection(ws, user)
+
+
+@asynccontextmanager
+async def _conn_in_workspace(
+    user,
+    workspace_id: str = "ws-1",
+    *,
+    container_id: str = "cid",
+    user_home: str | None = None,
+):
+    """Yield ``(sock, conn, session)`` registered in workspace state.
+
+    Creates a mock socket and Connection, registers it as a subscriber
+    of a fresh WorkspaceSession, and tears the registration down on exit.
+    The yielded ``session`` may be mutated (e.g. ``terminal_windows``)
+    by the caller before use.
+    """
+    sock = _mock_sock()
+    conn = _base_conn(user=user, ws=sock)
+    conn.workspace_id = workspace_id
+    conn.container_id = container_id
+    conn._user_home = user_home
+    session = wshandler.state.get_or_create_session(workspace_id)
+    await session.add_subscriber(sock, container_id)
+    wshandler.state.connections[sock] = conn
+    try:
+        yield sock, conn, session
+    finally:
+        await session.remove_subscriber(sock)
+        wshandler.state.connections.pop(sock, None)
+        wshandler.state.sessions.pop(workspace_id, None)
 
 
 async def _create_workspace_with_acl(user_id, name, **kwargs):
@@ -3885,19 +3917,13 @@ class TestTerminalWindowHandlers:
 
     async def test_close_shared_window_broadcasts(self, user):
         """Closing a shared window broadcasts updated shared_terminals."""
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        conn.container_id = "cid"
-        conn._user_home = "/home/admin"
-        conn.workspace_id = "ws-1"
-        session = wshandler.state.get_or_create_session("ws-1")
-        session.terminal_windows[user["id"]] = [
-            {"name": "bash", "index": 0, "id": "@0", "shared": True},
-            {"name": "1", "index": 1, "id": "@1", "shared": False},
-        ]
-        await session.add_subscriber(sock, "cid")
-        wshandler.state.connections[sock] = conn
-        try:
+        async with _conn_in_workspace(
+            user, "ws-1", user_home="/home/admin"
+        ) as (sock, conn, session):
+            session.terminal_windows[user["id"]] = [
+                {"name": "bash", "index": 0, "id": "@0", "shared": True},
+                {"name": "1", "index": 1, "id": "@1", "shared": False},
+            ]
             with patch(
                 "klangk_backend.terminal.close_window",
                 return_value=[
@@ -3913,9 +3939,6 @@ class TestTerminalWindowHandlers:
             assert len(shared_msgs) >= 1
             # The remaining window "1" is not shared
             assert shared_msgs[-1]["terminals"] == []
-        finally:
-            wshandler.state.sessions.pop("ws-1", None)
-            wshandler.state.connections.pop(sock, None)
 
     async def test_close_window_error(self):
         sock = _mock_sock()
@@ -4079,19 +4102,13 @@ class TestShareWindowHandlers:
             wshandler.state.sessions.pop("ws-1", None)
 
     async def test_list_shared_terminals(self, user, temp_data_dir):
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        conn.workspace_id = "ws-1"
-        conn.container_id = "cid"
-        conn._user_home = "/home/admin"
-        session = wshandler.state.get_or_create_session("ws-1")
-        session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "id": "@0", "shared": False},
-            {"name": "build", "index": 1, "id": "@1", "shared": True},
-        ]
-        await session.add_subscriber(sock, "cid")
-        wshandler.state.connections[sock] = conn
-        try:
+        async with _conn_in_workspace(
+            user, "ws-1", user_home="/home/admin"
+        ) as (sock, conn, session):
+            session.terminal_windows[user["id"]] = [
+                {"name": "1", "index": 0, "id": "@0", "shared": False},
+                {"name": "build", "index": 1, "id": "@1", "shared": True},
+            ]
             with patch(
                 "klangk_backend.acl.check_permission", return_value=True
             ):
@@ -4104,9 +4121,6 @@ class TestShareWindowHandlers:
             assert terminals[0]["window_name"] == "build"
             assert terminals[0]["user_id"] == user["id"]
             assert terminals[0]["handle"] == user["handle"]
-        finally:
-            wshandler.state.sessions.pop("ws-1", None)
-            wshandler.state.connections.pop(sock, None)
 
     async def test_shared_terminals_include_viewers(self, user, temp_data_dir):
         """shared_terminals response includes viewer list."""
@@ -4156,40 +4170,24 @@ class TestShareWindowHandlers:
 
     async def test_stop_terminal_broadcasts_viewer_change(self, user):
         """Stopping a terminal that was viewing shared broadcasts update."""
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        conn.workspace_id = "ws-sv"
-        conn.container_id = "cid"
-        conn._user_home = "/home/admin"
-        conn._viewing_shared = {"user_id": "owner-1", "window_id": "@0"}
-
-        session = wshandler.state.get_or_create_session("ws-sv")
-        await session.add_subscriber(sock, "cid")
-        wshandler.state.connections[sock] = conn
-        try:
+        async with _conn_in_workspace(
+            user, "ws-sv", user_home="/home/admin"
+        ) as (sock, conn, session):
+            conn._viewing_shared = {"user_id": "owner-1", "window_id": "@0"}
             await conn.stop_terminal()
             assert conn._viewing_shared is None
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             shared = [c for c in calls if c.get("type") == "shared_terminals"]
             assert len(shared) == 1
-        finally:
-            wshandler.state.sessions.pop("ws-sv", None)
-            wshandler.state.connections.pop(sock, None)
 
     async def test_create_shared_terminal_legacy(self, user, temp_data_dir):
         """Legacy create_shared_terminal creates a window and marks it shared."""
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        conn.workspace_id = "ws-1"
-        conn.container_id = "cid"
-        conn._user_home = "/home/admin"
-        session = wshandler.state.get_or_create_session("ws-1")
-        session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "id": "@0", "shared": False}
-        ]
-        await session.add_subscriber(sock, "cid")
-        wshandler.state.connections[sock] = conn
-        try:
+        async with _conn_in_workspace(
+            user, "ws-1", user_home="/home/admin"
+        ) as (sock, conn, session):
+            session.terminal_windows[user["id"]] = [
+                {"name": "1", "index": 0, "id": "@0", "shared": False}
+            ]
             with (
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
@@ -4215,9 +4213,6 @@ class TestShareWindowHandlers:
             assert dev["id"] == "@1"
             orig = next(w for w in windows if w["name"] == "1")
             assert orig["shared"] is False
-        finally:
-            wshandler.state.sessions.pop("ws-1", None)
-            wshandler.state.connections.pop(sock, None)
 
     async def test_share_window_no_container(self, user):
         conn = _base_conn(user=user)
@@ -4657,19 +4652,13 @@ class TestShareWindowHandlers:
             wshandler.state.sessions.pop("ws-1", None)
 
     async def test_delete_shared_terminal(self, user, temp_data_dir):
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        conn.workspace_id = "ws-1"
-        conn.container_id = "cid"
-        conn._user_home = "/home/admin"
-        session = wshandler.state.get_or_create_session("ws-1")
-        session.terminal_windows[user["id"]] = [
-            {"name": "1", "index": 0, "id": "@0", "shared": False},
-            {"name": "build", "index": 1, "id": "@1", "shared": True},
-        ]
-        await session.add_subscriber(sock, "cid")
-        wshandler.state.connections[sock] = conn
-        try:
+        async with _conn_in_workspace(
+            user, "ws-1", user_home="/home/admin"
+        ) as (sock, conn, session):
+            session.terminal_windows[user["id"]] = [
+                {"name": "1", "index": 0, "id": "@0", "shared": False},
+                {"name": "build", "index": 1, "id": "@1", "shared": True},
+            ]
             with (
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
@@ -4683,9 +4672,6 @@ class TestShareWindowHandlers:
             windows = session.terminal_windows[user["id"]]
             assert len(windows) == 1
             assert windows[0]["name"] == "1"
-        finally:
-            wshandler.state.sessions.pop("ws-1", None)
-            wshandler.state.connections.pop(sock, None)
 
     async def test_delete_shared_terminal_no_container(self, user):
         conn = _base_conn(user=user)
@@ -4779,17 +4765,14 @@ class TestShareWindowHandlers:
         )
         # Workspace owned by the caller (`user`).
         workspace = await model.create_workspace(user["id"], "ws-mine")
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        conn.container_id = "cid"
-        conn.workspace_id = workspace["id"]
-        session = wshandler.state.get_or_create_session(workspace["id"])
-        session.terminal_windows[other["id"]] = [
-            {"name": "build", "index": 0, "id": "@0", "shared": True},
-        ]
-        await session.add_subscriber(sock, "cid")
-        wshandler.state.connections[sock] = conn
-        try:
+        async with _conn_in_workspace(user, workspace["id"]) as (
+            sock,
+            conn,
+            session,
+        ):
+            session.terminal_windows[other["id"]] = [
+                {"name": "build", "index": 0, "id": "@0", "shared": True},
+            ]
             with (
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
@@ -4801,9 +4784,6 @@ class TestShareWindowHandlers:
                     {"user_id": other["id"], "window_id": "@0"}
                 )
             assert session.terminal_windows[other["id"]] == []
-        finally:
-            wshandler.state.sessions.pop(workspace["id"], None)
-            wshandler.state.connections.pop(sock, None)
 
     async def test_delete_shared_terminal_error(self, user):
         sock = _mock_sock()
@@ -6782,14 +6762,12 @@ class TestHandleChatAgentAbort:
 
 class TestPresenceIncludesAgent:
     async def test_agent_in_presence_when_running(self, user, agent_user):
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
         workspace = await ws_mod.create_workspace(user["id"], "pres-ws")
-        session = state.get_or_create_session(workspace["id"])
-        await session.add_subscriber(sock, "cid")
-        state.connections[sock] = conn
-
-        try:
+        async with _conn_in_workspace(user, workspace["id"]) as (
+            sock,
+            conn,
+            session,
+        ):
             with patch(
                 "klangk_backend.agent.is_running",
                 side_effect=lambda ws_id: ws_id == workspace["id"],
@@ -6797,24 +6775,18 @@ class TestPresenceIncludesAgent:
                 users = await _get_presence_list(workspace["id"])
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID in ids
-        finally:
-            await session.remove_subscriber(sock)
-            state.connections.pop(sock, None)
-            state.sessions.pop(workspace["id"], None)
 
     async def test_agent_not_in_presence_when_running_in_other_workspace(
         self, user, agent_user
     ):
         """Agent running in a different workspace must not appear in this
         workspace's presence list (regression for #870)."""
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
         workspace = await ws_mod.create_workspace(user["id"], "pres-ws")
-        session = state.get_or_create_session(workspace["id"])
-        await session.add_subscriber(sock, "cid")
-        state.connections[sock] = conn
-
-        try:
+        async with _conn_in_workspace(user, workspace["id"]) as (
+            sock,
+            conn,
+            session,
+        ):
             with patch(
                 "klangk_backend.agent.is_running",
                 side_effect=lambda ws_id: ws_id == "other-workspace",
@@ -6822,10 +6794,6 @@ class TestPresenceIncludesAgent:
                 users = await _get_presence_list(workspace["id"])
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID not in ids
-        finally:
-            await session.remove_subscriber(sock)
-            state.connections.pop(sock, None)
-            state.sessions.pop(workspace["id"], None)
 
 
 class TestAgentMentionOtherMsgsContext:
