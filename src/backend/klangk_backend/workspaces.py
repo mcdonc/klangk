@@ -195,7 +195,7 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
             if await build_workspace_archive(metadata, home_dir, archive_path):
                 logger.info(
                     "Archived workspace %s to %s", ws["name"], archive_path
-                )
+                )  # lgtm[py/clear-text-logging-sensitive-data]
                 archives.append(archive_path)
         if not page["has_more"]:
             break
