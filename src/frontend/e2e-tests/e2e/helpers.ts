@@ -10,20 +10,60 @@ export const API_BASE =
   process.env.KLANGK_TEST_URL || `http://localhost:${BACKEND_PORT}`;
 export const TEST_PASSWORD = "testpass";
 
+/** Sleep with exponential backoff + jitter before retrying a request. */
+function sleepBackoff(attempt: number): Promise<void> {
+  const ms = 250 * 2 ** (attempt - 1) + Math.random() * 200;
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** POST JSON to the E2E backend, retrying transient failures.
+ *
+ * The suite runs several workers against a single backend, and SQLite can
+ * briefly return a "database is locked" 5xx under concurrent writes; slow
+ * responses can also surface as thrown network errors. Those are retried with
+ * exponential backoff. Non-transient 4xx responses are surfaced immediately
+ * since retrying them (e.g. a real duplicate-email 400) cannot succeed. */
+async function postJsonWithRetry(
+  request: APIRequestContext,
+  url: string,
+  data: Record<string, unknown>,
+  label: string,
+  { headers }: { headers?: Record<string, string> } = {},
+) {
+  const maxAttempts = 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let resp;
+    try {
+      resp = await request.post(url, { data, headers, timeout: 30_000 });
+    } catch (err) {
+      // Network/timeout error — retry unless this was the last attempt.
+      if (attempt === maxAttempts) throw err;
+      await sleepBackoff(attempt);
+      continue;
+    }
+    if (resp.ok()) return resp.json();
+    const body = await resp.text().catch(() => "");
+    const transient = resp.status() >= 500 || resp.status() === 429;
+    if (!transient || attempt === maxAttempts) {
+      throw new Error(`${label} failed: ${resp.status()} ${body}`);
+    }
+    await sleepBackoff(attempt);
+  }
+  throw new Error(`${label} failed: retries exhausted`);
+}
+
 /** Register a new user via API (test mode allows unauthenticated registration).
  *  Returns { token, headers }. */
 export async function registerUser(
   request: APIRequestContext,
   email: string,
 ): Promise<{ token: string; headers: Record<string, string> }> {
-  const resp = await request.post(`${API_BASE}/api/v1/auth/register`, {
-    data: { email, password: TEST_PASSWORD },
-  });
-  if (!resp.ok()) {
-    const body = await resp.text();
-    throw new Error(`Register failed: ${resp.status()} ${body}`);
-  }
-  const data = await resp.json();
+  const data = await postJsonWithRetry(
+    request,
+    `${API_BASE}/api/v1/auth/register`,
+    { email, password: TEST_PASSWORD },
+    "Register",
+  );
   const token = data.access_token;
   return { token, headers: { Authorization: `Bearer ${token}` } };
 }
@@ -268,17 +308,13 @@ export async function createWorkspace(
   cleanup: () => Promise<void>;
 }> {
   const name = `${namePrefix}-${Date.now()}@test.example.com`;
-  const createResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
-    headers,
-    data: { name },
-  });
-  if (!createResp.ok()) {
-    const body = await createResp.text();
-    throw new Error(
-      `Workspace creation failed: ${createResp.status()} ${body}`,
-    );
-  }
-  const workspace = await createResp.json();
+  const workspace = await postJsonWithRetry(
+    request,
+    `${API_BASE}/api/v1/workspaces`,
+    { name },
+    "Workspace creation",
+    { headers },
+  );
   const workspaceId = workspace.id;
 
   return {
