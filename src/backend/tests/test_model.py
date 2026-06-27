@@ -655,6 +655,44 @@ class TestLoginAttempts:
         # Should not raise
         await model.clear_login_attempts("nobody@example.com")
 
+    async def test_record_resets_count(self, db):
+        """reset=True starts a fresh count and clears stale lockout."""
+        from datetime import datetime, timedelta, timezone
+
+        old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        stale_lock = (
+            datetime.now(timezone.utc) - timedelta(minutes=1)
+        ).isoformat()
+        async with model.transaction() as raw_db:
+            await raw_db.execute(
+                "INSERT INTO login_attempts"
+                " (email, attempt_count, first_attempt_at, locked_until)"
+                " VALUES (?, 5, ?, ?)",
+                ("alice@example.com", old, stale_lock),
+            )
+        await model.record_failed_login("alice@example.com", reset=True)
+        info = await model.get_login_attempt_info("alice@example.com")
+        assert info["attempt_count"] == 1
+        assert info["locked_until"] is None
+        # first_attempt_at moved forward to ~now.
+        first = datetime.fromisoformat(info["first_attempt_at"])
+        assert (datetime.now(timezone.utc) - first).total_seconds() < 5
+
+    async def test_record_reset_upserts_missing_row(self, db):
+        """reset=True on a row that doesn't exist inserts count=1."""
+        await model.record_failed_login("alice@example.com", reset=True)
+        info = await model.get_login_attempt_info("alice@example.com")
+        assert info is not None
+        assert info["attempt_count"] == 1
+        assert info["locked_until"] is None
+
+    async def test_record_increments_within_window(self, db):
+        """reset=False (default) increments the count."""
+        await model.record_failed_login("alice@example.com")
+        await model.record_failed_login("alice@example.com")
+        info = await model.get_login_attempt_info("alice@example.com")
+        assert info["attempt_count"] == 2
+
 
 class TestChatMessagesMigration:
     async def test_migrate_adds_message_type_column(self, db):
