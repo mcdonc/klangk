@@ -290,6 +290,44 @@ class TestExecContainerWithStdin:
         with patch(EXEC, _exec(("", "", 0))):
             await podman.exec_container("cid", ["ls"], timeout=60.0)
 
+    async def test_extra_env_adds_flags_before_container(self):
+        with patch(EXEC, _exec(("", "", 0))) as m:
+            await podman.exec_container(
+                "cid",
+                ["env"],
+                extra_env={"HOME": "/home/x", "FOO": "bar"},
+            )
+        # -e flags precede the container id and command.
+        assert _args(m) == [
+            "exec",
+            "-e",
+            "HOME=/home/x",
+            "-e",
+            "FOO=bar",
+            "cid",
+            "env",
+        ]
+
+    async def test_extra_env_with_user_and_stdin(self):
+        with patch(EXEC, _exec(("", "", 0))) as m:
+            await podman.exec_container(
+                "cid",
+                ["sh"],
+                user="root",
+                stdin_data=b"x",
+                extra_env={"A": "1"},
+            )
+        assert _args(m) == [
+            "exec",
+            "-i",
+            "-u",
+            "root",
+            "-e",
+            "A=1",
+            "cid",
+            "sh",
+        ]
+
 
 class TestExecContainerBytes:
     async def test_returns_raw_bytes(self):
@@ -308,6 +346,19 @@ class TestExecContainerBytes:
                 "cid", ["cat", "/f"], user="klangk"
             )
         assert _args(m) == ["exec", "-u", "klangk", "cid", "cat", "/f"]
+
+    async def test_extra_env_adds_flags_before_container(self):
+        with patch(EXEC, _exec(("", "", 0))) as m:
+            await podman.exec_container_bytes(
+                "cid", ["env"], extra_env={"HOME": "/home/x"}
+            )
+        assert _args(m) == [
+            "exec",
+            "-e",
+            "HOME=/home/x",
+            "cid",
+            "env",
+        ]
 
     async def test_nonzero_returned(self):
         with patch(EXEC, _exec(("", "err", 1))):
@@ -401,6 +452,26 @@ class TestExecContainerStream:
             "cid",
             "cat",
             "/f",
+        ]
+
+    async def test_extra_env_adds_flags_before_container(self):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.wait = AsyncMock(return_value=0)
+
+        with patch(EXEC, AsyncMock(return_value=mock_proc)) as m:
+            async for _ in podman.exec_container_stream(
+                "cid", ["env"], extra_env={"HOME": "/home/x"}
+            ):
+                pass
+        assert list(m.call_args.args[1:]) == [
+            "exec",
+            "-e",
+            "HOME=/home/x",
+            "cid",
+            "env",
         ]
 
     async def test_kills_process_on_early_exit(self):

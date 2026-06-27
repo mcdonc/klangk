@@ -273,25 +273,54 @@ async def start_container(container_id: str) -> None:
     await _run(["start", container_id], timeout=120.0)
 
 
+def _exec_args(
+    container_id: str,
+    cmd: list[str],
+    *,
+    user: str | None = None,
+    interactive: bool = False,
+    extra_env: dict[str, str] | None = None,
+) -> list[str]:
+    """Build the ``podman exec`` argument list (without the leading binary).
+
+    All options (``-i`` / ``-u`` / ``-e``) precede the container id and
+    command, matching ``podman exec [OPTIONS] CONTAINER [COMMAND...]``.
+    Centralized so the three ``exec_container*`` callers stay in sync and
+    there is a single place to add flags (e.g. ``extra_env``).
+    """
+    args = ["exec"]
+    if interactive:
+        args.append("-i")
+    if user:
+        args += ["-u", user]
+    if extra_env:
+        for key, value in extra_env.items():
+            args += ["-e", f"{key}={value}"]
+    args.append(container_id)
+    args.extend(cmd)
+    return args
+
+
 async def exec_container(
     container_id: str,
     cmd: list[str],
     *,
     user: str | None = None,
     stdin_data: bytes | None = None,
+    extra_env: dict[str, str] | None = None,
     timeout: float | None = 30.0,
 ) -> tuple[int, str, str]:
     """Run a command inside a running container.
 
     Returns ``(returncode, stdout, stderr)``.
     """
-    args = ["exec"]
-    if stdin_data is not None:
-        args.append("-i")
-    if user:
-        args += ["-u", user]
-    args.append(container_id)
-    args.extend(cmd)
+    args = _exec_args(
+        container_id,
+        cmd,
+        user=user,
+        interactive=stdin_data is not None,
+        extra_env=extra_env,
+    )
     return await _run(
         args, check=False, stdin_data=stdin_data, timeout=timeout
     )
@@ -302,14 +331,11 @@ async def exec_container_bytes(
     cmd: list[str],
     *,
     user: str | None = None,
+    extra_env: dict[str, str] | None = None,
     timeout: float | None = 30.0,
 ) -> tuple[int, bytes, str]:
     """Like ``exec_container`` but returns raw stdout bytes (for binary data)."""
-    args = ["exec"]
-    if user:
-        args += ["-u", user]
-    args.append(container_id)
-    args.extend(cmd)
+    args = _exec_args(container_id, cmd, user=user, extra_env=extra_env)
     return await _run_raw(args, check=False, timeout=timeout)
 
 
@@ -318,6 +344,7 @@ async def exec_container_stream(
     cmd: list[str],
     *,
     user: str | None = None,
+    extra_env: dict[str, str] | None = None,
     chunk_size: int = 64 * 1024,
 ) -> AsyncGenerator[bytes, None]:
     """Stream stdout from a command inside a container.
@@ -326,11 +353,7 @@ async def exec_container_stream(
     to disk.  stderr is discarded to avoid pipe-buffer deadlocks (the
     process would block if stderr fills while we only drain stdout).
     """
-    args = ["exec"]
-    if user:
-        args += ["-u", user]
-    args.append(container_id)
-    args.extend(cmd)
+    args = _exec_args(container_id, cmd, user=user, extra_env=extra_env)
     proc = await asyncio.create_subprocess_exec(
         PODMAN_BIN,
         *args,
