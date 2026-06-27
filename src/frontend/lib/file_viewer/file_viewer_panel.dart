@@ -8,11 +8,21 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import 'file_upload.dart';
+import 'file_list_cache.dart';
 import 'renderers/builtin_file_renderers.dart';
 import '../utils/suppress_browser_menu.dart';
 
 /// Override for testing — set to intercept all HTTP calls in file viewer.
 http.Client? testHttpClientOverride;
+
+/// Shared directory-listing cache, so revisiting a recently-viewed directory
+/// (even across panel rebuilds) renders instantly instead of re-fetching.
+/// Bounded LRU + short TTL; see [FileListCache].
+final FileListCache _fileListCache = FileListCache();
+
+/// Clears the shared file-list cache. Used by tests for isolation.
+@visibleForTesting
+void clearFileListCacheForTest() => _fileListCache.clear();
 
 /// Format a Unix timestamp (seconds since epoch) as a relative time string.
 String formatMtime(dynamic mtime) {
@@ -67,8 +77,41 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   bool _loading = false;
   late final FileRendererRegistry _registry;
 
-  /// Refresh the file list for the current directory.
-  void refresh() => _loadFiles();
+  /// Refresh the file list for the current directory, bypassing the cache
+  /// (manual refresh, or after a mutation that changed this directory).
+  void refresh() => _loadFiles(force: true);
+
+  /// The directory currently displayed. Exposed for tests so navigation
+  /// assertions don't depend on whether a listing fetch happened (the cache
+  /// may serve a revisit without a round-trip).
+  @visibleForTesting
+  String get currentPathForTest => _currentPath;
+
+  /// Test hook for the [FileDropZone.onUploadComplete] path (driving a real
+  /// desktop drop through the widget tree in a unit test is impractical).
+  /// Invalidates the current listing and forces a refetch.
+  @visibleForTesting
+  void triggerUploadCompleteForTest() => _onUploadComplete();
+
+  @visibleForTesting
+  Future<String> readFileTextForTest(String path) => _readFileText(path);
+
+  @visibleForTesting
+  Future<Uint8List> readFileBytesForTest(String path) => _readFileBytes(path);
+
+  /// Drop the cached listing for the current directory and force a refetch.
+  /// Called after local mutations (delete/rename/upload) so the panel never
+  /// shows stale data for a change it just made.
+  void _invalidateCurrent() {
+    _fileListCache.invalidate(widget.workspaceId, _currentPath);
+  }
+
+  /// Called by [FileDropZone] after uploads land. The current directory's
+  /// listing has changed, so invalidate the cached entry and force a refetch.
+  void _onUploadComplete() {
+    _invalidateCurrent();
+    _loadFiles(force: true);
+  }
 
   /// Opens [path] (absolute container path) directly in the viewer: positions
   /// the browser at the file's directory — so the path bar's up/breadcrumbs
@@ -107,8 +150,22 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           'Authorization': 'Bearer ${widget.authToken}',
       };
 
-  Future<void> _loadFiles() async {
+  Future<void> _loadFiles({bool force = false}) async {
     if (!mounted) return;
+    // Read-through cache: a fresh-enough hit renders instantly and skips
+    // the listing round-trip (~250-440ms), so navigating back to a recently
+    // viewed directory feels instantaneous. `force` (manual refresh, or a
+    // mutation that changed this directory) bypasses the cache.
+    if (!force) {
+      final cached = _fileListCache.get(widget.workspaceId, _currentPath);
+      if (cached != null) {
+        setState(() {
+          _entries = cached.entries;
+          _loading = false;
+        });
+        return;
+      }
+    }
     setState(() => _loading = true);
     try {
       final response = await _client.get(
@@ -119,8 +176,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as List;
-        if (mounted)
-          setState(() => _entries = data.cast<Map<String, dynamic>>());
+        final entries = data.cast<Map<String, dynamic>>();
+        _fileListCache.put(widget.workspaceId, _currentPath, entries);
+        if (mounted) setState(() => _entries = entries);
       } else {
         debugPrint('File listing failed: ${response.statusCode}');
       }
@@ -140,6 +198,16 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       ),
       headers: _headers,
     );
+    if (response.statusCode == 404) {
+      // The file no longer exists (e.g. deleted in the terminal since the
+      // listing was cached). Invalidate the cached listing so the next
+      // navigation/refresh refetches, and surface a clear message to the
+      // renderer. (Don't trigger a listing refresh here — this read runs
+      // lazily during the renderer's build, and a setState from build would
+      // loop on a persistently-missing file.)
+      _invalidateCurrent();
+      throw Exception('$path no longer exists');
+    }
     if (response.statusCode != 200) {
       throw Exception('Failed to read $path: ${response.statusCode}');
     }
@@ -147,7 +215,6 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     return data['content'] as String? ?? '';
   }
 
-  /// Reads a file's raw bytes via the `/files/download` endpoint. Injected into
   /// [RenderableFile.readBytes] for binary renderers (image/pdf/video).
   Future<Uint8List> _readFileBytes(String path) async {
     final response = await _client.get(
@@ -156,13 +223,19 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       ),
       headers: _headers,
     );
+    if (response.statusCode == 404) {
+      // The file no longer exists since the listing was cached; invalidate
+      // the listing so the next navigation/refresh refetches and surface a
+      // clear message. (No listing refresh here — see _readFileText.)
+      _invalidateCurrent();
+      throw Exception('$path no longer exists');
+    }
     if (response.statusCode != 200) {
       throw Exception('Failed to download $path: ${response.statusCode}');
     }
     return response.bodyBytes;
   }
 
-  /// Persists [content] to [path] via the `/files/upload` endpoint (which
   /// overwrites). Injected into [RenderableFile.saveText] so editor renderers
   /// can save edits.
   Future<void> _saveFileText(String path, String content) async {
@@ -240,8 +313,17 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         ),
         headers: _headers,
       );
-      if (response.statusCode == 200) {
-        _loadFiles();
+      if (response.statusCode == 200 || response.statusCode == 404) {
+        // 404 means it was already gone (e.g. deleted in the terminal
+        // since the listing was cached) — the user's goal is satisfied, so
+        // drop the stale entry and reload rather than alarming them.
+        _invalidateCurrent();
+        _loadFiles(force: true);
+        if (response.statusCode == 404 && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('"$name" was already deleted')),
+          );
+        }
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -299,7 +381,16 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         body: jsonEncode({'old_path': path, 'new_path': newPath}),
       );
       if (response.statusCode == 200) {
-        _loadFiles();
+        _invalidateCurrent();
+        _loadFiles(force: true);
+      } else if (response.statusCode == 404 && mounted) {
+        // Source no longer exists (e.g. deleted in the terminal since the
+        // listing was cached). Drop the stale entry and inform the user.
+        _invalidateCurrent();
+        _loadFiles(force: true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"$name" no longer exists')),
+        );
       } else {
         if (mounted) {
           final body = jsonDecode(response.body);
@@ -326,6 +417,18 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}';
     try {
       final response = await _client.get(Uri.parse(url), headers: _headers);
+      if (response.statusCode == 404) {
+        // The file no longer exists since the listing was cached; drop the
+        // stale entry and inform the user instead of showing a bare 404.
+        _invalidateCurrent();
+        _loadFiles(force: true);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('"$name" no longer exists')),
+          );
+        }
+        return;
+      }
       if (response.statusCode != 200) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -473,7 +576,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         authToken: widget.authToken,
         currentPath: _currentPath,
         currentEntries: _entries,
-        onUploadComplete: _loadFiles,
+        onUploadComplete: _onUploadComplete,
         child: Column(
           children: [
             // Path bar
@@ -503,7 +606,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
                     ),
                   IconButton(
                     icon: const Icon(Icons.refresh, size: 28),
-                    onPressed: _loadFiles,
+                    onPressed: () => _loadFiles(force: true),
                     iconSize: 28,
                   ),
                 ],
