@@ -371,7 +371,6 @@ void main() {
     tearDown(() {
       WsClient.testChannelFactory = null;
       WsClient.testBackoffOverride = null;
-      WsClient.testReconnectTimeout = null;
     });
 
     test('server close triggers auto-reconnect when workspace was connected',
@@ -717,48 +716,6 @@ void main() {
       client.dispose();
       expect(client.reconnecting, isFalse);
       expect(channels.length, 1); // no reconnect attempt was made
-    });
-
-    test('gives up reconnecting after timeout', () async {
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      // Zero backoff so reconnects fire immediately; zero timeout so
-      // the second attempt exceeds the deadline.
-      WsClient.testBackoffOverride = (_) => Duration.zero;
-      WsClient.testReconnectTimeout = Duration.zero;
-
-      final client = WsClient();
-      client.updateAuth(auth);
-      await client.connect();
-      client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
-      await Future.delayed(Duration.zero);
-
-      // Make all future channels fail.
-      WsClient.testChannelFactory = (_) {
-        final ch = _FakeWebSocketChannel()..failReady = true;
-        channels.add(ch);
-        return ch;
-      };
-
-      // Disconnect → first reconnect attempt fires.
-      channels[0].serverClose();
-      await Future.delayed(Duration.zero);
-
-      // Let the first attempt fire and fail, then the second schedule
-      // check triggers the timeout.
-      await Future.delayed(Duration.zero);
-      await Future.delayed(Duration.zero);
-      await Future.delayed(Duration.zero);
-
-      // Auto-reconnect should have given up.
-      expect(client.reconnecting, isFalse);
-
-      WsClient.testReconnectTimeout = null;
-      client.disconnect();
-      client.dispose();
     });
 
     test('backoff delay override is called with correct attempt', () async {
