@@ -2542,13 +2542,14 @@ async def _handle_agent_mention(
         response_text = "Stopped."
     except agent.AgentProcessDied:
         logger.warning("Agent process died for workspace %s", workspace_id)
-        # Post system message about the crash
-        sys_msg = await model.add_chat_message(
+        # Broadcast an ephemeral (non-persisted) system message — agent
+        # presence transitions are container-lifecycle events and must
+        # not linger in chat history (no symmetric persisted "connected").
+        sys_msg = agent._ephemeral_system_message(
             workspace_id,
-            model.AGENT_USER_ID,
             agent_email,
+            agent_handle,
             f"{agent_handle} has disconnected",
-            message_type=model.MSG_SYSTEM,
         )
         session = state.get_session(workspace_id)
         if session:
