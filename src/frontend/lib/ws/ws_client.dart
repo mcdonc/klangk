@@ -640,10 +640,13 @@ class WsClient extends ChangeNotifier {
     await connect();
     if (_connected && _pendingWorkspaceId != null) {
       connectWorkspace(_pendingWorkspaceId!);
-    } else if (!_connected) {
-      // connect() failed — schedule next attempt
+    } else {
+      // Clear _reconnecting here: when connected with no pending
+      // workspace the server sends no workspace_ready frame (which
+      // otherwise clears it), so _scheduleReconnect would otherwise
+      // short-circuit on the next drop.
       _reconnecting = false;
-      _scheduleReconnect();
+      if (!_connected) _scheduleReconnect();
     }
   }
 
