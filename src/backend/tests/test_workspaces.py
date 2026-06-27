@@ -211,23 +211,24 @@ class TestEnsureHomeSymlink:
 class TestPopulateHomeSkel:
     async def test_execs_setup_home(self):
         """populate_home_skel runs podman exec with klangk-setup-home script."""
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
         with patch(
-            "asyncio.create_subprocess_exec",
-            return_value=mock_proc,
+            "klangk_backend.workspaces.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),
         ) as mock_exec:
             await ws_mod.populate_home_skel("cid-123", "uid-456")
-        args = mock_exec.call_args[0]
-        assert "exec" in args
-        assert "cid-123" in args
-        assert any("klangk-setup-home" in str(a) for a in args)
-        assert any("uid-456" in str(a) for a in args)
+        mock_exec.assert_awaited_once_with(
+            "cid-123",
+            ["/opt/klangk/bin/klangk-setup-home", "/home/.users/uid-456"],
+            user="klangk",
+            timeout=10,
+        )
 
     async def test_logs_warning_on_failure(self):
         """populate_home_skel logs but does not raise on failure."""
         with patch(
-            "asyncio.create_subprocess_exec",
+            "klangk_backend.workspaces.podman.exec_container",
+            new_callable=AsyncMock,
             side_effect=OSError("podman not found"),
         ):
             # Should not raise
