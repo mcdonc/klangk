@@ -159,6 +159,147 @@ class TestCheckPermission:
         assert await acl.check_permission("/test", principals, "edit") is False
 
 
+class TestCheckPermissionCached:
+    """The batched in-memory path must match the per-call async path."""
+
+    _RESOURCES = ["/", "/workspaces", "/admin/users"]
+    _PERMISSIONS = ["view", "edit", "create", "terminal", "*"]
+
+    async def test_cached_matches_async_across_resources(self, user):
+        # Seed a mix: allow on root (everyone), allow on /admin (user),
+        # deny on /admin/users (authenticated) to exercise parent walk +
+        # first-match-wins + wildcard in both code paths.
+        await model.add_acl_entry(
+            "/",
+            0,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_EVERYONE,
+        )
+        await model.add_acl_entry(
+            "/admin",
+            0,
+            ACTION_ALLOW,
+            "*",
+            PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        await model.add_acl_entry(
+            "/admin/users",
+            0,
+            ACTION_DENY,
+            "view",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        principals = await acl.get_principals(user["id"])
+
+        ancestor_paths: list[str] = []
+        for res in self._RESOURCES:
+            ancestor_paths.extend(acl._resource_ancestors(res))
+        entries = await model.get_acl_entries_map(ancestor_paths)
+
+        for res in self._RESOURCES:
+            for perm in self._PERMISSIONS:
+                async_result = await acl.check_permission(
+                    res, principals, perm
+                )
+                cached_result = acl.check_permission_cached(
+                    res, principals, perm, entries
+                )
+                assert async_result == cached_result, (
+                    f"mismatch for {res}/{perm}: "
+                    f"async={async_result} cached={cached_result}"
+                )
+
+    async def test_permissions_for_resources_matches_pairwise(self, user):
+        await model.add_acl_entry(
+            "/workspaces",
+            0,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        await model.add_acl_entry(
+            "/admin",
+            0,
+            ACTION_ALLOW,
+            "terminal",
+            PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        principals = await acl.get_principals(user["id"])
+
+        batched = await acl.permissions_for_resources(
+            self._RESOURCES, principals, self._PERMISSIONS
+        )
+
+        # Reconstruct the same map the old pairwise loop produced.
+        pairwise: dict[str, list[str]] = {}
+        for res in self._RESOURCES:
+            perms = [
+                p
+                for p in self._PERMISSIONS
+                if await acl.check_permission(res, principals, p)
+            ]
+            if perms:
+                pairwise[res] = perms
+        assert batched == pairwise
+
+
+class TestGetAclEntriesMap:
+    async def test_single_query_for_many_resources(self, user):
+        await model.add_acl_entry(
+            "/workspaces",
+            0,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        await model.add_acl_entry(
+            "/admin",
+            0,
+            ACTION_ALLOW,
+            "edit",
+            PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        result = await model.get_acl_entries_map(
+            ["/workspaces", "/admin", "/nonexistent"]
+        )
+        # Every requested resource is a key; missing ones are empty lists.
+        assert set(result.keys()) == {
+            "/workspaces",
+            "/admin",
+            "/nonexistent",
+        }
+        assert len(result["/workspaces"]) == 1
+        assert result["/workspaces"][0]["permission"] == "view"
+        assert len(result["/admin"]) == 1
+        assert result["/nonexistent"] == []
+
+    async def test_empty_resource_list(self):
+        assert await model.get_acl_entries_map([]) == {}
+
+    async def test_de_duplicates_resources(self, user):
+        await model.add_acl_entry(
+            "/workspaces",
+            0,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        result = await model.get_acl_entries_map(
+            ["/workspaces", "/workspaces"]
+        )
+        assert list(result.keys()) == ["/workspaces"]
+        assert len(result["/workspaces"]) == 1
+
+
 class TestRequestToResource:
     def _make_request(self, path):
         request = MagicMock()

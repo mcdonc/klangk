@@ -42,6 +42,23 @@ def _ace_matches_principals(ace: dict, principals: dict) -> bool:
     return False
 
 
+def _resource_ancestors(resource_path: str) -> list[str]:
+    """Return [resource_path, ..., '/'] — the paths ``check_permission`` walks.
+
+    Mirrors the loop in [check_permission] so a caller can preload ACL
+    entries for exactly these paths and evaluate permissions in memory.
+    """
+    paths: list[str] = []
+    path = resource_path
+    while True:
+        paths.append(path)
+        if path == "/":
+            break
+        parent = path.rsplit("/", 1)[0]
+        path = parent if parent else "/"
+    return paths
+
+
 async def check_permission(
     resource_path: str,
     principals: dict,
@@ -52,18 +69,67 @@ async def check_permission(
     Returns True if an Allow ACE matches, False if a Deny ACE matches
     or no match is found (default deny).
     """
-    path = resource_path
-    while True:
+    for path in _resource_ancestors(resource_path):
         aces = await model.get_acl_entries(path)
         for ace in aces:
             if _ace_matches_principals(ace, principals):
                 if ace["permission"] == "*" or ace["permission"] == permission:
                     return ace["action"] == ACTION_ALLOW
-        if path == "/":
-            break
-        parent = path.rsplit("/", 1)[0]
-        path = parent if parent else "/"
     return False
+
+
+def check_permission_cached(
+    resource_path: str,
+    principals: dict,
+    permission: str,
+    entries_by_resource: dict[str, list[dict]],
+) -> bool:
+    """In-memory equivalent of [check_permission] over a preloaded ACE map.
+
+    ``entries_by_resource`` must contain every ancestor of
+    ``resource_path`` (see [_resource_ancestors]); missing paths are treated
+    as having no entries, matching the async version's behavior.
+    """
+    for path in _resource_ancestors(resource_path):
+        for ace in entries_by_resource.get(path, ()):
+            if _ace_matches_principals(ace, principals):
+                if ace["permission"] == "*" or ace["permission"] == permission:
+                    return ace["action"] == ACTION_ALLOW
+    return False
+
+
+async def permissions_for_resources(
+    resources: list[str],
+    principals: dict,
+    permissions: list[str],
+) -> dict[str, list[str]]:
+    """Effective permissions for each resource, preload-then-evaluate.
+
+    Fetches ACL entries for the union of every resource's ancestor paths
+    in a single query ([model.get_acl_entries_map]), then checks each
+    (resource, permission) pair in memory via [check_permission_cached].
+    This is equivalent to awaiting [check_permission] once per pair, but
+    avoids opening a fresh database connection per pair — the static
+    resource set previously triggered ~300 sequential connection-per-query
+    reads on every ``/my-permissions`` call.
+
+    Only resources with at least one granted permission appear in the
+    result, matching the historical response shape.
+    """
+    ancestor_paths: list[str] = []
+    for res in resources:
+        ancestor_paths.extend(_resource_ancestors(res))
+    entries = await model.get_acl_entries_map(ancestor_paths)
+    result: dict[str, list[str]] = {}
+    for res in resources:
+        perms = [
+            p
+            for p in permissions
+            if check_permission_cached(res, principals, p, entries)
+        ]
+        if perms:
+            result[res] = perms
+    return result
 
 
 def _request_to_resource(request: Request) -> str:
