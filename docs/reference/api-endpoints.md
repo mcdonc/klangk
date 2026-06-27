@@ -473,6 +473,18 @@ List workspaces owned by the current user.
 
 No request body.
 
+**Query params (optional, pagination):**
+
+| Param    | Type | Default | Constraints |
+| -------- | ---- | ------- | ----------- |
+| `limit`  | int  | (none)  | `1`–`100`   |
+| `offset` | int  | (none)  | `>= 0`      |
+
+Without pagination params the endpoint returns a **bare list** (backward
+compatible). With `?limit=` and/or `?offset=` it returns a **pagination
+envelope** `{ items, has_more, next_offset }`, ordered by `created_at, id`
+so offset pagination is deterministic.
+
 ```json
 [
   {
@@ -488,6 +500,21 @@ No request body.
 ]
 ```
 
+Paginated response (`?limit=10&offset=0`):
+
+```json
+{
+  "items": [
+    /* workspace objects as above */
+  ],
+  "has_more": true,
+  "next_offset": 10
+}
+```
+
+`has_more` is `true` when the returned page is full (`len(items) == limit`);
+`next_offset` is `offset + limit` when more rows remain, otherwise `null`.
+
 ---
 
 ### GET `/api/v1/workspaces/shared`
@@ -497,6 +524,10 @@ List workspaces that other users have shared with the current user.
 **Auth:** JWT required.
 
 No request body.
+
+**Query params (optional, pagination):** same `?limit=` / `?offset=` as
+`GET /api/v1/workspaces` — without params returns a bare list, with params
+returns the `{ items, has_more, next_offset }` envelope.
 
 ```json
 [
