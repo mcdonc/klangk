@@ -68,14 +68,21 @@ async def check_permission(
 
     Returns True if an Allow ACE matches, False if a Deny ACE matches
     or no match is found (default deny).
+
+    Fetches the ACEs for every ancestor of [resource_path] in a single
+    query ([model.get_acl_entries_map]) and evaluates them in memory via
+    [check_permission_inmemory] — equivalent to one [model.get_acl_entries]
+    call per path segment, but without opening a fresh [NullPool] database
+    connection per segment (2-3 connections per call -> 1). Nothing is
+    retained across requests; the live ``acl_entries`` table is re-read on
+    every call, so a permission change is reflected immediately.
     """
-    for path in _resource_ancestors(resource_path):
-        aces = await model.get_acl_entries(path)
-        for ace in aces:
-            if _ace_matches_principals(ace, principals):
-                if ace["permission"] == "*" or ace["permission"] == permission:
-                    return ace["action"] == ACTION_ALLOW
-    return False
+    entries = await model.get_acl_entries_map(
+        _resource_ancestors(resource_path)
+    )
+    return check_permission_inmemory(
+        resource_path, principals, permission, entries
+    )
 
 
 def check_permission_inmemory(
