@@ -22,6 +22,9 @@ class StaleBuildBanner extends StatefulWidget {
   /// Override the check interval for testing.
   final Duration? testInterval;
 
+  /// Default interval between stale-build checks.
+  static const defaultInterval = Duration(minutes: 5);
+
   const StaleBuildBanner({
     super.key,
     this.testHash,
@@ -34,7 +37,6 @@ class StaleBuildBanner extends StatefulWidget {
 }
 
 class StaleBuildBannerState extends State<StaleBuildBanner> {
-  static const _defaultInterval = Duration(minutes: 2);
   static final _hashPattern =
       RegExp(r'klangk-build-hash["\s]+content="([^"]+)"');
 
@@ -48,7 +50,7 @@ class StaleBuildBannerState extends State<StaleBuildBanner> {
     super.initState();
     _currentHash = widget.testHash ?? getBuildHash();
     if (_currentHash.isNotEmpty) {
-      final interval = widget.testInterval ?? _defaultInterval;
+      final interval = widget.testInterval ?? StaleBuildBanner.defaultInterval;
       _timer = Timer.periodic(interval, (_) => check());
     }
   }

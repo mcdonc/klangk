@@ -17,6 +17,13 @@ const _indexSameHash = '''
 ''';
 
 void main() {
+  test('default poll interval is 5 minutes', () {
+    // Issue #930: the stale-build poll runs on every page (the banner is
+    // mounted at the app root), so a longer interval cuts access-log noise
+    // uniformly without coupling to page-specific behavior.
+    expect(StaleBuildBanner.defaultInterval, const Duration(minutes: 5));
+  });
+
   testWidgets('renders nothing when no build hash is available',
       (tester) async {
     await tester.pumpWidget(
