@@ -107,6 +107,7 @@ class TestAgentSession:
         proc = AsyncMock()
         proc.returncode = None
         proc.stdin = AsyncMock()
+        proc.kill = MagicMock()
         # Feed ack + agent_start so we get past the preamble, then
         # nothing — simulating a model that never responds.
         proc.stdout = asyncio.StreamReader()
@@ -123,6 +124,69 @@ class TestAgentSession:
             result = await session.send_prompt("test", timeout=0.1)
 
         assert "timed out" in result
+        # Timeout tears down the process so the next prompt starts
+        # from a clean stream (#894).
+        assert session._proc is None
+        proc.kill.assert_called_once()
+
+    async def test_second_prompt_after_timeout_uses_fresh_process(self):
+        """Regression for #894: a timeout must tear down the subprocess
+        so the next prompt starts from a clean stdout stream, rather
+        than resyncing past leftover turn-1 events that could corrupt
+        turn 2's response.
+        """
+        # Turn 1: ack + agent_start, then silence -> response timeout.
+        proc1 = AsyncMock()
+        proc1.returncode = None
+        proc1.stdin = AsyncMock()
+        proc1.kill = MagicMock()
+        proc1.stdout = asyncio.StreamReader()
+        proc1.stdout.feed_data(
+            json.dumps(_ACK).encode()
+            + b"\n"
+            + json.dumps({"type": "agent_start"}).encode()
+            + b"\n"
+        )
+        proc1.stderr = asyncio.StreamReader()
+
+        # Turn 2: a clean stream carrying the real answer.
+        proc2 = AsyncMock()
+        proc2.returncode = None
+        proc2.stdin = AsyncMock()
+        proc2.stdout = asyncio.StreamReader()
+        turn2_events = [
+            _ACK,
+            {"type": "agent_start"},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "second",
+                },
+            },
+            {"type": "agent_end"},
+        ]
+        proc2.stdout.feed_data(
+            ("\n".join(json.dumps(e) for e in turn2_events) + "\n").encode()
+        )
+        proc2.stdout.feed_eof()
+        proc2.stderr = asyncio.StreamReader()
+
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=[proc1, proc2]
+        ) as mock_exec:
+            session = _make_session()
+            r1 = await session.send_prompt("turn1", timeout=0.1)
+            # If proc1 were (buggily) reused, EOF'ing its pipe makes
+            # turn 2 fail fast instead of hanging.  With the fix proc1
+            # is already gone, so this is a no-op for turn 2.
+            proc1.stdout.feed_eof()
+            r2 = await session.send_prompt("turn2")
+
+        assert "timed out" in r1
+        assert r2 == "second"
+        assert mock_exec.call_count == 2
+        proc1.kill.assert_called_once()
 
     async def test_llm_error_surfaced(self):
         """LLM errors (e.g. 429) are returned to the user."""
@@ -1147,6 +1211,36 @@ class TestMonitorProcess:
         ):
             await session._monitor_process(dead_proc)
             mock_start.assert_not_awaited()
+
+
+class TestResetProcess:
+    async def test_kills_and_clears_alive_proc(self):
+        """_reset_process cancels the monitor, kills, and clears state."""
+        session = _make_session()
+        proc = MagicMock()
+        proc.returncode = None
+        monitor = MagicMock()
+        session._proc = proc
+        session._monitor_task = monitor
+
+        await session._reset_process(proc)
+
+        monitor.cancel.assert_called_once()
+        proc.kill.assert_called_once()
+        assert session._proc is None
+        assert session._monitor_task is None
+
+    async def test_handles_already_dead_proc(self):
+        """_reset_process tolerates the process already being gone."""
+        session = _make_session()
+        proc = MagicMock()
+        proc.returncode = None
+        proc.kill.side_effect = ProcessLookupError()
+        session._proc = proc
+
+        await session._reset_process(proc)  # should not raise
+
+        assert session._proc is None
 
 
 class TestSendAbort:
