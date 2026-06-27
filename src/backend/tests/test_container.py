@@ -286,6 +286,24 @@ def _running(value=True):
     return AsyncMock(return_value={"State": {"Running": value}})
 
 
+def _sudo_call(p):
+    """Return the ``exec_container`` call that configures sudo.
+
+    ``start_container`` also invokes ``terminal.set_workspace_token`` which,
+    since terminal.py adopted ``podman.exec_container``, shows up as an
+    additional ``exec_container`` call.  Identify the sudoers call by its
+    command rather than assuming it is the only (or last) call.
+    """
+    for call in p.exec_container.call_args_list:
+        cmd = call.args[1] if len(call.args) > 1 else []
+        if "klangk-configure-sudo" in cmd:
+            return call
+    raise AssertionError(
+        "no klangk-configure-sudo exec_container call in "
+        f"{p.exec_container.call_args_list}"
+    )
+
+
 class TestStartContainer:
     def setup_method(self):
         container.registry.states.clear()
@@ -311,10 +329,9 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        p.exec_container.assert_awaited_once()
-        call_args = p.exec_container.call_args
-        assert call_args.kwargs.get("user") == "root"
-        assert "!ALL" in str(call_args.args[1])
+        call = _sudo_call(p)
+        assert call.kwargs.get("user") == "root"
+        assert "!ALL" in str(call.args[1])
 
     async def test_sudo_enabled(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
@@ -322,10 +339,9 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        p.exec_container.assert_awaited_once()
-        call_args = p.exec_container.call_args
-        assert call_args.kwargs.get("user") == "root"
-        assert "NOPASSWD:ALL" in str(call_args.args[1])
+        call = _sudo_call(p)
+        assert call.kwargs.get("user") == "root"
+        assert "NOPASSWD:ALL" in str(call.args[1])
 
     async def test_sudo_disabled(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "0")
@@ -333,8 +349,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        p.exec_container.assert_awaited_once()
-        assert "!ALL" in str(p.exec_container.call_args.args[1])
+        assert "!ALL" in str(_sudo_call(p).args[1])
 
     async def test_sudo_disabled_false(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
@@ -342,8 +357,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        p.exec_container.assert_awaited_once()
-        assert "!ALL" in str(p.exec_container.call_args.args[1])
+        assert "!ALL" in str(_sudo_call(p).args[1])
 
     async def test_sudo_toggled_off_to_on(self, workspace, monkeypatch):
         """Start with sudo disabled, restart with sudo enabled."""
@@ -352,7 +366,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        assert "!ALL" in str(p.exec_container.call_args.args[1])
+        assert "!ALL" in str(_sudo_call(p).args[1])
 
         # "Restart" — remove container state so start_container creates a new one
         container.registry.states.clear()
@@ -362,7 +376,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        assert "NOPASSWD:ALL" in str(p.exec_container.call_args.args[1])
+        assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
     async def test_sudo_toggled_on_to_off(self, workspace, monkeypatch):
         """Start with sudo enabled, restart with sudo disabled."""
@@ -371,7 +385,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        assert "NOPASSWD:ALL" in str(p.exec_container.call_args.args[1])
+        assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
         container.registry.states.clear()
         await model.update_workspace_container(workspace["id"], None)
@@ -380,7 +394,7 @@ class TestStartContainer:
             await container.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
-        assert "!ALL" in str(p.exec_container.call_args.args[1])
+        assert "!ALL" in str(_sudo_call(p).args[1])
 
     async def test_container_id_persisted_before_start(self, workspace, user):
         # If `start` fails, the id created just before it must already be on

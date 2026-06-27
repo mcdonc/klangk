@@ -109,50 +109,31 @@ async def _ensure_base_session(
     """
     # Check if the session already exists.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            podman.PODMAN_BIN,
-            "exec",
-            "-u",
-            CONTAINER_USER,
+        rc, _, _ = await podman.exec_container(
             container_id,
-            "tmux",
-            "has-session",
-            "-t",
-            session_name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-            env=podman.subprocess_env(),
+            ["tmux", "has-session", "-t", session_name],
+            user=CONTAINER_USER,
+            timeout=5,
         )
-        rc = await asyncio.wait_for(proc.wait(), timeout=5)
         if rc == 0:
             return  # already exists
     except Exception:
         pass  # assume it doesn't exist
 
-    # Create detached base session.
+    # Create detached base session.  HOME / SSH_AUTH_SOCK are passed as
+    # tmux's own ``-e`` flags (part of the command), not podman's.
     env_args: list[str] = []
     if user_home is not None:
         env_args += ["-e", f"HOME={user_home}"]
     if ssh_agent_socket is not None:
         env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
     try:
-        proc = await asyncio.create_subprocess_exec(
-            podman.PODMAN_BIN,
-            "exec",
-            "-u",
-            CONTAINER_USER,
+        await podman.exec_container(
             container_id,
-            "tmux",
-            "new-session",
-            "-d",
-            "-s",
-            session_name,
-            *env_args,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-            env=podman.subprocess_env(),
+            ["tmux", "new-session", "-d", "-s", session_name, *env_args],
+            user=CONTAINER_USER,
+            timeout=10,
         )
-        await asyncio.wait_for(proc.wait(), timeout=10)
     except Exception:
         logger.warning("Failed to create base tmux session %s", session_name)
 
@@ -256,27 +237,17 @@ async def attach_browser(container_id: str, browser_id: str) -> None:
     ``klangk-browser-id`` can read it dynamically.  Called after each
     ``terminal_start`` (including re-attach after browser refresh).
     """
-    argv = [
-        "exec",
-        "-u",
-        CONTAINER_USER,
+    rc, _stdout, stderr = await podman.exec_container(
         container_id,
-        "klangk-attach-browser",
-        browser_id,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        podman.PODMAN_BIN,
-        *argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=podman.subprocess_env(),
+        ["klangk-attach-browser", browser_id],
+        user=CONTAINER_USER,
+        timeout=10,
     )
-    _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-    if proc.returncode != 0:
+    if rc != 0:
         logger.warning(
             "klangk-attach-browser failed (rc=%d): %s",
-            proc.returncode,
-            stderr.decode(errors="replace").strip(),
+            rc,
+            stderr.strip(),
         )
 
 
@@ -284,27 +255,17 @@ async def set_workspace_token(container_id: str, token: str) -> None:
     """Write a workspace token to ``/run/klangk/workspace-token`` inside
     the container via ``klangk-set-workspace-token``.
     """
-    argv = [
-        "exec",
-        "-u",
-        CONTAINER_USER,
+    rc, _stdout, stderr = await podman.exec_container(
         container_id,
-        "klangk-set-workspace-token",
-        token,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        podman.PODMAN_BIN,
-        *argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=podman.subprocess_env(),
+        ["klangk-set-workspace-token", token],
+        user=CONTAINER_USER,
+        timeout=10,
     )
-    _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-    if proc.returncode != 0:
+    if rc != 0:
         logger.warning(
             "klangk-set-workspace-token failed (rc=%d): %s",
-            proc.returncode,
-            stderr.decode(errors="replace").strip(),
+            rc,
+            stderr.strip(),
         )
 
 
@@ -317,29 +278,18 @@ async def tmux_command(
     when the tmux server is still starting in a fresh container.
     """
     for attempt in range(3):
-        argv = [
-            "exec",
-            "-u",
-            CONTAINER_USER,
+        rc, stdout, stderr = await podman.exec_container(
             container_id,
-            "tmux",
-            *args,
-        ]
-        proc = await asyncio.create_subprocess_exec(
-            podman.PODMAN_BIN,
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=podman.subprocess_env(),
+            ["tmux", *args],
+            user=CONTAINER_USER,
+            timeout=10,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-        if proc.returncode == 0:
-            return stdout.decode("utf-8", errors="replace")
-        err = stderr.decode("utf-8", errors="replace").strip()
-        if "No such file or directory" in err and attempt < 2:
+        if rc == 0:
+            return stdout
+        if "No such file or directory" in stderr and attempt < 2:
             await asyncio.sleep(0.5)
             continue
-        raise TerminalError(f"tmux command failed: {err}")
+        raise TerminalError(f"tmux command failed: {stderr.strip()}")
     return ""  # pragma: no cover
 
 
@@ -404,29 +354,16 @@ async def new_window(
             f" tmux list-windows -t {session_name}"
             f" -F '#{{window_id}}|||#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
         )
-    argv = [
-        "exec",
-        "-u",
-        CONTAINER_USER,
+    rc, output, stderr = await podman.exec_container(
         container_id,
-        "bash",
-        "-c",
-        script,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        podman.PODMAN_BIN,
-        *argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=podman.subprocess_env(),
+        ["bash", "-c", script],
+        user=CONTAINER_USER,
+        timeout=10,
     )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-    output = stdout.decode("utf-8", errors="replace")
-    if proc.returncode != 0:
+    if rc != 0:
         if "DUPLICATE" in output:
             raise ValueError(f"Window name '{name}' already exists")
-        err = stderr.decode("utf-8", errors="replace").strip()
-        raise TerminalError(f"new_window failed: {err}")
+        raise TerminalError(f"new_window failed: {stderr.strip()}")
     windows = []
     for line in output.strip().splitlines():
         parts = line.split("|||")
@@ -513,19 +450,16 @@ async def load_workspace_state(container_id: str) -> dict:
     Returns empty dict if the file doesn't exist or is corrupt.
     Used for restoring state after container restart.
     """
-    argv = ["exec", "-u", CONTAINER_USER, container_id, "cat", _STATE_PATH]
-    proc = await asyncio.create_subprocess_exec(
-        podman.PODMAN_BIN,
-        *argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=podman.subprocess_env(),
+    rc, stdout, _ = await podman.exec_container(
+        container_id,
+        ["cat", _STATE_PATH],
+        user=CONTAINER_USER,
+        timeout=10,
     )
-    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-    if proc.returncode != 0:
+    if rc != 0:
         return {}
     try:
-        return json.loads(stdout.decode("utf-8", errors="replace"))
+        return json.loads(stdout)
     except (json.JSONDecodeError, ValueError):
         return {}
 
@@ -538,24 +472,13 @@ async def save_workspace_state(container_id: str, state: dict) -> None:
     Callers should serialize access via WorkspaceSession._save_lock.
     """
     data = json.dumps(state, indent=2)
-    argv = [
-        "exec",
-        "-i",
-        "-u",
-        CONTAINER_USER,
+    await podman.exec_container(
         container_id,
-        "klangk-save-workspace-state",
-        _STATE_PATH,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        podman.PODMAN_BIN,
-        *argv,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=podman.subprocess_env(),
+        ["klangk-save-workspace-state", _STATE_PATH],
+        user=CONTAINER_USER,
+        stdin_data=data.encode(),
+        timeout=10,
     )
-    await asyncio.wait_for(proc.communicate(input=data.encode()), timeout=10)
 
 
 async def restore_windows(
@@ -917,26 +840,19 @@ class TerminalSession:
                 socket_args = (
                     ["-S", self.socket_path] if self.socket_path else []
                 )
-                argv = [
-                    "exec",
-                    "-u",
-                    CONTAINER_USER,
+                await podman.exec_container(
                     self.container_id,
-                    "tmux",
-                    *socket_args,
-                    "kill-session",
-                    "-t",
-                    self._tmux_session_name,
-                ]
-                proc = await asyncio.create_subprocess_exec(
-                    podman.PODMAN_BIN,
-                    *argv,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                    env=podman.subprocess_env(),
+                    [
+                        "tmux",
+                        *socket_args,
+                        "kill-session",
+                        "-t",
+                        self._tmux_session_name,
+                    ],
+                    user=CONTAINER_USER,
+                    timeout=5,
                 )
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except Exception:  # pragma: no cover
+            except Exception:
                 logger.debug(
                     "Failed to kill tmux session %s",
                     self._tmux_session_name,

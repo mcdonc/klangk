@@ -7,12 +7,14 @@ lifecycle/queue logic against an injected fake shell.
 
 import asyncio
 import contextlib
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from klangk_backend.exceptions import TerminalError
 from klangk_backend.terminal import (
+    CONTAINER_USER,
     TerminalSession,
     set_workspace_token,
     _build_environment,
@@ -289,25 +291,24 @@ class TestStart:
 
 class TestAttachBrowser:
     async def test_runs_klangk_attach_browser(self):
-        mock_proc = AsyncMock()
-        mock_proc.communicate.return_value = (b"", b"")
-        mock_proc.returncode = 0
         with patch(
-            "klangk_backend.terminal.asyncio.create_subprocess_exec",
-            return_value=mock_proc,
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),
         ) as mock_exec:
             await attach_browser("cid-123", "bid-abc")
-        args = mock_exec.call_args[0]
-        assert "klangk-attach-browser" in args
-        assert "bid-abc" in args
+        mock_exec.assert_awaited_once_with(
+            "cid-123",
+            ["klangk-attach-browser", "bid-abc"],
+            user=CONTAINER_USER,
+            timeout=10,
+        )
 
     async def test_logs_warning_on_failure(self):
-        mock_proc = AsyncMock()
-        mock_proc.communicate.return_value = (b"", b"attach failed")
-        mock_proc.returncode = 1
         with patch(
-            "klangk_backend.terminal.asyncio.create_subprocess_exec",
-            return_value=mock_proc,
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "", "attach failed"),
         ):
             # Should not raise
             await attach_browser("cid-123", "bid-abc")
@@ -315,25 +316,24 @@ class TestAttachBrowser:
 
 class TestSetWorkspaceToken:
     async def test_runs_klangk_set_workspace_token(self):
-        mock_proc = AsyncMock()
-        mock_proc.communicate.return_value = (b"", b"")
-        mock_proc.returncode = 0
         with patch(
-            "klangk_backend.terminal.asyncio.create_subprocess_exec",
-            return_value=mock_proc,
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),
         ) as mock_exec:
             await set_workspace_token("cid-123", "jwt-token-xyz")
-        args = mock_exec.call_args[0]
-        assert "klangk-set-workspace-token" in args
-        assert "jwt-token-xyz" in args
+        mock_exec.assert_awaited_once_with(
+            "cid-123",
+            ["klangk-set-workspace-token", "jwt-token-xyz"],
+            user=CONTAINER_USER,
+            timeout=10,
+        )
 
     async def test_logs_warning_on_failure(self):
-        mock_proc = AsyncMock()
-        mock_proc.communicate.return_value = (b"", b"set failed")
-        mock_proc.returncode = 1
         with patch(
-            "klangk_backend.terminal.asyncio.create_subprocess_exec",
-            return_value=mock_proc,
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "", "set failed"),
         ):
             await set_workspace_token("cid-123", "jwt-token-xyz")
 
@@ -519,18 +519,34 @@ class TestStop:
         # Manually set tmux session name (normally set by _build_shell_command
         # when join_session is used with a socket path)
         s._tmux_session_name = "uid-abc123"
-        proc_mock = AsyncMock()
-        proc_mock.wait = AsyncMock(return_value=0)
         with patch(
-            "asyncio.create_subprocess_exec",
-            return_value=proc_mock,
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),
         ) as mock_exec:
             await s.stop()
-        mock_exec.assert_called_once()
-        argv = mock_exec.call_args[0]
-        assert "kill-session" in argv
-        assert "-t" in argv
-        assert "uid-abc123" in argv
+        mock_exec.assert_awaited_once()
+        cmd = mock_exec.call_args.args[1]
+        assert "kill-session" in cmd
+        assert "-t" in cmd
+        assert "uid-abc123" in cmd
+
+    async def test_stop_kill_session_failure_is_swallowed(self):
+        """A failing kill-session exec must not propagate from stop()."""
+        fake = FakeShell(block_after_chunks=True)
+        with _patch(fake):
+            s = TerminalSession(
+                "cid", session_name="uid", socket_path="/tmp/s.sock"
+            )
+            await s.start()
+        s._tmux_session_name = "uid-abc123"
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=OSError("boom"),
+        ):
+            # Should not raise — failure is logged at debug level.
+            await s.stop()
 
 
 class TestOutput:
@@ -617,39 +633,46 @@ class TestIsAlive:
 
 class TestTmuxCommand:
     async def test_returns_stdout(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"output\n", b""))
-        proc.returncode = 0
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "output\n", ""),
+        ) as mock_exec:
             result = await tmux_command("cid", "sess", ["list-windows"])
         assert result == "output\n"
+        mock_exec.assert_awaited_once_with(
+            "cid",
+            ["tmux", "list-windows"],
+            user=CONTAINER_USER,
+            timeout=10,
+        )
 
     async def test_raises_on_failure(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"", b"error msg"))
-        proc.returncode = 1
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "", "error msg"),
+        ) as mock_exec:
             with pytest.raises(TerminalError, match="error msg"):
                 await tmux_command("cid", "sess", ["bad-cmd"])
+        assert mock_exec.await_count == 1  # no retry on non-socket errors
 
     async def test_retries_on_socket_not_found(self):
-        fail_proc = AsyncMock()
-        fail_proc.communicate = AsyncMock(
-            return_value=(b"", b"No such file or directory")
-        )
-        fail_proc.returncode = 1
-        ok_proc = AsyncMock()
-        ok_proc.communicate = AsyncMock(return_value=(b"ok\n", b""))
-        ok_proc.returncode = 0
         with (
             patch(
-                "asyncio.create_subprocess_exec",
-                side_effect=[fail_proc, ok_proc],
-            ),
+                "klangk_backend.terminal.podman.exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (1, "", "No such file or directory"),
+                    (0, "ok\n", ""),
+                ],
+            ) as mock_exec,
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
             result = await tmux_command("cid", "sess", ["list-windows"])
         assert result == "ok\n"
+        assert mock_exec.await_count == 2
+        mock_sleep.assert_awaited_once_with(0.5)
         mock_sleep.assert_awaited_once_with(0.5)
 
 
@@ -692,52 +715,60 @@ class TestValidateWindowName:
 
 class TestNewWindow:
     async def test_creates_window_auto_name(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"@0|||0|||1|||1\n", b""))
-        proc.returncode = 0
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "@0|||0|||1|||1\n", ""),
+        ) as mock_exec:
             result = await new_window("cid", "sess")
         assert len(result) == 1
         assert result[0]["name"] == "1"
+        assert mock_exec.call_args.args[1][:2] == ["bash", "-c"]
 
     async def test_auto_name_skips_existing(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(
-            return_value=(b"@0|||0|||1|||0\n@1|||1|||2|||1\n", b"")
-        )
-        proc.returncode = 0
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "@0|||0|||1|||0\n@1|||1|||2|||1\n", ""),
+        ):
             result = await new_window("cid", "sess")
         assert len(result) == 2
 
     async def test_creates_named_window(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(
-            return_value=(b"@0|||0|||bash|||0\n@1|||1|||build|||1\n", b"")
-        )
-        proc.returncode = 0
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(
+                0,
+                "@0|||0|||bash|||0\n@1|||1|||build|||1\n",
+                "",
+            ),
+        ) as mock_exec:
             result = await new_window("cid", "sess", name="build")
         assert len(result) == 2
         assert result[1]["name"] == "build"
+        # the chosen name is interpolated into the bash script
+        assert "'build'" in mock_exec.call_args.args[1][2]
 
     async def test_rejects_shell_injection(self):
         with pytest.raises(ValueError, match="only contain"):
             await new_window("cid", "sess", name="';rm -rf /;'")
 
     async def test_rejects_duplicate_name(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"DUPLICATE\n", b""))
-        proc.returncode = 1
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "DUPLICATE\n", ""),
+        ):
             with pytest.raises(ValueError, match="already exists"):
                 await new_window("cid", "sess", name="build")
 
     async def test_raises_on_tmux_error(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"", b"session not found"))
-        proc.returncode = 1
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "", "session not found"),
+        ):
             with pytest.raises(TerminalError, match="session not found"):
                 await new_window("cid", "sess")
 
@@ -949,44 +980,58 @@ class TestBuildShellCommandTmuxDisabled:
 
 class TestLoadWorkspaceState:
     async def test_loads_state(self):
-        import json
-
         state = {"admin": [{"name": "1", "shared": False}]}
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(
-            return_value=(json.dumps(state).encode(), b"")
-        )
-        proc.returncode = 0
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, json.dumps(state), ""),
+        ) as mock_exec:
             result = await load_workspace_state("cid")
         assert result == state
+        mock_exec.assert_awaited_once_with(
+            "cid",
+            ["cat", "/home/.workspace-state.json"],
+            user=CONTAINER_USER,
+            timeout=10,
+        )
 
     async def test_missing_file(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"", b"No such file"))
-        proc.returncode = 1
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "", "No such file"),
+        ):
             result = await load_workspace_state("cid")
         assert result == {}
 
     async def test_corrupt_json(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"not json{", b""))
-        proc.returncode = 0
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "not json{", ""),
+        ):
             result = await load_workspace_state("cid")
         assert result == {}
 
 
 class TestSaveWorkspaceState:
     async def test_saves_state(self):
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"", b""))
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),
+        ) as mock_exec:
             await save_workspace_state(
                 "cid", {"admin": [{"name": "1", "shared": False}]}
             )
-        proc.communicate.assert_awaited_once()
+        mock_exec.assert_awaited_once()
+        cmd = mock_exec.call_args.args[1]
+        assert cmd == [
+            "klangk-save-workspace-state",
+            "/home/.workspace-state.json",
+        ]
+        assert mock_exec.call_args.kwargs["user"] == CONTAINER_USER
+        assert b'"admin"' in mock_exec.call_args.kwargs["stdin_data"]
 
 
 class TestRestoreWindows:
@@ -1115,76 +1160,66 @@ class TestEnsureBaseSession:
         """Skip creation if tmux has-session succeeds."""
         from klangk_backend.terminal import _ensure_base_session
 
-        proc_mock = AsyncMock()
-        proc_mock.wait = AsyncMock(return_value=0)
         with patch(
-            "asyncio.create_subprocess_exec",
-            return_value=proc_mock,
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),  # has-session succeeds
         ) as mock_exec:
             await _ensure_base_session("cid", "my-session")
         # has-session called, but new-session not called
-        assert mock_exec.call_count == 1
-        call_args = mock_exec.call_args[0]
-        assert "has-session" in call_args
+        mock_exec.assert_awaited_once()
+        assert "has-session" in mock_exec.call_args.args[1]
 
     async def test_session_does_not_exist(self):
         """Create detached session when has-session fails."""
         from klangk_backend.terminal import _ensure_base_session
 
-        has_proc = AsyncMock()
-        has_proc.wait = AsyncMock(return_value=1)
-        new_proc = AsyncMock()
-        new_proc.wait = AsyncMock(return_value=0)
         with patch(
-            "asyncio.create_subprocess_exec",
-            side_effect=[has_proc, new_proc],
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[(1, "", ""), (0, "", "")],  # has fail, new ok
         ) as mock_exec:
             await _ensure_base_session(
                 "cid", "my-session", user_home="/home/u"
             )
-        assert mock_exec.call_count == 2
-        new_args = mock_exec.call_args_list[1][0]
-        assert "new-session" in new_args
-        assert "-d" in new_args
-        assert "-s" in new_args
+        assert mock_exec.await_count == 2
+        new_cmd = mock_exec.call_args_list[1].args[1]
+        assert "new-session" in new_cmd
+        assert "-d" in new_cmd
+        assert "-s" in new_cmd
 
     async def test_has_session_exception(self):
         """Falls through to create if has-session raises."""
         from klangk_backend.terminal import _ensure_base_session
 
-        new_proc = AsyncMock()
-        new_proc.wait = AsyncMock(return_value=0)
         with patch(
-            "asyncio.create_subprocess_exec",
-            side_effect=[OSError("boom"), new_proc],
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[OSError("boom"), (0, "", "")],
         ) as mock_exec:
             await _ensure_base_session("cid", "my-session")
-        assert mock_exec.call_count == 2
+        assert mock_exec.await_count == 2
 
     async def test_create_failure_logs_warning(self):
         """Warning logged when new-session fails."""
         from klangk_backend.terminal import _ensure_base_session
 
-        has_proc = AsyncMock()
-        has_proc.wait = AsyncMock(return_value=1)
         with patch(
-            "asyncio.create_subprocess_exec",
-            side_effect=[has_proc, OSError("create failed")],
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[(1, "", ""), OSError("create failed")],
         ):
             # Should not raise
             await _ensure_base_session("cid", "my-session")
 
     async def test_env_args_passed(self):
-        """HOME and SSH_AUTH_SOCK are passed as -e flags."""
+        """HOME and SSH_AUTH_SOCK are passed as tmux -e flags."""
         from klangk_backend.terminal import _ensure_base_session
 
-        has_proc = AsyncMock()
-        has_proc.wait = AsyncMock(return_value=1)
-        new_proc = AsyncMock()
-        new_proc.wait = AsyncMock(return_value=0)
         with patch(
-            "asyncio.create_subprocess_exec",
-            side_effect=[has_proc, new_proc],
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[(1, "", ""), (0, "", "")],
         ) as mock_exec:
             await _ensure_base_session(
                 "cid",
@@ -1192,6 +1227,6 @@ class TestEnsureBaseSession:
                 user_home="/home/u",
                 ssh_agent_socket="/tmp/agent.sock",
             )
-        new_args = mock_exec.call_args_list[1][0]
-        assert "HOME=/home/u" in new_args
-        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_args
+        new_cmd = mock_exec.call_args_list[1].args[1]
+        assert "HOME=/home/u" in new_cmd
+        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_cmd
