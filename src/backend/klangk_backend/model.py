@@ -825,6 +825,21 @@ async def add_acl_entry(
         return cursor.lastrowid
 
 
+def _row_to_acl_entry(row) -> dict:
+    """Map an acl_entries row to the dict shape callers expect."""
+    return {
+        "id": row["id"],
+        "resource": row["resource"],
+        "position": row["position"],
+        "action": row["action"],
+        "principal_type": row["principal_type"],
+        "user_id": row["user_id"],
+        "group_id": row["group_id"],
+        "system_principal": row["system_principal"],
+        "permission": row["permission"],
+    }
+
+
 async def get_acl_entries(resource: str) -> list[dict]:
     """Get ACL entries for a resource, ordered by position."""
     async with transaction() as db:
@@ -835,20 +850,38 @@ async def get_acl_entries(resource: str) -> list[dict]:
             " ORDER BY position",
             (resource,),
         )
-        return [
-            {
-                "id": row["id"],
-                "resource": row["resource"],
-                "position": row["position"],
-                "action": row["action"],
-                "principal_type": row["principal_type"],
-                "user_id": row["user_id"],
-                "group_id": row["group_id"],
-                "system_principal": row["system_principal"],
-                "permission": row["permission"],
-            }
-            for row in await cursor.fetchall()
-        ]
+        return [_row_to_acl_entry(row) for row in await cursor.fetchall()]
+
+
+async def get_acl_entries_map(
+    resources: list[str],
+) -> dict[str, list[dict]]:
+    """Fetch ACL entries for many resources in a single query.
+
+    Returns a ``{resource: [entries]}`` map (entries ordered by position).
+    Resources with no entries are present as empty lists. This exists so
+    callers that check many resources/permissions (e.g. ``my_permissions``)
+    don't open one DB connection per resource — see ``acl.check_permission``
+    which previously caused ~300 sequential connection-per-query reads.
+    """
+    resources = list(dict.fromkeys(resources))  # de-dup, keep order
+    result: dict[str, list[dict]] = {r: [] for r in resources}
+    if not resources:
+        return result
+    placeholders = ",".join("?" for _ in resources)
+    async with transaction() as db:
+        cursor = await db.execute(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE resource IN"
+            f" ({placeholders}) ORDER BY position",
+            tuple(resources),
+        )
+        for row in await cursor.fetchall():
+            result.setdefault(row["resource"], []).append(
+                _row_to_acl_entry(row)
+            )
+    return result
 
 
 async def get_acl_entries_resolved(resource: str) -> list[dict]:

@@ -2668,26 +2668,21 @@ async def my_permissions(
     principals = await acl.get_principals(user["id"])
     groups = await model.get_user_groups(user["id"])
     if resource is not None:
-        perms = [
-            p
-            for p in ALL_PERMISSIONS
-            if await acl.check_permission(resource, principals, p)
-        ]
+        permissions = await acl.permissions_for_resources(
+            [resource], principals, ALL_PERMISSIONS
+        )
+        perms = permissions.get(resource, [])
         return {
             "user_id": user["id"],
             "email": user["email"],
             "groups": groups,
             "permissions": {resource: perms} if perms else {},
         }
-    permissions = {}
-    for res in STATIC_RESOURCES:
-        perms = [
-            p
-            for p in ALL_PERMISSIONS
-            if await acl.check_permission(res, principals, p)
-        ]
-        if perms:
-            permissions[res] = perms
+    # Batch all static resources into a single ACL query instead of
+    # awaiting check_permission() per resource/permission pair.
+    permissions = await acl.permissions_for_resources(
+        STATIC_RESOURCES, principals, ALL_PERMISSIONS
+    )
     return {
         "user_id": user["id"],
         "email": user["email"],
