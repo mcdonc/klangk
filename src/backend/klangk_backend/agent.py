@@ -294,7 +294,36 @@ class AgentSession:
                     timeout,
                     self.workspace_id,
                 )
+                # The abort is fire-and-forget: Pi may still emit
+                # trailing turn-1 events (message_end / agent_end) and
+                # the abort ack into the stdout pipe.  Reusing this
+                # process would force the next turn to resync past all
+                # of that, which is fragile -- a late turn-1 agent_end
+                # landing inside turn 2's read window would truncate
+                # turn 2 (#894).  Tear the process down so the next
+                # prompt starts from a clean stream.
+                await self._reset_process(proc)
                 return "Sorry, I timed out processing your request."
+
+    async def _reset_process(self, proc: asyncio.subprocess.Process) -> None:
+        """Tear down the current process so the next prompt starts fresh.
+
+        Cancels the death monitor (preventing a spurious disconnect
+        broadcast), clears ``self._proc``, and kills the subprocess.
+        Used on timeout, where leftover turn-1 events would otherwise
+        linger in the stdout pipe and risk corrupting the next turn
+        (#894).  The next ``send_prompt`` spawns a fresh subprocess via
+        ``_ensure_started``.
+        """
+        if self._monitor_task is not None:
+            self._monitor_task.cancel()
+            self._monitor_task = None
+        self._proc = None
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
 
     def _send_abort(self, proc: asyncio.subprocess.Process) -> None:
         """Send an abort command to Pi."""
