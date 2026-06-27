@@ -796,7 +796,10 @@ class Connection:
         )
 
         hosting_hostname, hosting_proto, hosting_base_path = (
-            derive_hosting_info(self.sock.headers)
+            derive_hosting_info(
+                self.sock.headers,
+                self.sock.client.host if self.sock.client else None,
+            )
         )
         (
             container_id,

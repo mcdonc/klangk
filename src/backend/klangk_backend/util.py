@@ -1,6 +1,7 @@
 """Shared utilities: env var resolution, bounded async queue."""
 
 import asyncio
+import ipaddress
 import logging
 import os
 from typing import TypeVar
@@ -71,25 +72,92 @@ def sanitize_disposition_name(name: str) -> str:
     return name.replace("/", "_").replace("\\", "_").replace('"', "")
 
 
+# Forwarded headers (X-Forwarded-Host/-Proto/-Prefix) are trusted ONLY when
+# the immediate connection comes from a configured trusted proxy upstream.
+# klangk's nginx proxies to 127.0.0.1, so the default trusted set is the
+# loopback addresses; every deployment runs the backend behind a local
+# reverse proxy, so this works out of the box. If the backend port is ever
+# exposed directly to untrusted networks, requests from those peers fall
+# outside the trusted set and forwarded headers are ignored (so an attacker
+# cannot spoof X-Forwarded-Host to poison verification/reset/OIDC links).
+#
+# KLANGK_TRUSTED_PROXY_CIDRS: comma-separated CIDRs/IPs to trust
+# (default "127.0.0.1,::1").
+#
+# Back-compat: KLANGK_REJECT_PROXY_HEADERS=1 (or true/yes) is honored as a
+# hard "reject always" override (trust nobody), matching the old opt-out.
 _REJECT_PROXY = resolve_env_bool("KLANGK_REJECT_PROXY_HEADERS")
 
 
-def derive_hosting_info(headers) -> tuple[str, str, str]:
+def _load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
+    raw = resolve_env_secret("KLANGK_TRUSTED_PROXY_CIDRS", "127.0.0.1,::1")
+    trusted: set[ipaddress._BaseAddress] = set()
+    for token in (raw or "").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            trusted.add(ipaddress.ip_address(token))
+        except ValueError:
+            try:
+                net = ipaddress.ip_network(token, strict=False)
+                trusted.add(net)
+            except ValueError:
+                logger.warning(
+                    "Ignoring invalid KLANGK_TRUSTED_PROXY_CIDRS entry: %r",
+                    token,
+                )
+    if not trusted:
+        trusted.add(ipaddress.ip_address("127.0.0.1"))
+    return trusted
+
+
+_TRUSTED_PROXY_CIDRS = _load_trusted_proxy_cidrs()
+
+
+def _peer_trusted(client_host: str | None) -> bool:
+    """True if the immediate peer is in the trusted proxy set."""
+    if not client_host:
+        return False
+    try:
+        ip = ipaddress.ip_address(client_host)
+    except ValueError:
+        return False
+    for entry in _TRUSTED_PROXY_CIDRS:
+        if isinstance(entry, ipaddress._BaseNetwork):
+            if ip in entry:
+                return True
+        elif entry == ip:
+            return True
+    return False
+
+
+def derive_hosting_info(
+    headers, client_host: str | None = None
+) -> tuple[str, str, str]:
     """Derive hosting hostname, proto, and base path from env vars or request headers.
 
-    Returns (hostname, proto, base_path). Env vars take precedence over headers.
-    Works with both Request.headers and WebSocket.headers.
+    Returns (hostname, proto, base_path). Env vars take precedence over
+    headers. Works with both Request.headers and WebSocket.headers.
 
     Forwarded headers (``X-Forwarded-Host``, ``X-Forwarded-Proto``,
-    ``X-Forwarded-Prefix``) are trusted by default since klangk's own
-    nginx sets them.  Set ``KLANGK_REJECT_PROXY_HEADERS=1`` to ignore
-    them in hardened deployments where the backend port is exposed
-    directly.
+    ``X-Forwarded-Prefix``) are trusted ONLY when the immediate peer
+    (``client_host``) is in ``KLANGK_TRUSTED_PROXY_CIDRS`` (default
+    ``127.0.0.1,::1`` — every klangk deployment runs the backend behind a
+    local reverse proxy). This prevents an attacker who reaches the backend
+    port directly from spoofing the host/proto to poison the
+    verification/reset/OIDC links the backend generates.
+
+    Pass the real connection peer (``request.client.host`` for HTTP,
+    ``websocket.client.host`` for WS). When ``client_host`` is unavailable
+    forwarded headers are ignored (fail-closed).
+
+    ``KLANGK_REJECT_PROXY_HEADERS=1`` (back-compat) forces trust off entirely.
     """
     hostname = resolve_env_secret("KLANGK_HOSTING_HOSTNAME")
     proto = resolve_env_secret("KLANGK_HOSTING_PROTO")
     base_path = resolve_env_secret("KLANGK_HOSTING_BASE_PATH")
-    trust = not _REJECT_PROXY
+    trust = (not _REJECT_PROXY) and _peer_trusted(client_host)
     if not hostname:
         if trust:
             forwarded_host = headers.get("x-forwarded-host")

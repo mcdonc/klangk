@@ -36,6 +36,16 @@ from klangk_backend.wshandler import (
 )
 
 
+def _trusted_default():
+    """The default trusted-proxy set (loopback) as a fresh set."""
+    import ipaddress
+
+    return {
+        ipaddress.ip_address("127.0.0.1"),
+        ipaddress.ip_address("::1"),
+    }
+
+
 def _mock_sock(headers=None, query_params=None):
     """Create a mock SafeWebSocket for testing.
 
@@ -269,24 +279,94 @@ class TestSendError:
 # --- derive_hosting_info ---
 
 
+class TestTrustedProxyCidrs:
+    def test_load_defaults_when_unset(self, monkeypatch):
+        import ipaddress
+
+        import klangk_backend.util as util
+
+        monkeypatch.delenv("KLANGK_TRUSTED_PROXY_CIDRS", raising=False)
+        trusted = util._load_trusted_proxy_cidrs()
+        assert ipaddress.ip_address("127.0.0.1") in trusted
+        assert ipaddress.ip_address("::1") in trusted
+
+    def test_load_cidr_network_token(self, monkeypatch):
+        import ipaddress
+
+        import klangk_backend.util as util
+
+        monkeypatch.setenv(
+            "KLANGK_TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 192.168.1.5"
+        )
+        trusted = util._load_trusted_proxy_cidrs()
+        assert ipaddress.ip_network("10.0.0.0/8") in trusted
+        assert ipaddress.ip_address("192.168.1.5") in trusted
+
+    def test_load_invalid_token_warns_and_skipped(self, monkeypatch, caplog):
+        import ipaddress
+
+        import klangk_backend.util as util
+
+        monkeypatch.setenv(
+            "KLANGK_TRUSTED_PROXY_CIDRS", "not-an-ip, 127.0.0.1"
+        )
+        with caplog.at_level("WARNING", logger="klangk_backend.util"):
+            trusted = util._load_trusted_proxy_cidrs()
+        assert ipaddress.ip_address("127.0.0.1") in trusted
+        assert any("not-an-ip" in r.getMessage() for r in caplog.records)
+
+    def test_load_all_invalid_falls_back_to_loopback(self, monkeypatch):
+        import ipaddress
+
+        import klangk_backend.util as util
+
+        monkeypatch.setenv("KLANGK_TRUSTED_PROXY_CIDRS", "garbage")
+        trusted = util._load_trusted_proxy_cidrs()
+        assert ipaddress.ip_address("127.0.0.1") in trusted
+
+    def test_load_empty_value_falls_back_to_loopback(self, monkeypatch):
+        import ipaddress
+
+        import klangk_backend.util as util
+
+        monkeypatch.setenv("KLANGK_TRUSTED_PROXY_CIDRS", "")
+        trusted = util._load_trusted_proxy_cidrs()
+        assert ipaddress.ip_address("127.0.0.1") in trusted
+
+    def test_peer_trusted_rejects_non_ip_string(self, monkeypatch):
+        import klangk_backend.util as util
+
+        monkeypatch.setattr(util, "_TRUSTED_PROXY_CIDRS", _trusted_default())
+        assert util._peer_trusted("not-an-ip") is False
+
+    def test_peer_trusted_rejects_none(self, monkeypatch):
+        import klangk_backend.util as util
+
+        monkeypatch.setattr(util, "_TRUSTED_PROXY_CIDRS", _trusted_default())
+        assert util._peer_trusted(None) is False
+
+
 class TestDeriveHostingInfo:
     def test_env_vars_take_precedence(self, monkeypatch):
         monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "env.example.com")
         monkeypatch.setenv("KLANGK_HOSTING_PROTO", "https")
         monkeypatch.setenv("KLANGK_HOSTING_BASE_PATH", "/app")
         sock = _mock_sock(headers={"host": "header.example.com"})
-        h, p, b = derive_hosting_info(sock.headers)
+        h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
         assert h == "env.example.com"
         assert p == "https"
         assert b == "/app"
 
-    def test_forwarded_host_trusted_by_default(self, monkeypatch):
-        """Forwarded headers trusted by default (klangk's nginx sets them)."""
+    def test_forwarded_headers_trusted_from_loopback_peer(self, monkeypatch):
+        """Forwarded headers honored when the peer is a trusted proxy (loopback by default)."""
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
         monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
         sock = _mock_sock(
             headers={
                 "x-forwarded-host": "arctor.repoze.org",
@@ -294,18 +374,25 @@ class TestDeriveHostingInfo:
                 "x-forwarded-prefix": "/klangk",
             }
         )
-        h, p, b = derive_hosting_info(sock.headers)
+        h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
         assert h == "arctor.repoze.org"
         assert p == "https"
         assert b == "/klangk"
 
-    def test_forwarded_headers_rejected_when_configured(self, monkeypatch):
-        """With KLANGK_REJECT_PROXY_HEADERS=1, forwarded headers are ignored."""
+    def test_forwarded_headers_rejected_from_untrusted_peer(self, monkeypatch):
+        """Forwarded headers ignored when the peer is NOT a trusted proxy.
+
+        An attacker reaching the backend directly (e.g. from a public IP)
+        must not be able to poison X-Forwarded-Host to mint phishing links.
+        """
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
-        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", True)
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
         sock = _mock_sock(
             headers={
                 "host": "localhost:8997",
@@ -314,10 +401,81 @@ class TestDeriveHostingInfo:
                 "x-forwarded-prefix": "/phish",
             }
         )
-        h, p, b = derive_hosting_info(sock.headers)
+        # Peer is a public address, not in the default trusted set.
+        h, p, b = derive_hosting_info(sock.headers, "203.0.113.7")
         assert h == "localhost:8995"
         assert p == "http"
         assert b == ""
+
+    def test_forwarded_headers_rejected_when_no_peer(self, monkeypatch):
+        """Forwarded headers ignored when client_host is unavailable (fail-closed)."""
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        sock = _mock_sock(
+            headers={
+                "host": "localhost:8997",
+                "x-forwarded-host": "evil.com",
+                "x-forwarded-proto": "https",
+            }
+        )
+        h, p, b = derive_hosting_info(sock.headers, None)
+        assert h == "localhost:8995"
+        assert p == "http"
+        assert b == ""
+
+    def test_reject_proxy_headers_override(self, monkeypatch):
+        """KLANGK_REJECT_PROXY_HEADERS=1 forces trust off even for loopback peers."""
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", True)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        sock = _mock_sock(
+            headers={
+                "host": "localhost:8997",
+                "x-forwarded-host": "evil.com",
+                "x-forwarded-proto": "https",
+                "x-forwarded-prefix": "/phish",
+            }
+        )
+        h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
+        assert h == "localhost:8995"
+        assert p == "http"
+        assert b == ""
+
+    def test_custom_trusted_cidr(self, monkeypatch):
+        """A non-loopback peer is trusted when its CIDR is configured."""
+        import ipaddress
+
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS",
+            {ipaddress.ip_network("10.0.0.0/8")},
+        )
+        sock = _mock_sock(
+            headers={
+                "x-forwarded-host": "internal.example.com",
+                "x-forwarded-proto": "https",
+                "x-forwarded-prefix": "/klangk",
+            }
+        )
+        h, p, b = derive_hosting_info(sock.headers, "10.5.5.5")
+        assert h == "internal.example.com"
+        assert p == "https"
+        assert b == "/klangk"
 
     def test_host_header_with_nginx_port(self, monkeypatch):
         """Direct access (local dev) — substitute nginx port."""
@@ -326,7 +484,7 @@ class TestDeriveHostingInfo:
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
         sock = _mock_sock(headers={"host": "myhost:8997"})
-        h, p, b = derive_hosting_info(sock.headers)
+        h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
         assert h == "myhost:8995"
         assert p == "http"
         assert b == ""
@@ -337,7 +495,7 @@ class TestDeriveHostingInfo:
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
         sock = _mock_sock(headers={"host": "myhost:8997"})
-        h, p, b = derive_hosting_info(sock.headers)
+        h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
         assert h == "myhost:8997"
         assert p == "http"
         assert b == ""
@@ -348,7 +506,7 @@ class TestDeriveHostingInfo:
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
         sock = _mock_sock(headers={})
-        h, p, b = derive_hosting_info(sock.headers)
+        h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
         assert h == "localhost:8995"
         assert p == "http"
         assert b == ""
@@ -359,7 +517,7 @@ class TestDeriveHostingInfo:
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
         sock = _mock_sock(headers={})
-        h, p, b = derive_hosting_info(sock.headers)
+        h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
         assert h == "localhost"
         assert p == "http"
         assert b == ""
