@@ -6286,23 +6286,17 @@ class TestUiReadySharedTerminals:
         from klangk_backend import workspaces
 
         ws = await workspaces.create_workspace(user["id"], "ui-shared")
-        sock = _mock_sock()
-        conn = _base_conn(
-            user={"id": user["id"], "email": user["email"]}, ws=sock
-        )
-        conn.workspace_id = ws["id"]
-        conn.container_id = "cid"
-        conn._user_home = "/home/testuser"
-        conn.pending_status_msg = "ready"
+        async with _conn_in_workspace(
+            {"id": user["id"], "email": user["email"]},
+            ws["id"],
+            user_home="/home/testuser",
+        ) as (sock, conn, session):
+            conn.pending_status_msg = "ready"
 
-        # Set up in-memory shared state
-        session = wshandler.state.get_or_create_session(ws["id"])
-        session.terminal_windows[user["id"]] = [
-            {"name": "dev", "index": 0, "id": "@0", "shared": True},
-        ]
-        await session.add_subscriber(sock, "cid")
-        wshandler.state.connections[sock] = conn
-        try:
+            # Set up in-memory shared state
+            session.terminal_windows[user["id"]] = [
+                {"name": "dev", "index": 0, "id": "@0", "shared": True},
+            ]
             await conn.handle_ui_ready()
 
             sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -6310,9 +6304,6 @@ class TestUiReadySharedTerminals:
                 isinstance(m, dict) and m.get("type") == "shared_terminals"
                 for m in sent
             )
-        finally:
-            wshandler.state.sessions.pop(ws["id"], None)
-            wshandler.state.connections.pop(sock, None)
 
     async def test_ui_ready_sends_container_ready(self, user, temp_data_dir):
         from klangk_backend import workspaces
