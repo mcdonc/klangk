@@ -801,6 +801,49 @@ void main() {
       client.dispose();
     });
 
+    test('reconnect after no-workspace success keeps reconnecting on next drop',
+        () async {
+      // Regression: a successful reconnect with no pending workspace used
+      // to leave _reconnecting = true, so the *next* drop never reconnected.
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      // No workspace joined — _pendingWorkspaceId stays null.
+
+      // First drop + successful reconnect.
+      channels[0].serverClose();
+      for (var i = 0; i < 10 && channels.length < 2; i++) {
+        await Future.delayed(Duration.zero);
+      }
+      expect(channels.length, 2);
+      expect(client.connected, isTrue);
+      // The bug: _reconnecting was left true here.
+      expect(client.reconnecting, isFalse,
+          reason: 'successful reconnect with no workspace must clear '
+              '_reconnecting');
+
+      // Second drop must schedule a fresh reconnect.
+      channels[1].serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.reconnecting, isTrue,
+          reason: 'client must reconnect again after a second drop');
+      expect(client.reconnectAttempt, greaterThanOrEqualTo(1));
+
+      // ...and it actually reconnects.
+      for (var i = 0; i < 10 && channels.length < 3; i++) {
+        await Future.delayed(Duration.zero);
+      }
+      expect(channels.length, 3);
+      expect(client.connected, isTrue);
+      expect(client.reconnecting, isFalse);
+
+      client.disconnect();
+      client.dispose();
+    });
+
     test('manual connect cancels pending reconnect timer', () async {
       final auth = AuthService();
       await Future.delayed(Duration.zero);
