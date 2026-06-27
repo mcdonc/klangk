@@ -170,6 +170,13 @@ async def transaction():
         await db.close()
 
 
+async def _fetchone(query: str, params: tuple = ()) -> _Row | None:
+    """Run a single-row SELECT and return the row, or ``None``."""
+    async with transaction() as db:
+        cursor = await db.execute(query, params)
+        return await cursor.fetchone()
+
+
 # Chat message types
 MSG_USER = 0
 MSG_AGENT = 1
@@ -551,44 +558,40 @@ async def set_user_handle(user_id: str, handle: str) -> None:
 
 async def get_user_by_handle(handle: str) -> dict | None:
     """Find a user by handle."""
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, email, handle FROM users WHERE handle = ?",
-            (handle,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "handle": row["handle"],
-        }
+    row = await _fetchone(
+        "SELECT id, email, handle FROM users WHERE handle = ?",
+        (handle,),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "handle": row["handle"],
+    }
 
 
 async def get_user_by_external_id(
     provider: str, external_id: str
 ) -> dict | None:
     """Find a user by OIDC provider + external ID."""
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, email, password_hash, verified, provider,"
-            " external_id, handle"
-            " FROM users WHERE provider = ? AND external_id = ?",
-            (provider, external_id),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "password_hash": row["password_hash"],
-            "verified": bool(row["verified"]),
-            "provider": row["provider"],
-            "external_id": row["external_id"],
-            "handle": row["handle"],
-        }
+    row = await _fetchone(
+        "SELECT id, email, password_hash, verified, provider,"
+        " external_id, handle"
+        " FROM users WHERE provider = ? AND external_id = ?",
+        (provider, external_id),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "password_hash": row["password_hash"],
+        "verified": bool(row["verified"]),
+        "provider": row["provider"],
+        "external_id": row["external_id"],
+        "handle": row["handle"],
+    }
 
 
 async def link_oidc_identity(
@@ -629,40 +632,34 @@ async def create_group(
 
 async def get_group_by_name(name: str) -> dict | None:
     """Find a group by name."""
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, name, description, created_at"
-            " FROM groups WHERE name = ?",
-            (name,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "name": row["name"],
-            "description": row["description"],
-            "created_at": row["created_at"],
-        }
+    row = await _fetchone(
+        "SELECT id, name, description, created_at FROM groups WHERE name = ?",
+        (name,),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "created_at": row["created_at"],
+    }
 
 
 async def get_group_by_id(group_id: str) -> dict | None:
     """Find a group by ID."""
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, name, description, created_at"
-            " FROM groups WHERE id = ?",
-            (group_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "name": row["name"],
-            "description": row["description"],
-            "created_at": row["created_at"],
-        }
+    row = await _fetchone(
+        "SELECT id, name, description, created_at FROM groups WHERE id = ?",
+        (group_id,),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "created_at": row["created_at"],
+    }
 
 
 async def list_groups() -> list[dict]:
@@ -971,25 +968,23 @@ async def get_acl_tree_summary() -> list[dict]:
 
 
 async def get_user_by_email(email: str) -> dict | None:
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, email, password_hash, verified, provider,"
-            " external_id, handle"
-            " FROM users WHERE email = ?",
-            (email,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "password_hash": row["password_hash"],
-            "verified": bool(row["verified"]),
-            "provider": row["provider"],
-            "external_id": row["external_id"],
-            "handle": row["handle"],
-        }
+    row = await _fetchone(
+        "SELECT id, email, password_hash, verified, provider,"
+        " external_id, handle"
+        " FROM users WHERE email = ?",
+        (email,),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "password_hash": row["password_hash"],
+        "verified": bool(row["verified"]),
+        "provider": row["provider"],
+        "external_id": row["external_id"],
+        "handle": row["handle"],
+    }
 
 
 async def list_users() -> list[dict]:
@@ -1060,19 +1055,17 @@ async def update_password(user_id: str, password_hash: str) -> None:
 
 
 async def get_user_by_id(user_id: str) -> dict | None:
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, email, handle FROM users WHERE id = ?",
-            (user_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "handle": row["handle"],
-        }
+    row = await _fetchone(
+        "SELECT id, email, handle FROM users WHERE id = ?",
+        (user_id,),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "handle": row["handle"],
+    }
 
 
 async def search_users(query: str, limit: int = 10) -> list[dict]:
@@ -1246,27 +1239,25 @@ async def get_workspace(
 
 async def get_workspace_by_id(workspace_id: str) -> dict | None:
     """Get a workspace by ID without access control (for admin use)."""
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, user_id, name, container_id, num_ports, image,"
-            " default_command, mounts, env"
-            " FROM workspaces WHERE id = ?",
-            (workspace_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "user_id": row["user_id"],
-            "name": row["name"],
-            "container_id": row["container_id"],
-            "num_ports": row["num_ports"],
-            "image": row["image"],
-            "default_command": row["default_command"],
-            "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
-            "env": json.loads(row["env"]) if row["env"] else None,
-        }
+    row = await _fetchone(
+        "SELECT id, user_id, name, container_id, num_ports, image,"
+        " default_command, mounts, env"
+        " FROM workspaces WHERE id = ?",
+        (workspace_id,),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "name": row["name"],
+        "container_id": row["container_id"],
+        "num_ports": row["num_ports"],
+        "image": row["image"],
+        "default_command": row["default_command"],
+        "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
+        "env": json.loads(row["env"]) if row["env"] else None,
+    }
 
 
 async def get_workspace_members(workspace_id: str) -> list[dict]:
@@ -1510,13 +1501,11 @@ async def blocklist_token(
 
 
 async def is_token_blocklisted(jti: str) -> bool:
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT 1 FROM token_blocklist WHERE jti = ?",
-            (jti,),
-        )
-        row = await cursor.fetchone()
-        return row is not None
+    row = await _fetchone(
+        "SELECT 1 FROM token_blocklist WHERE jti = ?",
+        (jti,),
+    )
+    return row is not None
 
 
 async def get_refreshed_token(jti: str) -> str | None:
@@ -1525,14 +1514,12 @@ async def get_refreshed_token(jti: str) -> str | None:
     The returned token is a full JWT whose own ``exp`` claim governs
     its validity — no additional expiry check is needed here.
     """
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT new_token FROM token_blocklist"
-            " WHERE jti = ? AND new_token IS NOT NULL",
-            (jti,),
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else None
+    row = await _fetchone(
+        "SELECT new_token FROM token_blocklist"
+        " WHERE jti = ? AND new_token IS NOT NULL",
+        (jti,),
+    )
+    return row[0] if row else None
 
 
 # Message history
@@ -1558,20 +1545,18 @@ async def get_login_attempt_info(
     email: str,
 ) -> dict[str, int | str | None] | None:
     """Return login attempt info for an email, or None if no attempts tracked."""
-    async with transaction() as db:
-        cursor = await db.execute(
-            """SELECT attempt_count, first_attempt_at, locked_until
-               FROM login_attempts WHERE email = ?""",
-            (email,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "attempt_count": row["attempt_count"],
-            "first_attempt_at": row["first_attempt_at"],
-            "locked_until": row["locked_until"],
-        }
+    row = await _fetchone(
+        "SELECT attempt_count, first_attempt_at, locked_until"
+        " FROM login_attempts WHERE email = ?",
+        (email,),
+    )
+    if row is None:
+        return None
+    return {
+        "attempt_count": row["attempt_count"],
+        "first_attempt_at": row["first_attempt_at"],
+        "locked_until": row["locked_until"],
+    }
 
 
 async def set_login_lockout(email: str, locked_until: str) -> None:
@@ -1838,44 +1823,40 @@ async def create_invitation(email: str, invited_by: str) -> dict:
 
 async def get_invitation(invitation_id: str) -> dict | None:
     """Get an invitation by ID."""
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, email, invited_by, status, created_at, accepted_at"
-            " FROM invitations WHERE id = ?",
-            (invitation_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "invited_by": row["invited_by"],
-            "status": row["status"],
-            "created_at": row["created_at"],
-            "accepted_at": row["accepted_at"],
-        }
+    row = await _fetchone(
+        "SELECT id, email, invited_by, status, created_at, accepted_at"
+        " FROM invitations WHERE id = ?",
+        (invitation_id,),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "invited_by": row["invited_by"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "accepted_at": row["accepted_at"],
+    }
 
 
 async def get_pending_invitation_by_email(email: str) -> dict | None:
     """Get a pending invitation for the given email."""
-    async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, email, invited_by, status, created_at, accepted_at"
-            " FROM invitations WHERE email = ? AND status = 'pending'",
-            (email,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "invited_by": row["invited_by"],
-            "status": row["status"],
-            "created_at": row["created_at"],
-            "accepted_at": row["accepted_at"],
-        }
+    row = await _fetchone(
+        "SELECT id, email, invited_by, status, created_at, accepted_at"
+        " FROM invitations WHERE email = ? AND status = 'pending'",
+        (email,),
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "invited_by": row["invited_by"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "accepted_at": row["accepted_at"],
+    }
 
 
 async def list_invitations() -> list[dict]:
