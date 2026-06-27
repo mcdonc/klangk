@@ -9,8 +9,26 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/workspace/workspace_list_page.dart';
+import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_frontend/widgets/klangk_logo.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+
+/// A WsClient whose workspacesChanged stream can be driven from tests.
+class _MockWsClient extends WsClient {
+  final StreamController<void> _workspacesChanged =
+      StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get workspacesChanged => _workspacesChanged.stream;
+
+  void emitWorkspacesChanged() => _workspacesChanged.add(null);
+
+  @override
+  void dispose() {
+    _workspacesChanged.close();
+    super.dispose();
+  }
+}
 
 void main() {
   /// Wraps a handler to also serve /api/config and /api/my-permissions.
@@ -93,9 +111,12 @@ void main() {
     return '$header.$body.fakesig';
   }
 
-  Widget buildPage() {
-    return ChangeNotifierProvider(
-      create: (_) => AuthService(),
+  Widget buildPage({WsClient? wsClient}) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthService()),
+        ChangeNotifierProvider.value(value: wsClient ?? WsClient()),
+      ],
       child: const MaterialApp(home: WorkspaceListPage()),
     );
   }
@@ -107,6 +128,45 @@ void main() {
 
       expect(find.byType(WorkspaceListPage), findsOneWidget);
       expect(find.text('Workspaces'), findsOneWidget);
+    });
+
+    testWidgets('refreshes workspace list on workspacesChanged event',
+        (tester) async {
+      final ws = _MockWsClient();
+      var fetchCount = 0;
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          fetchCount++;
+          // Second fetch (after the WS event) surfaces a new workspace.
+          final list = fetchCount >= 2
+              ? [
+                  {'id': 'ws-1', 'name': 'appeared', 'created_at': ''}
+                ]
+              : [];
+          return http.Response(jsonEncode(list), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/ws-1/members') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage(wsClient: ws));
+      await tester.pumpAndSettle();
+      expect(fetchCount, 1);
+      expect(find.text('appeared'), findsNothing);
+
+      // The backend signals the workspace set changed.
+      ws.emitWorkspacesChanged();
+      await tester.pumpAndSettle();
+
+      expect(fetchCount, greaterThan(1));
+      expect(find.text('appeared'), findsOneWidget);
+
+      ws.dispose();
     });
 
     testWidgets('has FAB for creating workspaces', (tester) async {
@@ -780,8 +840,11 @@ void main() {
       );
 
       await tester.pumpWidget(
-        ChangeNotifierProvider(
-          create: (_) => AuthService(),
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => AuthService()),
+            ChangeNotifierProvider.value(value: WsClient()),
+          ],
           child: MaterialApp.router(routerConfig: router),
         ),
       );
@@ -1141,8 +1204,11 @@ void main() {
       );
 
       await tester.pumpWidget(
-        ChangeNotifierProvider(
-          create: (_) => AuthService(),
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => AuthService()),
+            ChangeNotifierProvider.value(value: WsClient()),
+          ],
           child: MaterialApp.router(routerConfig: router),
         ),
       );
@@ -1186,8 +1252,11 @@ void main() {
       );
 
       await tester.pumpWidget(
-        ChangeNotifierProvider(
-          create: (_) => AuthService(),
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => AuthService()),
+            ChangeNotifierProvider.value(value: WsClient()),
+          ],
           child: MaterialApp.router(routerConfig: router),
         ),
       );
@@ -1225,8 +1294,11 @@ void main() {
       );
 
       await tester.pumpWidget(
-        ChangeNotifierProvider(
-          create: (_) => AuthService(),
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => AuthService()),
+            ChangeNotifierProvider.value(value: WsClient()),
+          ],
           child: MaterialApp.router(routerConfig: router),
         ),
       );
@@ -1282,8 +1354,11 @@ void main() {
       );
 
       await tester.pumpWidget(
-        ChangeNotifierProvider(
-          create: (_) => AuthService(),
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => AuthService()),
+            ChangeNotifierProvider.value(value: WsClient()),
+          ],
           child: MaterialApp.router(routerConfig: router),
         ),
       );

@@ -3020,6 +3020,56 @@ class TestResetWorkspaceState:
             mock_stop.assert_awaited_once_with(ws_id)
 
 
+class TestNotifyUserWorkspacesChanged:
+    """notify_user_workspaces_changed sends to a user's connections only."""
+
+    def _register(self, sock, user):
+        conn = _base_conn(user=user, ws=sock)
+        wshandler.state.connections[sock] = conn
+        return conn
+
+    def test_sends_to_matching_user_only(self):
+        sock_a = _mock_sock()
+        sock_b = _mock_sock()
+        sock_other = _mock_sock()
+        try:
+            self._register(sock_a, {"id": "uid-1", "email": "a@x"})
+            self._register(sock_b, {"id": "uid-1", "email": "b@x"})
+            self._register(sock_other, {"id": "uid-2", "email": "c@x"})
+            wshandler.state.notify_user_workspaces_changed("uid-1")
+        finally:
+            wshandler.state.connections.pop(sock_a, None)
+            wshandler.state.connections.pop(sock_b, None)
+            wshandler.state.connections.pop(sock_other, None)
+        # Both of uid-1's connections were notified...
+        sock_a.send_json.assert_called_once_with(
+            {"type": "workspaces_changed"}
+        )
+        sock_b.send_json.assert_called_once_with(
+            {"type": "workspaces_changed"}
+        )
+        # ...and the other user's connection was not.
+        sock_other.send_json.assert_not_called()
+
+    def test_no_connections_is_noop(self):
+        # Should not raise when the user has no active connections.
+        wshandler.state.notify_user_workspaces_changed("nobody")
+
+    def test_dead_socket_is_pruned(self):
+        from klangk_backend.wshandler import _WS_ERRORS
+
+        sock = _mock_sock()
+        # A send that raises a websocket error simulates a dead client.
+        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"})
+            wshandler.state.notify_user_workspaces_changed("uid-1")
+            # The dead connection was removed from the registry.
+            assert sock not in wshandler.state.connections
+        finally:
+            wshandler.state.connections.pop(sock, None)
+
+
 class TestRemoveSessionLocked:
     async def test_removes_session(self):
         session = wshandler.state.get_or_create_session("ws-locked-rm")
