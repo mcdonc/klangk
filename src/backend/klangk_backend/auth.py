@@ -58,6 +58,28 @@ def _should_lockout(attempt_info: dict | None) -> bool:
     )  # pragma: no cover
 
 
+def _window_elapsed(attempt_info: dict | None) -> bool:
+    """Return True if the first failure in *attempt_info* predates the
+    sliding lockout window.
+
+    Used to decide whether ``record_failed_login`` should reset the
+    count (old failures stop counting) rather than increment.  ``None``
+    info, a missing/unparseable ``first_attempt_at`` → not elapsed.
+    """
+    if attempt_info is None:
+        return False
+    first = attempt_info.get("first_attempt_at")
+    if not first:
+        return False
+    try:
+        first_dt = datetime.fromisoformat(first)
+    except (TypeError, ValueError):
+        return False
+    return (
+        datetime.now(timezone.utc) - first_dt
+    ).total_seconds() > LOGIN_LOCKOUT_WINDOW
+
+
 _INSECURE_DEFAULT_SECRET = "klangk-dev-secret-change-in-production"
 SECRET_KEY = resolve_env_secret("KLANGK_JWT_SECRET", _INSECURE_DEFAULT_SECRET)
 ALGORITHM = "HS256"
@@ -248,7 +270,12 @@ async def login(req: LoginRequest) -> TokenResponse:
         or not verify_password(req.password, user["password_hash"])
     ):
         if LOGIN_LOCKOUT_FAILURES > 0:
-            await model.record_failed_login(req.email)
+            # Reuse the attempt_info fetched up front for the lockout
+            # check to decide whether the sliding window has elapsed —
+            # if so, reset the count instead of incrementing, so old
+            # failures stop counting toward the threshold.
+            reset = _window_elapsed(attempt_info)
+            await model.record_failed_login(req.email, reset=reset)
             # Check if this attempt triggered a lockout
             updated_info = await model.get_login_attempt_info(req.email)
             if _should_lockout(updated_info):

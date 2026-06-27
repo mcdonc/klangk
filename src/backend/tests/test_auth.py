@@ -302,6 +302,52 @@ class TestLoginRateLimit:
             )
         assert exc_info.value.status_code == 429
 
+    async def test_login_resets_count_after_window(self, user):
+        """Failures older than the window don't accumulate to a lockout.
+
+        Seed a near-threshold count with an old first_attempt_at; the
+        next failed login should reset (not lock), so a user can't be
+        permanently locked out by failures spread across days.
+        """
+        old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        async with model.transaction() as raw_db:
+            await raw_db.execute(
+                "INSERT INTO login_attempts"
+                " (email, attempt_count, first_attempt_at)"
+                " VALUES (?, ?, ?)",
+                (
+                    "testuser@example.com",
+                    auth.LOGIN_LOCKOUT_FAILURES - 1,
+                    old,
+                ),
+            )
+        # A wrong password now: window elapsed -> reset, not lock.
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.login(
+                auth.LoginRequest(
+                    email="testuser@example.com", password="wrong"
+                )
+            )
+        assert exc_info.value.status_code == 401  # not 429
+        info = await model.get_login_attempt_info("testuser@example.com")
+        assert info["attempt_count"] == 1
+
+    def test_window_elapsed_policy(self):
+        """_window_elapsed decides whether the sliding window has passed."""
+        assert auth._window_elapsed(None) is False
+        assert auth._window_elapsed({"first_attempt_at": None}) is False
+        # Unparseable timestamp is treated as not-elapsed (safe default).
+        assert (
+            auth._window_elapsed({"first_attempt_at": "not-a-date"}) is False
+        )
+        old = (
+            datetime.now(timezone.utc)
+            - timedelta(seconds=auth.LOGIN_LOCKOUT_WINDOW + 1)
+        ).isoformat()
+        assert auth._window_elapsed({"first_attempt_at": old}) is True
+        recent = datetime.now(timezone.utc).isoformat()
+        assert auth._window_elapsed({"first_attempt_at": recent}) is False
+
     async def test_login_lockout_message_shows_remaining_time(self, user):
         """Lockout message includes remaining minutes."""
         locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)

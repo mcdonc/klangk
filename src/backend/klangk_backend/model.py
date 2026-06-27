@@ -1561,17 +1561,38 @@ async def get_refreshed_token(jti: str) -> str | None:
 # Login attempt tracking (brute-force protection)
 
 
-async def record_failed_login(email: str) -> None:
-    """Record a failed login attempt for an email. Resets after the window."""
+async def record_failed_login(email: str, *, reset: bool = False) -> None:
+    """Record a failed login attempt for an email.
+
+    Storage only; the sliding-window *decision* lives in ``auth.py``.
+    With ``reset=False`` the existing attempt count is incremented (or a
+    new row is inserted with count 1).  With ``reset=True`` the count is
+    reset to 1, ``first_attempt_at`` moved to now, and any stale
+    ``locked_until`` cleared — used when the prior failure fell outside
+    ``LOGIN_LOCKOUT_WINDOW`` so old failures stop counting.
+    """
     async with transaction() as db:
-        now = datetime.now(timezone.utc).isoformat()
-        # Try to update existing row
-        await db.execute(
-            """INSERT INTO login_attempts (email, attempt_count, first_attempt_at)
-               VALUES (?, 1, ?) ON CONFLICT(email) DO UPDATE SET
-               attempt_count = attempt_count + 1""",
-            (email, now),
-        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if reset:
+            # Upsert a fresh count, clearing any stale lockout.  INSERT ...
+            # ON CONFLICT DO UPDATE keeps this a single statement.
+            await db.execute(
+                """INSERT INTO login_attempts
+                   (email, attempt_count, first_attempt_at)
+                   VALUES (?, 1, ?)
+                   ON CONFLICT(email) DO UPDATE SET
+                   attempt_count = 1,
+                   first_attempt_at = excluded.first_attempt_at,
+                   locked_until = NULL""",
+                (email, now_iso),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO login_attempts (email, attempt_count, first_attempt_at)
+                   VALUES (?, 1, ?) ON CONFLICT(email) DO UPDATE SET
+                   attempt_count = attempt_count + 1""",
+                (email, now_iso),
+            )
 
 
 async def get_login_attempt_info(
