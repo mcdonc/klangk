@@ -747,8 +747,13 @@ class TestNewWindow:
             result = await new_window("cid", "sess", name="build")
         assert len(result) == 2
         assert result[1]["name"] == "build"
-        # the chosen name is interpolated into the bash script
-        assert "'build'" in mock_exec.call_args.args[1][2]
+        # the name is passed as a positional argv ($1), never interpolated
+        # into the bash script string (defense-in-depth against injection)
+        argv = mock_exec.call_args.args[1]
+        assert argv[:2] == ["bash", "-c"]
+        assert "build" not in argv[2]  # not in the script
+        assert argv[3] == "bash"  # $0
+        assert argv[4] == "build"  # $1 = name
 
     async def test_rejects_shell_injection(self):
         with pytest.raises(ValueError, match="only contain"):

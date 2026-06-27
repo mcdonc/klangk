@@ -334,29 +334,36 @@ async def new_window(
     """
     if name is not None:
         _validate_window_name(name)
-        # Explicit name — check + create + list in one exec.
+        # Explicit name — check + create + list in one exec. The window
+        # name and session name are passed as positional argv ($1/$2),
+        # never interpolated into the script, so shell metacharacters in
+        # either are harmless (name is validated above regardless).
         script = (
-            f"existing=$(tmux list-windows -t {session_name}"
-            f" -F '#{{window_name}}' 2>/dev/null);"
-            f" echo \"$existing\" | grep -qx '{name}'"
-            f" && echo 'DUPLICATE' && exit 1;"
-            f" tmux new-window -t {session_name} -n '{name}';"
-            f" tmux list-windows -t {session_name}"
-            f" -F '#{{window_id}}|||#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
+            'name="$1"; sn="$2";'
+            ' existing=$(tmux list-windows -t "$sn"'
+            " -F '#{window_name}' 2>/dev/null);"
+            ' echo "$existing" | grep -qx "$name"'
+            " && echo 'DUPLICATE' && exit 1;"
+            ' tmux new-window -t "$sn" -n "$name";'
+            ' tmux list-windows -t "$sn"'
+            " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
         )
+        argv = ["bash", "-c", script, "bash", name, session_name]
     else:
-        # Auto-name — find next number, create, list.
+        # Auto-name — find next number, create, list. session_name is $1.
         script = (
-            f"names=$(tmux list-windows -t {session_name}"
-            f" -F '#{{window_name}}' 2>/dev/null);"
-            f' n=1; while echo "$names" | grep -qx "$n"; do n=$((n+1)); done;'
-            f' tmux new-window -t {session_name} -n "$n";'
-            f" tmux list-windows -t {session_name}"
-            f" -F '#{{window_id}}|||#{{window_index}}|||#{{window_name}}|||#{{window_active}}'"
+            'sn="$1";'
+            ' names=$(tmux list-windows -t "$sn"'
+            " -F '#{window_name}' 2>/dev/null);"
+            ' n=1; while echo "$names" | grep -qx "$n"; do n=$((n+1)); done;'
+            ' tmux new-window -t "$sn" -n "$n";'
+            ' tmux list-windows -t "$sn"'
+            " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
         )
+        argv = ["bash", "-c", script, "bash", session_name]
     rc, output, stderr = await podman.exec_container(
         container_id,
-        ["bash", "-c", script],
+        argv,
         user=CONTAINER_USER,
         timeout=10,
     )
