@@ -48,6 +48,11 @@ String getLocationHash() => web.window.location.hash;
 /// Get the browser's location query string (e.g. '?token=xxx').
 String getLocationSearch() => web.window.location.search;
 
+/// The browser's User-Agent string. Used to detect Firefox (whose
+/// FailDelayManager can throttle WebSocket reconnects) so the HTTP pre-check
+/// in [WsClient._waitForServer] only runs there.
+String getUserAgent() => web.window.navigator.userAgent;
+
 /// Query params captured from the page URL at startup, before GoRouter
 /// navigation clears them. Plugin callback routes read from this.
 Map<String, String> capturedPageQuery = {};

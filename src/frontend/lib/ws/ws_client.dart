@@ -71,6 +71,17 @@ class WsClient extends ChangeNotifier {
   @visibleForTesting
   static Duration Function(int attempt)? testBackoffOverride;
 
+  /// Whether [userAgent] identifies Firefox. Pure (no DOM) so it is
+  /// unit-tested directly; the live browser UA is read via [getUserAgent]
+  /// (see [_waitForServer]).
+  ///
+  /// Firefox's UA contains "Firefox"; Chrome, Edge and Safari do not
+  /// (Safari carries "Safari" but not "Firefox", Chrome carries
+  /// "Chrome" but not "Firefox").
+  @visibleForTesting
+  static bool isFirefoxUserAgent(String userAgent) =>
+      userAgent.contains('Firefox');
+
   /// Inject a pre-connected channel for testing.
   @visibleForTesting
   void connectForTest(WebSocketChannel channel) {
@@ -163,6 +174,11 @@ class WsClient extends ChangeNotifier {
     if (testHttpPreCheck != null) return testHttpPreCheck!();
     if (testChannelFactory != null) return true; // coverage:ignore-line
     // coverage:ignore-start
+    // The HTTP pre-check exists only to drain Firefox's FailDelayManager
+    // throttle (which can delay a WebSocket reconnect by 30-60s after an
+    // unclean close). Other browsers connect immediately, so skip the
+    // extra round-trip (~250ms) and open the WebSocket straight away.
+    if (!isFirefoxUserAgent(getUserAgent())) return true;
     try {
       final resp = await http.get(Uri.parse('$_httpBaseUrl/api/v1/config'));
       return resp.statusCode == 200;
