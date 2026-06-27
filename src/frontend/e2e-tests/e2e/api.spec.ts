@@ -23,7 +23,7 @@ test.describe("API", () => {
       headers,
     });
     if (existingResp.ok()) {
-      for (const ws of (await existingResp.json()).items) {
+      for (const ws of await existingResp.json()) {
         if (ws.name === wsName) {
           await request.delete(`${API_BASE}/api/v1/workspaces/${ws.id}`, {
             headers,
@@ -47,7 +47,7 @@ test.describe("API", () => {
       headers,
     });
     expect(listResp.ok()).toBeTruthy();
-    let workspaces = (await listResp.json()).items;
+    let workspaces = await listResp.json();
     expect(workspaces.some((ws: any) => ws.id === created.id)).toBeTruthy();
 
     // Delete it
@@ -59,7 +59,7 @@ test.describe("API", () => {
 
     // Verify it's gone
     listResp = await request.get(`${API_BASE}/api/v1/workspaces`, { headers });
-    workspaces = (await listResp.json()).items;
+    workspaces = await listResp.json();
     expect(workspaces.some((ws: any) => ws.id === created.id)).toBeFalsy();
   });
 
@@ -277,7 +277,7 @@ test.describe("API", () => {
     const existing = await request.get(`${API_BASE}/api/v1/workspaces`, {
       headers,
     });
-    for (const ws of (await existing.json()).items) {
+    for (const ws of await existing.json()) {
       if (ws.name === "e2e-ws-a" || ws.name === "e2e-ws-b") {
         await request.delete(`${API_BASE}/api/v1/workspaces/${ws.id}`, {
           headers,

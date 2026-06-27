@@ -390,7 +390,7 @@ class TestTerminalWindows:
             headers={"Authorization": f"Bearer {self._token}"},
         )
         self._ws_id = None
-        for ws in r.json()["items"]:
+        for ws in r.json():
             if ws["name"] == WS_NAME:
                 self._ws_id = ws["id"]
                 break
