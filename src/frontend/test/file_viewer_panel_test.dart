@@ -49,11 +49,13 @@ void main() {
       }
       return http.Response('Not found', 404);
     });
+    clearFileListCacheForTest();
   });
 
   tearDown(() {
     testBaseUrlOverride = null;
     testHttpClientOverride = null;
+    clearFileListCacheForTest();
   });
 
   group('FileViewerPanel', () {
@@ -1147,12 +1149,13 @@ void main() {
         return http.Response('Not found', 404);
       });
       final client = _MockWsClient();
+      final key = GlobalKey<FileViewerPanelState>();
       await tester.pumpWidget(MaterialApp(
           home: Scaffold(
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: buildPanel(wsClient: client)))));
+                  child: buildPanel(wsClient: client, key: key)))));
       await tester.pumpAndSettle();
 
       // Navigate deep: . -> a -> a/b
@@ -1161,11 +1164,13 @@ void main() {
       await tester.tap(find.text('b'));
       await tester.pumpAndSettle();
 
-      // Tap the up/parent button
+      // Tap the up/parent button. Revisiting /home/tester/a is a cache
+      // hit (no round-trip), so assert on the panel's current path rather
+      // than on the last-fetched URL.
       await tester.tap(find.byIcon(Icons.arrow_upward));
       await tester.pumpAndSettle();
 
-      expect(lastPath, '/home/tester/a');
+      expect(key.currentState!.currentPathForTest, '/home/tester/a');
       client.close();
     });
 
@@ -1215,12 +1220,13 @@ void main() {
         return http.Response('Not found', 404);
       });
       final client = _MockWsClient();
+      final key = GlobalKey<FileViewerPanelState>();
       await tester.pumpWidget(MaterialApp(
           home: Scaffold(
               body: SizedBox(
                   width: 800,
                   height: 600,
-                  child: buildPanel(wsClient: client)))));
+                  child: buildPanel(wsClient: client, key: key)))));
       await tester.pumpAndSettle();
 
       // Navigate deep
@@ -1229,11 +1235,13 @@ void main() {
       await tester.tap(find.text('deep'));
       await tester.pumpAndSettle();
 
-      // Tap the "sub" breadcrumb segment to go back
+      // Tap the "sub" breadcrumb segment to go back. Revisiting
+      // /home/tester/sub is a cache hit (no round-trip), so assert on the
+      // panel's current path rather than the last-fetched URL.
       await tester.tap(find.text('sub'));
       await tester.pumpAndSettle();
 
-      expect(lastPath, '/home/tester/sub');
+      expect(key.currentState!.currentPathForTest, '/home/tester/sub');
       client.close();
     });
 
@@ -1421,6 +1429,253 @@ void main() {
       const oldTimestamp = 1736899200.0;
       final result = formatMtime(oldTimestamp);
       expect(result, matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
+    });
+  });
+
+  group('FileViewerPanel listing cache', () {
+    /// Mock that returns [entries] for every listing request and records how
+    /// many listing fetches happened.
+    (MockClient, int Function()) _countingListing(
+      List<Map<String, dynamic>> entries,
+    ) {
+      var fetches = 0;
+      final client = MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path.contains('/files') &&
+            !request.url.path.contains('/content') &&
+            !request.url.path.contains('/download')) {
+          fetches++;
+          return http.Response(jsonEncode(entries), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+      return (client, () => fetches);
+    }
+
+    Future<GlobalKey<FileViewerPanelState>> _pump(
+      WidgetTester tester,
+      MockClient client,
+    ) async {
+      testBaseUrlOverride = 'http://localhost:8997';
+      testHttpClientOverride = client;
+      clearFileListCacheForTest();
+      final key = GlobalKey<FileViewerPanelState>();
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+              body: SizedBox(
+                  width: 800,
+                  height: 600,
+                  child: buildPanel(wsClient: _MockWsClient(), key: key)))));
+      await tester.pumpAndSettle();
+      return key;
+    }
+
+    testWidgets('revisiting a directory is served from cache (no refetch)',
+        (tester) async {
+      final (client, fetchCount) = _countingListing([
+        {'name': 'a', 'path': '/home/tester/a', 'is_dir': true, 'size': null},
+      ]);
+      final key = await _pump(tester, client);
+      final firstCount = fetchCount();
+
+      // Navigate into /home/tester/a (cache miss -> fetch), then back up
+      // (cache hit for /home/tester -> no fetch).
+      key.currentState!.openDir('/home/tester/a');
+      await tester.pumpAndSettle();
+      expect(fetchCount(), firstCount + 1);
+      key.currentState!.openDir('/home/tester');
+      await tester.pumpAndSettle();
+      expect(fetchCount(), firstCount + 1); // revisit: served from cache
+    });
+
+    testWidgets('refresh() forces a refetch even on a cache hit',
+        (tester) async {
+      final (client, fetchCount) = _countingListing([]);
+      final key = await _pump(tester, client);
+      final initial = fetchCount();
+
+      key.currentState!.refresh();
+      await tester.pumpAndSettle();
+      expect(fetchCount(), initial + 1);
+    });
+
+    testWidgets('the refresh button forces a refetch', (tester) async {
+      final (client, fetchCount) = _countingListing([]);
+      await _pump(tester, client);
+      final initial = fetchCount();
+
+      await tester.tap(find.byIcon(Icons.refresh));
+      await tester.pumpAndSettle();
+      expect(fetchCount(), initial + 1);
+    });
+
+    testWidgets('upload complete invalidates and forces a refetch',
+        (tester) async {
+      final (client, fetchCount) = _countingListing([]);
+      final key = await _pump(tester, client);
+      final initial = fetchCount();
+
+      key.currentState!.triggerUploadCompleteForTest();
+      await tester.pumpAndSettle();
+      expect(fetchCount(), initial + 1);
+    });
+  });
+
+  group('FileViewerPanel staleness (404 on a cached entry)', () {
+    /// A mock that lists one file [name] and returns [deleteStatus] for a
+    /// DELETE, [renameStatus] for rename, [downloadStatus] for download.
+    MockClient _mock({
+      String name = 'file.txt',
+      int deleteStatus = 404,
+      int renameStatus = 404,
+      int downloadStatus = 404,
+      int contentStatus = 404,
+    }) {
+      final listing = [
+        {
+          'name': name,
+          'path': '/home/tester/$name',
+          'is_dir': false,
+          'size': 5
+        },
+      ];
+      return MockClient((request) async {
+        final p = request.url.path;
+        if (request.method == 'DELETE') {
+          return http.Response('', deleteStatus);
+        }
+        if (p.contains('/files/rename')) {
+          return http.Response(
+              jsonEncode({'detail': 'Source not found'}), renameStatus);
+        }
+        if (p.contains('/files/download')) {
+          return http.Response('x', downloadStatus);
+        }
+        if (p.contains('/files/content')) {
+          return http.Response(jsonEncode({'content': 'x'}), contentStatus);
+        }
+        if (p.contains('/files')) {
+          return http.Response(jsonEncode(listing), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+    }
+
+    Future<GlobalKey<FileViewerPanelState>> _pump(
+      WidgetTester tester,
+      MockClient client,
+    ) async {
+      testBaseUrlOverride = 'http://localhost:8997';
+      testHttpClientOverride = client;
+      clearFileListCacheForTest();
+      final key = GlobalKey<FileViewerPanelState>();
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+              body: SizedBox(
+                  width: 800,
+                  height: 600,
+                  child: buildPanel(wsClient: _MockWsClient(), key: key)))));
+      await tester.pumpAndSettle();
+      return key;
+    }
+
+    testWidgets('delete of an already-gone file says "already deleted"',
+        (tester) async {
+      await _pump(tester, _mock());
+
+      final center = tester.getCenter(find.text('file.txt'));
+      await tester.tapAt(center, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('already deleted'), findsOneWidget);
+    });
+
+    testWidgets('rename of a gone source says "no longer exists"',
+        (tester) async {
+      await _pump(tester, _mock(name: 'old.txt'));
+
+      final center = tester.getCenter(find.text('old.txt'));
+      await tester.tapAt(center, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rename'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'new.txt');
+      await tester.tap(find.text('Rename'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('no longer exists'), findsOneWidget);
+    });
+
+    testWidgets('download of a gone file says "no longer exists"',
+        (tester) async {
+      await _pump(tester, _mock());
+
+      final center = tester.getCenter(find.text('file.txt'));
+      await tester.tapAt(center, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Download'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('no longer exists'), findsOneWidget);
+    });
+
+    testWidgets('download non-404 failure shows the bare failure',
+        (tester) async {
+      await _pump(tester, _mock(downloadStatus: 500));
+
+      final center = tester.getCenter(find.text('file.txt'));
+      await tester.tapAt(center, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Download'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Download failed'), findsOneWidget);
+    });
+
+    testWidgets('reading a gone file\'s text throws "no longer exists"',
+        (tester) async {
+      final key = await _pump(tester, _mock(name: 'gone.txt'));
+      Object? err;
+      await tester.runAsync(() async {
+        try {
+          await key.currentState!.readFileTextForTest('/home/tester/gone.txt');
+        } catch (e) {
+          err = e;
+        }
+      });
+      expect(err.toString(), contains('no longer exists'));
+    });
+
+    testWidgets('reading a gone file\'s bytes throws "no longer exists"',
+        (tester) async {
+      final key = await _pump(tester, _mock(name: 'gone.txt'));
+      Object? err;
+      await tester.runAsync(() async {
+        try {
+          await key.currentState!.readFileBytesForTest('/home/tester/gone.txt');
+        } catch (e) {
+          err = e;
+        }
+      });
+      expect(err.toString(), contains('no longer exists'));
+    });
+
+    testWidgets('reading bytes with a non-404 error throws the bare failure',
+        (tester) async {
+      final key = await _pump(tester, _mock(downloadStatus: 500));
+      Object? err;
+      await tester.runAsync(() async {
+        try {
+          await key.currentState!.readFileBytesForTest('/home/tester/file.txt');
+        } catch (e) {
+          err = e;
+        }
+      });
+      expect(err.toString(), contains('Failed to download'));
     });
   });
 }

@@ -63,9 +63,11 @@ Widget _ide(GlobalKey<FileViewerPanelState> fvKey, WsClient ws, String? file,
     );
 
 void main() {
+  setUp(clearFileListCacheForTest);
   tearDown(() {
     testBaseUrlOverride = null;
     testHttpClientOverride = null;
+    clearFileListCacheForTest();
   });
 
   testWidgets('initialFile opens the file in the Files tab on load',

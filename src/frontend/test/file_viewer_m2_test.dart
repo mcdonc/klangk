@@ -121,6 +121,7 @@ Future<_MockWsClient> _pumpPanel(
 }) async {
   testBaseUrlOverride = 'http://localhost:8997';
   testHttpClientOverride = client;
+  clearFileListCacheForTest();
   final ws = _MockWsClient();
   await tester.pumpWidget(
     MaterialApp(
@@ -183,6 +184,7 @@ void main() {
   tearDown(() {
     testBaseUrlOverride = null;
     testHttpClientOverride = null;
+    clearFileListCacheForTest();
   });
 
   group('RawTextRenderer', () {
