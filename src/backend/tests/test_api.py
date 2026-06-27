@@ -6232,6 +6232,64 @@ class TestOIDCCallback:
             "http://localhost:12345/callback?token="
         )
 
+    async def test_callback_tampered_cli_redirect_falls_back(
+        self, client, monkeypatch, db
+    ):
+        """A tampered (non-localhost) cli_redirect in the unsigned state
+        cookie must NOT receive the token — fall back to the web flow.
+
+        Regression test for #936: the state cookie is client-controlled,
+        so cli_redirect is re-validated at callback time.
+        """
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"id_token": "idt", "access_token": "at"}),
+        )
+        monkeypatch.setattr(
+            api.oidc,
+            "validate_id_token",
+            AsyncMock(
+                return_value={
+                    "sub": "evil-sub",
+                    "email": "evil@example.com",
+                    "email_verified": True,
+                }
+            ),
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "redirect_uri": "https://klangk.example.com/cb",
+                "cli_redirect": "https://evil.com/steal",
+            }
+        )
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        location = resp.headers["location"]
+        # Must NOT redirect to the attacker host with the token.
+        assert not location.startswith("https://evil.com")
+        assert "evil.com" not in location
+        # Falls back to the web flow, still carrying the token in-house.
+        assert "oidc-complete" in location
+        assert "token=" in location
+
     async def test_callback_token_exchange_failure(
         self, client, monkeypatch, db
     ):

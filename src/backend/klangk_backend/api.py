@@ -726,6 +726,19 @@ async def resend_invitation(
     return {"status": "resent"}
 
 
+def _valid_cli_redirect(url: str | None) -> bool:
+    """True if *url* is a permitted CLI redirect target (localhost only).
+
+    The OIDC state cookie is unsigned and client-controlled, so the
+    cli_redirect stored there must be re-validated at callback time —
+    otherwise a tampered cookie could redirect the freshly-minted
+    access token to an attacker-controlled host (#936).
+    """
+    return bool(url) and url.startswith(
+        ("http://localhost:", "http://127.0.0.1:")
+    )
+
+
 # --- OIDC endpoints ---
 
 
@@ -743,10 +756,9 @@ async def oidc_login(
     if provider is None:
         raise HTTPException(status_code=404, detail="Unknown OIDC provider")
 
-    # Validate cli_redirect is localhost only
-    if cli_redirect and not cli_redirect.startswith(
-        ("http://localhost:", "http://127.0.0.1:")
-    ):
+    # Validate cli_redirect is localhost only (re-checked at callback,
+    # since the state cookie storing it is unsigned — see #936).
+    if cli_redirect and not _valid_cli_redirect(cli_redirect):
         raise HTTPException(
             status_code=400, detail="cli_redirect must be localhost"
         )
@@ -901,11 +913,15 @@ async def oidc_callback(
     # Clear the state cookie
     cli_redirect = cookie_data.get("cli_redirect")
 
-    if cli_redirect:
-        # CLI flow: redirect to the CLI's localhost server with the token
+    if _valid_cli_redirect(cli_redirect):
+        # CLI flow: redirect to the CLI's localhost server with the token.
+        # Re-validate here because the state cookie is unsigned and
+        # client-controlled — a tampered cli_redirect must not leak the
+        # access token to an arbitrary host (#936).
         redirect_url = f"{cli_redirect}?token={access_token}"
     else:
-        # Web flow: redirect to the frontend with token in the hash
+        # Web flow (also the safe fallback when the cookie's
+        # cli_redirect was missing or tampered to a non-localhost host).
         hostname, proto, base_path = derive_hosting_info(request.headers)
         redirect_url = (
             f"{proto}://{hostname}{base_path}"
