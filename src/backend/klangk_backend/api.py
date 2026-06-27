@@ -315,8 +315,12 @@ async def resend_verification(
 ):
     """Resend verification email. Requires email+password to prevent abuse."""
     user = await model.get_user_by_email(req.email)
-    if user is None or not auth.verify_password(
-        req.password, user["password_hash"]
+    # OIDC-only users have no password hash; treat that as invalid
+    # credentials rather than letting verify_password crash on None.
+    if (
+        user is None
+        or not user.get("password_hash")
+        or not auth.verify_password(req.password, user["password_hash"])
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if user.get("verified"):
@@ -446,6 +450,13 @@ async def change_password(
 ):
     """Change password. Requires current password."""
     stored = await model.get_user_by_email(user["email"])
+    # OIDC-only users have no password; their credentials are managed
+    # by their identity provider and must not crash on a NULL hash.
+    if stored is not None and not stored.get("password_hash"):
+        raise HTTPException(
+            status_code=403,
+            detail="Account is managed by your identity provider",
+        )
     if stored is None or not auth.verify_password(
         req.current_password, stored["password_hash"]
     ):
@@ -471,6 +482,13 @@ async def change_email(
 ):
     """Change email. Requires password. Marks account as unverified."""
     stored = await model.get_user_by_email(user["email"])
+    # OIDC-only users have no password; their credentials are managed
+    # by their identity provider and must not crash on a NULL hash.
+    if stored is not None and not stored.get("password_hash"):
+        raise HTTPException(
+            status_code=403,
+            detail="Account is managed by your identity provider",
+        )
     if stored is None or not auth.verify_password(
         req.password, stored["password_hash"]
     ):
@@ -510,6 +528,13 @@ async def change_handle(
 ):
     """Change the current user's handle. Requires password confirmation."""
     stored = await model.get_user_by_email(user["email"])
+    # OIDC-only users have no password; their credentials are managed
+    # by their identity provider and must not crash on a NULL hash.
+    if stored is not None and not stored.get("password_hash"):
+        raise HTTPException(
+            status_code=403,
+            detail="Account is managed by your identity provider",
+        )
     if stored is None or not auth.verify_password(
         req.password, stored["password_hash"]
     ):
