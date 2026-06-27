@@ -145,6 +145,9 @@ void main() {
               : [];
           return http.Response(jsonEncode(list), 200);
         }
+        if (request.url.path == '/api/v1/workspaces/ws-1/members') {
+          return http.Response(jsonEncode([]), 200);
+        }
         if (request.url.path == '/api/v1/workspaces/shared') {
           return http.Response(jsonEncode([]), 200);
         }
