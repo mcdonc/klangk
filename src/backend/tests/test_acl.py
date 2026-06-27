@@ -159,13 +159,13 @@ class TestCheckPermission:
         assert await acl.check_permission("/test", principals, "edit") is False
 
 
-class TestCheckPermissionCached:
+class TestCheckPermissionInMemory:
     """The batched in-memory path must match the per-call async path."""
 
     _RESOURCES = ["/", "/workspaces", "/admin/users"]
     _PERMISSIONS = ["view", "edit", "create", "terminal", "*"]
 
-    async def test_cached_matches_async_across_resources(self, user):
+    async def test_inmemory_matches_async_across_resources(self, user):
         # Seed a mix: allow on root (everyone), allow on /admin (user),
         # deny on /admin/users (authenticated) to exercise parent walk +
         # first-match-wins + wildcard in both code paths.
@@ -205,12 +205,12 @@ class TestCheckPermissionCached:
                 async_result = await acl.check_permission(
                     res, principals, perm
                 )
-                cached_result = acl.check_permission_cached(
+                inmemory_result = acl.check_permission_inmemory(
                     res, principals, perm, entries
                 )
-                assert async_result == cached_result, (
+                assert async_result == inmemory_result, (
                     f"mismatch for {res}/{perm}: "
-                    f"async={async_result} cached={cached_result}"
+                    f"async={async_result} inmemory={inmemory_result}"
                 )
 
     async def test_permissions_for_resources_matches_pairwise(self, user):

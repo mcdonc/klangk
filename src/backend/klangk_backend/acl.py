@@ -78,7 +78,7 @@ async def check_permission(
     return False
 
 
-def check_permission_cached(
+def check_permission_inmemory(
     resource_path: str,
     principals: dict,
     permission: str,
@@ -89,6 +89,11 @@ def check_permission_cached(
     ``entries_by_resource`` must contain every ancestor of
     ``resource_path`` (see [_resource_ancestors]); missing paths are treated
     as having no entries, matching the async version's behavior.
+
+    This does no I/O and stores nothing: ``entries_by_resource`` is a local
+    built fresh on each call by [permissions_for_resources], so every
+    request re-reads the live ``acl_entries`` table. There is no
+    cross-request cache and therefore no invalidation surface.
     """
     for path in _resource_ancestors(resource_path):
         for ace in entries_by_resource.get(path, ()):
@@ -107,11 +112,15 @@ async def permissions_for_resources(
 
     Fetches ACL entries for the union of every resource's ancestor paths
     in a single query ([model.get_acl_entries_map]), then checks each
-    (resource, permission) pair in memory via [check_permission_cached].
+    (resource, permission) pair in memory via [check_permission_inmemory].
     This is equivalent to awaiting [check_permission] once per pair, but
     avoids opening a fresh database connection per pair — the static
     resource set previously triggered ~300 sequential connection-per-query
     reads on every ``/my-permissions`` call.
+
+    No results are retained between requests: ``entries`` is a local that
+    is reloaded from the live ``acl_entries`` table on every call, so a
+    permission change is reflected on the next request immediately.
 
     Only resources with at least one granted permission appear in the
     result, matching the historical response shape.
@@ -125,7 +134,7 @@ async def permissions_for_resources(
         perms = [
             p
             for p in permissions
-            if check_permission_cached(res, principals, p, entries)
+            if check_permission_inmemory(res, principals, p, entries)
         ]
         if perms:
             result[res] = perms
