@@ -52,6 +52,18 @@ async def _auth_headers(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _oidc_user_headers(email="oidc@example.com"):
+    """Auth headers for an OIDC-only user (password_hash is NULL).
+
+    OIDC users can't use /auth/login, so we mint a token directly,
+    mirroring what the OIDC callback does.  Used to exercise the
+    authenticated endpoints that must not 500 on a NULL hash (#890).
+    """
+    user = await model.create_user(email, None, verified=True, provider="oidc")
+    token = auth.create_token(user["id"], user["email"])
+    return {"Authorization": f"Bearer {token}"}
+
+
 # --- Health ---
 
 
@@ -528,6 +540,18 @@ class TestResendVerification:
         )
         assert resp.status_code == 401
 
+    async def test_resend_oidc_only_user_no_password(self, client, db):
+        """OIDC-only users have no password hash; must 401, not 500 (#890)."""
+        await model.create_user(
+            "oidc@example.com", None, verified=False, provider="oidc"
+        )
+        resp = await client.post(
+            "/api/v1/auth/resend-verification",
+            json={"email": "oidc@example.com", "password": "anything"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid credentials"
+
     async def test_resend_already_verified(self, client, admin_user):
         resp = await client.post(
             "/api/v1/auth/resend-verification",
@@ -795,6 +819,23 @@ class TestChangePassword:
         )
         assert resp.status_code == 401
 
+    async def test_change_password_oidc_only_user(self, client, db):
+        """OIDC-only users have no password; must 403, not 500 (#890)."""
+        headers = await _oidc_user_headers()
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "anything",
+                "new_password": "newpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 403
+        assert (
+            resp.json()["detail"]
+            == "Account is managed by your identity provider"
+        )
+
 
 class TestChangeEmail:
     async def test_change_email_success(self, client, user):
@@ -872,6 +913,23 @@ class TestChangeEmail:
             },
         )
         assert resp.status_code == 401
+
+    async def test_change_email_oidc_only_user(self, client, db):
+        """OIDC-only users have no password; must 403, not 500 (#890)."""
+        headers = await _oidc_user_headers()
+        resp = await client.post(
+            "/api/v1/auth/change-email",
+            json={
+                "email": "new@example.com",
+                "password": "anything",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 403
+        assert (
+            resp.json()["detail"]
+            == "Account is managed by your identity provider"
+        )
 
 
 # --- Workspace routes ---
@@ -6432,6 +6490,20 @@ class TestHandleEndpoints:
             headers=headers,
         )
         assert resp.status_code == 401
+
+    async def test_change_handle_oidc_only_user(self, client, db):
+        """OIDC-only users have no password; must 403, not 500 (#890)."""
+        headers = await _oidc_user_headers()
+        resp = await client.post(
+            "/api/v1/auth/change-handle",
+            json={"handle": "good-handle", "password": "anything"},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+        assert (
+            resp.json()["detail"]
+            == "Account is managed by your identity provider"
+        )
 
     async def test_admin_change_user_handle(self, client, admin_user, user):
         admin_resp = await client.post(
