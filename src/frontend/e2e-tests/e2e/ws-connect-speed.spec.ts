@@ -26,8 +26,11 @@ test.describe("WebSocket connect speed", () => {
     );
 
     try {
-      await loginViaUI(page, email, TEST_PASSWORD);
-
+      // Set up the WebSocket listener BEFORE login: this PR hoists the WS
+      // connect to login (WsClient.updateAuth connects on the logged-out ->
+      // logged-in transition), so the socket is created during loginViaUI.
+      // Registering after login would miss the websocket event and never
+      // attach framereceived, causing container_ready to be missed.
       let containerReady = false;
       page.on("websocket", (ws: { on: Function }) => {
         ws.on("framereceived", (frame: { payload: string | Buffer }) => {
@@ -35,6 +38,8 @@ test.describe("WebSocket connect speed", () => {
           if (text.includes("container_ready")) containerReady = true;
         });
       });
+
+      await loginViaUI(page, email, TEST_PASSWORD);
 
       const start = Date.now();
       await page.goto(`/#/workspace/${workspaceId}`, { waitUntil: "load" });
