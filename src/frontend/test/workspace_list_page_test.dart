@@ -539,6 +539,69 @@ void main() {
       expect(lastSort, 'name');
     });
 
+    testWidgets('sort state is independent per tab', (tester) async {
+      String? ownedSort;
+      String? sharedSort;
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          ownedSort = request.url.queryParameters['sort'];
+          return http.Response(
+            jsonEncode({
+              'items': [
+                {
+                  'id': 'ws-1',
+                  'name': 'Alpha',
+                  'container_id': null,
+                  'created_at': ''
+                },
+              ],
+              'has_more': false,
+              'next_offset': null,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          sharedSort = request.url.queryParameters['sort'];
+          return http.Response(
+            jsonEncode({
+              'items': [
+                {
+                  'id': 'sh-1',
+                  'name': 'Shared',
+                  'container_id': null,
+                  'created_at': '',
+                  'owner_email': 'o@e.com'
+                },
+              ],
+              'has_more': false,
+              'next_offset': null,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/workspaces/ws-1/members' ||
+            request.url.path == '/api/v1/workspaces/sh-1/members') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      // Owned tab is active: sort by name there.
+      await tester.tap(find.text('Name'));
+      await tester.pumpAndSettle();
+      expect(ownedSort, 'name');
+
+      // Switch to the Shared tab: its request should still use the
+      // default 'created' sort, unaffected by the Owned tab's sort.
+      await tester.tap(find.text('Shared with Me'));
+      await tester.pumpAndSettle();
+      expect(sharedSort, 'created');
+    });
+
     testWidgets('filter box sends q= and filters results', (tester) async {
       var lastQ = '';
       testAuthHttpClientOverride = withPermissions((request) async {

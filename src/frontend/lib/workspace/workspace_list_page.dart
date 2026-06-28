@@ -66,15 +66,27 @@ class _Section {
   int? nextOffset;
   bool loadingMore = false;
 
-  /// API path for this section, paginated at [offset] with the shared
+  // Independent sort/filter per section. Defaults: created, descending,
+  // no filter.
+  String sort = 'created';
+  String order = 'desc';
+  String query = '';
+  Timer? queryDebounce;
+  final TextEditingController searchController = TextEditingController();
+
+  /// API path for this section, paginated at [offset] with this section's
   /// sort/order/filter query params.
-  String path(int offset,
-      {String sort = 'created', String order = 'desc', String? q}) {
+  String path(int offset) {
     final base = isShared ? '/api/v1/workspaces/shared' : '/api/v1/workspaces';
     var p = '$base?limit=${_WorkspaceListPageState._pageSize}&offset=$offset'
         '&sort=$sort&order=$order';
-    if (q != null && q.isNotEmpty) p += '&q=${Uri.encodeQueryComponent(q)}';
+    if (query.isNotEmpty) p += '&q=${Uri.encodeQueryComponent(query)}';
     return p;
+  }
+
+  void dispose() {
+    queryDebounce?.cancel();
+    searchController.dispose();
   }
 }
 
@@ -89,15 +101,6 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   Map<String, List<Map<String, dynamic>>> _workspaceMembers = {};
   bool _loading = true;
   StreamSubscription<void>? _workspacesChangedSub;
-
-  // Shared sort/filter (applied to both sections). Changing any of these
-  // resets each section to its first page, since a different sort/filter
-  // reorders every row.
-  String _sort = 'created';
-  String _order = 'desc';
-  String _query = '';
-  Timer? _queryDebounce;
-  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -116,8 +119,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   @override
   void dispose() {
     _workspacesChangedSub?.cancel();
-    _queryDebounce?.cancel();
-    _searchController.dispose();
+    _owned.dispose();
+    _shared.dispose();
     super.dispose();
   }
 
@@ -141,9 +144,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   Future<({List<Map<String, dynamic>> items, bool hasMore, int? nextOffset})?>
       _fetchPage(_Section section, int offset) async {
     try {
-      final resp = await _auth.authGet(
-        section.path(offset, sort: _sort, order: _order, q: _query),
-      );
+      final resp = await _auth.authGet(section.path(offset));
       if (resp.statusCode != 200) return null;
       return _parseEnvelope(resp.body);
     } catch (_) {
@@ -255,34 +256,28 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     }
   }
 
-  /// Change sort column/direction. Resets both sections to page 1 because
-  /// a different sort reorders every row.
-  Future<void> _changeSort(String sort) async {
-    if (_sort == sort) {
+  /// Change sort column/direction for [section]. Resets that section to
+  /// page 1 because a different sort reorders every row.
+  Future<void> _changeSort(_Section section, String sort) async {
+    if (section.sort == sort) {
       // Same column -> toggle direction.
-      setState(() => _order = _order == 'asc' ? 'desc' : 'asc');
+      setState(() => section.order = section.order == 'asc' ? 'desc' : 'asc');
     } else {
       setState(() {
-        _sort = sort;
-        _order = sort == 'name' ? 'asc' : 'desc';
+        section.sort = sort;
+        section.order = sort == 'name' ? 'asc' : 'desc';
       });
     }
-    await _reloadFromFirstPage();
+    await _loadFirstPage(section);
   }
 
-  /// Debounced name-filter handler. Resets to page 1 on change.
-  void _onQueryChanged(String value) {
-    setState(() => _query = value);
-    _queryDebounce?.cancel();
-    _queryDebounce = Timer(const Duration(milliseconds: 300), () {
-      _reloadFromFirstPage();
+  /// Debounced name-filter handler for [section]. Resets to page 1 on change.
+  void _onQueryChanged(_Section section, String value) {
+    setState(() => section.query = value);
+    section.queryDebounce?.cancel();
+    section.queryDebounce = Timer(const Duration(milliseconds: 300), () {
+      _loadFirstPage(section);
     });
-  }
-
-  Future<void> _reloadFromFirstPage() async {
-    await _loadFirstPage(_owned);
-    if (!mounted) return;
-    await _loadFirstPage(_shared);
   }
 
   Future<Map<String, dynamic>?> _fetchImages() async {
@@ -872,29 +867,29 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     );
   }
 
-  Widget _sortChip(String label, String sortKey) {
-    final active = _sort == sortKey;
-    final arrow = _order == 'asc' ? '▲' : '▼';
+  Widget _sortChip(_Section section, String label, String sortKey) {
+    final active = section.sort == sortKey;
+    final arrow = section.order == 'asc' ? '▲' : '▼';
     return ActionChip(
       label: Text(active ? '$label $arrow' : label),
-      onPressed: () => _changeSort(sortKey),
+      onPressed: () => _changeSort(section, sortKey),
       backgroundColor:
           active ? KColors.accentBlue.withValues(alpha: 0.2) : null,
     );
   }
 
-  Widget _buildControls() {
+  Widget _buildControls(_Section section) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
-          _sortChip('Name', 'name'),
+          _sortChip(section, 'Name', 'name'),
           const SizedBox(width: 8),
-          _sortChip('Created', 'created'),
+          _sortChip(section, 'Created', 'created'),
           const SizedBox(width: 12),
           Expanded(
             child: TextField(
-              controller: _searchController,
+              controller: section.searchController,
               decoration: const InputDecoration(
                 isDense: true,
                 hintText: 'Filter by name...',
@@ -905,7 +900,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   vertical: 0,
                 ),
               ),
-              onChanged: _onQueryChanged,
+              onChanged: (v) => _onQueryChanged(section, v),
             ),
           ),
         ],
@@ -1014,13 +1009,13 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _buildControls(),
+        _buildControls(section),
         if (empty)
           Center(
             child: Padding(
               padding: const EdgeInsets.only(top: 32),
               child: Text(
-                _query.isEmpty
+                section.query.isEmpty
                     ? (section.isShared
                         ? 'No workspaces shared with you.'
                         : 'No workspaces yet. Create one to get started.')
