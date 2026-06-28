@@ -183,15 +183,6 @@ class TestStart:
         assert "ANTHROPIC_API_KEY" in unset
         await s.stop()
 
-    async def test_command_override_sets_env_var(self):
-        fake = FakeShell(block_after_chunks=True)
-        with _patch(fake):
-            s = TerminalSession("cid")
-            await s.start(command_override="bash")
-        assert "-e" in fake.argv
-        assert "KLANGK_CMD_OVERRIDE=bash" in fake.argv
-        await s.stop()
-
     async def test_no_command_override_by_default(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
@@ -1170,8 +1161,8 @@ class TestEnsureBaseSession:
             new_callable=AsyncMock,
             return_value=(0, "", ""),  # has-session succeeds
         ) as mock_exec:
-            await _ensure_base_session("cid", "my-session")
-        # has-session called, but new-session not called
+            created = await _ensure_base_session("cid", "my-session")
+        assert created is False
         mock_exec.assert_awaited_once()
         assert "has-session" in mock_exec.call_args.args[1]
 
@@ -1184,9 +1175,10 @@ class TestEnsureBaseSession:
             new_callable=AsyncMock,
             side_effect=[(1, "", ""), (0, "", "")],  # has fail, new ok
         ) as mock_exec:
-            await _ensure_base_session(
+            created = await _ensure_base_session(
                 "cid", "my-session", user_home="/home/u"
             )
+        assert created is True
         assert mock_exec.await_count == 2
         new_cmd = mock_exec.call_args_list[1].args[1]
         assert "new-session" in new_cmd
@@ -1202,7 +1194,8 @@ class TestEnsureBaseSession:
             new_callable=AsyncMock,
             side_effect=[OSError("boom"), (0, "", "")],
         ) as mock_exec:
-            await _ensure_base_session("cid", "my-session")
+            created = await _ensure_base_session("cid", "my-session")
+        assert created is True
         assert mock_exec.await_count == 2
 
     async def test_create_failure_logs_warning(self):
@@ -1214,8 +1207,8 @@ class TestEnsureBaseSession:
             new_callable=AsyncMock,
             side_effect=[(1, "", ""), OSError("create failed")],
         ):
-            # Should not raise
-            await _ensure_base_session("cid", "my-session")
+            created = await _ensure_base_session("cid", "my-session")
+        assert created is False
 
     async def test_env_args_passed(self):
         """HOME and SSH_AUTH_SOCK are passed as tmux -e flags."""
@@ -1235,3 +1228,59 @@ class TestEnsureBaseSession:
         new_cmd = mock_exec.call_args_list[1].args[1]
         assert "HOME=/home/u" in new_cmd
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_cmd
+
+    async def test_default_command_sends_keys(self):
+        """Default command is sent as keystrokes after session creation."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[
+                (1, "", ""),  # has-session fails
+                (0, "", ""),  # new-session ok
+                (0, "", ""),  # send-keys ok
+            ],
+        ) as mock_exec:
+            created = await _ensure_base_session(
+                "cid", "my-session", default_command="openclaw gateway"
+            )
+        assert created is True
+        assert mock_exec.await_count == 3
+        send_cmd = mock_exec.call_args_list[2].args[1]
+        assert "send-keys" in send_cmd
+        assert "my-session:0" in send_cmd
+        assert "openclaw gateway" in send_cmd
+        assert "Enter" in send_cmd
+
+    async def test_default_command_skipped_when_session_exists(self):
+        """Default command is not sent if session already exists."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),  # has-session succeeds
+        ) as mock_exec:
+            await _ensure_base_session(
+                "cid", "my-session", default_command="openclaw gateway"
+            )
+        mock_exec.assert_awaited_once()
+
+    async def test_default_command_failure_logs_warning(self):
+        """Warning logged when send-keys fails, session still created."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[
+                (1, "", ""),  # has-session fails
+                (0, "", ""),  # new-session ok
+                OSError("send-keys failed"),
+            ],
+        ):
+            created = await _ensure_base_session(
+                "cid", "my-session", default_command="openclaw gateway"
+            )
+        assert created is True

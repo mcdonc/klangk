@@ -224,19 +224,6 @@ def get_config_host_path(user_id: str, workspace_id: str) -> Path:
     return path
 
 
-def write_default_command(
-    user_id: str, workspace_id: str, command: str | None
-) -> None:
-    """Write the default command file to the config directory."""
-    path = config_path(user_id, workspace_id)
-    path.mkdir(parents=True, exist_ok=True)
-    cmd_file = path / "default-command"
-    if command:
-        cmd_file.write_text(command)
-    elif cmd_file.exists():
-        cmd_file.unlink()
-
-
 async def create_workspace(
     user_id: str,
     name: str,
@@ -261,8 +248,6 @@ async def create_workspace(
     users_dir.mkdir(exist_ok=True)
     terminals_dir = home / ".terminals"
     terminals_dir.mkdir(exist_ok=True)
-    if default_command:
-        write_default_command(user_id, workspace["id"], default_command)
     # Allocate ports at creation time so ranges are sequential
     try:
         await container.registry.allocate_ports(

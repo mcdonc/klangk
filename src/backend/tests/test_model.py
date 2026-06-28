@@ -600,26 +600,6 @@ class TestDefaultCommand:
         assert match[0]["default_command"] == "pi"
 
 
-class TestWriteDefaultCommand:
-    def test_write_and_clear(self, tmp_path, monkeypatch):
-        from klangk_backend import workspaces
-
-        monkeypatch.setattr(workspaces, "WORKSPACES_ROOT", tmp_path)
-        workspaces.write_default_command("u1", "ws1", "pi")
-        cmd_file = tmp_path / "u1" / "config" / "ws1" / "default-command"
-        assert cmd_file.read_text() == "pi"
-
-        workspaces.write_default_command("u1", "ws1", None)
-        assert not cmd_file.exists()
-
-    def test_clear_nonexistent(self, tmp_path, monkeypatch):
-        from klangk_backend import workspaces
-
-        monkeypatch.setattr(workspaces, "WORKSPACES_ROOT", tmp_path)
-        # Should not raise even if file doesn't exist
-        workspaces.write_default_command("u1", "ws1", None)
-
-
 class TestContainerTracking:
     async def test_update_workspace_container(self, workspace, user):
         await model.update_workspace_container(

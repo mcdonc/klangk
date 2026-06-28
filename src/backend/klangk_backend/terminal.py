@@ -73,7 +73,6 @@ _SENSITIVE_ENV_PREFIXES = (
 
 
 def _build_environment(
-    command_override: str | None,
     user_home: str | None = None,
     user_id: str | None = None,
     user_handle: str | None = None,
@@ -86,8 +85,6 @@ def _build_environment(
         env.append(f"KLANGK_USER_ID={user_id}")
     if user_handle is not None:
         env.append(f"KLANGK_USER_HANDLE={user_handle}")
-    if command_override is not None:
-        env.append(f"KLANGK_CMD_OVERRIDE={command_override}")
     if ssh_agent_socket is not None:
         env.append(f"SSH_AUTH_SOCK={ssh_agent_socket}")
     return env
@@ -101,11 +98,19 @@ async def _ensure_base_session(
     session_name: str,
     user_home: str | None = None,
     ssh_agent_socket: str | None = None,
-) -> None:
+    default_command: str | None = None,
+) -> bool:
     """Create the base tmux session (detached) if it doesn't exist.
 
     Grouped sessions require a target session.  This ensures the base
     session exists before any grouped session tries to link to it.
+
+    If *default_command* is set and the session is freshly created,
+    the command is sent as keystrokes into window 0.  The command
+    runs as a foreground process in the bash shell — Ctrl-C stops
+    it and returns to the prompt.
+
+    Returns ``True`` if the session was freshly created.
     """
     # Check if the session already exists.
     try:
@@ -116,7 +121,7 @@ async def _ensure_base_session(
             timeout=5,
         )
         if rc == 0:
-            return  # already exists
+            return False  # already exists
     except Exception:
         pass  # assume it doesn't exist
 
@@ -136,6 +141,30 @@ async def _ensure_base_session(
         )
     except Exception:
         logger.warning("Failed to create base tmux session %s", session_name)
+        return False
+
+    # Send default command as keystrokes into window 0.
+    if default_command:
+        try:
+            await podman.exec_container(
+                container_id,
+                [
+                    "tmux",
+                    "send-keys",
+                    "-t",
+                    f"{session_name}:0",
+                    default_command,
+                    "Enter",
+                ],
+                user=CONTAINER_USER,
+                timeout=5,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to send default command to session %s", session_name
+            )
+
+    return True
 
 
 def _build_shell_command(
@@ -640,6 +669,7 @@ class TerminalSession:
         user_id: str | None = None,
         user_handle: str | None = None,
         ssh_agent_socket: str | None = None,
+        default_command: str | None = None,
     ):
         self.container_id = container_id
         self.session_name = session_name
@@ -650,6 +680,7 @@ class TerminalSession:
         self.user_id = user_id
         self.user_handle = user_handle
         self.ssh_agent_socket = ssh_agent_socket
+        self.default_command = default_command
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -662,7 +693,6 @@ class TerminalSession:
         self,
         cols: int = 80,
         rows: int = 24,
-        command_override: str | None = None,
     ) -> None:
         """Start a shell session via ``podman exec`` over a PTY."""
         self._running = True
@@ -680,9 +710,9 @@ class TerminalSession:
                 self.session_name,
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
+                default_command=self.default_command,
             )
         env = _build_environment(
-            command_override,
             self.user_home,
             user_id=self.user_id,
             user_handle=self.user_handle,

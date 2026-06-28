@@ -434,7 +434,6 @@ class TerminalController:
         rows = msg.get("rows", self.rows)
         self.cols = cols
         self.rows = rows
-        command_override = msg.get("commandOverride")
         session = TerminalSession(
             self._conn.container_id,
             session_name=self._conn.user["id"],
@@ -442,6 +441,7 @@ class TerminalController:
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
             ssh_agent_socket=self._conn._ssh_agent_socket,
+            default_command=self._conn._default_command,
         )
 
         browser_id = msg.get("browser_id")
@@ -461,9 +461,7 @@ class TerminalController:
                     conn.container_id,
                 )
                 await asyncio.wait_for(
-                    session.start(
-                        cols, rows, command_override=command_override
-                    ),
+                    session.start(cols, rows),
                     timeout=30,
                 )
                 if browser_id:

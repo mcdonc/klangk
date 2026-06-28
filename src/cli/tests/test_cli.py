@@ -2008,6 +2008,23 @@ class TestCreateWorkspaceClient:
         assert body["mounts"] == ["/data:/data"]
         assert body["env"] == {"FOO": "bar"}
 
+    def test_create_workspace_with_default_command(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "ws-cmd",
+            "name": "svc-ws",
+            "created_at": "2025-01-01",
+        }
+        with patch.object(client, "post", return_value=mock_resp) as mock_post:
+            ws = client.create_workspace(
+                "svc-ws", default_command="openclaw gateway"
+            )
+        assert ws.name == "svc-ws"
+        body = mock_post.call_args.kwargs.get("json")
+        assert body["default_command"] == "openclaw gateway"
+
 
 class TestListImagesClient:
     def test_list_images(self):

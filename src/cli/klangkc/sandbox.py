@@ -15,6 +15,7 @@ class SandboxConfig:
 
     # workspace
     image: str | None = None
+    default_command: str | None = None
     # sandbox
     mount_at: str = "~/work"
     setup: str | None = None
@@ -54,6 +55,9 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
 
     return SandboxConfig(
         image=workspace.get("image"),
+        default_command=workspace.get(
+            "default-command", workspace.get("default_command")
+        ),
         mount_at=sandbox.get("mount-at", sandbox.get("mount_at", "~/work")),
         setup=sandbox.get("setup"),
         setup_timeout=setup_timeout,
