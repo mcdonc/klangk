@@ -28,6 +28,7 @@ from klangk_backend.wshandler import (
     Connection,
     ExecController,
     SafeWebSocket,
+    SharedTerminalController,
     SlowClientError,
     SshAgentForwarder,
     TerminalController,
@@ -6369,6 +6370,644 @@ class TestShareWindowHandlers:
     async def test_has_perm_no_workspace(self):
         conn = _base_conn()
         assert not await conn._has_perm("view")
+
+
+class TestSharedTerminalController:
+    """Unit tests for the SharedTerminalController collaborator in isolation.
+
+    These exercise the controller directly against a lightweight fake
+    connection (a SimpleNamespace), proving it is decoupled from
+    Connection (issue #961) and covering the branches the existing
+    Connection-level tests reach only indirectly — notably the
+    ``Connection._handle_list_error`` backward-compat delegate, the
+    ``join_shared_terminal`` ``asyncio.CancelledError`` re-raise, and
+    the ``find_window``/``broadcast_shared_terminals``/
+    ``save_state_snapshot`` helpers as controller methods.
+    """
+
+    def _controller(
+        self,
+        *,
+        container_id="cid",
+        workspace_id="ws-1",
+        user_home="/home/alice",
+        sock=None,
+        has_perm=True,
+        user=None,
+    ):
+        if sock is None:
+            sock = _mock_sock()
+        if user is None:
+            user = {
+                "id": "uid",
+                "email": "alice@example.com",
+                "handle": "alice",
+            }
+
+        class _FakeConn:
+            """Minimal Connection stand-in for isolated controller tests."""
+
+            def __init__(self):
+                self.sock = sock
+                self.container_id = container_id
+                self.workspace_id = workspace_id
+                self._user_home = user_home
+                self.user = user
+                self._has_perm = AsyncMock(return_value=has_perm)
+                self.stop_terminal = AsyncMock()
+                self._activate_session = AsyncMock(return_value=True)
+                self._tmux_session_name = MagicMock(return_value="uid")
+                self._sync_terminal_windows = MagicMock()
+                self._terminal_cols = 80
+                self._terminal_rows = 24
+                self.terminal = SimpleNamespace(session=None, task=None)
+
+            @property
+            def terminal_session(self):
+                return self.terminal.session
+
+            @terminal_session.setter
+            def terminal_session(self, value):
+                self.terminal.session = value
+
+            @property
+            def terminal_task(self):
+                return self.terminal.task
+
+            @terminal_task.setter
+            def terminal_task(self, value):
+                self.terminal.task = value
+
+        conn = _FakeConn()
+        ctrl = SharedTerminalController(conn)
+        return ctrl, sock, conn
+
+    def _ws_session(self, ws_id="ws-1"):
+        return wshandler.state.get_or_create_session(ws_id)
+
+    # --- find_window ---
+
+    async def test_find_window_returns_match(self, user):
+        ctrl, _, conn = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": False}
+        ]
+        try:
+            found = ctrl.find_window(ws, user["id"], "@0")
+            assert found is not None
+            assert found["name"] == "a"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_find_window_not_found_sends_error(self, user):
+        ctrl, sock, conn = self._controller(user=user)
+        ws = self._ws_session()
+        try:
+            assert ctrl.find_window(ws, user["id"], "@99") is None
+            msg = sock.send_json.call_args[0][0]
+            assert msg == {"type": "error", "message": "Window not found"}
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_find_window_shared_true_rejects_unshared(self, user):
+        ctrl, sock, conn = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": False}
+        ]
+        try:
+            assert (
+                ctrl.find_window(
+                    ws, user["id"], "@0", shared=True, error_msg="nope"
+                )
+                is None
+            )
+            assert sock.send_json.call_args[0][0]["message"] == "nope"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    # --- share_window ---
+
+    async def test_share_window_marks_and_broadcasts(self, user):
+        ctrl, _, conn = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": False}
+        ]
+        try:
+            await ctrl.share_window({"window_id": "@0"})
+            assert ws.terminal_windows[user["id"]][0]["shared"] is True
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_share_window_no_container(self, user):
+        ctrl, _, _ = self._controller(user=user, container_id=None)
+        await ctrl.share_window({"window_id": "@0"})
+
+    async def test_share_window_no_perm(self, user):
+        ctrl, sock, _ = self._controller(user=user, has_perm=False)
+        await ctrl.share_window({"window_id": "@0"})
+        assert "Permission" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_share_window_missing_id(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        await ctrl.share_window({})
+        assert "Window ID" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_share_window_not_found(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows[user["id"]] = []
+        try:
+            await ctrl.share_window({"window_id": "@99"})
+            assert sock.send_json.call_args[0][0]["type"] == "error"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_share_window_no_session(self, user):
+        ctrl, _, _ = self._controller(user=user, workspace_id="none")
+        await ctrl.share_window({"window_id": "@0"})
+
+    # --- unshare_window ---
+
+    async def test_unshare_window_no_container(self, user):
+        ctrl, _, _ = self._controller(user=user, container_id=None)
+        await ctrl.unshare_window({"window_id": "@0"})
+
+    async def test_unshare_window_no_perm(self, user):
+        ctrl, sock, _ = self._controller(user=user, has_perm=False)
+        await ctrl.unshare_window({"window_id": "@0"})
+        assert "Permission" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_unshare_window_marks_unshared_and_kicks(
+        self, user, temp_data_dir
+    ):
+        ctrl, _, conn = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": True}
+        ]
+        try:
+            with patch("klangk_backend.terminal.kill_joiner_sessions") as kill:
+                await ctrl.unshare_window({"window_id": "@0"})
+            assert ws.terminal_windows[user["id"]][0]["shared"] is False
+            kill.assert_awaited_once_with("cid", "uid")
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_unshare_kill_error_handled(self, user, temp_data_dir):
+        ctrl, sock, _ = self._controller(user=user)
+        ws = self._ws_session()
+        await ws.add_subscriber(sock, "cid")
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": True}
+        ]
+        try:
+            with patch(
+                "klangk_backend.terminal.kill_joiner_sessions",
+                side_effect=OSError("boom"),
+            ):
+                # Should not raise.
+                await ctrl.unshare_window({"window_id": "@0"})
+            # Still broadcast the deletion.
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(
+                s.get("type") == "shared_terminal_deleted" for s in sent
+            )
+        finally:
+            await ws.remove_subscriber(sock)
+            wshandler.state.sessions.pop("ws-1", None)
+
+    # --- list_shared_terminals ---
+
+    async def test_list_shared_terminals_no_workspace(self, user):
+        ctrl, _, _ = self._controller(user=user, workspace_id=None)
+        await ctrl.list_shared_terminals()
+
+    async def test_list_shared_terminals_no_perm(self, user):
+        ctrl, sock, _ = self._controller(user=user, has_perm=False)
+        await ctrl.list_shared_terminals()
+        assert "Permission" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_list_shared_terminals_no_session_sends_empty(self, user):
+        ctrl, sock, _ = self._controller(user=user, workspace_id="none")
+        await ctrl.list_shared_terminals()
+        msg = sock.send_json.call_args[0][0]
+        assert msg == {"type": "shared_terminals", "terminals": []}
+
+    async def test_list_shared_terminals_sends_list(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": True}
+        ]
+        try:
+            await ctrl.list_shared_terminals()
+            msg = sock.send_json.call_args[0][0]
+            assert msg["type"] == "shared_terminals"
+            assert isinstance(msg["terminals"], list)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    # --- broadcast_shared_terminals / save_state_snapshot ---
+
+    async def test_broadcast_shared_terminals_broadcasts(self, user):
+        ctrl, sock, conn = self._controller(user=user)
+        ws = self._ws_session()
+        await ws.add_subscriber(sock, "cid")
+        try:
+            ctrl.broadcast_shared_terminals(ws)
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(s.get("type") == "shared_terminals" for s in sent)
+        finally:
+            await ws.remove_subscriber(sock)
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_save_state_snapshot_is_noop_when_disabled(self, user):
+        """The snapshot save is currently disabled (early return)."""
+        ctrl, _, _ = self._controller(user=user)
+        ws = self._ws_session()
+        try:
+            # Must not raise and must not schedule any task.
+            ctrl.save_state_snapshot(ws)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    # --- create_shared_terminal (legacy) ---
+
+    async def test_create_shared_terminal_no_container(self, user):
+        ctrl, _, _ = self._controller(user=user, container_id=None)
+        await ctrl.create_shared_terminal({"name": "x"})
+
+    async def test_create_shared_terminal_no_perm(self, user):
+        ctrl, sock, _ = self._controller(user=user, has_perm=False)
+        await ctrl.create_shared_terminal({"name": "x"})
+        assert "Permission" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_create_shared_terminal_empty_name(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        await ctrl.create_shared_terminal({"name": "  "})
+        assert "Name" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_create_shared_terminal_marks_new_window_shared(
+        self, user, temp_data_dir
+    ):
+        ctrl, sock, _ = self._controller(user=user)
+        ws = self._ws_session()
+        await ws.add_subscriber(sock, "cid")
+        try:
+            with patch(
+                "klangk_backend.terminal.new_window",
+                return_value=[{"id": "@0", "index": 0, "name": "build"}],
+            ):
+                await ctrl.create_shared_terminal({"name": "build"})
+            # _sync_terminal_windows is a delegate that Connection would
+            # route to TerminalController; on the fake conn it's a
+            # MagicMock, so populate the windows manually as the real
+            # _sync_terminal_windows would.
+            ws.terminal_windows[user["id"]] = [
+                {"id": "@0", "index": 0, "name": "build", "shared": True}
+            ]
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(s.get("type") == "shared_terminals" for s in sent)
+        finally:
+            await ws.remove_subscriber(sock)
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_create_shared_terminal_error_sends_error(
+        self, user, temp_data_dir
+    ):
+        ctrl, sock, _ = self._controller(user=user)
+        with patch(
+            "klangk_backend.terminal.new_window",
+            side_effect=OSError("boom"),
+        ):
+            await ctrl.create_shared_terminal({"name": "x"})
+        assert sock.send_json.call_args[0][0]["type"] == "error"
+
+    async def test_create_shared_terminal_no_session(self, user):
+        ctrl, _, _ = self._controller(user=user, workspace_id="none")
+        with patch(
+            "klangk_backend.terminal.new_window",
+            return_value=[{"id": "@0", "index": 0, "name": "x"}],
+        ):
+            await ctrl.create_shared_terminal({"name": "x"})
+
+    # --- delete_shared_terminal (legacy) ---
+
+    async def test_delete_shared_terminal_no_container(self, user):
+        ctrl, _, _ = self._controller(user=user, container_id=None)
+        await ctrl.delete_shared_terminal({"user_id": "u", "window_id": "@0"})
+
+    async def test_delete_shared_terminal_no_perm(self, user):
+        ctrl, sock, _ = self._controller(user=user, has_perm=False)
+        await ctrl.delete_shared_terminal({"user_id": "u", "window_id": "@0"})
+        assert "Permission" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_delete_shared_terminal_missing_fields(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        await ctrl.delete_shared_terminal({"user_id": "u"})
+        assert "required" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_delete_shared_terminal_other_user_denied(
+        self, user, temp_data_dir
+    ):
+        ctrl, sock, _ = self._controller(user=user)
+        with patch(
+            "klangk_backend.model.get_workspace_by_id", new=AsyncMock()
+        ) as gw:
+            gw.return_value = {"user_id": "someone-else"}
+            await ctrl.delete_shared_terminal(
+                {"user_id": "owner-1", "window_id": "@0"}
+            )
+        assert "Permission" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_delete_shared_terminal_not_found(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows["owner-1"] = []
+        try:
+            await ctrl.delete_shared_terminal(
+                {"user_id": "owner-1", "window_id": "@99"}
+            )
+            assert sock.send_json.call_args[0][0]["type"] == "error"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_delete_shared_terminal_no_session(self, user):
+        ctrl, _, _ = self._controller(user=user, workspace_id="none")
+        await ctrl.delete_shared_terminal({"user_id": "u", "window_id": "@0"})
+
+    async def test_delete_shared_terminal_closes_and_broadcasts(
+        self, user, temp_data_dir
+    ):
+        ctrl, sock, _ = self._controller(user=user)
+        ws = self._ws_session()
+        await ws.add_subscriber(sock, "cid")
+        ws.terminal_windows["owner-1"] = [
+            {"id": "@0", "index": 0, "name": "build", "shared": True},
+            {"id": "@1", "index": 1, "name": "other", "shared": False},
+        ]
+        try:
+            # owner_user_id != user["id"], so the delete handler calls
+            # model.get_workspace_by_id to authorize; return a workspace
+            # owned by the current user so the delete is permitted.
+            with (
+                patch(
+                    "klangk_backend.model.get_workspace_by_id",
+                    new=AsyncMock(return_value={"user_id": user["id"]}),
+                ),
+                patch("klangk_backend.terminal.kill_joiner_sessions") as kill,
+                patch("klangk_backend.terminal.close_window") as close,
+            ):
+                await ctrl.delete_shared_terminal(
+                    {"user_id": "owner-1", "window_id": "@0"}
+                )
+            kill.assert_awaited_once_with("cid", "owner-1")
+            close.assert_awaited_once_with("cid", "owner-1", "@0")
+            remaining = ws.terminal_windows["owner-1"]
+            assert [w["id"] for w in remaining] == ["@1"]
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(
+                s.get("type") == "shared_terminal_deleted" for s in sent
+            )
+        finally:
+            await ws.remove_subscriber(sock)
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_delete_shared_terminal_error_sends_error(
+        self, user, temp_data_dir
+    ):
+        ctrl, sock, _ = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows["owner-1"] = [
+            {"id": "@0", "index": 0, "name": "build", "shared": True}
+        ]
+        try:
+            with patch(
+                "klangk_backend.terminal.kill_joiner_sessions",
+                side_effect=OSError("boom"),
+            ):
+                await ctrl.delete_shared_terminal(
+                    {"user_id": "owner-1", "window_id": "@0"}
+                )
+            assert sock.send_json.call_args[0][0]["type"] == "error"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    # --- join_shared_terminal ---
+
+    async def test_join_shared_terminal_no_container(self, user):
+        ctrl, _, _ = self._controller(user=user, container_id=None)
+        await ctrl.join_shared_terminal({"user_id": "x", "window_id": "@0"})
+
+    async def test_join_shared_terminal_no_perm(self, user):
+        ctrl, sock, _ = self._controller(user=user, has_perm=False)
+        await ctrl.join_shared_terminal({"user_id": "x", "window_id": "@0"})
+        assert "Permission" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_join_shared_terminal_missing_fields(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        await ctrl.join_shared_terminal({"user_id": ""})
+        assert "required" in sock.send_json.call_args[0][0]["message"]
+
+    async def test_join_shared_terminal_not_found(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows["owner-1"] = []
+        try:
+            await ctrl.join_shared_terminal(
+                {"user_id": "owner-1", "window_id": "@99"}
+            )
+            assert sock.send_json.call_args[0][0]["type"] == "error"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_join_shared_terminal_no_session(self, user):
+        ctrl, _, _ = self._controller(user=user, workspace_id="none")
+        await ctrl.join_shared_terminal({"user_id": "x", "window_id": "@0"})
+
+    async def test_join_shared_terminal_sets_viewing_and_starts(
+        self, user, temp_data_dir
+    ):
+        ctrl, sock, conn = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows["owner-1"] = [
+            {"id": "@0", "index": 0, "name": "build", "shared": True}
+        ]
+        try:
+            with (
+                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch("klangk_backend.terminal.tmux_command"),
+                patch("klangk_backend.terminal.select_window"),
+            ):
+                mock_sess = _mock_terminal()
+                MockTS.return_value = mock_sess
+                await ctrl.join_shared_terminal(
+                    {"user_id": "owner-1", "window_id": "@0"}
+                )
+                # Drain the spawned start task.
+                await asyncio.sleep(0)
+            # viewing_shared marker set.
+            assert ctrl.viewing_shared == {
+                "user_id": "owner-1",
+                "window_id": "@0",
+            }
+            conn.stop_terminal.assert_awaited_once()
+            MockTS.assert_called_once()
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_join_shared_terminal_start_error_sends_error(
+        self, user, temp_data_dir
+    ):
+        ctrl, sock, conn = self._controller(user=user)
+        ws = self._ws_session()
+        ws.terminal_windows["owner-1"] = [
+            {"id": "@0", "index": 0, "name": "build", "shared": True}
+        ]
+        try:
+            with (
+                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch(
+                    "klangk_backend.terminal.tmux_command",
+                    side_effect=TerminalError("nope"),
+                ),
+                patch("klangk_backend.terminal.select_window"),
+            ):
+                mock_sess = _mock_terminal()
+                mock_sess.start = AsyncMock(side_effect=OSError("boom"))
+                MockTS.return_value = mock_sess
+                await ctrl.join_shared_terminal(
+                    {"user_id": "owner-1", "window_id": "@0"}
+                )
+                await asyncio.sleep(0)
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(
+                "Failed to join shared terminal" in s.get("message", "")
+                for s in sent
+            )
+            mock_sess.stop.assert_awaited_once()
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    # --- handle_list_error ---
+
+    async def test_handle_list_error_sends_error(self, user):
+        ctrl, sock, _ = self._controller(user=user)
+        await ctrl.handle_list_error(ValueError("boom"))
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "error"
+        assert "Failed to list shared terminals" in msg["message"]
+
+    # --- Connection backward-compat delegates + property shim ---
+
+    async def test_connection_handle_list_error_delegate(self, user):
+        """Connection._handle_list_error forwards to the controller."""
+        conn = _base_conn(user=user)
+        with patch.object(
+            conn.shared, "handle_list_error", new=AsyncMock()
+        ) as m:
+            await conn._handle_list_error(ValueError("x"))
+        m.assert_awaited_once()
+
+    async def test_connection_share_window_delegate(self, user):
+        conn = _base_conn(user=user)
+        with patch.object(conn.shared, "share_window", new=AsyncMock()) as m:
+            await conn.handle_share_window({"window_id": "@0"})
+        m.assert_awaited_once_with({"window_id": "@0"})
+
+    async def test_connection_unshare_window_delegate(self, user):
+        conn = _base_conn(user=user)
+        with patch.object(conn.shared, "unshare_window", new=AsyncMock()) as m:
+            await conn.handle_unshare_window({"window_id": "@0"})
+        m.assert_awaited_once_with({"window_id": "@0"})
+
+    async def test_connection_join_shared_terminal_delegate(self, user):
+        conn = _base_conn(user=user)
+        with patch.object(
+            conn.shared, "join_shared_terminal", new=AsyncMock()
+        ) as m:
+            await conn.handle_join_shared_terminal(
+                {"user_id": "x", "window_id": "@0"}
+            )
+        m.assert_awaited_once_with({"user_id": "x", "window_id": "@0"})
+
+    async def test_connection_list_shared_terminals_delegate(self, user):
+        conn = _base_conn(user=user)
+        with patch.object(
+            conn.shared, "list_shared_terminals", new=AsyncMock()
+        ) as m:
+            await conn.handle_list_shared_terminals()
+        m.assert_awaited_once()
+
+    async def test_connection_create_shared_terminal_delegate(self, user):
+        conn = _base_conn(user=user)
+        with patch.object(
+            conn.shared, "create_shared_terminal", new=AsyncMock()
+        ) as m:
+            await conn.handle_create_shared_terminal({"name": "x"})
+        m.assert_awaited_once_with({"name": "x"})
+
+    async def test_connection_delete_shared_terminal_delegate(self, user):
+        conn = _base_conn(user=user)
+        with patch.object(
+            conn.shared, "delete_shared_terminal", new=AsyncMock()
+        ) as m:
+            await conn.handle_delete_shared_terminal(
+                {"user_id": "u", "window_id": "@0"}
+            )
+        m.assert_awaited_once_with({"user_id": "u", "window_id": "@0"})
+
+    async def test_connection_broadcast_shared_terminals_delegate(self, user):
+        conn = _base_conn(user=user)
+        ws = wshandler.state.get_or_create_session("ws-1")
+        try:
+            with patch.object(conn.shared, "broadcast_shared_terminals") as m:
+                conn._broadcast_shared_terminals(ws)
+            m.assert_called_once_with(ws)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_connection_save_state_snapshot_delegate(self, user):
+        conn = _base_conn(user=user)
+        ws = wshandler.state.get_or_create_session("ws-1")
+        try:
+            with patch.object(conn.shared, "save_state_snapshot") as m:
+                conn._save_state_snapshot(ws)
+            m.assert_called_once_with(ws)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_connection_find_window_delegate(self, user):
+        conn = _base_conn(user=user)
+        ws = wshandler.state.get_or_create_session("ws-1")
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": False}
+        ]
+        try:
+            with patch.object(
+                conn.shared, "find_window", return_value={"id": "@0"}
+            ) as m:
+                result = conn._find_window(ws, user["id"], "@0")
+            assert result == {"id": "@0"}
+            m.assert_called_once_with(
+                ws,
+                user["id"],
+                "@0",
+                shared=False,
+                error_msg="Window not found",
+            )
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_viewing_shared_property_round_trip(self, user):
+        conn = _base_conn(user=user)
+        marker = {"user_id": "x", "window_id": "@0"}
+        conn._viewing_shared = marker
+        assert conn._viewing_shared is marker
+        assert conn.shared.viewing_shared is marker
 
 
 class TestFindWindow:
