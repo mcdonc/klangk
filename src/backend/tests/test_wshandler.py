@@ -7801,7 +7801,7 @@ class TestChatSend:
 
         try:
             with patch(
-                "klangk_backend.wshandler._handle_agent_mention",
+                "klangk_backend.wshandler.connection._handle_agent_mention",
                 new=slow_mention,
             ):
                 await conn1.handle_chat_send({"message": "@MrBoops first"})
