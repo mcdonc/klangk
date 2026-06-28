@@ -1160,23 +1160,53 @@ async def create_workspace(
         }
 
 
+# Whitelisted sort columns for workspace list queries. Values are the
+# real column names; the prefix (e.g. "w.") is applied by the caller.
+_SORT_COLUMNS = {"created": "created_at", "name": "name"}
+
+
+def _sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
+    """Build a deterministic ORDER BY clause for paginated workspace lists.
+
+    ``sort`` is whitelisted against ``_SORT_COLUMNS``; ``order`` is
+    coerced to ASC/DESC. The ``id`` tiebreaker uses the same direction so
+    offset pagination stays stable when rows share the sort key.
+    """
+    col = _SORT_COLUMNS.get(sort, "created_at")
+    p = f"{prefix}." if prefix else ""
+    direction = "DESC" if order.lower() == "desc" else "ASC"
+    return f"ORDER BY {p}{col} {direction}, {p}id {direction}"
+
+
 async def list_workspaces(
-    user_id: str, limit: int = 10, offset: int = 0
+    user_id: str,
+    limit: int = 10,
+    offset: int = 0,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
 ) -> dict:
-    """List a page of workspaces owned by ``user_id``, newest first.
+    """List a page of workspaces owned by ``user_id``.
 
     Returns a pagination envelope:
     ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
-    Ordering is ``created_at, id`` so offset pagination is deterministic
-    even when rows share a timestamp.
+    ``sort`` (``created``/``name``) and ``order`` (``asc``/``desc``) are
+    whitelisted; ``q`` filters by name substring. The ``id`` tiebreaker
+    keeps offset pagination deterministic.
     """
+    order_by = _sort_order_clause(sort, order)
+    where = "WHERE user_id = ?"
+    params: list = [user_id]
+    if q:
+        where += " AND name LIKE '%' || ? || '%'"
+        params.append(q)
+    params.extend([limit, offset])
     async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, container_id, image, default_command,"
             " mounts, env, created_at FROM workspaces"
-            " WHERE user_id = ? ORDER BY created_at, id"
-            " LIMIT ? OFFSET ?",
-            (user_id, limit, offset),
+            f" {where} {order_by} LIMIT ? OFFSET ?",
+            tuple(params),
         )
         rows = await cursor.fetchall()
         items = [
@@ -1201,15 +1231,22 @@ async def list_workspaces(
 
 
 async def list_shared_workspaces(
-    user_id: str, limit: int = 10, offset: int = 0
+    user_id: str,
+    limit: int = 10,
+    offset: int = 0,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
 ) -> dict:
     """List a page of workspaces shared with (not owned by) this user.
 
     Access is granted through either a direct user-level ACE or a
     group-level ACE on ``/workspaces/{id}``. Returns a pagination
     envelope: ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
-    Ordering is ``created_at, id`` so offset pagination is deterministic.
+    ``sort``/``order``/``q`` as in :func:`list_workspaces`.
     """
+    order_by = _sort_order_clause(sort, order, prefix="w")
+    name_filter = " AND w.name LIKE '%' || ? || '%'" if q else ""
     async with transaction() as db:
         group_ids = await get_user_group_ids(user_id)
         group_placeholders = ",".join("?" for _ in group_ids)
@@ -1231,9 +1268,17 @@ async def list_shared_workspaces(
             f"    (ae.principal_type = {PRINCIPAL_USER} AND ae.user_id = ?)"
             f"    {group_clause}"
             "   )"
-            " ORDER BY w.created_at, w.id"
-            " LIMIT ? OFFSET ?",
-            (ACTION_ALLOW, user_id, user_id, *group_ids, limit, offset),
+            f"{name_filter}"
+            f" {order_by} LIMIT ? OFFSET ?",
+            (
+                ACTION_ALLOW,
+                user_id,
+                user_id,
+                *group_ids,
+                *([q] if q else []),
+                limit,
+                offset,
+            ),
         )
         rows = await cursor.fetchall()
         items = [

@@ -475,15 +475,23 @@ No request body.
 
 **Query params (optional, pagination):**
 
-| Param    | Type | Default | Constraints |
-| -------- | ---- | ------- | ----------- |
-| `limit`  | int  | (none)  | `1`–`100`   |
-| `offset` | int  | (none)  | `>= 0`      |
+| Param    | Type   | Default   | Constraints           |
+| -------- | ------ | --------- | --------------------- |
+| `limit`  | int    | (none)    | `1`–`100`             |
+| `offset` | int    | (none)    | `>= 0`                |
+| `sort`   | string | `created` | `name` \| `created`   |
+| `order`  | string | `desc`    | `asc` \| `desc`       |
+| `q`      | string | (none)    | name substring filter |
 
 Without pagination params the endpoint returns a **bare list** (backward
 compatible). With `?limit=` and/or `?offset=` it returns a **pagination
-envelope** `{ items, has_more, next_offset }`, ordered by `created_at, id`
-so offset pagination is deterministic.
+envelope** `{ items, has_more, next_offset }`. `sort`/`order`/`q` apply in
+both shapes.
+
+Sorting is whitelisted (`created`→`created_at`, `name`→`name`) with an `id`
+tiebreaker so offset pagination is deterministic. `q` matches anywhere in
+the name (`LIKE '%q%'`), not just a prefix, and is applied before pagination
+so `has_more`/`next_offset` reflect the filtered set.
 
 ```json
 [
@@ -526,8 +534,9 @@ List workspaces that other users have shared with the current user.
 No request body.
 
 **Query params (optional, pagination):** same `?limit=` / `?offset=` as
-`GET /api/v1/workspaces` — without params returns a bare list, with params
-returns the `{ items, has_more, next_offset }` envelope.
+`GET /api/v1/workspaces`, plus `?sort=name|created`, `?order=asc|desc`, and
+`?q=<substring>` (name substring). Without params returns a bare list, with
+params returns the `{ items, has_more, next_offset }` envelope.
 
 ```json
 [

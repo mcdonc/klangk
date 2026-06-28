@@ -369,13 +369,20 @@ class TestMainCLI:
         client.list_shared_workspaces.return_value = []
         monkeypatch.setattr(main, "_client", lambda: client)
 
-        main.list_workspaces(limit=10, all_workspaces=True, shared=True)
+        main.list_workspaces(
+            limit=10,
+            all_workspaces=True,
+            shared=True,
+            sort="created",
+            order="desc",
+            filter=None,
+        )
 
         client.list_workspaces.assert_called_once_with(
-            limit=10, all_pages=True
+            limit=10, all_pages=True, sort="created", order="desc", q=None
         )
         client.list_shared_workspaces.assert_called_once_with(
-            limit=10, all_pages=True
+            limit=10, all_pages=True, sort="created", order="desc", q=None
         )
 
     def test_list_workspaces_limit_forwarded(self, logged_in_cfg, monkeypatch):
@@ -386,13 +393,54 @@ class TestMainCLI:
         client.list_shared_workspaces.return_value = []
         monkeypatch.setattr(main, "_client", lambda: client)
 
-        main.list_workspaces(limit=50, all_workspaces=False, shared=True)
+        main.list_workspaces(
+            limit=50,
+            all_workspaces=False,
+            shared=True,
+            sort="created",
+            order="desc",
+            filter=None,
+        )
 
         client.list_workspaces.assert_called_once_with(
-            limit=50, all_pages=False
+            limit=50, all_pages=False, sort="created", order="desc", q=None
         )
         client.list_shared_workspaces.assert_called_once_with(
-            limit=50, all_pages=False
+            limit=50, all_pages=False, sort="created", order="desc", q=None
+        )
+
+    def test_list_workspaces_sort_filter_forwarded(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangkc import main
+
+        client = MagicMock()
+        client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = []
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        main.list_workspaces(
+            limit=10,
+            all_workspaces=False,
+            sort="name",
+            order="asc",
+            filter="gamma",
+            shared=True,
+        )
+
+        client.list_workspaces.assert_called_once_with(
+            limit=10,
+            all_pages=False,
+            sort="name",
+            order="asc",
+            q="gamma",
+        )
+        client.list_shared_workspaces.assert_called_once_with(
+            limit=10,
+            all_pages=False,
+            sort="name",
+            order="asc",
+            q="gamma",
         )
 
     def test_create_workspace(self, logged_in_cfg, monkeypatch):

@@ -279,9 +279,14 @@ async def create_workspace(
 
 
 async def list_workspaces(
-    user_id: str, limit: int = 10, offset: int = 0
+    user_id: str,
+    limit: int = 10,
+    offset: int = 0,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
 ) -> dict:
-    return await model.list_workspaces(user_id, limit, offset)
+    return await model.list_workspaces(user_id, limit, offset, sort, order, q)
 
 
 async def get_workspace(

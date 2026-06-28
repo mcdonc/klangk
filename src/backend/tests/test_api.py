@@ -980,6 +980,67 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 422
 
+    async def test_list_sort_by_name(self, client, user):
+        headers = await _auth_headers(client)
+        for name in ["charlie", "alpha", "bravo"]:
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": name},
+            )
+        resp = await client.get(
+            "/api/v1/workspaces?limit=10&sort=name&order=asc",
+            headers=headers,
+        )
+        names = [w["name"] for w in resp.json()["items"]]
+        assert names == sorted(names)
+        assert names[0] == "alpha"
+
+    async def test_list_sort_desc(self, client, user):
+        headers = await _auth_headers(client)
+        for name in ["alpha", "bravo", "charlie"]:
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": name},
+            )
+        resp = await client.get(
+            "/api/v1/workspaces?limit=10&sort=name&order=desc",
+            headers=headers,
+        )
+        names = [w["name"] for w in resp.json()["items"]]
+        assert names == sorted(names, reverse=True)
+        assert names[0] == "charlie"
+
+    async def test_list_filter_substring(self, client, user):
+        headers = await _auth_headers(client)
+        for name in ["alpha", "beta-gamma", "delta"]:
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": name},
+            )
+        # Matches anywhere (substring), not just prefix.
+        resp = await client.get(
+            "/api/v1/workspaces?limit=10&q=gamma", headers=headers
+        )
+        names = [w["name"] for w in resp.json()["items"]]
+        assert names == ["beta-gamma"]
+
+    async def test_list_rejects_invalid_sort(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/v1/workspaces?sort=bogus", headers=headers
+        )
+        assert resp.status_code == 422
+
+    async def test_list_rejects_invalid_order(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/v1/workspaces?order=sideways", headers=headers
+        )
+        assert resp.status_code == 422
+
     async def test_create_workspace(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -1515,6 +1576,37 @@ class TestWorkspaceSharingRoutes:
         assert isinstance(body, dict)
         assert "items" in body and "has_more" in body
         assert any(w["id"] == ws_id for w in body["items"])
+
+    async def test_list_shared_filter_and_sort(self, client, user):
+        headers = await _auth_headers(client)
+        await self._create_other_user()
+        other_headers = await self._other_headers(client)
+        for name in ["alpha", "beta-shared", "gamma"]:
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": name},
+            )
+            await client.post(
+                f"/api/v1/workspaces/{resp.json()['id']}/members",
+                headers=headers,
+                json={"email": "other@example.com"},
+            )
+        # Substring filter on name.
+        resp = await client.get(
+            "/api/v1/workspaces/shared?limit=10&q=shared",
+            headers=other_headers,
+        )
+        names = [w["name"] for w in resp.json()["items"]]
+        assert names == ["beta-shared"]
+        # Sort by name ascending across all shared.
+        resp = await client.get(
+            "/api/v1/workspaces/shared?limit=10&sort=name&order=asc",
+            headers=other_headers,
+        )
+        names = [w["name"] for w in resp.json()["items"]]
+        assert names == sorted(names)
+        assert names[0] == "alpha"
 
     async def test_get_members_empty(self, client, user):
         headers = await _auth_headers(client)

@@ -232,11 +232,16 @@ class KlangkClient:
         limit: int = 10,
         offset: int = 0,
         all_pages: bool = False,
+        sort: str = "created",
+        order: str = "desc",
+        q: str | None = None,
     ) -> list[Workspace]:
         """List workspaces owned by the current user.
 
         By default returns a single page (10 items). Pass ``all_pages=True``
-        to page through every workspace.
+        to page through every workspace. ``sort`` (``created``/``name``),
+        ``order`` (``asc``/``desc``) and ``q`` (name substring) mirror the
+        API query params.
         """
         return self._list_paginated(
             "/api/v1/workspaces",
@@ -244,6 +249,9 @@ class KlangkClient:
             offset=offset,
             all_pages=all_pages,
             shared=False,
+            sort=sort,
+            order=order,
+            q=q,
         )
 
     def list_shared_workspaces(
@@ -251,6 +259,9 @@ class KlangkClient:
         limit: int = 10,
         offset: int = 0,
         all_pages: bool = False,
+        sort: str = "created",
+        order: str = "desc",
+        q: str | None = None,
     ) -> list[Workspace]:
         """List workspaces shared with the current user."""
         return self._list_paginated(
@@ -259,6 +270,9 @@ class KlangkClient:
             offset=offset,
             all_pages=all_pages,
             shared=True,
+            sort=sort,
+            order=order,
+            q=q,
         )
 
     def _list_paginated(
@@ -269,10 +283,21 @@ class KlangkClient:
         offset: int,
         all_pages: bool,
         shared: bool,
+        sort: str = "created",
+        order: str = "desc",
+        q: str | None = None,
     ) -> list[Workspace]:
         workspaces: list[Workspace] = []
+        params: dict = {
+            "limit": limit,
+            "offset": offset,
+            "sort": sort,
+            "order": order,
+        }
+        if q:
+            params["q"] = q
         while True:
-            resp = self.get(path, params={"limit": limit, "offset": offset})
+            resp = self.get(path, params=params)
             self._check_auth(resp)
             resp.raise_for_status()
             body = resp.json()
@@ -280,7 +305,7 @@ class KlangkClient:
                 workspaces.append(self._workspace_from_json(w, shared=shared))
             if not all_pages or not body.get("has_more"):
                 break
-            offset = body["next_offset"]
+            params["offset"] = body["next_offset"]
         return workspaces
 
     @staticmethod

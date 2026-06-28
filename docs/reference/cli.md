@@ -143,6 +143,8 @@ klangkc ls                               # list workspaces (first page)
 klangkc ls --shared                      # include workspaces shared with you
 klangkc ls --limit 50                    # list up to 50 per section
 klangkc ls --all                         # page through every workspace
+klangkc ls --sort name --order asc       # sort by name, ascending
+klangkc ls --filter gamma                # substring filter on name
 klangkc create my-project                # create a workspace
 klangkc create my-project --mount ~/src:/home/klangk/work/src          # with bind mount
 klangkc create my-project --mount nix-store:/nix           # with named volume
