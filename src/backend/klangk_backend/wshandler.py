@@ -756,6 +756,176 @@ def _get_shared_terminals(ws_session) -> list[dict]:
     return terminals
 
 
+class SshAgentForwarder:
+    """SSH agent forwarding relay via socat inside the container.
+
+    Owns the socat subprocess, its stdout-relay task, and the socket
+    path.  ``Connection`` delegates the ``ssh_agent_*`` WebSocket
+    commands here, and reads :attr:`socket` (the in-container
+    ``SSH_AUTH_SOCK`` path) when starting terminals/exec sessions.
+
+    Extracted from ``Connection`` (issue #961) so the relay can be
+    unit-tested in isolation without standing up a full connection.
+    """
+
+    def __init__(self, conn: "Connection") -> None:
+        self._conn = conn
+        self.proc: asyncio.subprocess.Process | None = None
+        self.task: asyncio.Task | None = None
+        self.socket: str | None = None
+
+    async def start(self) -> None:
+        """Start SSH agent forwarding via socat inside the container."""
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
+        container_id = self._conn.container_id
+        if not container_id:
+            send_error(
+                self._conn.sock, "No container for SSH agent forwarding"
+            )
+            return
+        # Clean up any existing agent relay.
+        await self.stop()
+        user_id = self._conn.user["id"]
+        sock_path = f"/tmp/klangk-ssh-agent-{user_id}.sock"
+        # Remove stale socket if it exists from a previous session.
+        await podman.exec_container(container_id, ["rm", "-f", sock_path])
+        if _debug_agent:
+            logger.info("[ssh-agent] starting socat at %s", sock_path)
+        # Start socat: listen on the Unix socket, relay to stdin/stdout.
+        proc = await asyncio.create_subprocess_exec(
+            podman.PODMAN_BIN,
+            "exec",
+            "-i",
+            container_id,
+            "socat",
+            f"UNIX-LISTEN:{sock_path},mode=600,unlink-early,fork",
+            "STDIO",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+            if _debug_agent
+            else asyncio.subprocess.DEVNULL,
+        )
+        self.proc = proc
+        self.socket = sock_path
+        self.task = asyncio.create_task(self.forward_output())
+        if _debug_agent and proc.stderr is not None:
+            asyncio.create_task(self.log_stderr())
+        self._conn.sock.send_json(
+            {
+                "type": "ssh_agent_started",
+                "socket": sock_path,
+            }
+        )
+        logger.info(
+            "SSH agent forwarding started for user %s at %s",
+            user_id,
+            sock_path,
+        )
+
+    async def log_stderr(self) -> None:
+        """Log socat stderr when KLANGKC_DEBUG_SSH_AGENT is set."""
+        proc = self.proc
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                logger.info(
+                    "[ssh-agent] socat stderr: %s", line.decode().rstrip()
+                )
+        except (asyncio.CancelledError, OSError):
+            pass
+
+    async def forward_output(self) -> None:
+        """Read from socat stdout and send to the CLI as ssh_agent_response."""
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
+        proc = self.proc
+        if proc is None or proc.stdout is None:
+            return
+        try:
+            while True:
+                data = await proc.stdout.read(65536)
+                if not data:
+                    if _debug_agent:
+                        logger.info("[ssh-agent] socat stdout EOF")
+                    break
+                if _debug_agent:
+                    logger.info(
+                        "[ssh-agent] socat stdout: %d bytes", len(data)
+                    )
+                self._conn.sock.send_json(
+                    {
+                        "type": "ssh_agent_response",
+                        "data": base64.b64encode(data).decode("ascii"),
+                    }
+                )
+        except asyncio.CancelledError:
+            logger.debug("SSH agent output relay cancelled")
+        except OSError as e:
+            logger.warning("SSH agent output relay error: %s", e)
+
+    async def data(self, msg: dict) -> None:
+        """Write data from the CLI's local agent into socat stdin."""
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
+        proc = self.proc
+        if proc is None or proc.stdin is None:
+            if _debug_agent:
+                logger.info(
+                    "[ssh-agent] data received but no proc (proc=%s)",
+                    proc,
+                )
+            return
+        raw = msg.get("data", "")
+        if raw:
+            decoded = base64.b64decode(raw)
+            if _debug_agent:
+                logger.info(
+                    "[ssh-agent] writing %d bytes to socat stdin",
+                    len(decoded),
+                )
+            proc.stdin.write(decoded)
+            await proc.stdin.drain()
+
+    async def stop_command(self) -> None:
+        """Stop SSH agent forwarding and notify the client."""
+        await self.stop()
+        self._conn.sock.send_json({"type": "ssh_agent_stopped"})
+
+    async def stop(self) -> None:
+        """Clean up the SSH agent relay process."""
+        if self.task is not None:
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+            self.task = None
+        if self.proc is not None:
+            try:
+                self.proc.kill()
+                await self.proc.wait()
+            except ProcessLookupError:
+                logger.debug("SSH agent process already exited")
+            self.proc = None
+        container_id = self._conn.container_id
+        if self.socket and container_id:
+            try:
+                await podman.exec_container(
+                    container_id,
+                    ["rm", "-f", self.socket],
+                )
+            except OSError as e:
+                logger.warning(
+                    "Failed to remove SSH agent socket %s: %s",
+                    self.socket,
+                    e,
+                )
+        self.socket = None
+
+
 class Connection:
     """Per-WebSocket connection state and command handlers."""
 
@@ -779,10 +949,60 @@ class Connection:
         # Tracks which shared terminal this connection is viewing.
         # Set on join_shared_terminal, cleared on stop_terminal/terminal_start.
         self._viewing_shared: dict | None = None  # {user_id, window_id}
-        # SSH agent forwarding state.
-        self._ssh_agent_proc: asyncio.subprocess.Process | None = None
-        self._ssh_agent_task: asyncio.Task | None = None
-        self._ssh_agent_socket: str | None = None
+        # SSH agent forwarding is owned by the SshAgentForwarder
+        # collaborator; Connection delegates the ssh_agent_* commands to
+        # it.  The ``_ssh_agent_*`` properties below proxy to the
+        # forwarder for backwards compatibility with code (and tests)
+        # that read/write those fields directly.
+        self.ssh_agent = SshAgentForwarder(self)
+
+    # --- SSH agent forwarding (delegates to SshAgentForwarder) ---
+
+    # Backwards-compatible proxies for the state formerly held on
+    # Connection itself.  Reads and writes are forwarded to the
+    # collaborator so existing callers (and the terminal/exec code
+    # that consumes ``_ssh_agent_socket``) keep working unchanged.
+    @property
+    def _ssh_agent_proc(self):
+        return self.ssh_agent.proc
+
+    @_ssh_agent_proc.setter
+    def _ssh_agent_proc(self, value):
+        self.ssh_agent.proc = value
+
+    @property
+    def _ssh_agent_task(self):
+        return self.ssh_agent.task
+
+    @_ssh_agent_task.setter
+    def _ssh_agent_task(self, value):
+        self.ssh_agent.task = value
+
+    @property
+    def _ssh_agent_socket(self):
+        return self.ssh_agent.socket
+
+    @_ssh_agent_socket.setter
+    def _ssh_agent_socket(self, value):
+        self.ssh_agent.socket = value
+
+    async def handle_ssh_agent_start(self) -> None:
+        await self.ssh_agent.start()
+
+    async def handle_ssh_agent_data(self, msg: dict) -> None:
+        await self.ssh_agent.data(msg)
+
+    async def handle_ssh_agent_stop(self) -> None:
+        await self.ssh_agent.stop_command()
+
+    async def _stop_ssh_agent(self) -> None:
+        await self.ssh_agent.stop()
+
+    async def _forward_ssh_agent_output(self) -> None:
+        await self.ssh_agent.forward_output()
+
+    async def _log_ssh_agent_stderr(self) -> None:
+        await self.ssh_agent.log_stderr()
 
     async def start_workspace_container(
         self, workspace_id: str, workspace: dict
@@ -1932,155 +2152,6 @@ class Connection:
         await self.stop_exec()
 
     # --- SSH agent forwarding ---
-
-    async def handle_ssh_agent_start(self) -> None:
-        """Start SSH agent forwarding via socat inside the container."""
-        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
-        if not self.container_id:
-            send_error(self.sock, "No container for SSH agent forwarding")
-            return
-        # Clean up any existing agent relay.
-        await self._stop_ssh_agent()
-        user_id = self.user["id"]
-        sock_path = f"/tmp/klangk-ssh-agent-{user_id}.sock"
-        # Remove stale socket if it exists from a previous session.
-        await podman.exec_container(self.container_id, ["rm", "-f", sock_path])
-        if _debug_agent:  # pragma: no cover
-            logger.info("[ssh-agent] starting socat at %s", sock_path)
-        # Start socat: listen on the Unix socket, relay to stdin/stdout.
-        proc = await asyncio.create_subprocess_exec(
-            podman.PODMAN_BIN,
-            "exec",
-            "-i",
-            self.container_id,
-            "socat",
-            f"UNIX-LISTEN:{sock_path},mode=600,unlink-early,fork",
-            "STDIO",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-            if _debug_agent
-            else asyncio.subprocess.DEVNULL,
-        )
-        self._ssh_agent_proc = proc
-        self._ssh_agent_socket = sock_path
-        self._ssh_agent_task = asyncio.create_task(
-            self._forward_ssh_agent_output()
-        )
-        if _debug_agent and proc.stderr is not None:  # pragma: no cover
-            asyncio.create_task(self._log_ssh_agent_stderr())
-        self.sock.send_json(
-            {
-                "type": "ssh_agent_started",
-                "socket": sock_path,
-            }
-        )
-        logger.info(
-            "SSH agent forwarding started for user %s at %s",
-            user_id,
-            sock_path,
-        )
-
-    async def _log_ssh_agent_stderr(self) -> None:  # pragma: no cover
-        """Log socat stderr when KLANGKC_DEBUG_SSH_AGENT is set."""
-        proc = self._ssh_agent_proc
-        if proc is None or proc.stderr is None:
-            return
-        try:
-            while True:
-                line = await proc.stderr.readline()
-                if not line:
-                    break
-                logger.info(
-                    "[ssh-agent] socat stderr: %s", line.decode().rstrip()
-                )
-        except (asyncio.CancelledError, OSError):
-            pass
-
-    async def _forward_ssh_agent_output(self) -> None:
-        """Read from socat stdout and send to the CLI as ssh_agent_response."""
-        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
-        proc = self._ssh_agent_proc
-        if proc is None or proc.stdout is None:  # pragma: no cover
-            return
-        try:
-            while True:
-                data = await proc.stdout.read(65536)
-                if not data:
-                    if _debug_agent:  # pragma: no cover
-                        logger.info("[ssh-agent] socat stdout EOF")
-                    break
-                if _debug_agent:  # pragma: no cover
-                    logger.info(
-                        "[ssh-agent] socat stdout: %d bytes", len(data)
-                    )
-                self.sock.send_json(
-                    {
-                        "type": "ssh_agent_response",
-                        "data": base64.b64encode(data).decode("ascii"),
-                    }
-                )
-        except asyncio.CancelledError:  # pragma: no cover
-            logger.debug("SSH agent output relay cancelled")
-        except OSError as e:  # pragma: no cover
-            logger.warning("SSH agent output relay error: %s", e)
-
-    async def handle_ssh_agent_data(self, msg: dict) -> None:
-        """Write data from the CLI's local agent into socat stdin."""
-        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
-        proc = self._ssh_agent_proc
-        if proc is None or proc.stdin is None:
-            if _debug_agent:  # pragma: no cover
-                logger.info(
-                    "[ssh-agent] data received but no proc (proc=%s)",
-                    proc,
-                )
-            return
-        raw = msg.get("data", "")
-        if raw:
-            decoded = base64.b64decode(raw)
-            if _debug_agent:  # pragma: no cover
-                logger.info(
-                    "[ssh-agent] writing %d bytes to socat stdin",
-                    len(decoded),
-                )
-            proc.stdin.write(decoded)
-            await proc.stdin.drain()
-
-    async def handle_ssh_agent_stop(self) -> None:
-        """Stop SSH agent forwarding."""
-        await self._stop_ssh_agent()
-        self.sock.send_json({"type": "ssh_agent_stopped"})
-
-    async def _stop_ssh_agent(self) -> None:
-        """Clean up the SSH agent relay process."""
-        if self._ssh_agent_task is not None:
-            self._ssh_agent_task.cancel()
-            try:
-                await self._ssh_agent_task
-            except asyncio.CancelledError:
-                pass
-            self._ssh_agent_task = None
-        if self._ssh_agent_proc is not None:
-            try:
-                self._ssh_agent_proc.kill()
-                await self._ssh_agent_proc.wait()
-            except ProcessLookupError:  # pragma: no cover
-                logger.debug("SSH agent process already exited")
-            self._ssh_agent_proc = None
-        if self._ssh_agent_socket and self.container_id:
-            try:
-                await podman.exec_container(
-                    self.container_id,
-                    ["rm", "-f", self._ssh_agent_socket],
-                )
-            except OSError as e:  # pragma: no cover
-                logger.warning(
-                    "Failed to remove SSH agent socket %s: %s",
-                    self._ssh_agent_socket,
-                    e,
-                )
-        self._ssh_agent_socket = None
 
     async def handle_heartbeat(self) -> None:
         if self.container_id is not None:
