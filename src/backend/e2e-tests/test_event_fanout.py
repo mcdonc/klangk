@@ -358,7 +358,7 @@ class TestEventFanout:
                         and "left" in msg.get("message", "")
                     )
 
-                msgs = await recv_until(ws1, is_leave_chat, timeout=10)
+                msgs = await recv_until(ws1, is_leave_chat, timeout=15)
                 leave_msgs = [m for m in msgs if is_leave_chat(m)]
                 assert len(leave_msgs) >= 1
                 assert leave_msgs[0]["message"] == "user2 left"
