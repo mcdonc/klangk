@@ -23,12 +23,35 @@ String _usersEnvelope(
       'total': total,
     });
 
+/// A paged envelope, matching the backend `GET /admin/groups` response.
+String _groupsEnvelope(
+  List<Map<String, dynamic>> groups, {
+  int page = 1,
+  int pageSize = 10,
+  int total = 0,
+}) =>
+    jsonEncode({
+      'groups': groups,
+      'page': page,
+      'page_size': pageSize,
+      'total': total,
+    });
+
 Map<String, dynamic> _user(String email, {String id = ''}) => {
       'id': id.isEmpty ? email : id,
       'email': email,
       'handle': '',
       'verified': true,
       'provider': 'local',
+      'created_at': '2026-01-01T00:00:00',
+    };
+
+Map<String, dynamic> _group(String name,
+        {String id = '', String description = ''}) =>
+    {
+      'id': id.isEmpty ? name : id,
+      'name': name,
+      'description': description,
       'created_at': '2026-01-01T00:00:00',
     };
 
@@ -133,6 +156,13 @@ void main() {
         matching: inner,
       );
 
+  /// Likewise, scope widgets to the groups toolbar (the users/invitations
+  /// toolbars are also built inside the IndexedStack).
+  Finder inGroupsToolbar(Finder inner) => find.descendant(
+        of: find.byKey(const ValueKey('admin-groups-toolbar')),
+        matching: inner,
+      );
+
   /// Serves the admin/users endpoint via [usersFor] plus empty
   /// invitations/groups so the page loads.
   void serveUsers(
@@ -159,7 +189,39 @@ void main() {
         return http.Response(emptyInvitationsEnvelope(), 200);
       }
       if (request.url.path == '/api/v1/admin/groups') {
-        return http.Response(jsonEncode([]), 200);
+        return http.Response(_groupsEnvelope([]), 200);
+      }
+      return http.Response('Not found', 404);
+    });
+  }
+
+  /// Serves the admin/groups endpoint via [groupsFor] plus empty
+  /// users/invitations so the page loads.
+  void serveGroups(
+    List<Map<String, dynamic>> Function(
+            int page, int pageSize, String sort, String order, String? q)
+        groupsFor, {
+    int total = 25,
+  }) {
+    testAuthHttpClientOverride = _mockClient((request) async {
+      if (request.url.path == '/api/v1/admin/users') {
+        return http.Response(_usersEnvelope([]), 200);
+      }
+      if (request.url.path == '/api/v1/admin/invitations') {
+        return http.Response(emptyInvitationsEnvelope(), 200);
+      }
+      if (request.url.path == '/api/v1/admin/groups') {
+        final page = int.parse(request.url.queryParameters['page'] ?? '1');
+        final pageSize =
+            int.parse(request.url.queryParameters['page_size'] ?? '10');
+        final sort = request.url.queryParameters['sort'] ?? 'name';
+        final order = request.url.queryParameters['order'] ?? 'asc';
+        final q = request.url.queryParameters['q'];
+        return http.Response(
+          _groupsEnvelope(groupsFor(page, pageSize, sort, order, q),
+              page: page, pageSize: pageSize, total: total),
+          200,
+        );
       }
       return http.Response('Not found', 404);
     });
@@ -253,7 +315,7 @@ void main() {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
         if (request.url.path == '/api/v1/admin/groups') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(_groupsEnvelope([]), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -298,7 +360,7 @@ void main() {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
         if (request.url.path == '/api/v1/admin/groups') {
-          return http.Response(jsonEncode([]), 200);
+          return http.Response(_groupsEnvelope([]), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -328,6 +390,173 @@ void main() {
       await pumpPage(tester);
 
       expect(find.textContaining('Groups:'), findsNothing);
+    });
+  });
+
+  group('AdminUsersPage groups tab', () {
+    /// Pump the page on the users tab, then switch to the Groups tab.
+    Future<void> pumpGroupsTab(WidgetTester tester) async {
+      await pumpPage(tester);
+      await tester.tap(find.text('Groups'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('renders groups from the paged envelope', (tester) async {
+      serveGroups(
+        (page, pageSize, sort, order, q) => [
+          _group('admins', description: 'Admin team'),
+          _group('editors', description: 'Editor team'),
+        ],
+        total: 2,
+      );
+
+      await pumpGroupsTab(tester);
+
+      expect(find.text('admins', skipOffstage: false), findsOneWidget);
+      expect(find.text('editors', skipOffstage: false), findsOneWidget);
+    });
+
+    testWidgets('shows pagination controls when more than one page',
+        (tester) async {
+      // 25 groups with page_size 10 => 3 pages.
+      serveGroups((page, pageSize, sort, order, q) {
+        final start = (page - 1) * pageSize;
+        return [
+          for (int i = start; i < start + pageSize && i < 25; i++)
+            _group('group$i'),
+        ];
+      });
+
+      await pumpGroupsTab(tester);
+
+      expect(inGroupsToolbar(find.text('1 / 3')), findsOneWidget);
+      // Prev disabled on page 1.
+      expect(
+          tester
+              .widget<IconButton>(inGroupsToolbar(iconButton('Previous page')))
+              .onPressed,
+          isNull);
+      // Next enabled.
+      expect(
+          tester
+              .widget<IconButton>(inGroupsToolbar(iconButton('Next page')))
+              .onPressed,
+          isNotNull);
+    });
+
+    testWidgets('navigates to next and previous pages', (tester) async {
+      var lastPageRequested = 1;
+      serveGroups((page, pageSize, sort, order, q) {
+        lastPageRequested = page;
+        final start = (page - 1) * pageSize;
+        return [
+          for (int i = start; i < start + pageSize && i < 15; i++)
+            _group('group$i'),
+        ];
+      }, total: 15);
+
+      await pumpGroupsTab(tester);
+
+      // 15 groups / 10 => 2 pages.
+      expect(inGroupsToolbar(find.text('1 / 2')), findsOneWidget);
+
+      await tester.tap(inGroupsToolbar(iconButton('Next page')));
+      await tester.pumpAndSettle();
+
+      expect(lastPageRequested, 2);
+      expect(inGroupsToolbar(find.text('2 / 2')), findsOneWidget);
+      expect(
+          tester
+              .widget<IconButton>(inGroupsToolbar(iconButton('Previous page')))
+              .onPressed,
+          isNotNull);
+
+      await tester.tap(inGroupsToolbar(iconButton('Previous page')));
+      await tester.pumpAndSettle();
+
+      expect(lastPageRequested, 1);
+      expect(inGroupsToolbar(find.text('1 / 2')), findsOneWidget);
+    });
+
+    testWidgets('sends sort and order params to the backend', (tester) async {
+      String? capturedSort;
+      String? capturedOrder;
+      testAuthHttpClientOverride = _mockClient((request) async {
+        if (request.url.path == '/api/v1/admin/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        if (request.url.path == '/api/v1/admin/invitations') {
+          return http.Response(emptyInvitationsEnvelope(), 200);
+        }
+        if (request.url.path == '/api/v1/admin/groups') {
+          capturedSort = request.url.queryParameters['sort'];
+          capturedOrder = request.url.queryParameters['order'];
+          return http.Response(
+            _groupsEnvelope([_group('g')], total: 1),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpGroupsTab(tester);
+
+      // Defaults: name, ascending. The active Name chip shows ▲. Scope to
+      // the groups toolbar: the users/invitations toolbars are also built
+      // (offstage) inside the IndexedStack.
+      expect(capturedSort, 'name');
+      expect(capturedOrder, 'asc');
+      expect(inGroupsToolbar(find.text('Name ▲')), findsOneWidget);
+
+      // Tap the Created chip to switch sort (defaults to desc for created).
+      await tester.tap(inGroupsToolbar(find.text('Created')));
+      await tester.pumpAndSettle();
+
+      expect(capturedSort, 'created');
+      expect(capturedOrder, 'desc');
+      expect(inGroupsToolbar(find.text('Created ▼')), findsOneWidget);
+
+      // Tap Created again to flip direction to asc.
+      await tester.tap(inGroupsToolbar(find.text('Created ▼')));
+      await tester.pumpAndSettle();
+
+      expect(capturedOrder, 'asc');
+      expect(inGroupsToolbar(find.text('Created ▲')), findsOneWidget);
+    });
+
+    testWidgets('sends name filter query live (debounced)', (tester) async {
+      String? capturedQ;
+      testAuthHttpClientOverride = _mockClient((request) async {
+        if (request.url.path == '/api/v1/admin/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        if (request.url.path == '/api/v1/admin/invitations') {
+          return http.Response(emptyInvitationsEnvelope(), 200);
+        }
+        if (request.url.path == '/api/v1/admin/groups') {
+          capturedQ = request.url.queryParameters['q'];
+          return http.Response(
+            _groupsEnvelope([_group('needle-group')], total: 1),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpGroupsTab(tester);
+
+      expect(capturedQ, isNull);
+
+      // The filter re-queries as the user types, debounced — settle past
+      // the debounce timer. Scope to the groups toolbar so we type into the
+      // groups filter, not the offstage users/invitations ones.
+      await tester.enterText(
+        inGroupsToolbar(find.byType(TextField)),
+        'needle',
+      );
+      await tester.pumpAndSettle();
+
+      expect(capturedQ, 'needle');
     });
   });
 }
