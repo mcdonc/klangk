@@ -926,6 +926,124 @@ class SshAgentForwarder:
         self.socket = None
 
 
+class ExecController:
+    """Exec session lifecycle: start, input, output forwarding, stop.
+
+    Owns the current ``ExecSession`` and its output-forwarding task.
+    ``Connection`` delegates the ``exec_*`` WebSocket commands here,
+    and reads :attr:`session` when wiring up new exec runs.
+
+    Extracted from ``Connection`` (issue #961) so the exec subsystem
+    can be unit-tested in isolation without standing up a full
+    connection.  Follows the same collaborator pattern as
+    :class:`SshAgentForwarder`.
+    """
+
+    def __init__(self, conn: "Connection") -> None:
+        self._conn = conn
+        self.session: ExecSession | None = None
+        self.task: asyncio.Task | None = None
+
+    async def start(self, msg: dict) -> None:
+        container_id = self._conn.container_id
+        if not container_id:
+            return
+        if not await self._conn._has_perm("code-in-isolation"):
+            send_error(
+                self._conn.sock,
+                "exec requires code-in-isolation permission",
+            )
+            return
+        await self.stop()
+        command = msg.get("command", [])
+        if not command:
+            send_error(self._conn.sock, "exec_start requires a command list")
+            return
+        env: list[str] = []
+        work_dir = "/home/work"
+        user_home = self._conn._user_home
+        if user_home is not None:
+            env.append(f"HOME={user_home}")
+            work_dir = user_home
+        ssh_agent_socket = self._conn._ssh_agent_socket
+        if ssh_agent_socket is not None:
+            env.append(f"SSH_AUTH_SOCK={ssh_agent_socket}")
+        session = ExecSession(container_id, env=env, work_dir=work_dir)
+        await session.start(command)
+        self.session = session
+        self.task = asyncio.create_task(self.forward_output(session))
+        container.registry.record_activity(container_id)
+
+    async def input(self, msg: dict) -> None:
+        session = self.session
+        if session is None or not session.is_alive:
+            return
+        raw = base64.b64decode(msg.get("data", ""))
+        if len(raw) > _MAX_INPUT_SIZE:
+            logger.warning(
+                "exec_input too large (%d bytes), dropping", len(raw)
+            )
+            return
+        container.registry.record_activity(self._conn.container_id)
+        await session.write(raw)
+
+    async def close_stdin(self) -> None:
+        session = self.session
+        if session is None:
+            return
+        await session.close_stdin()
+
+    async def stop_command(self) -> None:
+        await self.stop()
+
+    async def claim_and_stop(self) -> None:
+        """Drop and stop the current session (idempotent)."""
+        session = self.session
+        self.session = None
+        if session is not None:
+            await session.stop()
+
+    async def stop(self) -> None:
+        """Cancel the output-forwarding task and stop the session."""
+        task = self.task
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            self.task = None
+        await self.claim_and_stop()
+
+    async def forward_output(self, session: ExecSession) -> None:
+        """Forward exec stdout to the client via WebSocket as base64."""
+        try:
+            async for data in session.output():
+                self._conn.sock.send_json(
+                    {
+                        "type": "exec_output",
+                        "data": base64.b64encode(data).decode("ascii"),
+                    }
+                )
+                if self._conn.container_id:
+                    container.registry.record_activity(self._conn.container_id)
+            # Process exited — send exit code
+            self._conn.sock.send_json(
+                {
+                    "type": "exec_exit",
+                    "code": session.returncode
+                    if session.returncode is not None
+                    else 1,
+                }
+            )
+        except asyncio.CancelledError:
+            raise
+        except _WS_ERRORS as e:
+            logger.error("Exec output forwarding error: %s", e)
+        finally:
+            await self.claim_and_stop()
+
+
 class Connection:
     """Per-WebSocket connection state and command handlers."""
 
@@ -936,8 +1054,12 @@ class Connection:
         self.container_id: str | None = None
         self.terminal_session: TerminalSession | None = None
         self.terminal_task: asyncio.Task | None = None
-        self.exec_session: ExecSession | None = None
-        self.exec_task: asyncio.Task | None = None
+        # Exec sessions are owned by the ExecController collaborator;
+        # Connection delegates the exec_* commands to it.  The
+        # ``exec_session``/``exec_task`` properties below proxy to the
+        # controller for backwards compatibility with code (and tests)
+        # that read/write those fields directly.
+        self.exec = ExecController(self)
         self.workspace: dict | None = None
         self._idle_cb = None
         self.pending_status_msg: str | None = None
@@ -1003,6 +1125,49 @@ class Connection:
 
     async def _log_ssh_agent_stderr(self) -> None:
         await self.ssh_agent.log_stderr()
+
+    # --- Exec sessions (delegates to ExecController) ---
+
+    # Backwards-compatible proxies for the state formerly held on
+    # Connection itself.  Reads and writes are forwarded to the
+    # controller so existing callers (and tests) that read/write
+    # ``exec_session``/``exec_task`` directly keep working unchanged.
+    @property
+    def exec_session(self):
+        return self.exec.session
+
+    @exec_session.setter
+    def exec_session(self, value):
+        self.exec.session = value
+
+    @property
+    def exec_task(self):
+        return self.exec.task
+
+    @exec_task.setter
+    def exec_task(self, value):
+        self.exec.task = value
+
+    async def handle_exec_start(self, msg: dict) -> None:
+        await self.exec.start(msg)
+
+    async def handle_exec_input(self, msg: dict) -> None:
+        await self.exec.input(msg)
+
+    async def handle_exec_close_stdin(self) -> None:
+        await self.exec.close_stdin()
+
+    async def handle_exec_stop(self) -> None:
+        await self.exec.stop_command()
+
+    async def stop_exec(self) -> None:
+        await self.exec.stop()
+
+    async def forward_exec_output(self, session: ExecSession) -> None:
+        await self.exec.forward_output(session)
+
+    async def _claim_and_stop_exec(self) -> None:
+        await self.exec.claim_and_stop()
 
     async def start_workspace_container(
         self, workspace_id: str, workspace: dict
@@ -2105,52 +2270,6 @@ class Connection:
     ) -> None:  # pragma: no cover
         send_error(self.sock, f"Failed to list shared terminals: {e}")
 
-    async def handle_exec_start(self, msg: dict) -> None:
-        if not self.container_id:
-            return
-        if not await self._has_perm("code-in-isolation"):
-            send_error(self.sock, "exec requires code-in-isolation permission")
-            return
-        await self.stop_exec()
-        command = msg.get("command", [])
-        if not command:
-            send_error(self.sock, "exec_start requires a command list")
-            return
-        env: list[str] = []
-        work_dir = "/home/work"
-        if self._user_home is not None:
-            env.append(f"HOME={self._user_home}")
-            work_dir = self._user_home
-        if self._ssh_agent_socket is not None:
-            env.append(f"SSH_AUTH_SOCK={self._ssh_agent_socket}")
-        session = ExecSession(self.container_id, env=env, work_dir=work_dir)
-        await session.start(command)
-        self.exec_session = session
-        self.exec_task = asyncio.create_task(self.forward_exec_output(session))
-        container.registry.record_activity(self.container_id)
-
-    async def handle_exec_input(self, msg: dict) -> None:
-        session = self.exec_session
-        if session is None or not session.is_alive:
-            return
-        raw = base64.b64decode(msg.get("data", ""))
-        if len(raw) > _MAX_INPUT_SIZE:
-            logger.warning(
-                "exec_input too large (%d bytes), dropping", len(raw)
-            )
-            return
-        container.registry.record_activity(self.container_id)
-        await session.write(raw)
-
-    async def handle_exec_close_stdin(self) -> None:
-        session = self.exec_session
-        if session is None:
-            return
-        await session.close_stdin()
-
-    async def handle_exec_stop(self) -> None:
-        await self.stop_exec()
-
     # --- SSH agent forwarding ---
 
     async def handle_heartbeat(self) -> None:
@@ -2337,51 +2456,6 @@ class Connection:
         self.terminal_session = None
         if session is not None:
             await session.stop()
-
-    async def _claim_and_stop_exec(self) -> None:
-        session = self.exec_session
-        self.exec_session = None
-        if session is not None:
-            await session.stop()
-
-    async def stop_exec(self) -> None:
-        task = self.exec_task
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            self.exec_task = None
-        await self._claim_and_stop_exec()
-
-    async def forward_exec_output(self, session: ExecSession) -> None:
-        """Forward exec stdout to the client via WebSocket as base64."""
-        try:
-            async for data in session.output():
-                self.sock.send_json(
-                    {
-                        "type": "exec_output",
-                        "data": base64.b64encode(data).decode("ascii"),
-                    }
-                )
-                if self.container_id:
-                    container.registry.record_activity(self.container_id)
-            # Process exited — send exit code
-            self.sock.send_json(
-                {
-                    "type": "exec_exit",
-                    "code": session.returncode
-                    if session.returncode is not None
-                    else 1,
-                }
-            )
-        except asyncio.CancelledError:  # pragma: no cover
-            raise
-        except _WS_ERRORS as e:
-            logger.error("Exec output forwarding error: %s", e)
-        finally:
-            await self._claim_and_stop_exec()
 
     async def _activate_session(
         self, session: TerminalSession, cols: int, rows: int
