@@ -913,11 +913,104 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     );
   }
 
-  Widget _buildWorkspacesList() {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    final empty = _owned.workspaces.isEmpty && _shared.workspaces.isEmpty;
+  Widget _buildSection(_Section section) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: KColors.borderDefault),
+        borderRadius: BorderRadius.circular(8),
+        color: KColors.bgSurface,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ...section.workspaces.asMap().entries.map(
+                (e) => Material(
+                  color: e.key.isEven
+                      ? Colors.white.withValues(alpha: 0.03)
+                      : Colors.transparent,
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.terminal,
+                      size: 20,
+                      color: section.isShared
+                          ? KColors.accentBlue
+                          : KColors.accentGreen,
+                    ),
+                    title: Text(e.value['name'] as String),
+                    subtitle: section.isShared
+                        ? Text(
+                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
+                          )
+                        : Builder(builder: (context) {
+                            final wsMembers =
+                                _workspaceMembers[e.value['id'] as String] ??
+                                    [];
+                            return Row(
+                              children: [
+                                Text(_formatCreatedAt(
+                                  e.value['created_at'] as String?,
+                                )),
+                                if (wsMembers.isNotEmpty) ...[
+                                  const SizedBox(width: 8),
+                                  ...wsMembers.map((m) {
+                                    final email = m['email'] as String;
+                                    final letter = email.isNotEmpty
+                                        ? email[0].toUpperCase()
+                                        : '?';
+                                    return Padding(
+                                      padding: const EdgeInsets.only(right: 2),
+                                      child: Tooltip(
+                                        message: email,
+                                        child: CircleAvatar(
+                                          radius: 10,
+                                          backgroundColor:
+                                              KColors.colorForString(email),
+                                          child: Text(
+                                            letter,
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                                ],
+                              ],
+                            );
+                          }),
+                    trailing: section.isShared
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            tooltip: 'Delete workspace',
+                            onPressed: () =>
+                                _deleteWorkspace(e.value['id'] as String),
+                          ),
+                    onTap: () =>
+                        // coverage:ignore-start
+                        context.go('/workspace/${e.value['id']}'),
+                    // coverage:ignore-end
+                  ),
+                ),
+              ),
+          _loadMoreButton(
+            section.isShared
+                ? 'Load more shared workspaces'
+                : 'Load more workspaces',
+            enabled: section.hasMore,
+            loading: section.loadingMore,
+            onPressed: () => _loadMore(section),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabBody(_Section section) {
+    final empty = section.workspaces.isEmpty;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -928,181 +1021,46 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
               padding: const EdgeInsets.only(top: 32),
               child: Text(
                 _query.isEmpty
-                    ? 'No workspaces yet. Create one to get started.'
+                    ? (section.isShared
+                        ? 'No workspaces shared with you.'
+                        : 'No workspaces yet. Create one to get started.')
                     : 'No workspaces match.',
               ),
             ),
           )
-        else ...[
-          if (_shared.workspaces.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                border: Border.all(color: KColors.borderDefault),
-                borderRadius: BorderRadius.circular(8),
-                color: KColors.bgSurface,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.folder_shared,
-                          size: 18,
-                          color: KColors.textSecondary,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Shared with Me',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: KColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  ..._shared.workspaces.asMap().entries.map(
-                        (e) => Material(
-                          color: e.key.isEven
-                              ? Colors.white.withValues(alpha: 0.03)
-                              : Colors.transparent,
-                          child: ListTile(
-                            leading: const Icon(
-                              Icons.terminal,
-                              size: 20,
-                              color: KColors.accentBlue,
-                            ),
-                            title: Text(e.value['name'] as String),
-                            subtitle: Text(
-                              '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
-                            ),
-                            // coverage:ignore-start
-                            onTap: () =>
-                                context.go('/workspace/${e.value['id']}'),
-                            // coverage:ignore-end
-                          ),
-                        ),
-                      ),
-                  _loadMoreButton(
-                    'Load more shared workspaces',
-                    enabled: _shared.hasMore,
-                    loading: _shared.loadingMore,
-                    onPressed: () => _loadMore(_shared),
-                  ),
-                ],
-              ),
-            ),
-          if (_owned.workspaces.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                border: Border.all(color: KColors.borderDefault),
-                borderRadius: BorderRadius.circular(8),
-                color: KColors.bgSurface,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.folder,
-                          size: 18,
-                          color: KColors.textSecondary,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Owned by Me',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: KColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  ..._owned.workspaces.asMap().entries.map((e) {
-                    final i = e.key;
-                    final ws = e.value;
-                    final wsMembers =
-                        _workspaceMembers[ws['id'] as String] ?? [];
-                    // Material (not a plain ColoredBox/Container color) so the
-                    // ListTile paints its background and ink splashes on this
-                    // surface; Flutter 3.44+ asserts when a ListTile's nearest
-                    // ancestor with a background is a ColoredBox.
-                    return Material(
-                      color: i.isEven
-                          ? Colors.white.withValues(alpha: 0.03)
-                          : Colors.transparent,
-                      child: ListTile(
-                        leading: const Icon(
-                          Icons.terminal,
-                          size: 20,
-                          color: KColors.accentGreen,
-                        ),
-                        title: Text(ws['name'] as String),
-                        subtitle: Row(
-                          children: [
-                            Text(_formatCreatedAt(ws['created_at'] as String?)),
-                            if (wsMembers.isNotEmpty) ...[
-                              const SizedBox(width: 8),
-                              ...wsMembers.map((m) {
-                                final email = m['email'] as String;
-                                final letter = email.isNotEmpty
-                                    ? email[0].toUpperCase()
-                                    : '?';
-                                return Padding(
-                                  padding: const EdgeInsets.only(right: 2),
-                                  child: Tooltip(
-                                    message: email,
-                                    child: CircleAvatar(
-                                      radius: 10,
-                                      backgroundColor: KColors.colorForString(
-                                        email,
-                                      ),
-                                      child: Text(
-                                        letter,
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }),
-                            ],
-                          ],
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          tooltip: 'Delete workspace',
-                          onPressed: () => _deleteWorkspace(ws['id'] as String),
-                        ),
-                        onTap: () => context.go('/workspace/${ws['id']}'),
-                      ),
-                    );
-                  }),
-                  _loadMoreButton(
-                    'Load more workspaces',
-                    enabled: _owned.hasMore,
-                    loading: _owned.loadingMore,
-                    onPressed: () => _loadMore(_owned),
-                  ),
-                ],
-              ),
-            ),
-        ],
+        else
+          _buildSection(section),
       ],
+    );
+  }
+
+  Widget _buildWorkspacesList() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          Material(
+            color: KColors.bgSurface,
+            child: const TabBar(
+              tabs: [
+                Tab(text: 'Owned by Me'),
+                Tab(text: 'Shared with Me'),
+              ],
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildTabBody(_owned),
+                _buildTabBody(_shared),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

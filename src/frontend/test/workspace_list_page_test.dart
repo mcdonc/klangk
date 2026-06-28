@@ -338,15 +338,21 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
+      // Both tab labels render; the Owned tab is active by default.
       expect(find.text('Owned by Me'), findsOneWidget);
-      expect(find.text('My Project'), findsOneWidget);
       expect(find.text('Shared with Me'), findsOneWidget);
+      expect(find.text('My Project'), findsOneWidget);
+
+      // Switch to the Shared tab to see shared workspaces.
+      await tester.tap(find.text('Shared with Me'));
+      await tester.pumpAndSettle();
+
       expect(find.text('Team Project'), findsOneWidget);
       expect(find.text('Other Project'), findsOneWidget);
       expect(find.textContaining('alice@example.com'), findsOneWidget);
       expect(find.textContaining('bob@example.com'), findsOneWidget);
-      // 1 owned + 2 shared = 3 terminal icons
-      expect(find.byIcon(Icons.terminal), findsNWidgets(3));
+      // 2 shared terminals visible on this tab.
+      expect(find.byIcon(Icons.terminal), findsNWidgets(2));
     });
 
     testWidgets('load more appends next page and hides when done',
@@ -470,6 +476,10 @@ void main() {
       });
 
       await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      // Switch to the Shared tab (owned is empty/active by default).
+      await tester.tap(find.text('Shared with Me'));
       await tester.pumpAndSettle();
 
       expect(find.text('Shared First'), findsOneWidget);
@@ -614,8 +624,13 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      expect(find.text('Owned by Me'), findsNothing);
+      // Both tab labels always render; the Owned tab is empty.
+      expect(find.text('Owned by Me'), findsOneWidget);
       expect(find.text('Shared with Me'), findsOneWidget);
+
+      // Switch to the Shared tab to see the shared workspace.
+      await tester.tap(find.text('Shared with Me'));
+      await tester.pumpAndSettle();
       expect(find.text('Guest Project'), findsOneWidget);
     });
 
