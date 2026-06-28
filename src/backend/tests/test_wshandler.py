@@ -1,10 +1,13 @@
 """Tests for wshandler: WebSocket command dispatch, event forwarding, terminal, cleanup."""
 
 import asyncio
+import base64
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
@@ -25,6 +28,7 @@ from klangk_backend.wshandler import (
     Connection,
     SafeWebSocket,
     SlowClientError,
+    SshAgentForwarder,
     WorkspaceSession,
     state,
     send_error,
@@ -2597,6 +2601,354 @@ class TestSSHAgentHandlers:
             user_handle="testuser",
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
         )
+
+
+class TestSshAgentForwarder:
+    """Unit tests for the SshAgentForwarder collaborator in isolation.
+
+    These exercise the forwarder directly against a lightweight fake
+    connection (a SimpleNamespace), proving the collaborator is
+    decoupled from Connection (issue #961) and covering the debug /
+    error branches that were previously excluded with
+    ``# pragma: no cover``.
+    """
+
+    def _forwarder(self, *, container_id="cid", user=None, sock=None):
+        if sock is None:
+            sock = _mock_sock()
+        if user is None:
+            user = {
+                "id": "uid",
+                "email": "testuser@example.com",
+                "handle": "testuser",
+            }
+        conn = SimpleNamespace(sock=sock, user=user, container_id=container_id)
+        return SshAgentForwarder(conn), sock
+
+    @asynccontextmanager
+    async def _track_tasks(self):
+        """Capture asyncio.create_task() calls for cleanup."""
+        created = []
+        orig = asyncio.create_task
+
+        def _wrap(coro, **kw):
+            t = orig(coro, **kw)
+            created.append(t)
+            return t
+
+        with patch("klangk_backend.wshandler.asyncio.create_task", _wrap):
+            yield created
+        for t in created:
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+    async def test_start_logs_and_spawns_stderr_relay_when_debug(self):
+        """KLANGKC_DEBUG_SSH_AGENT logs start + spawns the stderr relay."""
+        fwd, sock = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        # stderr.readline returns EOF immediately so the relay exits.
+        mock_proc.stderr = AsyncMock()
+        mock_proc.stderr.readline = AsyncMock(return_value=b"")
+        mock_proc.stdin = AsyncMock()
+        with (
+            patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
+            patch(
+                "klangk_backend.wshandler.podman.exec_container",
+                new=AsyncMock(),
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+        ):
+            async with self._track_tasks() as tasks:
+                await fwd.start()
+                # Let the relay tasks run to completion.
+                for _ in range(5):
+                    await asyncio.sleep(0)
+        assert fwd.proc is mock_proc
+        assert fwd.socket == "/tmp/klangk-ssh-agent-uid.sock"
+        # stderr relay task was created (debug + proc.stderr is not None).
+        assert any(
+            t.get_coro().__qualname__.startswith(
+                "SshAgentForwarder.log_stderr"
+            )
+            for t in tasks
+        )
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "ssh_agent_started"
+        assert msg["socket"] == "/tmp/klangk-ssh-agent-uid.sock"
+
+    async def test_start_skips_stderr_relay_when_proc_has_no_stderr(self):
+        """Debug set but proc.stderr is None -> no stderr relay task."""
+        fwd, sock = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stderr = None
+        mock_proc.stdin = AsyncMock()
+        with (
+            patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
+            patch(
+                "klangk_backend.wshandler.podman.exec_container",
+                new=AsyncMock(),
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+        ):
+            async with self._track_tasks() as tasks:
+                await fwd.start()
+                for _ in range(3):
+                    await asyncio.sleep(0)
+        assert not any(
+            t.get_coro().__qualname__.startswith(
+                "SshAgentForwarder.log_stderr"
+            )
+            for t in tasks
+        )
+
+    async def test_start_no_container_sends_error(self):
+        fwd, sock = self._forwarder(container_id=None)
+        await fwd.start()
+        msg = sock.send_json.call_args[0][0]
+        assert msg.get("type") == "error"
+        assert fwd.proc is None
+
+    async def test_log_stderr_no_proc(self):
+        fwd, _ = self._forwarder()
+        fwd.proc = None
+        # No-op, must not raise.
+        await fwd.log_stderr()
+
+    async def test_log_stderr_no_stderr_stream(self):
+        fwd, _ = self._forwarder()
+        fwd.proc = MagicMock(stderr=None)
+        await fwd.log_stderr()
+
+    async def test_log_stderr_reads_lines_until_eof(self):
+        fwd, _ = self._forwarder()
+        mock_proc = MagicMock()
+        mock_proc.stderr = AsyncMock()
+        mock_proc.stderr.readline = AsyncMock(
+            side_effect=[b"line one\n", b"line two\n", b""]
+        )
+        fwd.proc = mock_proc
+        with patch("klangk_backend.wshandler.logger") as lg:
+            await fwd.log_stderr()
+        info_msgs = [c.args for c in lg.info.call_args_list]
+        assert (
+            any(
+                "line one" in a[0] % () if False else "line one" in str(a)
+                for a in info_msgs
+            )
+            or info_msgs
+        )
+        # Decoded lines were logged.
+        assert any("line one" in str(a) for a in info_msgs)
+        assert any("line two" in str(a) for a in info_msgs)
+
+    async def test_log_stderr_swallows_oserror(self):
+        fwd, _ = self._forwarder()
+        mock_proc = MagicMock()
+        mock_proc.stderr = AsyncMock()
+        mock_proc.stderr.readline = AsyncMock(side_effect=OSError("boom"))
+        fwd.proc = mock_proc
+        # Must not raise.
+        await fwd.log_stderr()
+
+    async def test_log_stderr_swallows_cancelled(self):
+        fwd, _ = self._forwarder()
+        mock_proc = MagicMock()
+        mock_proc.stderr = AsyncMock()
+        # Block on readline so we can cancel the running task.
+        never = asyncio.Event()
+
+        async def _block(*a, **k):
+            await never.wait()
+
+        mock_proc.stderr.readline = _block
+        fwd.proc = mock_proc
+        task = asyncio.create_task(fwd.log_stderr())
+        for _ in range(3):
+            await asyncio.sleep(0)
+        task.cancel()
+        # Should suppress the CancelledError and complete normally.
+        await task
+
+    async def test_forward_output_no_proc(self):
+        fwd, _ = self._forwarder()
+        fwd.proc = None
+        await fwd.forward_output()
+
+    async def test_forward_output_no_stdout(self):
+        fwd, _ = self._forwarder()
+        fwd.proc = MagicMock(stdout=None)
+        await fwd.forward_output()
+
+    async def test_forward_output_relays_data(self):
+        import base64
+
+        fwd, sock = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(side_effect=[b"resp", b""])
+        fwd.proc = mock_proc
+        await fwd.forward_output()
+        calls = [
+            c[0][0]
+            for c in sock.send_json.call_args_list
+            if c[0][0].get("type") == "ssh_agent_response"
+        ]
+        assert len(calls) == 1
+        assert base64.b64decode(calls[0]["data"]) == b"resp"
+
+    async def test_forward_output_debug_logs_eof_and_data(self):
+        fwd, _ = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(side_effect=[b"x", b""])
+        fwd.proc = mock_proc
+        with (
+            patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
+            patch("klangk_backend.wshandler.logger") as lg,
+        ):
+            await fwd.forward_output()
+        info_args = [str(c) for c in lg.info.call_args_list]
+        assert any("socat stdout" in a and "bytes" in a for a in info_args)
+        assert any("socat stdout EOF" in a for a in info_args)
+
+    async def test_forward_output_swallows_oserror(self):
+        fwd, _ = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(side_effect=OSError("boom"))
+        fwd.proc = mock_proc
+        with patch("klangk_backend.wshandler.logger") as lg:
+            await fwd.forward_output()
+        lg.warning.assert_called_once()
+        assert "SSH agent output relay error" in str(lg.warning.call_args)
+
+    async def test_forward_output_swallows_cancelled(self):
+        fwd, _ = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        never = asyncio.Event()
+
+        async def _block(*a, **k):
+            await never.wait()
+
+        mock_proc.stdout.read = _block
+        fwd.proc = mock_proc
+        task = asyncio.create_task(fwd.forward_output())
+        for _ in range(3):
+            await asyncio.sleep(0)
+        task.cancel()
+        # Suppresses CancelledError and completes normally.
+        await task
+
+    async def test_data_no_proc_debug_logs(self):
+        fwd, _ = self._forwarder()
+        fwd.proc = None
+        with (
+            patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
+            patch("klangk_backend.wshandler.logger") as lg,
+        ):
+            await fwd.data({"data": base64.b64encode(b"x").decode()})
+        assert any(
+            "data received but no proc" in str(c)
+            for c in lg.info.call_args_list
+        )
+
+    async def test_data_debug_logs_write(self):
+        data = base64.b64encode(b"agent-request").decode()
+        fwd, _ = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdin = AsyncMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        fwd.proc = mock_proc
+        with (
+            patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
+            patch("klangk_backend.wshandler.logger") as lg,
+        ):
+            await fwd.data({"data": data})
+        mock_proc.stdin.write.assert_called_once_with(b"agent-request")
+        assert any(
+            "writing" in str(c) and "bytes" in str(c)
+            for c in lg.info.call_args_list
+        )
+
+    async def test_data_empty_payload_noop(self):
+        fwd, _ = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdin = AsyncMock()
+        mock_proc.stdin.write = MagicMock()
+        fwd.proc = mock_proc
+        await fwd.data({"data": ""})
+        mock_proc.stdin.write.assert_not_called()
+
+    async def test_stop_command_notifies_client(self):
+        fwd, sock = self._forwarder()
+        with patch.object(fwd, "stop", new=AsyncMock()) as stop:
+            await fwd.stop_command()
+        stop.assert_awaited_once()
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "ssh_agent_stopped"
+
+    async def test_stop_handles_process_lookup_error(self):
+        fwd, _ = self._forwarder()
+        mock_proc = MagicMock()
+        mock_proc.kill = MagicMock(side_effect=ProcessLookupError())
+        mock_proc.wait = AsyncMock()
+        fwd.proc = mock_proc
+        # No task, no socket: only the proc branch runs.
+        await fwd.stop()
+        assert fwd.proc is None
+
+    async def test_stop_handles_socket_remove_oserror(self):
+        fwd, _ = self._forwarder()
+        fwd.socket = "/tmp/agent.sock"
+        with patch(
+            "klangk_backend.wshandler.podman.exec_container",
+            new=AsyncMock(side_effect=OSError("boom")),
+        ) as exec_mock:
+            with patch("klangk_backend.wshandler.logger") as lg:
+                await fwd.stop()
+        exec_mock.assert_awaited_once()
+        lg.warning.assert_called_once()
+        assert "Failed to remove SSH agent socket" in str(lg.warning.call_args)
+        assert fwd.socket is None
+
+    async def test_stop_cancels_task_and_kills_proc(self):
+        fwd, _ = self._forwarder()
+        mock_proc = MagicMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        fwd.proc = mock_proc
+        fwd.socket = None  # skip socket-removal branch
+        fwd.task = asyncio.create_task(asyncio.sleep(999))
+        with patch(
+            "klangk_backend.wshandler.podman.exec_container", new=AsyncMock()
+        ):
+            await fwd.stop()
+        assert fwd.task is None
+        assert fwd.proc is None
+        mock_proc.kill.assert_called_once()
+
+    async def test_connection_log_stderr_delegate(self):
+        """Connection._log_ssh_agent_stderr forwards to the collaborator."""
+        conn = _base_conn()
+        with patch.object(conn.ssh_agent, "log_stderr", new=AsyncMock()) as m:
+            await conn._log_ssh_agent_stderr()
+        m.assert_awaited_once()
 
 
 class TestExecDispatch:
