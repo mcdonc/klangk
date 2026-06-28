@@ -879,237 +879,74 @@ async def _ws_shell(
             await _send_ignore_closed(ws, json.dumps({"cmd": "terminal_stop"}))
 
 
-async def _run_shell(
-    ws,
-    cols: int,
-    rows: int,
-    stdin: io.RawIOBase | None = None,
-    stdout: io.TextIOBase | None = None,
-    ssh_agent_sock: str | None = None,
-) -> None:
-    """Run stdin/stdout forwarding loop with SIGWINCH support.
+class _ShellSession:
+    """Shared I/O pump infrastructure for terminal and exec sessions.
 
-    ssh_agent_sock: path to the local SSH agent socket. When set, an
-    additional relay loop forwards SSH agent protocol messages between
-    the container and the local agent.
-    stdin/stdout default to sys.stdin.buffer / sys.stdout when None.
-    Pass explicit streams in tests to avoid mutating globals.
+    Owns the WebSocket, stop event, heartbeat loop, and SSH agent relay
+    that both ``_TerminalSession`` and ``_ExecSession`` need.
     """
-    _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
-    if stdin is None:
-        stdin = sys.stdin.buffer
-    if stdout is None:
-        stdout = sys.stdout
-    loop = asyncio.get_event_loop()
-    stop_event = asyncio.Event()
-    _current_cols = [cols]
-    _current_rows = [rows]
 
-    async def _send_resize() -> None:
-        await ws.send(
-            json.dumps(
-                {
-                    "cmd": "terminal_resize",
-                    "cols": _current_cols[0],
-                    "rows": _current_rows[0],
-                }
-            )
-        )
+    def __init__(self, ws, ssh_agent_sock: str | None = None):
+        self.ws = ws
+        self.ssh_agent_sock = ssh_agent_sock
+        self.stop = asyncio.Event()
+        self.agent_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
 
-    async def stdin_loop() -> None:
-        fd = stdin.fileno()
-        # SSH-style escape: after Enter (or at start), ~ then . disconnects.
-        after_newline = True
-        saw_tilde = False
-        while not stop_event.is_set():
-            # select() with a 0.2s timeout keeps us responsive to stop_event
-            # without burning CPU. When stop_event fires we exit within 0.2s.
-            ready, _, _ = await loop.run_in_executor(
-                None, lambda: select.select([fd], [], [], 0.2)
-            )
-            if not ready:
-                continue
+    async def heartbeat_loop(self) -> None:  # pragma: no cover
+        """Send a heartbeat every 60 s until stopped."""
+        while not self.stop.is_set():
             try:
-                # os.read runs in the executor, never on the event loop:
-                # a false-positive select (e.g. a racing reader, or a test
-                # that stubs select) must not be able to block stdout/resize/
-                # heartbeat while this read waits for a byte.
-                data = await loop.run_in_executor(None, os.read, fd, 1)
-                if not data:  # EOF on stdin
-                    return
-                # Escape sequence: ~. after Enter disconnects (like SSH)
-                if saw_tilde:
-                    saw_tilde = False
-                    if data == b".":
-                        stdout.write("\r\nDisconnected.\r\n")
-                        stdout.flush()
-                        stop_event.set()
-                        # Close the WS so stdout_loop's recv() unblocks.
-                        await ws.close()
-                        return
-                    # Not a disconnect — send the buffered ~ and this byte
-                    await ws.send(
-                        json.dumps({"cmd": "terminal_input", "data": "~"})
-                    )
-                    # Fall through to send current byte normally
-                if data == b"~" and after_newline:
-                    saw_tilde = True
-                    after_newline = False
-                    continue
-                after_newline = data in (b"\r", b"\n")
-                # If the first byte is ESC, read the rest of the escape
-                # sequence as a single unit. Without this, the sequence
-                # gets split across WebSocket messages and the terminal
-                # can't interpret arrow keys, etc.
-                if data == b"\x1b":
-                    # Brief wait for the rest of the sequence
-                    if select.select([fd], [], [], 0.05)[0]:
-                        more = await loop.run_in_executor(
-                            None, os.read, fd, 32
-                        )
-                        if more:
-                            data += more
-                    # Filter terminal query responses that the user's
-                    # terminal sends in reply to tmux's capability probes.
-                    # These arrive on stdin but are not user input — sending
-                    # them as terminal_input causes tmux to echo them as
-                    # visible garbage.  If we detect a response prefix,
-                    # drain any remaining bytes (the payload may arrive
-                    # in a subsequent chunk).
-                    if _is_terminal_response(data):
-                        # Drain trailing response bytes that may still
-                        # be in the buffer (payload + string terminator).
-                        for _ in range(10):
-                            if not select.select([fd], [], [], 0.02)[0]:
-                                break
-                            try:
-                                await loop.run_in_executor(
-                                    None, os.read, fd, 256
-                                )
-                            except OSError:  # pragma: no cover
-                                break
-                        continue
-            except (OSError, io.UnsupportedOperation):  # pragma: no cover
-                return
-            await ws.send(
-                json.dumps(
-                    {
-                        "cmd": "terminal_input",
-                        "data": data.decode("utf-8", errors="replace"),
-                    }
-                )
-            )
-
-    # Queue for SSH agent response messages (filled by stdout_loop,
-    # consumed by ssh_agent_relay_loop).
-    agent_queue: asyncio.Queue[bytes] = asyncio.Queue()
-
-    async def stdout_loop() -> None:
-        try:
-            while not stop_event.is_set():
-                msg = await ws.recv()
-                if isinstance(msg, bytes):
-                    msg = msg.decode("utf-8", errors="replace")
-                data = json.loads(msg)
-                if data.get("type") == "terminal_output":
-                    text = data["data"]
-                    stdout.write(text)
-                    stdout.flush()
-                    if "[exited]" in text:
-                        stdout.write(
-                            "\r\nPress Enter, then ~. to disconnect.\r\n"
-                        )
-                        stdout.flush()
-                elif data.get("type") == "ssh_agent_response":
-                    raw = base64.b64decode(data.get("data", ""))
-                    if raw:
-                        if _debug_agent:  # pragma: no cover
-                            logger.info(
-                                "[ssh-agent] got %d bytes from backend",
-                                len(raw),
-                            )
-                        await agent_queue.put(raw)
-                elif data.get("type") == "event":
-                    event = data.get("event", {})
-                    if (
-                        event.get("type") == "CUSTOM"
-                        and event.get("name") == "container_stopped"
-                    ):
-                        logging.info("[container stopped]")
-                        stop_event.set()
-                        break
-        except websockets.ConnectionClosed as exc:
-            if not stop_event.is_set():
-                _code = exc.rcvd.code if exc.rcvd else None
-                if _code in (4001, 4002):
-                    stdout.write(
-                        "\r\nSession expired. Run `klangkc login` to"
-                        " re-authenticate.\r\n"
-                    )
-                else:
-                    stdout.write("\r\nServer disconnected.\r\n")
-                stdout.flush()
-        stop_event.set()
-
-    async def resize_loop() -> None:
-        while not stop_event.is_set():
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=1)
-                return  # pragma: no cover
-            except asyncio.TimeoutError:
-                pass
-            new_cols, new_rows = _get_terminal_size()
-            if new_cols != _current_cols[0] or new_rows != _current_rows[0]:
-                _current_cols[0] = new_cols
-                _current_rows[0] = new_rows
-                await _send_resize()
-
-    async def heartbeat_loop() -> None:  # pragma: no cover
-        elapsed = 0
-        while not stop_event.is_set():
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=1)
+                await asyncio.wait_for(self.stop.wait(), timeout=60)
                 return
             except asyncio.TimeoutError:
                 pass
-            elapsed += 1
-            if elapsed >= 60 and not stop_event.is_set():
-                elapsed = 0
-                await ws.send(json.dumps({"cmd": "heartbeat"}))
+            if not self.stop.is_set():
+                await self.ws.send(json.dumps({"cmd": "heartbeat"}))
 
-    async def ssh_agent_relay_loop() -> None:
+    def dispatch_agent_response(self, data: dict) -> None:
+        """Enqueue an ssh_agent_response message for the relay loop."""
+        raw = base64.b64decode(data.get("data", ""))
+        if raw:
+            if self._debug_agent:  # pragma: no cover
+                logger.info("[ssh-agent] got %d bytes from backend", len(raw))
+            self.agent_queue.put_nowait(raw)
+
+    async def ssh_agent_relay_loop(self) -> None:
         """Relay SSH agent protocol between container and local agent.
 
         Reads ssh_agent_response messages from the queue (put there by
-        stdout_loop), forwards them to the local SSH agent socket, reads
-        the agent's reply, and sends it back over the WebSocket.
+        the stdout loop), forwards them to the local SSH agent socket,
+        reads the agent's reply, and sends it back over the WebSocket.
         """
-        if not ssh_agent_sock:  # pragma: no cover
+        if not self.ssh_agent_sock:
             return
-        if _debug_agent:  # pragma: no cover
+        if self._debug_agent:  # pragma: no cover
             logger.info(
                 "[ssh-agent] relay loop started, local sock=%s",
-                ssh_agent_sock,
+                self.ssh_agent_sock,
             )
-        while not stop_event.is_set():
+        while not self.stop.is_set():
             try:
-                data = await asyncio.wait_for(agent_queue.get(), timeout=1.0)
+                data = await asyncio.wait_for(
+                    self.agent_queue.get(), timeout=1.0
+                )
             except asyncio.TimeoutError:
                 continue
-            if _debug_agent:  # pragma: no cover
+            if self._debug_agent:  # pragma: no cover
                 logger.info(
                     "[ssh-agent] relay: got %d bytes from queue", len(data)
                 )
             try:
-                response = _query_local_ssh_agent(ssh_agent_sock, data)
+                response = _query_local_ssh_agent(self.ssh_agent_sock, data)
                 if response is not None:
-                    if _debug_agent:  # pragma: no cover
+                    if self._debug_agent:  # pragma: no cover
                         logger.info(
                             "[ssh-agent] relay: sending %d bytes back "
                             "to backend",
                             len(response),
                         )
-                    await ws.send(
+                    await self.ws.send(
                         json.dumps(
                             {
                                 "cmd": "ssh_agent_data",
@@ -1119,15 +956,334 @@ async def _run_shell(
                             }
                         )
                     )
-                elif _debug_agent:  # pragma: no cover
+                elif self._debug_agent:  # pragma: no cover
                     logger.info("[ssh-agent] relay: no response from agent")
             except (OSError, ConnectionError) as e:
                 logger.warning("SSH agent relay: %s", e)
 
-    tasks = [stdin_loop(), stdout_loop(), resize_loop(), heartbeat_loop()]
-    if ssh_agent_sock:
-        tasks.append(ssh_agent_relay_loop())
-    await asyncio.gather(*tasks)
+    async def run(self) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+
+class _TerminalSession(_ShellSession):
+    """Interactive PTY-over-WebSocket I/O pump."""
+
+    def __init__(
+        self,
+        ws,
+        cols: int,
+        rows: int,
+        stdin: io.RawIOBase | None = None,
+        stdout: io.TextIOBase | None = None,
+        ssh_agent_sock: str | None = None,
+    ):
+        super().__init__(ws, ssh_agent_sock)
+        self.stdin = stdin if stdin is not None else sys.stdin.buffer
+        self.stdout = stdout if stdout is not None else sys.stdout
+        self._cols = cols
+        self._rows = rows
+        self._loop = asyncio.get_event_loop()
+
+    async def _send_resize(self) -> None:
+        await self.ws.send(
+            json.dumps(
+                {
+                    "cmd": "terminal_resize",
+                    "cols": self._cols,
+                    "rows": self._rows,
+                }
+            )
+        )
+
+    async def stdin_loop(self) -> None:
+        fd = self.stdin.fileno()
+        after_newline = True
+        saw_tilde = False
+        while not self.stop.is_set():
+            ready, _, _ = await self._loop.run_in_executor(
+                None, lambda: select.select([fd], [], [], 0.2)
+            )
+            if not ready:
+                continue
+            try:
+                data = await self._loop.run_in_executor(None, os.read, fd, 1)
+                if not data:
+                    return
+                if saw_tilde:
+                    saw_tilde = False
+                    if data == b".":
+                        self.stdout.write("\r\nDisconnected.\r\n")
+                        self.stdout.flush()
+                        self.stop.set()
+                        await self.ws.close()
+                        return
+                    await self.ws.send(
+                        json.dumps({"cmd": "terminal_input", "data": "~"})
+                    )
+                if data == b"~" and after_newline:
+                    saw_tilde = True
+                    after_newline = False
+                    continue
+                after_newline = data in (b"\r", b"\n")
+                if data == b"\x1b":
+                    if select.select([fd], [], [], 0.05)[0]:
+                        more = await self._loop.run_in_executor(
+                            None, os.read, fd, 32
+                        )
+                        if more:
+                            data += more
+                    if _is_terminal_response(data):
+                        for _ in range(10):
+                            if not select.select([fd], [], [], 0.02)[0]:
+                                break
+                            try:
+                                await self._loop.run_in_executor(
+                                    None, os.read, fd, 256
+                                )
+                            except OSError:  # pragma: no cover
+                                break
+                        continue
+            except (OSError, io.UnsupportedOperation):  # pragma: no cover
+                return
+            await self.ws.send(
+                json.dumps(
+                    {
+                        "cmd": "terminal_input",
+                        "data": data.decode("utf-8", errors="replace"),
+                    }
+                )
+            )
+
+    async def stdout_loop(self) -> None:
+        try:
+            while not self.stop.is_set():
+                msg = await self.ws.recv()
+                if isinstance(msg, bytes):
+                    msg = msg.decode("utf-8", errors="replace")
+                data = json.loads(msg)
+                if data.get("type") == "terminal_output":
+                    text = data["data"]
+                    self.stdout.write(text)
+                    self.stdout.flush()
+                    if "[exited]" in text:
+                        self.stdout.write(
+                            "\r\nPress Enter, then ~. to disconnect.\r\n"
+                        )
+                        self.stdout.flush()
+                elif data.get("type") == "ssh_agent_response":
+                    self.dispatch_agent_response(data)
+                elif data.get("type") == "event":
+                    event = data.get("event", {})
+                    if (
+                        event.get("type") == "CUSTOM"
+                        and event.get("name") == "container_stopped"
+                    ):
+                        logging.info("[container stopped]")
+                        self.stop.set()
+                        break
+        except websockets.ConnectionClosed as exc:
+            if not self.stop.is_set():
+                _code = exc.rcvd.code if exc.rcvd else None
+                if _code in (4001, 4002):
+                    self.stdout.write(
+                        "\r\nSession expired. Run `klangkc login` to"
+                        " re-authenticate.\r\n"
+                    )
+                else:
+                    self.stdout.write("\r\nServer disconnected.\r\n")
+                self.stdout.flush()
+        self.stop.set()
+
+    async def resize_loop(self) -> None:
+        while not self.stop.is_set():
+            try:
+                await asyncio.wait_for(self.stop.wait(), timeout=1)
+                return  # pragma: no cover
+            except asyncio.TimeoutError:
+                pass
+            new_cols, new_rows = _get_terminal_size()
+            if new_cols != self._cols or new_rows != self._rows:
+                self._cols = new_cols
+                self._rows = new_rows
+                await self._send_resize()
+
+    async def run(self) -> None:
+        tasks = [
+            self.stdin_loop(),
+            self.stdout_loop(),
+            self.resize_loop(),
+            self.heartbeat_loop(),
+        ]
+        if self.ssh_agent_sock:
+            tasks.append(self.ssh_agent_relay_loop())
+        await asyncio.gather(*tasks)
+
+
+class _ExecSession(_ShellSession):
+    """Non-interactive command execution over WebSocket."""
+
+    def __init__(
+        self,
+        ws,
+        command: list[str],
+        stdin: io.RawIOBase | None = None,
+        stdout: io.RawIOBase | None = None,
+        timeout: int | None = None,
+    ):
+        local_sock = os.environ.get("SSH_AUTH_SOCK")
+        sock = (
+            local_sock if local_sock and os.path.exists(local_sock) else None
+        )
+        super().__init__(ws, sock)
+        self.command = command
+        self.stdin = stdin
+        self.stdout = stdout
+        self.timeout = timeout
+        self.exit_code = 1
+        self._loop = asyncio.get_event_loop()
+        self._stdout_fd = -1
+        try:
+            if self.stdout is not None:
+                self._stdout_fd = self.stdout.fileno()
+        except (io.UnsupportedOperation, AttributeError):
+            pass
+        self._has_stdout_fd = self._stdout_fd >= 0
+
+    async def stdin_forward(self) -> None:
+        if self.stdin is None:
+            await self.ws.send(json.dumps({"cmd": "exec_close_stdin"}))
+            return
+        try:
+            fd = self.stdin.fileno()
+            has_fd = True
+        except (io.UnsupportedOperation, AttributeError):
+            has_fd = False
+
+        if has_fd:
+            while not self.stop.is_set():
+                ready = await self._loop.run_in_executor(
+                    None,
+                    lambda: select.select([fd], [], [], 0.2)[0],
+                )
+                if not ready:  # pragma: no cover
+                    continue
+                data = await self._loop.run_in_executor(
+                    None, os.read, fd, 65536
+                )
+                if not data:
+                    break
+                await self.ws.send(  # pragma: no cover
+                    json.dumps(
+                        {
+                            "cmd": "exec_input",
+                            "data": base64.b64encode(data).decode("ascii"),
+                        }
+                    )
+                )
+        else:
+            data = self.stdin.read()
+            if data:
+                await self.ws.send(
+                    json.dumps(
+                        {
+                            "cmd": "exec_input",
+                            "data": base64.b64encode(data).decode("ascii"),
+                        }
+                    )
+                )
+        await self.ws.send(json.dumps({"cmd": "exec_close_stdin"}))
+
+    async def stdout_forward(self) -> None:
+        while True:
+            msg = await self.ws.recv()
+            if isinstance(msg, bytes):  # pragma: no cover
+                msg = msg.decode("utf-8", errors="replace")
+            data = json.loads(msg)
+            if data.get("type") == "exec_output":
+                raw = base64.b64decode(data["data"])
+                if self.stdout is not None:
+                    if self._has_stdout_fd:
+                        await self._loop.run_in_executor(
+                            None, os.write, self._stdout_fd, raw
+                        )
+                    else:
+                        self.stdout.write(raw)
+            elif data.get("type") == "ssh_agent_response":
+                self.dispatch_agent_response(data)
+            elif data.get("type") == "exec_exit":
+                self.exit_code = data.get("code", 0)
+                break
+            elif data.get("type") == "error":  # pragma: no cover
+                logging.error(
+                    "Server error: %s",
+                    data.get("message", "unknown"),
+                )
+                self.exit_code = 1
+                break
+
+    async def run(self) -> int:
+        await self.ws.send(
+            json.dumps({"cmd": "exec_start", "command": self.command})
+        )
+
+        stdout_task = asyncio.create_task(self.stdout_forward())
+        stdin_task = asyncio.create_task(self.stdin_forward())
+        heartbeat_task = asyncio.create_task(self.heartbeat_loop())
+        agent_task = asyncio.create_task(self.ssh_agent_relay_loop())
+        try:
+            if self.timeout is not None:
+                await asyncio.wait_for(stdout_task, timeout=self.timeout)
+            else:
+                await stdout_task
+        except asyncio.TimeoutError:
+            self.exit_code = 124  # same as coreutils timeout(1)
+            stdout_task.cancel()
+            try:
+                await stdout_task
+            except asyncio.CancelledError:
+                pass
+        self.stop.set()
+        try:
+            await asyncio.wait_for(stdin_task, timeout=2)
+        except asyncio.TimeoutError:  # pragma: no cover
+            stdin_task.cancel()
+            try:
+                await stdin_task
+            except asyncio.CancelledError:
+                pass
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:  # pragma: no cover
+            pass
+        agent_task.cancel()
+        try:
+            await agent_task
+        except asyncio.CancelledError:
+            pass
+
+        await self.ws.send(json.dumps({"cmd": "exec_stop"}))
+        return self.exit_code
+
+
+async def _run_shell(
+    ws,
+    cols: int,
+    rows: int,
+    stdin: io.RawIOBase | None = None,
+    stdout: io.TextIOBase | None = None,
+    ssh_agent_sock: str | None = None,
+) -> None:
+    """Run stdin/stdout forwarding loop with SIGWINCH support."""
+    session = _TerminalSession(
+        ws,
+        cols,
+        rows,
+        stdin=stdin,
+        stdout=stdout,
+        ssh_agent_sock=ssh_agent_sock,
+    )
+    await session.run()
 
 
 async def _exec_on_ws(
@@ -1139,198 +1295,16 @@ async def _exec_on_ws(
 ) -> int:
     """Run a command on an already-connected WebSocket.
 
-    The caller must have already connected and called
-    ``_wait_workspace_ready``.
-
-    *stdin*: file-like to read input from.  ``None`` closes stdin
-    immediately.  For a real terminal pass ``sys.stdin.buffer``; for
-    programmatic use pass ``io.BytesIO(data)``.
-
-    *stdout*: file-like to write output to.  ``None`` discards output.
-    For a real terminal pass ``sys.stdout.buffer``; for capture pass
-    an ``io.BytesIO()``.
-
-    *timeout*: optional seconds; if the command doesn't finish in
-    time, it is stopped and exit code 124 is returned (matching
-    coreutils ``timeout(1)``).
-
     Returns the remote process exit code.
     """
-    loop = asyncio.get_event_loop()
-
-    await ws.send(json.dumps({"cmd": "exec_start", "command": command}))
-
-    exit_code = 1
-    stop = asyncio.Event()
-
-    async def stdin_forward() -> None:
-        if stdin is None:
-            await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
-            return
-        try:
-            fd = stdin.fileno()
-            has_fd = True
-        except (io.UnsupportedOperation, AttributeError):
-            has_fd = False
-
-        if has_fd:
-            while not stop.is_set():
-                ready = await loop.run_in_executor(
-                    None,
-                    lambda: select.select([fd], [], [], 0.2)[0],
-                )
-                if not ready:  # pragma: no cover
-                    continue
-                data = await loop.run_in_executor(None, os.read, fd, 65536)
-                if not data:
-                    break
-                await ws.send(  # pragma: no cover
-                    json.dumps(
-                        {
-                            "cmd": "exec_input",
-                            "data": base64.b64encode(data).decode("ascii"),
-                        }
-                    )
-                )
-        else:
-            data = stdin.read()
-            if data:
-                await ws.send(
-                    json.dumps(
-                        {
-                            "cmd": "exec_input",
-                            "data": base64.b64encode(data).decode("ascii"),
-                        }
-                    )
-                )
-        await ws.send(json.dumps({"cmd": "exec_close_stdin"}))
-
-    agent_queue: asyncio.Queue[bytes] = asyncio.Queue()
-
-    async def stdout_forward() -> None:
-        nonlocal exit_code
-        while True:
-            msg = await ws.recv()
-            if isinstance(msg, bytes):  # pragma: no cover
-                msg = msg.decode("utf-8", errors="replace")
-            data = json.loads(msg)
-            if data.get("type") == "exec_output":
-                raw = base64.b64decode(data["data"])
-                if stdout is not None:
-                    if has_stdout_fd:
-                        # Use os.write for real fds to avoid buffering
-                        # issues (rsync needs unbuffered output).
-                        await loop.run_in_executor(
-                            None, os.write, stdout_fd, raw
-                        )
-                    else:
-                        stdout.write(raw)
-            elif data.get("type") == "ssh_agent_response":
-                raw = base64.b64decode(data.get("data", ""))
-                if raw:
-                    await agent_queue.put(raw)
-            elif data.get("type") == "exec_exit":
-                exit_code = data.get("code", 0)
-                break
-            elif data.get("type") == "error":  # pragma: no cover
-                logging.error(
-                    "Server error: %s",
-                    data.get("message", "unknown"),
-                )
-                exit_code = 1
-                break
-
-    async def heartbeat_loop() -> None:  # pragma: no cover
-        while not stop.is_set():
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=60)
-                return
-            except asyncio.TimeoutError:
-                pass
-            if not stop.is_set():
-                await ws.send(json.dumps({"cmd": "heartbeat"}))
-
-    async def ssh_agent_relay() -> None:
-        """Relay SSH agent protocol between container and local agent.
-
-        Without this, git-over-SSH during exec sessions hangs because
-        the container's SSH process talks to the forwarded agent socket
-        (socat) which relays through the backend to us, but nobody
-        reads the response and forwards it to the real local agent.
-        """
-        local_sock = os.environ.get("SSH_AUTH_SOCK")
-        if not local_sock or not os.path.exists(local_sock):
-            return
-        while not stop.is_set():
-            try:
-                data = await asyncio.wait_for(agent_queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
-            try:
-                response = _query_local_ssh_agent(local_sock, data)
-                if response is not None:
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "cmd": "ssh_agent_data",
-                                "data": base64.b64encode(response).decode(
-                                    "ascii"
-                                ),
-                            }
-                        )
-                    )
-            except OSError:
-                logger.debug(
-                    "SSH agent relay: failed to contact local agent",
-                    exc_info=True,
-                )
-
-    stdout_fd = -1
-    try:
-        if stdout is not None:
-            stdout_fd = stdout.fileno()
-    except (io.UnsupportedOperation, AttributeError):
-        pass
-    has_stdout_fd = stdout_fd >= 0
-
-    stdout_task = asyncio.create_task(stdout_forward())
-    stdin_task = asyncio.create_task(stdin_forward())
-    heartbeat_task = asyncio.create_task(heartbeat_loop())
-    agent_task = asyncio.create_task(ssh_agent_relay())
-    try:
-        if timeout is not None:
-            await asyncio.wait_for(stdout_task, timeout=timeout)
-        else:
-            await stdout_task
-    except asyncio.TimeoutError:
-        exit_code = 124  # same as coreutils timeout(1)
-        stdout_task.cancel()
-        try:
-            await stdout_task
-        except asyncio.CancelledError:
-            pass
-    stop.set()
-    try:
-        await asyncio.wait_for(stdin_task, timeout=2)
-    except asyncio.TimeoutError:  # pragma: no cover
-        stdin_task.cancel()
-        try:
-            await stdin_task
-        except asyncio.CancelledError:
-            pass
-    heartbeat_task.cancel()
-    try:
-        await heartbeat_task
-    except asyncio.CancelledError:  # pragma: no cover
-        pass
-    agent_task.cancel()
-    try:
-        await agent_task
-    except asyncio.CancelledError:
-        pass
-
-    await ws.send(json.dumps({"cmd": "exec_stop"}))
-    return exit_code
+    session = _ExecSession(
+        ws,
+        command,
+        stdin=stdin,
+        stdout=stdout,
+        timeout=timeout,
+    )
+    return await session.run()
 
 
 async def _ws_exec(
