@@ -357,6 +357,65 @@ class Connection:
 
         logger.info("Container ready for workspace %s", workspace_id)
 
+    async def _send_chat_history(self, workspace_id: str) -> None:
+        """Send chat history to the connecting user."""
+        chat_history = await model.get_chat_messages(workspace_id)
+        if chat_history:
+            self.sock.send_json(
+                {"type": "chat_history", "messages": chat_history}
+            )
+
+    async def _send_workspace_members(
+        self, workspace_id: str, workspace: dict
+    ) -> None:
+        """Send workspace members (including agent) for @mention autocomplete."""
+        members = await model.get_workspace_members(workspace_id)
+        owner = await model.get_user_by_id(workspace.get("user_id", ""))
+        if owner and not any(m["id"] == owner["id"] for m in members):
+            members.append(
+                {
+                    "id": owner["id"],
+                    "email": owner["email"],
+                    "handle": owner.get("handle", ""),
+                }
+            )
+        agent_user = await model.get_agent_user()
+        members.append(
+            {
+                "id": model.AGENT_USER_ID,
+                "email": agent_user["email"],
+                "handle": agent_user.get("handle", ""),
+            }
+        )
+        self.sock.send_json({"type": "workspace_members", "members": members})
+
+    async def _broadcast_join(
+        self, workspace_id: str, rejoining: bool
+    ) -> None:
+        """Send presence list and broadcast join to other subscribers."""
+        presence = await _get_presence_list(workspace_id)
+        self.sock.send_json({"type": "presence_list", "users": presence})
+        session = state.get_session(workspace_id)
+        if session and not rejoining:
+            join_msg = {
+                "type": "presence_join",
+                "user_id": self.user["id"],
+                "user_email": self.user["email"],
+                "user_handle": self.user["handle"],
+            }
+            for sock in list(session.subscribers):
+                if sock is not self.sock:
+                    sock.send_json(join_msg)
+
+            sys_msg = await model.add_chat_message(
+                workspace_id,
+                self.user["id"],
+                self.user["email"],
+                f"{self.user.get('handle') or self.user['email']} joined",
+                message_type=model.MSG_SYSTEM,
+            )
+            session.broadcast({"type": "chat_message", **sys_msg})
+
     async def handle_workspace_connect(self, msg: dict) -> None:
 
         t_connect_start = time.monotonic()
@@ -377,11 +436,11 @@ class Connection:
             return
 
         logger.info(
-            "workspace-open: check permissions and fetch workspace from DB: %.3fs",
+            "workspace-open: check permissions and fetch workspace "
+            "from DB: %.3fs",
             time.monotonic() - t_connect_start,
         )
 
-        # Disconnect from any current workspace
         await self.handle_workspace_disconnect()
 
         t_container = time.monotonic()
@@ -391,7 +450,8 @@ class Connection:
             send_error(self.sock, str(exc))
             return
         logger.info(
-            "workspace-open: start or reuse container (see breakdown above): %.3fs",
+            "workspace-open: start or reuse container "
+            "(see breakdown above): %.3fs",
             time.monotonic() - t_container,
         )
 
@@ -400,11 +460,12 @@ class Connection:
         status = getattr(self, "container_status", "created")
         container_name, ports_str = _format_container_info(workspace_id, ports)
         status_msg = {
-            "connected": f"Connected to running container {container_name}{ports_str}",
-            "restarted": f"Restarted stopped container {container_name}{ports_str}",
+            "connected": f"Connected to running container "
+            f"{container_name}{ports_str}",
+            "restarted": f"Restarted stopped container "
+            f"{container_name}{ports_str}",
             "created": f"Created new container {container_name}{ports_str}",
         }.get(status, "Container ready")
-
         status_msg += _format_idle_timeout(container.IDLE_TIMEOUT_SECONDS)
 
         self.sock.send_json(
@@ -417,78 +478,26 @@ class Connection:
                 "userHome": self._user_home,
             }
         )
-        # Send chat history to the connecting user
-        chat_history = await model.get_chat_messages(workspace_id)
-        if chat_history:
-            self.sock.send_json(
-                {"type": "chat_history", "messages": chat_history}
-            )
 
-        # Send workspace members for @mention autocomplete
-        members = await model.get_workspace_members(workspace_id)
-        owner = await model.get_user_by_id(workspace.get("user_id", ""))
-        if owner and not any(m["id"] == owner["id"] for m in members):
-            members.append(
-                {
-                    "id": owner["id"],
-                    "email": owner["email"],
-                    "handle": owner.get("handle", ""),
-                }
-            )
-        # Include the agent so it autocompletes
-        agent_user = await model.get_agent_user()
-        members.append(
-            {
-                "id": model.AGENT_USER_ID,
-                "email": agent_user["email"],
-                "handle": agent_user.get("handle", ""),
-            }
-        )
-        self.sock.send_json({"type": "workspace_members", "members": members})
+        await self._send_chat_history(workspace_id)
+        await self._send_workspace_members(workspace_id, workspace)
 
-        # Start the agent eagerly so it shows as present immediately.
         if self.container_id:
             asyncio.create_task(self._start_agent_if_needed())
 
-        # If this user had a pending leave (reconnecting after a brief
-        # disconnect), cancel it and suppress the join broadcast — other
-        # users never saw them leave so there's nothing to announce.
         rejoining = state.cancel_pending_leave(workspace_id, self.user["id"])
-
-        # Send presence list to joining user and broadcast join to others
-        presence = await _get_presence_list(workspace_id)
-        self.sock.send_json({"type": "presence_list", "users": presence})
-        session = state.get_session(workspace_id)
-        if session and not rejoining:
-            join_msg = {
-                "type": "presence_join",
-                "user_id": self.user["id"],
-                "user_email": self.user["email"],
-                "user_handle": self.user["handle"],
-            }
-            for sock in list(session.subscribers):
-                if sock is not self.sock:
-                    sock.send_json(join_msg)
-
-            # Broadcast a system chat message for the join
-            sys_msg = await model.add_chat_message(
-                workspace_id,
-                self.user["id"],
-                self.user["email"],
-                f"{self.user.get('handle') or self.user['email']} joined",
-                message_type=model.MSG_SYSTEM,
-            )
-            session.broadcast({"type": "chat_message", **sys_msg})
+        await self._broadcast_join(workspace_id, rejoining)
 
         logger.info(
-            "workspace-open: send chat history, members, and presence to client: %.3fs",
+            "workspace-open: send chat history, members, and "
+            "presence to client: %.3fs",
             time.monotonic() - t_post,
         )
 
-        # Store status for when frontend sends ui_ready
         self.pending_status_msg = status_msg
         logger.info(
-            "workspace-open: TOTAL workspace connect (user sees workspace_ready after this): %.3fs",
+            "workspace-open: TOTAL workspace connect (user sees "
+            "workspace_ready after this): %.3fs",
             time.monotonic() - t_connect_start,
         )
         logger.info(

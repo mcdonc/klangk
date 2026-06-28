@@ -340,10 +340,64 @@ class TerminalController:
         self.cols: int = 80
         self.rows: int = 24
 
+    def _register_browser(self, browser_id: str | None) -> None:
+        """Register a browser ID for bridge routing.
+
+        The browser sends its sessionStorage UUID with terminal_start;
+        on refresh the same ID re-registers with the new WebSocket.
+        The CLI sends "klangkshell" as a sentinel — store it in tmux
+        env but don't register it for bridge routing.
+        """
+        if browser_id and browser_id != "klangkshell":
+            container.registry.revoke_browser(self._conn.sock)
+            container.registry.register_browser(
+                browser_id, self._conn.workspace_id, self._conn.sock
+            )
+        self._conn._browser_id = browser_id
+
+    async def _restore_and_sync_windows(self) -> None:
+        """Restore saved window state and sync with tmux.
+
+        On first terminal_start after restart, loads the saved
+        snapshot from the container.  Then lists current tmux
+        windows, syncs in-memory state, and sends the window list
+        and shared terminals to the client.
+        """
+        conn = self._conn
+        sname = conn._tmux_session_name()
+        user_id = conn.user["id"]
+        ws_session = state.get_session(conn.workspace_id)
+
+        if ws_session and user_id not in ws_session.terminal_windows:
+            saved = await terminal.load_workspace_state(conn.container_id)
+            if user_id in saved:
+                saved_windows = saved[user_id]
+                await terminal.restore_windows(
+                    conn.container_id, sname, saved_windows
+                )
+                ws_session.terminal_windows[user_id] = saved_windows
+                for uid, wins in saved.items():
+                    if uid != user_id:
+                        ws_session.terminal_windows.setdefault(uid, wins)
+
+        windows = await terminal.list_windows(conn.container_id, sname)
+        conn._sync_terminal_windows(windows)
+        conn.sock.send_json({"type": "terminal_windows", "windows": windows})
+
+    def _send_shared_terminals(self) -> None:
+        """Send the current shared terminal list to the client."""
+        ws_session = state.get_session(self._conn.workspace_id)
+        if ws_session:
+            terminals = _get_shared_terminals(ws_session)
+            self._conn.sock.send_json(
+                {"type": "shared_terminals", "terminals": terminals}
+            )
+
     async def start(self, msg: dict) -> None:
 
         logger.info(
-            "handle_terminal_start: user=%s workspace=%s container=%s user_home=%s",
+            "handle_terminal_start: user=%s workspace=%s "
+            "container=%s user_home=%s",
             self._conn.user.get("email"),
             self._conn.workspace_id,
             self._conn.container_id,
@@ -367,11 +421,9 @@ class TerminalController:
             send_error(self._conn.sock, "Handle not set")
             return
         if not await self._conn._has_perm("code-in-isolation"):
-            # Spectators can't start isolated terminals but still need
-            # the terminal pane. Send terminal_started (no session) so
-            # the frontend renders shared tabs.
             logger.info(
-                "Skipping isolated terminal for user=%s (no code-in-isolation)",
+                "Skipping isolated terminal for user=%s "
+                "(no code-in-isolation)",
                 self._conn.user.get("email"),
             )
             self._conn.sock.send_json({"type": "terminal_started"})
@@ -392,24 +444,14 @@ class TerminalController:
             ssh_agent_socket=self._conn._ssh_agent_socket,
         )
 
-        # Register browser ID for bridge routing.  The browser sends
-        # its sessionStorage UUID with terminal_start; on refresh the
-        # same ID re-registers with the new WebSocket.  The CLI sends
-        # "klangkshell" as a sentinel — store it in tmux env (so
-        # klangk-copy-to-clipboard can skip the bridge) but don't
-        # register it for bridge routing.
         browser_id = msg.get("browser_id")
-        if browser_id and browser_id != "klangkshell":
-            container.registry.revoke_browser(self._conn.sock)
-            container.registry.register_browser(
-                browser_id, self._conn.workspace_id, self._conn.sock
-            )
-        self._conn._browser_id = browser_id
+        self._register_browser(browser_id)
 
         # Store session immediately so stop_terminal can clean it up
         # if another terminal_start arrives before this one finishes.
         self.session = session
         conn = self._conn
+        ctrl = self
 
         async def _start_terminal() -> None:
             try:
@@ -420,67 +462,20 @@ class TerminalController:
                 )
                 await asyncio.wait_for(
                     session.start(
-                        cols,
-                        rows,
-                        command_override=command_override,
+                        cols, rows, command_override=command_override
                     ),
                     timeout=30,
                 )
-                # Store the browser ID in the container's tmux
-                # environment so klangk-browser-id can read it.
                 if browser_id:
                     await attach_browser(conn.container_id, browser_id)
                 if not await conn._activate_session(session, cols, rows):
                     return
                 conn.sock.send_json({"type": "terminal_started"})
                 try:
-                    sname = conn._tmux_session_name()
-                    user_id = conn.user["id"]
-                    ws_session = state.get_session(conn.workspace_id)
-
-                    # On first terminal_start after restart, restore
-                    # saved window state from the container.
-                    if (
-                        ws_session
-                        and user_id not in ws_session.terminal_windows
-                    ):
-                        saved = await terminal.load_workspace_state(
-                            conn.container_id
-                        )
-                        if user_id in saved:
-                            saved_windows = saved[user_id]
-                            await terminal.restore_windows(
-                                conn.container_id, sname, saved_windows
-                            )
-                            ws_session.terminal_windows[user_id] = (
-                                saved_windows
-                            )
-                            # Restore shared state for ALL users from snapshot
-                            for uid, wins in saved.items():
-                                if uid != user_id:
-                                    ws_session.terminal_windows.setdefault(
-                                        uid, wins
-                                    )
-
-                    windows = await terminal.list_windows(
-                        conn.container_id, sname
-                    )
-                    conn._sync_terminal_windows(windows)
-                    conn.sock.send_json(
-                        {
-                            "type": "terminal_windows",
-                            "windows": windows,
-                        }
-                    )
+                    await ctrl._restore_and_sync_windows()
                 except (TerminalError, OSError):
                     logger.exception("_start_terminal: window list failed")
-                # Also send the shared terminal list from in-memory state.
-                ws_session = state.get_session(conn.workspace_id)
-                if ws_session:
-                    terminals = _get_shared_terminals(ws_session)
-                    conn.sock.send_json(
-                        {"type": "shared_terminals", "terminals": terminals}
-                    )
+                ctrl._send_shared_terminals()
             except asyncio.CancelledError:
                 await session.stop()
                 container.registry.revoke_browser(conn.sock)
@@ -927,6 +922,40 @@ class SharedTerminalController:
         self.broadcast_shared_terminals(ws_session)
         self.save_state_snapshot(ws_session)
 
+    @staticmethod
+    async def _select_shared_window(
+        container_id: str,
+        session: TerminalSession,
+        owner_user_id: str,
+        window_id: str,
+    ) -> None:
+        """Select the target window in the joiner's tmux session.
+
+        Targets the joiner's grouped session so the active window
+        changes for the joiner, not the group owner.  Falls back
+        to bare @N if the session isn't ready yet.
+        """
+        joiner_session = session._tmux_session_name
+        if joiner_session:
+            try:
+                await terminal.tmux_command(
+                    container_id,
+                    joiner_session,
+                    [
+                        "select-window",
+                        "-t",
+                        f"{joiner_session}:{window_id}",
+                    ],
+                )
+            except TerminalError:
+                await terminal.select_window(
+                    container_id, owner_user_id, window_id
+                )
+        else:
+            await terminal.select_window(
+                container_id, owner_user_id, window_id
+            )
+
     async def join_shared_terminal(self, msg: dict) -> None:
         """Join another user's shared window via session group."""
 
@@ -947,7 +976,6 @@ class SharedTerminalController:
             send_error(self._conn.sock, "user_id and window_id required")
             return
 
-        # Verify the window exists and is shared
         ws_session = state.get_session(self._conn.workspace_id)
         if not ws_session:
             return
@@ -967,9 +995,6 @@ class SharedTerminalController:
             or await self._conn._has_perm("share-terminals")
         )
 
-        # Stop the current terminal session and join the owner's
-        # session group on the default tmux server (no -S socket).
-        # tmux session is named by user_id.
         await self._conn.stop_terminal()
         self.viewing_shared = {
             "user_id": owner_user_id,
@@ -993,33 +1018,12 @@ class SharedTerminalController:
         async def _start_shared() -> None:
             try:
                 await session.start(cols, rows)
-                # Select the target window BEFORE activating output
-                # forwarding, so the initial output burst is from
-                # the correct window.  Target the joiner's session
-                # specifically so the active window changes for the
-                # joiner, not the group owner.  Fall back to bare @N
-                # if the session isn't ready yet (race on rapid joins).
-                joiner_session = session._tmux_session_name
-                if joiner_session:
-                    try:
-                        await terminal.tmux_command(
-                            conn.container_id,
-                            joiner_session,
-                            [
-                                "select-window",
-                                "-t",
-                                f"{joiner_session}:{window_id}",
-                            ],
-                        )
-                    except TerminalError:
-                        # Joiner session not ready — fall back to bare @N
-                        await terminal.select_window(
-                            conn.container_id, owner_user_id, window_id
-                        )
-                else:
-                    await terminal.select_window(
-                        conn.container_id, owner_user_id, window_id
-                    )
+                await self._select_shared_window(
+                    conn.container_id,
+                    session,
+                    owner_user_id,
+                    window_id,
+                )
                 if not await conn._activate_session(session, cols, rows):
                     return
                 conn.sock.send_json(
@@ -1030,7 +1034,6 @@ class SharedTerminalController:
                         "readOnly": read_only,
                     }
                 )
-                # Broadcast updated viewer list
                 ws_sess = state.get_session(conn.workspace_id)
                 if ws_sess:
                     conn._broadcast_shared_terminals(ws_sess)
@@ -1040,7 +1043,10 @@ class SharedTerminalController:
             except Exception as e:
                 await session.stop()
                 logger.exception("Shared terminal join failed: %s", e)
-                send_error(conn.sock, f"Failed to join shared terminal: {e}")
+                send_error(
+                    conn.sock,
+                    f"Failed to join shared terminal: {e}",
+                )
 
         self._conn.terminal_task = asyncio.create_task(_start_shared())
 
