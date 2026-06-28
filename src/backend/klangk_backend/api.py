@@ -2243,8 +2243,17 @@ async def workspace_chat(
 
 
 @router.get("/admin/users")
-async def list_users(admin: dict = Depends(acl.has_permission("admin"))):
-    return await model.list_users()
+async def list_users(
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    return await model.list_users(
+        page=page, page_size=page_size, sort=sort, order=order, q=q
+    )
 
 
 class AdminCreateUserRequest(BaseModel):
