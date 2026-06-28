@@ -754,245 +754,260 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       child: Column(
         children: [
           _buildPresenceBar(currentUserId),
-          Expanded(
-            child: _messages.isEmpty
-                ? const Center(
-                    child: Text(
-                      'No messages yet',
-                      style: TextStyle(color: KColors.textMuted),
+          _buildMessageList(currentUserId),
+          if (_agentThinking) _buildThinkingIndicator(),
+          _buildInputBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageList(String? currentUserId) {
+    return Expanded(
+      child: _messages.isEmpty
+          ? const Center(
+              child: Text(
+                'No messages yet',
+                style: TextStyle(color: KColors.textMuted),
+              ),
+            )
+          : ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
+              itemCount: _messages.length + (_loadingOlder ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (_loadingOlder && index == 0) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Center(
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                     ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    itemCount: _messages.length + (_loadingOlder ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (_loadingOlder && index == 0) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Center(
-                            child: SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          ),
-                        );
-                      }
-                      final msgIndex = _loadingOlder ? index - 1 : index;
-                      final msg = _messages[msgIndex];
-                      final handle = msg['user_handle'] as String?;
-                      final email = msg['user_email'] as String? ?? '';
-                      final senderName = (handle != null && handle.isNotEmpty)
-                          ? handle
-                          : email;
-                      final text = msg['message'] as String? ?? '';
-                      final createdAt = _formatTime(
-                        msg['created_at'] as String? ?? '',
-                      );
-                      final msgUserId = msg['user_id'] as String?;
-                      final isOwn =
-                          msgUserId != null && msgUserId == currentUserId;
-                      final isDeleted = text == '<message deleted by author>';
-                      final messageType = msg['message_type'] as int? ?? 0;
+                  );
+                }
+                final msgIndex = _loadingOlder ? index - 1 : index;
+                return _buildMessageItem(_messages[msgIndex], currentUserId);
+              },
+            ),
+    );
+  }
 
-                      // Hide own join/leave system messages — they
-                      // are only informational for other users.
-                      if (messageType == 2 && isOwn) {
-                        return const SizedBox.shrink();
-                      }
+  Widget _buildMessageItem(Map<String, dynamic> msg, String? currentUserId) {
+    final handle = msg['user_handle'] as String?;
+    final email = msg['user_email'] as String? ?? '';
+    final senderName = (handle != null && handle.isNotEmpty) ? handle : email;
+    final text = msg['message'] as String? ?? '';
+    final createdAt = _formatTime(msg['created_at'] as String? ?? '');
+    final msgUserId = msg['user_id'] as String?;
+    final isOwn = msgUserId != null && msgUserId == currentUserId;
+    final isDeleted = text == '<message deleted by author>';
+    final messageType = msg['message_type'] as int? ?? 0;
 
-                      // System messages: compact divider style
-                      if (messageType == 2) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Row(
-                            children: [
-                              const Expanded(
-                                child: Divider(
-                                  color: KColors.borderMuted,
-                                  height: 1,
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                ),
-                                child: Text(
-                                  text,
-                                  style: const TextStyle(
-                                    color: KColors.textMuted,
-                                    fontSize: 10,
-                                  ),
-                                ),
-                              ),
-                              const Expanded(
-                                child: Divider(
-                                  color: KColors.borderMuted,
-                                  height: 1,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
+    // Hide own join/leave system messages — they are only informational
+    // for other users.
+    if (messageType == 2 && isOwn) {
+      return const SizedBox.shrink();
+    }
 
-                      // Agent messages: robot icon prefix, left accent
-                      final isAgent = messageType == 1;
+    // System messages: compact divider style.
+    if (messageType == 2) {
+      return _buildSystemMessage(text);
+    }
 
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: isAgent
-                            ? const EdgeInsets.only(left: 8)
-                            : EdgeInsets.zero,
-                        decoration: isAgent
-                            ? const BoxDecoration(
-                                border: Border(
-                                  left: BorderSide(
-                                    color: KColors.accentCyan,
-                                    width: 2,
-                                  ),
-                                ),
-                              )
-                            : null,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (isAgent)
-                              const Padding(
-                                padding: EdgeInsets.only(right: 6, top: 1),
-                                child: Icon(
-                                  Icons.smart_toy,
-                                  size: 14,
-                                  color: KColors.accentCyan,
-                                ),
-                              ),
-                            Expanded(
-                              child: _CollapsibleMessage(
-                                messageId: msg['id'] as String? ?? '',
-                                isExpanded: _expandedMessages.contains(
-                                  msg['id'],
-                                ),
-                                onToggle: () {
-                                  setState(() {
-                                    final id = msg['id'] as String? ?? '';
-                                    if (_expandedMessages.contains(id)) {
-                                      _expandedMessages.remove(id);
-                                    } else {
-                                      _expandedMessages.add(id);
-                                    }
-                                  });
-                                },
-                                child: _buildMessageContent(
-                                  context,
-                                  senderName: senderName,
-                                  text: text,
-                                  isAgent: isAgent,
-                                  isDeleted: isDeleted,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              createdAt,
-                              style: const TextStyle(
-                                color: KColors.textMuted,
-                                fontSize: 11,
-                              ),
-                            ),
-                            if (isOwn && !isDeleted)
-                              GestureDetector(
-                                onTap: () =>
-                                    _deleteMessage(msg['id'] as String),
-                                child: const Padding(
-                                  padding: EdgeInsets.only(left: 4),
-                                  child: Icon(
-                                    Icons.close,
-                                    size: 14,
-                                    color: KColors.textMuted,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+    // Agent messages: robot icon prefix, left accent.
+    return _buildMessageRow(
+      msg: msg,
+      senderName: senderName,
+      text: text,
+      createdAt: createdAt,
+      isAgent: messageType == 1,
+      isOwn: isOwn,
+      isDeleted: isDeleted,
+    );
+  }
+
+  Widget _buildSystemMessage(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Divider(color: KColors.borderMuted, height: 1),
           ),
-          if (_agentThinking)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Row(
-                children: [
-                  const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
-                      color: KColors.accentCyan,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$_agentName is thinking...',
-                    style: TextStyle(
-                      color: KColors.textMuted,
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ],
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: KColors.textMuted,
+                fontSize: 10,
               ),
             ),
-          Container(
-            key: _inputKey,
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: KColors.borderDefault)),
+          ),
+          const Expanded(
+            child: Divider(color: KColors.borderMuted, height: 1),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageRow({
+    required Map<String, dynamic> msg,
+    required String senderName,
+    required String text,
+    required String createdAt,
+    required bool isAgent,
+    required bool isOwn,
+    required bool isDeleted,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: isAgent ? const EdgeInsets.only(left: 8) : EdgeInsets.zero,
+      decoration: isAgent
+          ? const BoxDecoration(
+              border: Border(
+                left: BorderSide(color: KColors.accentCyan, width: 2),
+              ),
+            )
+          : null,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isAgent)
+            const Padding(
+              padding: EdgeInsets.only(right: 6, top: 1),
+              child: Icon(
+                Icons.smart_toy,
+                size: 14,
+                color: KColors.accentCyan,
+              ),
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 120),
-                    child: TextField(
-                      controller: _textController,
-                      focusNode: _inputFocusNode,
-                      maxLines: null,
-                      style: const TextStyle(
-                        color: KColors.textPrimary,
-                        fontSize: 13,
-                      ),
-                      decoration: const InputDecoration(
-                        hintText: 'Type a message...',
-                        hintStyle: TextStyle(color: KColors.textMuted),
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(
-                          vertical: 8,
-                          horizontal: 8,
-                        ),
-                      ),
-                    ),
+          Expanded(
+            child: _CollapsibleMessage(
+              messageId: msg['id'] as String? ?? '',
+              isExpanded: _expandedMessages.contains(msg['id']),
+              onToggle: () {
+                setState(() {
+                  final id = msg['id'] as String? ?? '';
+                  if (_expandedMessages.contains(id)) {
+                    _expandedMessages.remove(id);
+                  } else {
+                    _expandedMessages.add(id);
+                  }
+                });
+              },
+              child: _buildMessageContent(
+                context,
+                senderName: senderName,
+                text: text,
+                isAgent: isAgent,
+                isDeleted: isDeleted,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            createdAt,
+            style: const TextStyle(
+              color: KColors.textMuted,
+              fontSize: 11,
+            ),
+          ),
+          if (isOwn && !isDeleted)
+            GestureDetector(
+              onTap: () => _deleteMessage(msg['id'] as String),
+              child: const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(
+                  Icons.close,
+                  size: 14,
+                  color: KColors.textMuted,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThinkingIndicator() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              color: KColors.accentCyan,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$_agentName is thinking...',
+            style: TextStyle(
+              color: KColors.textMuted,
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    return Container(
+      key: _inputKey,
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: KColors.borderDefault)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 120),
+              child: TextField(
+                controller: _textController,
+                focusNode: _inputFocusNode,
+                maxLines: null,
+                style: const TextStyle(
+                  color: KColors.textPrimary,
+                  fontSize: 13,
+                ),
+                decoration: const InputDecoration(
+                  hintText: 'Type a message...',
+                  hintStyle: TextStyle(color: KColors.textMuted),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
                   ),
                 ),
-                if (_agentThinking)
-                  IconButton(
-                    icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                    color: KColors.accentRed,
-                    tooltip: 'Stop agent',
-                    onPressed: () => widget.wsClient.sendChatAgentAbort(),
-                  ),
-                IconButton(
-                  icon: const Icon(Icons.send, size: 18),
-                  color: KColors.accentBlue,
-                  onPressed: _sendMessage,
-                ),
-              ],
+              ),
             ),
+          ),
+          if (_agentThinking)
+            IconButton(
+              icon: const Icon(Icons.stop_circle_outlined, size: 18),
+              color: KColors.accentRed,
+              tooltip: 'Stop agent',
+              onPressed: () => widget.wsClient.sendChatAgentAbort(),
+            ),
+          IconButton(
+            icon: const Icon(Icons.send, size: 18),
+            color: KColors.accentBlue,
+            onPressed: _sendMessage,
           ),
         ],
       ),
