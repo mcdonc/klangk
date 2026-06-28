@@ -144,6 +144,15 @@ class SafeWebSocket:
         return self._sock.headers
 
     @property
+    def client(self):
+        """Proxy client (peer address) access to the underlying WebSocket.
+
+        Used by derive_hosting_info to scope X-Forwarded-* trust to the
+        real connection peer (see util._peer_trusted).
+        """
+        return self._sock.client
+
+    @property
     def raw(self) -> WebSocket:
         """Access the underlying WebSocket (e.g. for identity checks)."""
         return self._sock
