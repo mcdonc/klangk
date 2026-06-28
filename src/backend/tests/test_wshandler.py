@@ -178,6 +178,13 @@ class TestSafeWebSocket:
         sw = SafeWebSocket(raw)
         assert sw.headers == {"host": "example.com"}
 
+    async def test_client_delegates(self):
+        raw = AsyncMock()
+        # Starlette WebSocket.client is an Address with .host, or None.
+        raw.client = type("Addr", (), {"host": "127.0.0.1"})()
+        sw = SafeWebSocket(raw)
+        assert sw.client.host == "127.0.0.1"
+
     async def test_raw_returns_underlying(self):
         raw = AsyncMock()
         sw = SafeWebSocket(raw)

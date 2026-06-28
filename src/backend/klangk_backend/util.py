@@ -90,7 +90,11 @@ _REJECT_PROXY = resolve_env_bool("KLANGK_REJECT_PROXY_HEADERS")
 
 
 def _load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
-    raw = resolve_env_secret("KLANGK_TRUSTED_PROXY_CIDRS", "127.0.0.1,::1")
+    # KLANGK_TRUSTED_PROXY_CIDRS is a public CIDR/IP list (not a secret), so read
+    # it via os.environ rather than resolve_env_secret (which treats its input
+    # as a secret and would both support an unwanted "file:" prefix and trip
+    # CodeQL's clear-text-logging taint check when we log invalid entries).
+    raw = os.environ.get("KLANGK_TRUSTED_PROXY_CIDRS", "127.0.0.1,::1")
     trusted: set[ipaddress._BaseAddress] = set()
     for token in (raw or "").split(","):
         token = token.strip()
