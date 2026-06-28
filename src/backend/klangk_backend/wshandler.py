@@ -1044,6 +1044,498 @@ class ExecController:
             await self.claim_and_stop()
 
 
+class TerminalController:
+    """Terminal session lifecycle: start, input, window management, stop.
+
+    Owns the current ``TerminalSession`` (``session``), its
+    output-forwarding task (``task``), and the client's last-known
+    terminal dimensions (``cols``/``rows``).  ``Connection``
+    delegates the ``terminal_*`` WebSocket commands here.
+
+    Extracted from ``Connection`` (issue #961) so the terminal
+    subsystem can be unit-tested in isolation.  Follows the same
+    collaborator pattern as :class:`SshAgentForwarder` and
+    :class:`ExecController`.  Shared-terminal state
+    (``_viewing_shared``, ``handle_join_shared_terminal``) remains
+    on ``Connection`` for now; this controller touches it only
+    through ``self._conn`` so a later SharedTerminalController
+    stage can own it without further changes here.
+    """
+
+    def __init__(self, conn: "Connection") -> None:
+        self._conn = conn
+        self.session: TerminalSession | None = None
+        self.task: asyncio.Task | None = None
+        self.cols: int = 80
+        self.rows: int = 24
+
+    async def start(self, msg: dict) -> None:
+        logger.info(
+            "handle_terminal_start: user=%s workspace=%s container=%s user_home=%s",
+            self._conn.user.get("email"),
+            self._conn.workspace_id,
+            self._conn.container_id,
+            self._conn._user_home,
+        )
+        if not self._conn.container_id:
+            logger.info("handle_terminal_start: no container_id, skipping")
+            return
+        # Debounce: if the last terminal start was very recent, skip.
+        # This prevents rapid retry loops when the PTY exits immediately.
+        now = time.monotonic()
+        if hasattr(self._conn, "_last_terminal_start"):
+            if now - self._conn._last_terminal_start < 2.0:
+                logger.warning(
+                    "Ignoring rapid terminal_start (%.1fs since last)",
+                    now - self._conn._last_terminal_start,
+                )
+                return
+        self._conn._last_terminal_start = now
+        if self._conn._user_home is None:
+            send_error(self._conn.sock, "Handle not set")
+            return
+        if not await self._conn._has_perm("code-in-isolation"):
+            # Spectators can't start isolated terminals but still need
+            # the terminal pane. Send terminal_started (no session) so
+            # the frontend renders shared tabs.
+            logger.info(
+                "Skipping isolated terminal for user=%s (no code-in-isolation)",
+                self._conn.user.get("email"),
+            )
+            self._conn.sock.send_json({"type": "terminal_started"})
+            return
+        # Stop existing terminal if any
+        await self.stop()
+        cols = msg.get("cols", self.cols)
+        rows = msg.get("rows", self.rows)
+        self.cols = cols
+        self.rows = rows
+        command_override = msg.get("commandOverride")
+        session = TerminalSession(
+            self._conn.container_id,
+            session_name=self._conn.user["id"],
+            user_home=self._conn._user_home,
+            user_id=self._conn.user["id"],
+            user_handle=self._conn.user.get("handle"),
+            ssh_agent_socket=self._conn._ssh_agent_socket,
+        )
+
+        # Register browser ID for bridge routing.  The browser sends
+        # its sessionStorage UUID with terminal_start; on refresh the
+        # same ID re-registers with the new WebSocket.  The CLI sends
+        # "klangkshell" as a sentinel — store it in tmux env (so
+        # klangk-copy-to-clipboard can skip the bridge) but don't
+        # register it for bridge routing.
+        browser_id = msg.get("browser_id")
+        if browser_id and browser_id != "klangkshell":
+            container.registry.revoke_browser(self._conn.sock)
+            container.registry.register_browser(
+                browser_id, self._conn.workspace_id, self._conn.sock
+            )
+        self._conn._browser_id = browser_id
+
+        # Store session immediately so stop_terminal can clean it up
+        # if another terminal_start arrives before this one finishes.
+        self.session = session
+        conn = self._conn
+
+        async def _start_terminal() -> None:
+            try:
+                logger.info(
+                    "_start_terminal: starting for user=%s container=%s",
+                    conn.user.get("email"),
+                    conn.container_id,
+                )
+                await asyncio.wait_for(
+                    session.start(
+                        cols,
+                        rows,
+                        command_override=command_override,
+                    ),
+                    timeout=30,
+                )
+                # Store the browser ID in the container's tmux
+                # environment so klangk-browser-id can read it.
+                if browser_id:
+                    await attach_browser(conn.container_id, browser_id)
+                if not await conn._activate_session(session, cols, rows):
+                    return
+                conn.sock.send_json({"type": "terminal_started"})
+                try:
+                    sname = conn._tmux_session_name()
+                    user_id = conn.user["id"]
+                    ws_session = state.get_session(conn.workspace_id)
+
+                    # On first terminal_start after restart, restore
+                    # saved window state from the container.
+                    if (
+                        ws_session
+                        and user_id not in ws_session.terminal_windows
+                    ):
+                        saved = await terminal.load_workspace_state(
+                            conn.container_id
+                        )
+                        if user_id in saved:
+                            saved_windows = saved[user_id]
+                            await terminal.restore_windows(
+                                conn.container_id, sname, saved_windows
+                            )
+                            ws_session.terminal_windows[user_id] = (
+                                saved_windows
+                            )
+                            # Restore shared state for ALL users from snapshot
+                            for uid, wins in saved.items():
+                                if uid != user_id:
+                                    ws_session.terminal_windows.setdefault(
+                                        uid, wins
+                                    )
+
+                    windows = await terminal.list_windows(
+                        conn.container_id, sname
+                    )
+                    conn._sync_terminal_windows(windows)
+                    conn.sock.send_json(
+                        {
+                            "type": "terminal_windows",
+                            "windows": windows,
+                        }
+                    )
+                except (TerminalError, OSError):
+                    logger.exception("_start_terminal: window list failed")
+                # Also send the shared terminal list from in-memory state.
+                ws_session = state.get_session(conn.workspace_id)
+                if ws_session:
+                    terminals = _get_shared_terminals(ws_session)
+                    conn.sock.send_json(
+                        {"type": "shared_terminals", "terminals": terminals}
+                    )
+            except asyncio.CancelledError:
+                await session.stop()
+                container.registry.revoke_browser(conn.sock)
+                conn._browser_id = None
+                raise
+            except (SlowClientError, WebSocketDisconnect):
+                await session.stop()
+                container.registry.revoke_browser(conn.sock)
+                conn._browser_id = None
+            except Exception as e:
+                await session.stop()
+                container.registry.revoke_browser(conn.sock)
+                conn._browser_id = None
+                logger.exception("Terminal start failed: %s", e)
+                try:
+                    send_error(conn.sock, f"Terminal start failed: {e}")
+                except _WS_ERRORS:
+                    pass
+
+        self.task = asyncio.create_task(_start_terminal())
+
+    async def browser_reattach(self, msg: dict) -> None:
+        """Re-register the browser ID and update the container's tmux env.
+
+        Sent by the frontend when the terminal gains focus (e.g. tab
+        switch) so the container always routes bridge requests to the
+        active browser tab.
+        """
+        browser_id = msg.get("browser_id")
+        if not browser_id or not self._conn.container_id:
+            return
+        container.registry.revoke_browser(self._conn.sock)
+        container.registry.register_browser(
+            browser_id, self._conn.workspace_id, self._conn.sock
+        )
+        self._conn._browser_id = browser_id
+        logger.info(
+            "browser_reattach: browser_id=%s user=%s workspace=%s",
+            browser_id,
+            self._conn.user.get("email"),
+            self._conn.workspace_id,
+        )
+        await attach_browser(self._conn.container_id, browser_id)
+
+    async def input(self, msg: dict) -> None:
+        t0 = time.monotonic()
+        session = self.session
+        if session is None or not session.is_alive:
+            logger.warning("terminal_input: no session or not alive")
+            return
+        data = msg.get("data", "")
+        if session.read_only:
+            # Allow terminal protocol responses (DA queries, color
+            # reports) through so tmux can complete initialization.
+            # Block user-typed input.
+            if not data.startswith("\x1b"):
+                return
+        if len(data) > _MAX_INPUT_SIZE:
+            logger.warning(
+                "terminal_input too large (%d bytes), dropping", len(data)
+            )
+            return
+        container.registry.record_activity(self._conn.container_id)
+        await session.write(data)
+        elapsed = time.monotonic() - t0
+        if elapsed > 0.1:  # pragma: no cover
+            logger.warning("terminal_input SLOW: %.3fs", elapsed)
+
+    async def resize(self, msg: dict) -> None:
+        self.cols = msg.get("cols", 80)
+        self.rows = msg.get("rows", 24)
+        session = self.session
+        if session is None:
+            return
+        await session.resize(self.cols, self.rows)
+
+    async def stop_command(self) -> None:
+        await self.stop()
+
+    def tmux_session_name(self) -> str:
+        """Get the tmux session name (user_id).
+
+        Callers must check ``_user_home`` before calling this method.
+        """
+        return self._conn.user["id"]
+
+    def sync_terminal_windows(self, windows: list[dict]) -> None:
+        """Update in-memory terminal_windows from tmux list_windows result."""
+        ws_session = state.get_session(self._conn.workspace_id)
+        if not ws_session:
+            return
+        user_id = self._conn.user["id"]
+        old = ws_session.terminal_windows.get(user_id, [])
+        # Match old entries to new tmux entries by window_id (@N) —
+        # a tmux-assigned unique identifier that is never reused within
+        # a server's lifetime.  This is stable across renames and
+        # index reuse.
+        old_by_id = {w["id"]: w for w in old if "id" in w}
+        # Name-based fallback for matching after container restart where
+        # window_ids change but names are restored.
+        old_by_name = {w["name"]: w for w in old if "name" in w}
+        old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
+        new_entries = []
+        for w in windows:
+            prev = old_by_id.get(w["id"]) or old_by_name.get(w["name"])
+            new_entries.append(
+                {
+                    "id": w["id"],
+                    "name": w["name"],
+                    "index": w["index"],
+                    "shared": prev.get("shared", False) if prev else False,
+                }
+            )
+        ws_session.terminal_windows[user_id] = new_entries
+        new_shared = {w["id"] for w in new_entries if w.get("shared")}
+        # Broadcast if shared set changed (e.g. shared window was closed)
+        # or if any shared window was renamed.
+        old_shared_names = {
+            (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
+        }
+        new_shared_names = {
+            (w["id"], w["name"]) for w in new_entries if w.get("shared")
+        }
+        if old_shared != new_shared or old_shared_names != new_shared_names:
+            self._conn._broadcast_shared_terminals(ws_session)
+        self._conn._save_state_snapshot(ws_session)
+
+    def notify_user_terminal_windows(self, windows: list[dict]) -> None:
+        """Send terminal_windows to all connections for this user."""
+        ws_session = state.get_session(self._conn.workspace_id)
+        if not ws_session:
+            self._conn.sock.send_json(
+                {"type": "terminal_windows", "windows": windows}
+            )
+            return
+        user_id = self._conn.user["id"]
+        msg = {"type": "terminal_windows", "windows": windows}
+        for sock in list(ws_session.subscribers):
+            conn = state.connections.get(sock)
+            if conn and conn.user.get("id") == user_id:
+                sock.send_json(msg)
+
+    async def new_window(self, msg: dict) -> None:
+        t0 = time.monotonic()
+        if not self._conn.container_id or not self._conn._user_home:
+            return
+
+        session_name = self.tmux_session_name()
+        name = msg.get("name")
+        try:
+            windows = await terminal.new_window(
+                self._conn.container_id, session_name, name=name
+            )
+            logger.info(
+                "handle_terminal_new_window: %.3fs",
+                time.monotonic() - t0,
+            )
+            self.sync_terminal_windows(windows)
+            self.notify_user_terminal_windows(windows)
+        except Exception as e:
+            send_error(self._conn.sock, f"Failed to create window: {e}")
+
+    async def select_window(self, msg: dict) -> None:
+        t0 = time.monotonic()
+        if not self._conn.container_id or not self._conn._user_home:
+            return
+
+        # Use this connection's grouped session so select-window only
+        # affects this client, not other connections to the same workspace.
+        session = self.session
+        session_name = (
+            session._tmux_session_name
+            if session and session._tmux_session_name
+            else self.tmux_session_name()
+        )
+        # Prefer @N window_id (stable); fall back to index for compat.
+        target: int | str = msg.get("window_id") or msg.get("index", 0)
+        try:
+            await terminal.select_window(
+                self._conn.container_id, session_name, target
+            )
+            logger.info(
+                "handle_terminal_select_window: target=%s %.3fs",
+                target,
+                time.monotonic() - t0,
+            )
+        except Exception as e:
+            send_error(self._conn.sock, f"Failed to select window: {e}")
+
+    async def close_window(self, msg: dict) -> None:
+        if not self._conn.container_id or not self._conn._user_home:
+            return
+
+        session_name = self.tmux_session_name()
+        index = msg.get("index", 0)
+        try:
+            windows = await terminal.close_window(
+                self._conn.container_id, session_name, index
+            )
+            self.sync_terminal_windows(windows)
+            self.notify_user_terminal_windows(windows)
+        except Exception as e:
+            send_error(self._conn.sock, f"Failed to close window: {e}")
+
+    async def rename_window(self, msg: dict) -> None:
+        if not self._conn.container_id or not self._conn._user_home:
+            return
+
+        session_name = self.tmux_session_name()
+        index = msg.get("index", 0)
+        name = msg.get("name", "")
+        if not name:
+            send_error(self._conn.sock, "Name required")
+            return
+        try:
+            await terminal.rename_window(
+                self._conn.container_id, session_name, index, name
+            )
+            windows = await terminal.list_windows(
+                self._conn.container_id, session_name
+            )
+            self.sync_terminal_windows(windows)
+            self.notify_user_terminal_windows(windows)
+        except Exception as e:
+            send_error(self._conn.sock, f"Failed to rename window: {e}")
+
+    async def list_windows(self) -> None:
+        if not self._conn.container_id or not self._conn._user_home:
+            return
+
+        # Use this connection's grouped session so the active flag
+        # reflects this client's view, not the base session's.
+        session = self.session
+        session_name = (
+            session._tmux_session_name
+            if session and session._tmux_session_name
+            else self.tmux_session_name()
+        )
+        try:
+            windows = await terminal.list_windows(
+                self._conn.container_id, session_name
+            )
+            self._conn.sock.send_json(
+                {"type": "terminal_windows", "windows": windows}
+            )
+        except Exception as e:
+            send_error(self._conn.sock, f"Failed to list windows: {e}")
+
+    async def claim_and_stop(self) -> None:
+        session = self.session
+        self.session = None
+        if session is not None:
+            await session.stop()
+
+    async def activate_session(
+        self, session: TerminalSession, cols: int, rows: int
+    ) -> bool:
+        """Wire up a started session for output forwarding.
+
+        Checks the session is still current, creates the output task,
+        resizes to force a tmux redraw, and records activity.
+        Returns False if the session was superseded.
+        """
+        if self.session is not session:
+            await session.stop()
+            return False
+        self.task = asyncio.create_task(self.forward_output(session))
+        # Resize to force tmux to redraw at the client's terminal size.
+        # Without this, reattaching shows a blank screen because tmux
+        # skips the redraw when the PTY size matches the default.
+        await session.resize(cols, rows)
+        container.registry.record_activity(self._conn.container_id)
+        return True
+
+    async def stop(self) -> None:
+        was_viewing = self._conn._viewing_shared
+        self._conn._viewing_shared = None
+        task = self.task
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            self.task = None
+        await self.claim_and_stop()
+        # Broadcast viewer change so other users see updated viewer list
+        if was_viewing and self._conn.workspace_id:
+            ws_session = state.get_session(self._conn.workspace_id)
+            if ws_session:
+                self._conn._broadcast_shared_terminals(ws_session)
+        # Reset debounce so the next explicit start isn't blocked.
+        self._conn._last_terminal_start = 0
+
+    async def forward_output(self, session: TerminalSession) -> None:
+        """Forward terminal output to the frontend via WebSocket."""
+        logger.info(
+            "forward_terminal_output: starting for user=%s container=%s",
+            self._conn.user.get("email"),
+            self._conn.container_id,
+        )
+        try:
+            async for data in session.output():
+                self._conn.sock.send_json(
+                    {"type": "terminal_output", "data": data}
+                )
+                if self._conn.container_id:
+                    container.registry.record_activity(self._conn.container_id)
+            # Stream ended — the tmux session exited (not necessarily the
+            # container). Don't send container_stopped; the idle timeout
+            # or shutdown button handles actual container death.
+            logger.info(
+                "forward_terminal_output: stream ended for user=%s",
+                self._conn.user.get("email"),
+            )
+        except asyncio.CancelledError:
+            raise  # Normal cleanup, don't send event
+        except _WS_ERRORS as e:
+            logger.error("Terminal output forwarding error: %s", e)
+            try:
+                _send_event(self._conn.sock, "container_stopped")
+            except _WS_ERRORS:
+                pass
+        finally:
+            await self.claim_and_stop()
+
+
 class Connection:
     """Per-WebSocket connection state and command handlers."""
 
@@ -1052,8 +1544,13 @@ class Connection:
         self.user = user
         self.workspace_id: str | None = None
         self.container_id: str | None = None
-        self.terminal_session: TerminalSession | None = None
-        self.terminal_task: asyncio.Task | None = None
+        # Terminal sessions are owned by the TerminalController
+        # collaborator; Connection delegates the terminal_* commands to
+        # it.  The ``terminal_session``/``terminal_task`` (and
+        # ``_terminal_cols``/``_terminal_rows``) properties below proxy
+        # to the controller for backwards compatibility with code
+        # (and tests) that read/write those fields directly.
+        self.terminal = TerminalController(self)
         # Exec sessions are owned by the ExecController collaborator;
         # Connection delegates the exec_* commands to it.  The
         # ``exec_session``/``exec_task`` properties below proxy to the
@@ -1125,6 +1622,98 @@ class Connection:
 
     async def _log_ssh_agent_stderr(self) -> None:
         await self.ssh_agent.log_stderr()
+
+    # --- Terminal sessions (delegates to TerminalController) ---
+
+    # Backwards-compatible proxies for the state formerly held on
+    # Connection itself.  Reads and writes are forwarded to the
+    # controller so existing callers (and tests) that read/write
+    # ``terminal_session``/``terminal_task``/``_terminal_cols``/
+    # ``_terminal_rows`` directly keep working unchanged.
+    @property
+    def terminal_session(self):
+        return self.terminal.session
+
+    @terminal_session.setter
+    def terminal_session(self, value):
+        self.terminal.session = value
+
+    @property
+    def terminal_task(self):
+        return self.terminal.task
+
+    @terminal_task.setter
+    def terminal_task(self, value):
+        self.terminal.task = value
+
+    @property
+    def _terminal_cols(self):
+        return self.terminal.cols
+
+    @_terminal_cols.setter
+    def _terminal_cols(self, value):
+        self.terminal.cols = value
+
+    @property
+    def _terminal_rows(self):
+        return self.terminal.rows
+
+    @_terminal_rows.setter
+    def _terminal_rows(self, value):
+        self.terminal.rows = value
+
+    async def handle_terminal_start(self, msg: dict) -> None:
+        await self.terminal.start(msg)
+
+    async def handle_browser_reattach(self, msg: dict) -> None:
+        await self.terminal.browser_reattach(msg)
+
+    async def handle_terminal_input(self, msg: dict) -> None:
+        await self.terminal.input(msg)
+
+    async def handle_terminal_resize(self, msg: dict) -> None:
+        await self.terminal.resize(msg)
+
+    async def handle_terminal_stop(self) -> None:
+        await self.terminal.stop_command()
+
+    async def handle_terminal_new_window(self, msg: dict) -> None:
+        await self.terminal.new_window(msg)
+
+    async def handle_terminal_select_window(self, msg: dict) -> None:
+        await self.terminal.select_window(msg)
+
+    async def handle_terminal_close_window(self, msg: dict) -> None:
+        await self.terminal.close_window(msg)
+
+    async def handle_terminal_rename_window(self, msg: dict) -> None:
+        await self.terminal.rename_window(msg)
+
+    async def handle_terminal_list_windows(self) -> None:
+        await self.terminal.list_windows()
+
+    def _tmux_session_name(self) -> str:
+        return self.terminal.tmux_session_name()
+
+    def _sync_terminal_windows(self, windows: list[dict]) -> None:
+        self.terminal.sync_terminal_windows(windows)
+
+    def _notify_user_terminal_windows(self, windows: list[dict]) -> None:
+        self.terminal.notify_user_terminal_windows(windows)
+
+    async def _activate_session(
+        self, session: TerminalSession, cols: int, rows: int
+    ) -> bool:
+        return await self.terminal.activate_session(session, cols, rows)
+
+    async def stop_terminal(self) -> None:
+        await self.terminal.stop()
+
+    async def forward_terminal_output(self, session: TerminalSession) -> None:
+        await self.terminal.forward_output(session)
+
+    async def _claim_and_stop_terminal(self) -> None:
+        await self.terminal.claim_and_stop()
 
     # --- Exec sessions (delegates to ExecController) ---
 
@@ -1521,394 +2110,6 @@ class Connection:
         logger.info(
             "Container shut down by user for workspace %s", workspace_id
         )
-
-    async def handle_terminal_start(self, msg: dict) -> None:
-        logger.info(
-            "handle_terminal_start: user=%s workspace=%s container=%s user_home=%s",
-            self.user.get("email"),
-            self.workspace_id,
-            self.container_id,
-            self._user_home,
-        )
-        if not self.container_id:
-            logger.info("handle_terminal_start: no container_id, skipping")
-            return
-        # Debounce: if the last terminal start was very recent, skip.
-        # This prevents rapid retry loops when the PTY exits immediately.
-        now = time.monotonic()
-        if hasattr(self, "_last_terminal_start"):
-            if now - self._last_terminal_start < 2.0:
-                logger.warning(
-                    "Ignoring rapid terminal_start (%.1fs since last)",
-                    now - self._last_terminal_start,
-                )
-                return
-        self._last_terminal_start = now
-        if self._user_home is None:
-            send_error(self.sock, "Handle not set")
-            return
-        if not await self._has_perm("code-in-isolation"):
-            # Spectators can't start isolated terminals but still need
-            # the terminal pane. Send terminal_started (no session) so
-            # the frontend renders shared tabs.
-            logger.info(
-                "Skipping isolated terminal for user=%s (no code-in-isolation)",
-                self.user.get("email"),
-            )
-            self.sock.send_json({"type": "terminal_started"})
-            return
-        # Stop existing terminal if any
-        await self.stop_terminal()
-        cols = msg.get("cols", self._terminal_cols)
-        rows = msg.get("rows", self._terminal_rows)
-        self._terminal_cols = cols
-        self._terminal_rows = rows
-        command_override = msg.get("commandOverride")
-        session = TerminalSession(
-            self.container_id,
-            session_name=self.user["id"],
-            user_home=self._user_home,
-            user_id=self.user["id"],
-            user_handle=self.user.get("handle"),
-            ssh_agent_socket=self._ssh_agent_socket,
-        )
-
-        # Register browser ID for bridge routing.  The browser sends
-        # its sessionStorage UUID with terminal_start; on refresh the
-        # same ID re-registers with the new WebSocket.  The CLI sends
-        # "klangkshell" as a sentinel — store it in tmux env (so
-        # klangk-copy-to-clipboard can skip the bridge) but don't
-        # register it for bridge routing.
-        browser_id = msg.get("browser_id")
-        if browser_id and browser_id != "klangkshell":
-            container.registry.revoke_browser(self.sock)
-            container.registry.register_browser(
-                browser_id, self.workspace_id, self.sock
-            )
-        self._browser_id = browser_id
-
-        # Store session immediately so stop_terminal can clean it up
-        # if another terminal_start arrives before this one finishes.
-        self.terminal_session = session
-        conn = self
-
-        async def _start_terminal() -> None:
-            try:
-                logger.info(
-                    "_start_terminal: starting for user=%s container=%s",
-                    conn.user.get("email"),
-                    conn.container_id,
-                )
-                await asyncio.wait_for(
-                    session.start(
-                        cols,
-                        rows,
-                        command_override=command_override,
-                    ),
-                    timeout=30,
-                )
-                # Store the browser ID in the container's tmux
-                # environment so klangk-browser-id can read it.
-                if browser_id:
-                    await attach_browser(conn.container_id, browser_id)
-                if not await conn._activate_session(session, cols, rows):
-                    return
-                conn.sock.send_json({"type": "terminal_started"})
-                try:
-                    sname = conn._tmux_session_name()
-                    user_id = conn.user["id"]
-                    ws_session = state.get_session(conn.workspace_id)
-
-                    # On first terminal_start after restart, restore
-                    # saved window state from the container.
-                    if (
-                        ws_session
-                        and user_id not in ws_session.terminal_windows
-                    ):
-                        saved = await terminal.load_workspace_state(
-                            conn.container_id
-                        )
-                        if user_id in saved:
-                            saved_windows = saved[user_id]
-                            await terminal.restore_windows(
-                                conn.container_id, sname, saved_windows
-                            )
-                            ws_session.terminal_windows[user_id] = (
-                                saved_windows
-                            )
-                            # Restore shared state for ALL users from snapshot
-                            for uid, wins in saved.items():
-                                if uid != user_id:
-                                    ws_session.terminal_windows.setdefault(
-                                        uid, wins
-                                    )
-
-                    windows = await terminal.list_windows(
-                        conn.container_id, sname
-                    )
-                    conn._sync_terminal_windows(windows)
-                    conn.sock.send_json(
-                        {
-                            "type": "terminal_windows",
-                            "windows": windows,
-                        }
-                    )
-                except (TerminalError, OSError):
-                    logger.exception("_start_terminal: window list failed")
-                # Also send the shared terminal list from in-memory state.
-                ws_session = state.get_session(conn.workspace_id)
-                if ws_session:
-                    terminals = _get_shared_terminals(ws_session)
-                    conn.sock.send_json(
-                        {"type": "shared_terminals", "terminals": terminals}
-                    )
-            except asyncio.CancelledError:
-                await session.stop()
-                container.registry.revoke_browser(conn.sock)
-                conn._browser_id = None
-                raise
-            except (SlowClientError, WebSocketDisconnect):
-                await session.stop()
-                container.registry.revoke_browser(conn.sock)
-                conn._browser_id = None
-            except Exception as e:
-                await session.stop()
-                container.registry.revoke_browser(conn.sock)
-                conn._browser_id = None
-                logger.exception("Terminal start failed: %s", e)
-                try:
-                    send_error(conn.sock, f"Terminal start failed: {e}")
-                except _WS_ERRORS:
-                    pass
-
-        self.terminal_task = asyncio.create_task(_start_terminal())
-
-    async def handle_browser_reattach(self, msg: dict) -> None:
-        """Re-register the browser ID and update the container's tmux env.
-
-        Sent by the frontend when the terminal gains focus (e.g. tab
-        switch) so the container always routes bridge requests to the
-        active browser tab.
-        """
-        browser_id = msg.get("browser_id")
-        if not browser_id or not self.container_id:
-            return
-        container.registry.revoke_browser(self.sock)
-        container.registry.register_browser(
-            browser_id, self.workspace_id, self.sock
-        )
-        self._browser_id = browser_id
-        logger.info(
-            "browser_reattach: browser_id=%s user=%s workspace=%s",
-            browser_id,
-            self.user.get("email"),
-            self.workspace_id,
-        )
-        await attach_browser(self.container_id, browser_id)
-
-    async def handle_terminal_input(self, msg: dict) -> None:
-        t0 = time.monotonic()
-        session = self.terminal_session
-        if session is None or not session.is_alive:
-            logger.warning("terminal_input: no session or not alive")
-            return
-        data = msg.get("data", "")
-        if session.read_only:
-            # Allow terminal protocol responses (DA queries, color
-            # reports) through so tmux can complete initialization.
-            # Block user-typed input.
-            if not data.startswith("\x1b"):
-                return
-        if len(data) > _MAX_INPUT_SIZE:
-            logger.warning(
-                "terminal_input too large (%d bytes), dropping", len(data)
-            )
-            return
-        container.registry.record_activity(self.container_id)
-        await session.write(data)
-        elapsed = time.monotonic() - t0
-        if elapsed > 0.1:  # pragma: no cover
-            logger.warning("terminal_input SLOW: %.3fs", elapsed)
-
-    async def handle_terminal_resize(self, msg: dict) -> None:
-        self._terminal_cols = msg.get("cols", 80)
-        self._terminal_rows = msg.get("rows", 24)
-        session = self.terminal_session
-        if session is None:
-            return
-        await session.resize(self._terminal_cols, self._terminal_rows)
-
-    async def handle_terminal_stop(self) -> None:
-        await self.stop_terminal()
-
-    def _tmux_session_name(self) -> str:
-        """Get the tmux session name (user_id).
-
-        Callers must check ``_user_home`` before calling this method.
-        """
-        return self.user["id"]
-
-    def _sync_terminal_windows(self, windows: list[dict]) -> None:
-        """Update in-memory terminal_windows from tmux list_windows result."""
-        ws_session = state.get_session(self.workspace_id)
-        if not ws_session:
-            return
-        user_id = self.user["id"]
-        old = ws_session.terminal_windows.get(user_id, [])
-        # Match old entries to new tmux entries by window_id (@N) —
-        # a tmux-assigned unique identifier that is never reused within
-        # a server's lifetime.  This is stable across renames and
-        # index reuse.
-        old_by_id = {w["id"]: w for w in old if "id" in w}
-        # Name-based fallback for matching after container restart where
-        # window_ids change but names are restored.
-        old_by_name = {w["name"]: w for w in old if "name" in w}
-        old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
-        new_entries = []
-        for w in windows:
-            prev = old_by_id.get(w["id"]) or old_by_name.get(w["name"])
-            new_entries.append(
-                {
-                    "id": w["id"],
-                    "name": w["name"],
-                    "index": w["index"],
-                    "shared": prev.get("shared", False) if prev else False,
-                }
-            )
-        ws_session.terminal_windows[user_id] = new_entries
-        new_shared = {w["id"] for w in new_entries if w.get("shared")}
-        # Broadcast if shared set changed (e.g. shared window was closed)
-        # or if any shared window was renamed.
-        old_shared_names = {
-            (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
-        }
-        new_shared_names = {
-            (w["id"], w["name"]) for w in new_entries if w.get("shared")
-        }
-        if old_shared != new_shared or old_shared_names != new_shared_names:
-            self._broadcast_shared_terminals(ws_session)
-        self._save_state_snapshot(ws_session)
-
-    def _notify_user_terminal_windows(self, windows: list[dict]) -> None:
-        """Send terminal_windows to all connections for this user."""
-        ws_session = state.get_session(self.workspace_id)
-        if not ws_session:
-            self.sock.send_json(
-                {"type": "terminal_windows", "windows": windows}
-            )
-            return
-        user_id = self.user["id"]
-        msg = {"type": "terminal_windows", "windows": windows}
-        for sock in list(ws_session.subscribers):
-            conn = state.connections.get(sock)
-            if conn and conn.user.get("id") == user_id:
-                sock.send_json(msg)
-
-    async def handle_terminal_new_window(self, msg: dict) -> None:
-        t0 = time.monotonic()
-        if not self.container_id or not self._user_home:
-            return
-
-        session_name = self._tmux_session_name()
-        name = msg.get("name")
-        try:
-            windows = await terminal.new_window(
-                self.container_id, session_name, name=name
-            )
-            logger.info(
-                "handle_terminal_new_window: %.3fs",
-                time.monotonic() - t0,
-            )
-            self._sync_terminal_windows(windows)
-            self._notify_user_terminal_windows(windows)
-        except Exception as e:
-            send_error(self.sock, f"Failed to create window: {e}")
-
-    async def handle_terminal_select_window(self, msg: dict) -> None:
-        t0 = time.monotonic()
-        if not self.container_id or not self._user_home:
-            return
-
-        # Use this connection's grouped session so select-window only
-        # affects this client, not other connections to the same workspace.
-        session = self.terminal_session
-        session_name = (
-            session._tmux_session_name
-            if session and session._tmux_session_name
-            else self._tmux_session_name()
-        )
-        # Prefer @N window_id (stable); fall back to index for compat.
-        target: int | str = msg.get("window_id") or msg.get("index", 0)
-        try:
-            await terminal.select_window(
-                self.container_id, session_name, target
-            )
-            logger.info(
-                "handle_terminal_select_window: target=%s %.3fs",
-                target,
-                time.monotonic() - t0,
-            )
-        except Exception as e:
-            send_error(self.sock, f"Failed to select window: {e}")
-
-    async def handle_terminal_close_window(self, msg: dict) -> None:
-        if not self.container_id or not self._user_home:
-            return
-
-        session_name = self._tmux_session_name()
-        index = msg.get("index", 0)
-        try:
-            windows = await terminal.close_window(
-                self.container_id, session_name, index
-            )
-            self._sync_terminal_windows(windows)
-            self._notify_user_terminal_windows(windows)
-        except Exception as e:
-            send_error(self.sock, f"Failed to close window: {e}")
-
-    async def handle_terminal_rename_window(self, msg: dict) -> None:
-        if not self.container_id or not self._user_home:
-            return
-
-        session_name = self._tmux_session_name()
-        index = msg.get("index", 0)
-        name = msg.get("name", "")
-        if not name:
-            send_error(self.sock, "Name required")
-            return
-        try:
-            await terminal.rename_window(
-                self.container_id, session_name, index, name
-            )
-            windows = await terminal.list_windows(
-                self.container_id, session_name
-            )
-            self._sync_terminal_windows(windows)
-            self._notify_user_terminal_windows(windows)
-        except Exception as e:
-            send_error(self.sock, f"Failed to rename window: {e}")
-
-    async def handle_terminal_list_windows(self) -> None:
-        if not self.container_id or not self._user_home:
-            return
-
-        # Use this connection's grouped session so the active flag
-        # reflects this client's view, not the base session's.
-        session = self.terminal_session
-        session_name = (
-            session._tmux_session_name
-            if session and session._tmux_session_name
-            else self._tmux_session_name()
-        )
-        try:
-            windows = await terminal.list_windows(
-                self.container_id, session_name
-            )
-            self.sock.send_json(
-                {"type": "terminal_windows", "windows": windows}
-            )
-        except Exception as e:
-            send_error(self.sock, f"Failed to list windows: {e}")
 
     async def _has_perm(self, perm: str) -> bool:
         """Check if the connected user has a workspace permission."""
@@ -2450,84 +2651,6 @@ class Connection:
                     "error": str(exc),
                 }
             )
-
-    async def _claim_and_stop_terminal(self) -> None:
-        session = self.terminal_session
-        self.terminal_session = None
-        if session is not None:
-            await session.stop()
-
-    async def _activate_session(
-        self, session: TerminalSession, cols: int, rows: int
-    ) -> bool:
-        """Wire up a started session for output forwarding.
-
-        Checks the session is still current, creates the output task,
-        resizes to force a tmux redraw, and records activity.
-        Returns False if the session was superseded.
-        """
-        if self.terminal_session is not session:
-            await session.stop()
-            return False
-        self.terminal_task = asyncio.create_task(
-            self.forward_terminal_output(session)
-        )
-        # Resize to force tmux to redraw at the client's terminal size.
-        # Without this, reattaching shows a blank screen because tmux
-        # skips the redraw when the PTY size matches the default.
-        await session.resize(cols, rows)
-        container.registry.record_activity(self.container_id)
-        return True
-
-    async def stop_terminal(self) -> None:
-        was_viewing = self._viewing_shared
-        self._viewing_shared = None
-        task = self.terminal_task
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            self.terminal_task = None
-        await self._claim_and_stop_terminal()
-        # Broadcast viewer change so other users see updated viewer list
-        if was_viewing and self.workspace_id:
-            ws_session = state.get_session(self.workspace_id)
-            if ws_session:
-                self._broadcast_shared_terminals(ws_session)
-        # Reset debounce so the next explicit start isn't blocked.
-        self._last_terminal_start = 0
-
-    async def forward_terminal_output(self, session: TerminalSession) -> None:
-        """Forward terminal output to the frontend via WebSocket."""
-        logger.info(
-            "forward_terminal_output: starting for user=%s container=%s",
-            self.user.get("email"),
-            self.container_id,
-        )
-        try:
-            async for data in session.output():
-                self.sock.send_json({"type": "terminal_output", "data": data})
-                if self.container_id:
-                    container.registry.record_activity(self.container_id)
-            # Stream ended — the tmux session exited (not necessarily the
-            # container). Don't send container_stopped; the idle timeout
-            # or shutdown button handles actual container death.
-            logger.info(
-                "forward_terminal_output: stream ended for user=%s",
-                self.user.get("email"),
-            )
-        except asyncio.CancelledError:
-            raise  # Normal cleanup, don't send event
-        except _WS_ERRORS as e:
-            logger.error("Terminal output forwarding error: %s", e)
-            try:
-                _send_event(self.sock, "container_stopped")
-            except _WS_ERRORS:
-                pass
-        finally:
-            await self._claim_and_stop_terminal()
 
     async def cleanup(self) -> None:
         # Remove idle callback
