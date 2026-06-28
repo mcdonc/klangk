@@ -46,6 +46,7 @@ in
       gnutar
       nginx
       podman
+      ruff
       sqlite.bin
       rsync
       twine
