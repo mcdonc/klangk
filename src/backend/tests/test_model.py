@@ -10,8 +10,8 @@ class TestMigration:
     async def test_migrate_old_schema(self, temp_data_dir):
         """Migrates a pre-OIDC database: password_hash NOT NULL, no
         provider/external_id columns."""
-        db = await aiosqlite.connect(str(model.DB_PATH))
-        model.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(model._core.DB_PATH))
+        model._core.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         try:
             await db.execute("""
                 CREATE TABLE users (
@@ -444,7 +444,7 @@ class TestPortAllocations:
         assert all_ports == set()
 
     async def test_find_and_allocate_ports(self, workspace, monkeypatch):
-        monkeypatch.setattr(model, "_port_in_use", lambda p: False)
+        monkeypatch.setattr(model.ports, "_port_in_use", lambda p: False)
         ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
         assert ports == [9000, 9001, 9002]
         stored = await model.get_workspace_ports(workspace["id"])
@@ -453,7 +453,7 @@ class TestPortAllocations:
     async def test_find_and_allocate_skips_used(
         self, workspace, user, monkeypatch
     ):
-        monkeypatch.setattr(model, "_port_in_use", lambda p: False)
+        monkeypatch.setattr(model.ports, "_port_in_use", lambda p: False)
         await model.add_port_allocations(workspace["id"], [9000, 9002])
         ws2 = await model.create_workspace(user["id"], "ws2")
         ports = await model.find_and_allocate_ports(ws2["id"], 3, 9000)
@@ -462,7 +462,9 @@ class TestPortAllocations:
     async def test_find_and_allocate_skips_os_bound_ports(
         self, workspace, monkeypatch
     ):
-        monkeypatch.setattr(model, "_port_in_use", lambda p: p in {9001, 9003})
+        monkeypatch.setattr(
+            model.ports, "_port_in_use", lambda p: p in {9001, 9003}
+        )
         ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
         assert ports == [9000, 9002, 9004]
 
@@ -472,7 +474,7 @@ class TestPortAllocations:
         """Exhausting the port range fails fast instead of looping forever."""
         # Every port at/after start is treated as in-use; asking for any
         # ports from a start of MAX_PORT guarantees immediate exhaustion.
-        monkeypatch.setattr(model, "_port_in_use", lambda p: True)
+        monkeypatch.setattr(model.ports, "_port_in_use", lambda p: True)
         with pytest.raises(ValueError):
             await model.find_and_allocate_ports(
                 workspace["id"], 1, model.MAX_PORT
@@ -484,7 +486,9 @@ class TestPortAllocations:
         """The scan never exceeds MAX_PORT and raises if it can't fulfil."""
         # Only the last two ports are free; requesting two succeeds, three raises.
         free = {model.MAX_PORT - 1, model.MAX_PORT}
-        monkeypatch.setattr(model, "_port_in_use", lambda p: p not in free)
+        monkeypatch.setattr(
+            model.ports, "_port_in_use", lambda p: p not in free
+        )
         ports = await model.find_and_allocate_ports(
             workspace["id"], 2, model.MAX_PORT - 1
         )
