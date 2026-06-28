@@ -6,7 +6,6 @@ import '../theme/colors.dart';
 /// Chat text input with send/abort buttons, @mention autocomplete,
 /// emacs keybindings, and sent-message history recall.
 class ChatInputBar extends StatefulWidget {
-  final VoidCallback onSend;
   final ValueChanged<String> onSendText;
   final bool agentThinking;
   final VoidCallback? onAbort;
@@ -14,7 +13,6 @@ class ChatInputBar extends StatefulWidget {
 
   const ChatInputBar({
     super.key,
-    required this.onSend,
     required this.onSendText,
     this.agentThinking = false,
     this.onAbort,

@@ -24,7 +24,6 @@ void main() {
             height: 100,
             child: ChatInputBar(
               key: barKey,
-              onSend: () {},
               onSendText: (text) => sentMessages.add(text),
               agentThinking: agentThinking,
               onAbort: onAbort,

@@ -245,7 +245,6 @@ class WorkspaceChatState extends State<WorkspaceChat> {
           if (_agentThinking) AgentThinkingIndicator(agentName: _agentName),
           ChatInputBar(
             key: _inputBarKey,
-            onSend: () {},
             onSendText: _onSendText,
             agentThinking: _agentThinking,
             onAbort: () => widget.wsClient.sendChatAgentAbort(),
