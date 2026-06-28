@@ -555,66 +555,55 @@ class ContainerRegistry:
                 user_id=user_id,
             )
 
-    async def _start_container_inner(
+    async def _handle_existing_container(
         self,
+        existing_container_id: str,
         workspace_id: str,
-        host_path: str,
-        home_path: str,
-        existing_container_id: str | None = None,
-        num_ports: int = DEFAULT_PORTS_PER_WORKSPACE,
-        hosting_hostname: str = "localhost",
-        hosting_proto: str = "http",
-        hosting_base_path: str = "",
-        image: str | None = None,
-        config_path: str | None = None,
-        extra_mounts: list[str] | None = None,
-        extra_env: dict[str, str] | None = None,
-        user_id: str | None = None,
-    ) -> tuple[str, str]:
-        """Inner implementation of start_container (called under lock)."""
-        t_start = time.monotonic()
-        resolved_image = image or IMAGE_NAME
-        if resolved_image not in ALLOWED_IMAGES:
-            raise ValueError(
-                f"Image {resolved_image!r} is not in the allowed list: "
-                f"{sorted(ALLOWED_IMAGES)}"
-            )
+        t_start: float,
+    ) -> tuple[str, str] | None:
+        """Check an existing container and reuse/remove it.
 
-        if existing_container_id:
-            info = await podman.inspect_container(existing_container_id)
-            t_inspect = time.monotonic()
+        Returns ``(container_id, "connected")`` if the container is
+        still running, or ``None`` if it was removed (or not found)
+        and a new one should be created.
+        """
+        info = await podman.inspect_container(existing_container_id)
+        t_inspect = time.monotonic()
+        logger.info(
+            "workspace-open: check if old container still exists "
+            "(podman inspect): %.3fs",
+            t_inspect - t_start,
+        )
+        if info is None:
             logger.info(
-                "workspace-open: check if old container still exists (podman inspect): %.3fs",
-                t_inspect - t_start,
+                "Could not find container %s, creating new one",
+                existing_container_id,
             )
-            if info is None:
-                logger.info(
-                    "Could not find container %s, creating new one",
-                    existing_container_id,
-                )
-            elif info["State"]["Running"]:
-                self.track_activity(existing_container_id, workspace_id)
-                logger.info(
-                    "workspace-open: DONE — container was already running, no work needed: %.3fs",
-                    time.monotonic() - t_start,
-                )
-                return existing_container_id, "connected"
-            else:
-                await podman.remove_container(existing_container_id)
-                logger.info(
-                    "workspace-open: delete old stopped container (podman rm): %.3fs",
-                    time.monotonic() - t_inspect,
-                )
-                logger.info(
-                    "Removed stopped container %s for workspace %s, "
-                    "will recreate",
-                    existing_container_id,
-                    workspace_id,
-                )
+            return None
+        if info["State"]["Running"]:
+            self.track_activity(existing_container_id, workspace_id)
+            logger.info(
+                "workspace-open: DONE — container was already running, "
+                "no work needed: %.3fs",
+                time.monotonic() - t_start,
+            )
+            return existing_container_id, "connected"
+        await podman.remove_container(existing_container_id)
+        logger.info(
+            "workspace-open: delete old stopped container (podman rm): %.3fs",
+            time.monotonic() - t_inspect,
+        )
+        logger.info(
+            "Removed stopped container %s for workspace %s, will recreate",
+            existing_container_id,
+            workspace_id,
+        )
+        return None
 
-        # Lock the entire read+allocate sequence to prevent
-        # concurrent start_container calls from double-allocating.
-        t_ports_start = time.monotonic()
+    async def _reconcile_ports(
+        self, workspace_id: str, num_ports: int
+    ) -> list[int]:
+        """Allocate or trim host ports under the port lock."""
         async with self.port_lock:
             host_ports = await model.get_workspace_ports(workspace_id)
             if len(host_ports) < num_ports:
@@ -628,14 +617,19 @@ class ContainerRegistry:
                 excess = host_ports[num_ports:]
                 await model.remove_port_allocations(workspace_id, excess)
                 host_ports = host_ports[:num_ports]
+        return host_ports
 
-        logger.info(
-            "workspace-open: allocate host ports from DB: %.3fs",
-            time.monotonic() - t_ports_start,
-        )
-
-        t_env_start = time.monotonic()
-        env_vars = []
+    def _build_env(
+        self,
+        workspace_id: str,
+        host_ports: list[int],
+        hosting_hostname: str,
+        hosting_proto: str,
+        hosting_base_path: str,
+        extra_env: dict[str, str] | None,
+    ) -> list[str]:
+        """Build the container environment variable list."""
+        env_vars: list[str] = []
         nginx_port = util.resolve_env_value("KLANGK_NGINX_PORT", "8995")
         proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
         llm_model = util.resolve_env_value("KLANGK_LLM_MODEL", "")
@@ -663,7 +657,6 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
         if TERMINAL_BANNER:
             env_vars.append(f"KLANGK_TERMINAL_BANNER={TERMINAL_BANNER}")
-        allow_sudo = util.resolve_env_bool("KLANGK_ALLOW_SUDO")
 
         for k, v in plugins.container_env().items():
             env_vars.append(f"{k}={v}")
@@ -672,64 +665,215 @@ class ContainerRegistry:
             for k, v in extra_env.items():
                 env_vars.append(f"{k}={v}")
 
-        # Ensure named volumes in extra_mounts exist with klangk labels.
-        # Refuse to mount a volume owned by another instance or user.
-        if extra_mounts:
-            for mount_spec in extra_mounts:
-                source = mount_spec.split(":")[0]
-                if _is_named_volume(source):
-                    info = await podman.inspect_volume(source)
-                    if info is None:
-                        labels = {
-                            "klangk.managed": "true",
-                            "klangk.instance": INSTANCE_ID,
-                        }
-                        if user_id:
-                            labels["klangk.user-id"] = user_id
-                        await podman.create_volume(source, labels)
-                    else:
-                        vol_labels = info.get("Labels") or {}
-                        if vol_labels.get("klangk.instance") != INSTANCE_ID:
-                            raise ValueError(
-                                f"Volume {source!r} is not managed by this "
-                                "klangk instance"
-                            )
-                        vol_owner = vol_labels.get("klangk.user-id")
-                        if vol_owner and user_id and vol_owner != user_id:
-                            raise ValueError(
-                                f"Volume {source!r} belongs to another user"
-                            )
+        return env_vars
 
-        # Check that bind-mount sources exist before calling podman.
-        # Missing sources cause a cryptic podman 404 (statfs) error.
-        if extra_mounts:
-            for mount_spec in extra_mounts:
-                source = mount_spec.split(":")[0]
-                if not _is_named_volume(source) and not os.path.exists(source):
-                    raise ValueError(
-                        f"Bind mount source does not exist: {source}"
-                    )
+    @staticmethod
+    async def _ensure_volumes(
+        extra_mounts: list[str] | None,
+        user_id: str | None,
+    ) -> None:
+        """Create named volumes and validate bind-mount sources."""
+        if not extra_mounts:
+            return
+        for mount_spec in extra_mounts:
+            source = mount_spec.split(":")[0]
+            if _is_named_volume(source):
+                info = await podman.inspect_volume(source)
+                if info is None:
+                    labels = {
+                        "klangk.managed": "true",
+                        "klangk.instance": INSTANCE_ID,
+                    }
+                    if user_id:
+                        labels["klangk.user-id"] = user_id
+                    await podman.create_volume(source, labels)
+                else:
+                    vol_labels = info.get("Labels") or {}
+                    if vol_labels.get("klangk.instance") != INSTANCE_ID:
+                        raise ValueError(
+                            f"Volume {source!r} is not managed "
+                            "by this klangk instance"
+                        )
+                    vol_owner = vol_labels.get("klangk.user-id")
+                    if vol_owner and user_id and vol_owner != user_id:
+                        raise ValueError(
+                            f"Volume {source!r} belongs to another user"
+                        )
+            elif not os.path.exists(source):
+                raise ValueError(f"Bind mount source does not exist: {source}")
 
-        binds = [
-            f"{home_path}:/home",
-        ]
+    @staticmethod
+    def _build_mounts(
+        home_path: str,
+        config_path: str | None,
+        extra_mounts: list[str] | None,
+    ) -> list[str]:
+        """Build the bind-mount list for the container."""
+        binds = [f"{home_path}:/home"]
         if config_path:
             binds.append(f"{config_path}:/opt/klangk/config:ro")
         binds += extra_mounts or []
+        return binds
+
+    async def _create_and_start(
+        self,
+        container_name: str,
+        resolved_image: str,
+        workspace_id: str,
+        publish: list[tuple[int, int]],
+        allow_sudo: bool,
+        create_kwargs: dict,
+    ) -> str:
+        """Create the container, persist it, start it, and configure it.
+
+        Handles port-conflict retries by removing stale containers
+        that hold conflicting ports.
+        """
+        t_create = time.monotonic()
+        cid = await podman.create_container(
+            container_name, resolved_image, **create_kwargs
+        )
+        logger.info(
+            "workspace-open: create container image (podman create): %.3fs",
+            time.monotonic() - t_create,
+        )
+        await model.update_workspace_container(workspace_id, cid)
+        self.track_activity(cid, workspace_id)
+        t_podman_start = time.monotonic()
+        try:
+            await podman.start_container(cid)
+        except podman.PodmanError as exc:
+            if "port is already allocated" not in exc.message:
+                raise
+            await self._resolve_port_conflict(cid, container_name, publish)
+            await podman.start_container(cid)
+        logger.info(
+            "workspace-open: boot container (podman start): %.3fs",
+            time.monotonic() - t_podman_start,
+        )
+
+        # Configure sudo inside the container.
+        if allow_sudo:
+            sudoers_rule = "klangk ALL=(ALL) NOPASSWD:ALL"
+        else:
+            sudoers_rule = "klangk ALL=(ALL) !ALL"
+        await podman.exec_container(
+            cid,
+            ["klangk-configure-sudo", sudoers_rule],
+            user="root",
+        )
+
+        # Write the workspace token so container processes can
+        # authenticate without an env-var restart.
+        workspace_token = auth.create_workspace_token(workspace_id)
+        await terminal.set_workspace_token(cid, workspace_token)
+
+        return cid
+
+    @staticmethod
+    async def _resolve_port_conflict(
+        cid: str,
+        container_name: str,
+        publish: list[tuple[int, int]],
+    ) -> None:
+        """Remove stale containers holding conflicting ports."""
+        logger.warning(
+            "Port conflict starting %s, cleaning stale containers",
+            container_name,
+        )
+        wanted_ports = {hp for hp, _cp in publish}
+        stale = await podman.list_containers(f"klangk.instance={INSTANCE_ID}")
+        for c in stale:
+            stale_id = c.get("Id") or c.get("ID", "")
+            if stale_id == cid:
+                continue
+            info = await podman.inspect_container(stale_id)
+            if info is None:
+                continue
+            bindings = info.get("HostConfig", {}).get("PortBindings") or {}
+            bound = set()
+            for ports_list in bindings.values():
+                for entry in ports_list or []:
+                    try:
+                        bound.add(int(entry["HostPort"]))
+                    except (KeyError, ValueError, TypeError):
+                        pass
+            if bound & wanted_ports:
+                try:
+                    await podman.remove_container(stale_id)
+                    logger.info(
+                        "Removed stale container %s (ports %s)",
+                        stale_id[:12],
+                        bound & wanted_ports,
+                    )
+                except podman.PodmanError as del_exc:
+                    logger.warning(
+                        "Could not remove stale container %s: %s",
+                        stale_id[:12],
+                        del_exc,
+                    )
+
+    async def _start_container_inner(
+        self,
+        workspace_id: str,
+        host_path: str,
+        home_path: str,
+        existing_container_id: str | None = None,
+        num_ports: int = DEFAULT_PORTS_PER_WORKSPACE,
+        hosting_hostname: str = "localhost",
+        hosting_proto: str = "http",
+        hosting_base_path: str = "",
+        image: str | None = None,
+        config_path: str | None = None,
+        extra_mounts: list[str] | None = None,
+        extra_env: dict[str, str] | None = None,
+        user_id: str | None = None,
+    ) -> tuple[str, str]:
+        """Inner implementation of start_container (called under lock)."""
+        t_start = time.monotonic()
+        resolved_image = image or IMAGE_NAME
+        if resolved_image not in ALLOWED_IMAGES:
+            raise ValueError(
+                f"Image {resolved_image!r} is not in the allowed "
+                f"list: {sorted(ALLOWED_IMAGES)}"
+            )
+
+        # Reuse a running container or remove a stopped one.
+        if existing_container_id:
+            result = await self._handle_existing_container(
+                existing_container_id, workspace_id, t_start
+            )
+            if result is not None:
+                return result
+
+        # Allocate host ports.
+        t_ports = time.monotonic()
+        host_ports = await self._reconcile_ports(workspace_id, num_ports)
+        logger.info(
+            "workspace-open: allocate host ports from DB: %.3fs",
+            time.monotonic() - t_ports,
+        )
+
+        # Build environment and mounts.
+        t_env = time.monotonic()
+        env_vars = self._build_env(
+            workspace_id,
+            host_ports,
+            hosting_hostname,
+            hosting_proto,
+            hosting_base_path,
+            extra_env,
+        )
+        await self._ensure_volumes(extra_mounts, user_id)
+        binds = self._build_mounts(home_path, config_path, extra_mounts)
 
         publish = [
             (host_port, CONTAINER_PORT_START + i)
             for i, host_port in enumerate(host_ports)
         ]
-
         container_name = f"klangk-{INSTANCE_ID}-{workspace_id[:12]}"
+        allow_sudo = util.resolve_env_bool("KLANGK_ALLOW_SUDO")
 
-        # Shield the create+persist+start sequence from cancellation.
-        # The connecting client's websocket can drop mid-startup (idle
-        # ping-timeout, navigation), which cancels this coroutine.
-        # Without the shield, a cancel landing between create and the
-        # DB write orphans a running container with no container_id on
-        # record.
         create_kwargs = dict(
             labels={
                 "klangk.managed": "true",
@@ -755,100 +899,23 @@ class ContainerRegistry:
         )
 
         logger.info(
-            "workspace-open: build env vars, volumes, and container config: %.3fs",
-            time.monotonic() - t_env_start,
+            "workspace-open: build env vars, volumes, and "
+            "container config: %.3fs",
+            time.monotonic() - t_env,
         )
 
-        async def _create_and_start() -> str:
-            t_create = time.monotonic()
-            cid = await podman.create_container(
-                container_name, resolved_image, **create_kwargs
+        # Shield create+start from cancellation so a dropped
+        # WebSocket doesn't orphan a running container.
+        container_id = await asyncio.shield(
+            self._create_and_start(
+                container_name,
+                resolved_image,
+                workspace_id,
+                publish,
+                allow_sudo,
+                create_kwargs,
             )
-            logger.info(
-                "workspace-open: create container image (podman create): %.3fs",
-                time.monotonic() - t_create,
-            )
-            await model.update_workspace_container(workspace_id, cid)
-            self.track_activity(cid, workspace_id)
-            t_podman_start = time.monotonic()
-            try:
-                await podman.start_container(cid)
-            except podman.PodmanError as exc:
-                if "port is already allocated" not in exc.message:
-                    raise
-                # A stale container is holding one of our ports.
-                # Find managed containers binding conflicting ports
-                # and remove them, then retry.
-                logger.warning(
-                    "Port conflict starting %s, cleaning stale containers",
-                    container_name,
-                )
-                wanted_ports = {hp for hp, _cp in publish}
-                stale = await podman.list_containers(
-                    f"klangk.instance={INSTANCE_ID}"
-                )
-                for c in stale:
-                    stale_id = c.get("Id") or c.get("ID", "")
-                    if stale_id == cid:
-                        continue
-                    info = await podman.inspect_container(stale_id)
-                    if info is None:
-                        continue
-                    bindings = (
-                        info.get("HostConfig", {}).get("PortBindings") or {}
-                    )
-                    bound = set()
-                    for ports_list in bindings.values():
-                        for entry in ports_list or []:
-                            try:
-                                bound.add(int(entry["HostPort"]))
-                            except (KeyError, ValueError, TypeError):
-                                pass
-                    if bound & wanted_ports:
-                        try:
-                            await podman.remove_container(stale_id)
-                            logger.info(
-                                "Removed stale container %s (ports %s)",
-                                stale_id[:12],
-                                bound & wanted_ports,
-                            )
-                        except podman.PodmanError as del_exc:
-                            logger.warning(
-                                "Could not remove stale container %s: %s",
-                                stale_id[:12],
-                                del_exc,
-                            )
-                await podman.start_container(cid)
-            logger.info(
-                "workspace-open: boot container (podman start): %.3fs",
-                time.monotonic() - t_podman_start,
-            )
-
-            # Configure sudo inside the container.  The image ships without
-            # a sudoers rule; we exec as root to write it based on the
-            # KLANGK_ALLOW_SUDO setting.
-            if allow_sudo:
-                sudoers_rule = "klangk ALL=(ALL) NOPASSWD:ALL"
-            else:
-                # Explicitly deny all sudo, even if someone sets a password
-                # on the klangk user.
-                sudoers_rule = "klangk ALL=(ALL) !ALL"
-            await podman.exec_container(
-                cid,
-                ["klangk-configure-sudo", sudoers_rule],
-                user="root",
-            )
-
-            # Write the workspace token to /run/klangk/workspace-token
-            # inside the container. Consumers read from this file
-            # rather than an environment variable so the token can be
-            # renewed without restarting the container.
-            workspace_token = auth.create_workspace_token(workspace_id)
-            await terminal.set_workspace_token(cid, workspace_token)
-
-            return cid
-
-        container_id = await asyncio.shield(_create_and_start())
+        )
 
         logger.info(
             "workspace-open: DONE — new container created and started: %.3fs",
