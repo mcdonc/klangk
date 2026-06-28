@@ -2018,17 +2018,75 @@ async def get_pending_invitation_by_email(email: str) -> dict | None:
     }
 
 
-async def list_invitations() -> list[dict]:
-    """List all invitations, most recent first."""
+# Whitelisted sort columns for the admin invitations list. Values are the
+# SQL expressions to ORDER BY; the ``invited_by`` key sorts by the inviter's
+# email (the joined ``users.email``), which is the value the UI displays.
+_ADMIN_INVITATION_SORT_COLUMNS = {
+    "email": "i.email",
+    "invited_by": "u.email",
+    "created": "i.created_at",
+}
+
+
+async def list_invitations(
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
+) -> dict:
+    """List invitations with server-side pagination, sorting, and filtering.
+
+    Returns a paged envelope ``{"invitations", "page", "page_size",
+    "total", "pending_count"}`` suitable for forwards/backwards paging.
+    ``pending_count`` is the total number of pending invitations across the
+    whole table (ignoring the ``q`` filter and pagination) so the admin UI
+    can keep its "pending invitations" badge accurate on every page.
+
+    Sort keys: ``email`` (invitee email), ``invited_by`` (inviter's email),
+    ``created`` (creation time). An unknown ``sort`` is whitelisted against
+    a static map and falls back to ``i.created_at`` (no string
+    interpolation of user input). The ``q`` filter is a substring match on
+    the invitee email. A trailing ``i.id`` tiebreaker keeps offset
+    pagination deterministic when rows share the sort key.
+    """
+    sort_col = _ADMIN_INVITATION_SORT_COLUMNS.get(sort, "i.created_at")
+    direction = "DESC" if order.lower() == "desc" else "ASC"
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    offset = (page - 1) * page_size
+
     async with transaction() as db:
+        where_clause = ""
+        params: list = []
+        if q:
+            where_clause = " WHERE i.email LIKE ?"
+            params.append(f"%{q}%")
+
+        count_cursor = await db.execute(
+            f"SELECT COUNT(*) AS c FROM invitations i{where_clause}",
+            params,
+        )
+        total = (await count_cursor.fetchone())["c"]
+
+        # Global pending count for the UI badge — independent of the q
+        # filter and the current page.
+        pending_cursor = await db.execute(
+            "SELECT COUNT(*) AS c FROM invitations WHERE status = 'pending'"
+        )
+        pending_count = (await pending_cursor.fetchone())["c"]
+
         cursor = await db.execute(
             "SELECT i.id, i.email, i.invited_by, i.status,"
             " i.created_at, i.accepted_at, u.email AS invited_by_email"
             " FROM invitations i"
             " JOIN users u ON i.invited_by = u.id"
-            " ORDER BY i.created_at DESC"
+            f"{where_clause}"
+            f" ORDER BY {sort_col} {direction}, i.id"
+            " LIMIT ? OFFSET ?",
+            (*params, page_size, offset),
         )
-        return [
+        invitations = [
             {
                 "id": row["id"],
                 "email": row["email"],
@@ -2040,6 +2098,13 @@ async def list_invitations() -> list[dict]:
             }
             for row in await cursor.fetchall()
         ]
+        return {
+            "invitations": invitations,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pending_count": pending_count,
+        }
 
 
 async def mark_invitation_accepted(invitation_id: str) -> bool:

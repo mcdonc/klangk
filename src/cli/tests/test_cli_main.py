@@ -2545,14 +2545,20 @@ class TestInviteCLI:
         client = MagicMock()
         client.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: [
-                {
-                    "email": "a@b.com",
-                    "status": "pending",
-                    "invited_by_email": "admin@x.com",
-                    "created_at": "2026-01-01 00:00:00",
-                }
-            ],
+            json=lambda: {
+                "invitations": [
+                    {
+                        "email": "a@b.com",
+                        "status": "pending",
+                        "invited_by_email": "admin@x.com",
+                        "created_at": "2026-01-01 00:00:00",
+                    }
+                ],
+                "page": 1,
+                "page_size": 200,
+                "total": 1,
+                "pending_count": 1,
+            },
         )
         monkeypatch.setattr(main, "_client", lambda: client)
 
@@ -2569,7 +2575,13 @@ class TestInviteCLI:
         client = MagicMock()
         client.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: [],
+            json=lambda: {
+                "invitations": [],
+                "page": 1,
+                "page_size": 200,
+                "total": 0,
+                "pending_count": 0,
+            },
         )
         monkeypatch.setattr(main, "_client", lambda: client)
 
