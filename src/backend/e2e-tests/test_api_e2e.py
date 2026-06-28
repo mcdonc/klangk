@@ -259,8 +259,10 @@ class TestGroupManagement:
         group_id = resp.json()["id"]
 
         # Get user A's ID
-        resp = api.get("/api/v1/admin/users", headers=admin_headers)
-        users = resp.json()
+        resp = api.get(
+            "/api/v1/admin/users?page_size=200", headers=admin_headers
+        )
+        users = resp.json()["users"]
         alice = next(u for u in users if u["email"] == user_a["email"])
 
         # Add user A to group
@@ -288,8 +290,12 @@ class TestGroupManagement:
         )
         group_id = resp.json()["id"]
 
-        resp = api.get("/api/v1/admin/users", headers=admin_headers)
-        bob = next(u for u in resp.json() if u["email"] == user_b["email"])
+        resp = api.get(
+            "/api/v1/admin/users?page_size=200", headers=admin_headers
+        )
+        bob = next(
+            u for u in resp.json()["users"] if u["email"] == user_b["email"]
+        )
 
         api.post(
             f"/api/v1/admin/groups/{group_id}/members",
@@ -422,8 +428,12 @@ class TestACLIntrospection:
         ws_id = resp.json()["id"]
 
         # Get user A's ID
-        resp = api.get("/api/v1/admin/users", headers=admin_headers)
-        alice = next(u for u in resp.json() if u["email"] == user_a["email"])
+        resp = api.get(
+            "/api/v1/admin/users?page_size=200", headers=admin_headers
+        )
+        alice = next(
+            u for u in resp.json()["users"] if u["email"] == user_a["email"]
+        )
 
         resp = api.get(
             f"/api/v1/admin/acl/by-principal/user/{alice['id']}",
@@ -692,8 +702,12 @@ class TestGrantAdminViaGroup:
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
         admin_group = next(g for g in resp.json() if g["name"] == "admin")
 
-        resp = api.get("/api/v1/admin/users", headers=admin_headers)
-        alice = next(u for u in resp.json() if u["email"] == user_a["email"])
+        resp = api.get(
+            "/api/v1/admin/users?page_size=200", headers=admin_headers
+        )
+        alice = next(
+            u for u in resp.json()["users"] if u["email"] == user_a["email"]
+        )
 
         # Add user A to admin group
         resp = api.post(
@@ -705,9 +719,12 @@ class TestGrantAdminViaGroup:
 
         # Now user A needs a fresh token (re-login) — group membership
         # is checked on every request, not cached in JWT
-        resp = api.get("/api/v1/admin/users", headers=user_a["headers"])
+        resp = api.get(
+            "/api/v1/admin/users?page_size=200",
+            headers=user_a["headers"],
+        )
         assert resp.status_code == 200
-        assert len(resp.json()) > 0
+        assert len(resp.json()["users"]) > 0
 
         # Clean up — remove user A from admin group
         resp = api.delete(
@@ -740,9 +757,13 @@ class TestACLCascades:
         )
 
         # Get user's ID
-        resp = api.get("/api/v1/admin/users", headers=admin_headers)
+        resp = api.get(
+            "/api/v1/admin/users?page_size=200", headers=admin_headers
+        )
         target = next(
-            u for u in resp.json() if u["email"].startswith("cascade-")
+            u
+            for u in resp.json()["users"]
+            if u["email"].startswith("cascade-")
         )
 
         # Verify ACE exists

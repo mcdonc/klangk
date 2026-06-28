@@ -1020,36 +1020,71 @@ async def get_user_by_email(email: str) -> dict | None:
     }
 
 
-async def list_users() -> list[dict]:
-    """List all users with their groups."""
+_ADMIN_USER_SORT_COLUMNS = {
+    "email": "email",
+    "handle": "handle",
+    "created": "created_at",
+}
+
+
+async def list_users(
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
+) -> dict:
+    """List users with server-side pagination, sorting, and filtering.
+
+    Returns a paged envelope ``{"users", "page", "page_size", "total"}``
+    suitable for forwards/backwards paging. Per-user groups are no longer
+    included — the list view doesn't need them and fetching them was an
+    N+1 query (one per user). Group membership is available via the
+    ``GET /admin/groups/{id}/members`` endpoint.
+    """
+    sort_col = _ADMIN_USER_SORT_COLUMNS.get(sort, "created_at")
+    direction = "DESC" if order.lower() == "desc" else "ASC"
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    offset = (page - 1) * page_size
+
     async with transaction() as db:
-        cursor = await db.execute(
-            "SELECT id, email, verified, provider, created_at"
-            " FROM users ORDER BY created_at"
+        where_clause = ""
+        params: list = []
+        if q:
+            where_clause = " WHERE email LIKE ?"
+            params.append(f"%{q}%")
+
+        count_cursor = await db.execute(
+            f"SELECT COUNT(*) AS c FROM users{where_clause}",
+            params,
         )
-        users = []
-        for row in await cursor.fetchall():
-            group_cursor = await db.execute(
-                "SELECT g.id, g.name FROM groups g"
-                " JOIN user_groups ug ON g.id = ug.group_id"
-                " WHERE ug.user_id = ?",
-                (row["id"],),
-            )
-            groups = [
-                {"id": r["id"], "name": r["name"]}
-                for r in await group_cursor.fetchall()
-            ]
-            users.append(
-                {
-                    "id": row["id"],
-                    "email": row["email"],
-                    "verified": bool(row["verified"]),
-                    "provider": row["provider"],
-                    "created_at": row["created_at"],
-                    "groups": groups,
-                }
-            )
-        return users
+        total = (await count_cursor.fetchone())["c"]
+
+        cursor = await db.execute(
+            "SELECT id, email, handle, verified, provider, created_at"
+            f" FROM users{where_clause}"
+            f" ORDER BY {sort_col} {direction}, id"
+            " LIMIT ? OFFSET ?",
+            (*params, page_size, offset),
+        )
+        users = [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "handle": row["handle"],
+                "verified": bool(row["verified"]),
+                "provider": row["provider"],
+                "created_at": row["created_at"],
+            }
+            for row in await cursor.fetchall()
+        ]
+        return {
+            "users": users,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        }
 
 
 async def delete_user(user_id: str) -> bool:

@@ -3789,14 +3789,120 @@ class TestAdminEndpoints:
         headers = await self._admin_headers(client)
         resp = await client.get("/api/v1/admin/users", headers=headers)
         assert resp.status_code == 200
-        users = resp.json()
+        body = resp.json()
+        users = body["users"]
         assert len(users) >= 2
         emails = [u["email"] for u in users]
         assert "testadmin@example.com" in emails
         assert "testuser@example.com" in emails
-        # Admin user should have admin group
-        admin = next(u for u in users if u["email"] == "testadmin@example.com")
-        assert any(g["name"] == "admin" for g in admin["groups"])
+        # Groups are no longer shipped in the list response.
+        assert "groups" not in users[0]
+        # Paged envelope metadata.
+        assert body["page"] == 1
+        assert body["page_size"] == 10
+        assert body["total"] >= 2
+
+    async def test_list_users_default_page_size_is_10(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        # Create 12 users so the default page is full but not exhaustive.
+        for i in range(12):
+            await model.create_user(f"u{i}@example.com", None, verified=True)
+        resp = await client.get("/api/v1/admin/users", headers=headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["page"] == 1
+        assert body["page_size"] == 10
+        assert body["total"] >= 13  # 12 created + admin fixture
+        assert len(body["users"]) == 10
+
+    async def test_list_users_pagination_across_pages(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        for i in range(5):
+            await model.create_user(f"pg{i}@example.com", None, verified=True)
+        page1 = await client.get(
+            "/api/v1/admin/users?page=1&page_size=3", headers=headers
+        )
+        page2 = await client.get(
+            "/api/v1/admin/users?page=2&page_size=3", headers=headers
+        )
+        assert page1.status_code == 200
+        assert page2.status_code == 200
+        b1 = page1.json()
+        b2 = page2.json()
+        assert b1["page"] == 1
+        assert b2["page"] == 2
+        assert b1["page_size"] == 3
+        assert b1["total"] == b2["total"]
+        # Pages don't overlap.
+        ids1 = {u["id"] for u in b1["users"]}
+        ids2 = {u["id"] for u in b2["users"]}
+        assert ids1.isdisjoint(ids2)
+        assert len(b1["users"]) == 3
+        assert len(b2["users"]) == 3
+
+    async def test_list_users_sort_by_email(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        for e in [
+            "charlie@example.com",
+            "alpha@example.com",
+            "bravo@example.com",
+        ]:
+            await model.create_user(e, None, verified=True)
+        resp = await client.get(
+            "/api/v1/admin/users?sort=email&order=asc&page_size=50",
+            headers=headers,
+        )
+        emails = [u["email"] for u in resp.json()["users"]]
+        assert emails == sorted(emails, key=str.lower)
+        assert emails[0] == "alpha@example.com"
+
+    async def test_list_users_sort_desc_reverses(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        for e in [
+            "charlie@example.com",
+            "alpha@example.com",
+            "bravo@example.com",
+        ]:
+            await model.create_user(e, None, verified=True)
+        asc = await client.get(
+            "/api/v1/admin/users?sort=email&order=asc&page_size=50",
+            headers=headers,
+        )
+        desc = await client.get(
+            "/api/v1/admin/users?sort=email&order=desc&page_size=50",
+            headers=headers,
+        )
+        asc_emails = [u["email"] for u in asc.json()["users"]]
+        desc_emails = [u["email"] for u in desc.json()["users"]]
+        assert asc_emails == list(reversed(desc_emails))
+
+    async def test_list_users_filter_by_email(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        await model.create_user("needle@example.com", None, verified=True)
+        await model.create_user("haystack@example.com", None, verified=True)
+        resp = await client.get(
+            "/api/v1/admin/users?q=needle&page_size=50", headers=headers
+        )
+        body = resp.json()
+        emails = [u["email"] for u in body["users"]]
+        assert emails == ["needle@example.com"]
+        assert body["total"] == 1
+
+    async def test_list_users_invalid_sort_falls_back_to_created(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        # An unknown sort column must not 500 (falls back to created_at).
+        resp = await client.get(
+            "/api/v1/admin/users?sort=evil%3B%20DROP%20TABLE&order=asc",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["users"] is not None
 
     async def test_list_users_requires_admin(self, client, user):
         login_resp = await client.post(
@@ -3912,8 +4018,10 @@ class TestAdminEndpoints:
             )
         assert resp.status_code == 200
         # Verify user is gone
-        resp = await client.get("/api/v1/admin/users", headers=headers)
-        emails = [u["email"] for u in resp.json()]
+        resp = await client.get(
+            "/api/v1/admin/users?page_size=200", headers=headers
+        )
+        emails = [u["email"] for u in resp.json()["users"]]
         assert "testuser@example.com" not in emails
 
     async def test_delete_self_forbidden(self, client, admin_user):

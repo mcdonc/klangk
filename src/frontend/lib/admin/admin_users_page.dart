@@ -24,15 +24,41 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   String? _error;
   int _selectedIndex = 0;
 
+  // Admin users list: server-side pagination / sort / filter state.
+  int _usersPage = 1;
+  final int _usersPageSize = 10;
+  int _usersTotal = 0;
+  String _usersSort = 'created'; // email | handle | created
+  String _usersOrder = 'desc'; // asc | desc
+  String _usersQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+
   bool _canUsers = false;
   bool _canGroups = false;
   bool _canInvitations = false;
 
+  /// URL-encode a query param map (sorted for stable, cacheable URLs).
+  static String _encodeQuery(Map<String, String> params) {
+    final pairs = <String>[];
+    for (final key in params.keys.toList()..sort()) {
+      pairs.add(
+        '${Uri.encodeQueryComponent(key)}='
+        '${Uri.encodeQueryComponent(params[key]!)}',
+      );
+    }
+    return pairs.join('&');
+  }
+
   @override
   void initState() {
     super.initState();
-    _resolvePermissions();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   void _resolvePermissions() {
@@ -49,18 +75,30 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     await Future.wait([_loadUsers(), _loadInvitations(), _loadGroups()]);
   }
 
-  Future<void> _loadUsers() async {
+  Future<void> _loadUsers({int page = 1}) async {
     setState(() {
       _loading = true;
       _error = null;
+      _usersPage = page;
     });
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet('/api/v1/admin/users');
+      final query = <String, String>{
+        'page': '$_usersPage',
+        'page_size': '$_usersPageSize',
+        'sort': _usersSort,
+        'order': _usersOrder,
+      };
+      final q = _usersQuery.trim();
+      if (q.isNotEmpty) query['q'] = q;
+      final resp = await auth.authGet(
+        '/api/v1/admin/users?${_encodeQuery(query)}',
+      );
       if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as List;
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
         setState(() {
-          _users = data.cast<Map<String, dynamic>>();
+          _users = (data['users'] as List).cast<Map<String, dynamic>>();
+          _usersTotal = (data['total'] as num).toInt();
           _loading = false;
         });
       } else {
@@ -206,13 +244,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final membersResp = await auth.authGet(
       '/api/v1/admin/groups/$groupId/members',
     );
-    final usersResp = await auth.authGet('/api/v1/admin/users');
+    final usersResp = await auth.authGet(
+      '/api/v1/admin/users?page_size=200',
+    );
     if (!mounted) return;
     if (membersResp.statusCode != 200 || usersResp.statusCode != 200) return;
 
     var members = List<Map<String, dynamic>>.from(jsonDecode(membersResp.body));
     final allUsers = List<Map<String, dynamic>>.from(
-      jsonDecode(usersResp.body),
+      (jsonDecode(usersResp.body) as Map<String, dynamic>)['users'] as List,
     );
 
     await showDialog<void>(
@@ -579,6 +619,94 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   }
 
   Widget _buildUsersTab() {
+    return Column(
+      children: [
+        _buildUsersToolbar(),
+        Expanded(child: _buildUsersList()),
+      ],
+    );
+  }
+
+  Widget _buildUsersToolbar() {
+    final totalPages = _usersTotal == 0
+        ? 1
+        : (_usersTotal + _usersPageSize - 1) ~/ _usersPageSize;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SizedBox(
+            width: 220,
+            child: TextField(
+              controller: _searchController,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: 'Filter by email…',
+                prefixIcon: Icon(Icons.search, size: 18),
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (value) {
+                _usersQuery = value;
+                _loadUsers(page: 1);
+              },
+            ),
+          ),
+          DropdownButton<String>(
+            value: _usersSort,
+            items: const [
+              DropdownMenuItem(value: 'created', child: Text('Sort: Created')),
+              DropdownMenuItem(value: 'email', child: Text('Sort: Email')),
+              DropdownMenuItem(value: 'handle', child: Text('Sort: Handle')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _usersSort = value);
+              _loadUsers(page: 1);
+            },
+          ),
+          IconButton(
+            tooltip: _usersOrder == 'asc'
+                ? 'Ascending (tap for descending)'
+                : 'Descending (tap for ascending)',
+            icon: Icon(
+              _usersOrder == 'asc' ? Icons.arrow_upward : Icons.arrow_downward,
+            ),
+            onPressed: () {
+              setState(
+                () => _usersOrder = _usersOrder == 'asc' ? 'desc' : 'asc',
+              );
+              _loadUsers(page: 1);
+            },
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Previous page',
+                icon: const Icon(Icons.chevron_left),
+                onPressed: _usersPage > 1
+                    ? () => _loadUsers(page: _usersPage - 1)
+                    : null,
+              ),
+              Text('$_usersPage / $totalPages'),
+              IconButton(
+                tooltip: 'Next page',
+                icon: const Icon(Icons.chevron_right),
+                onPressed: _usersPage < totalPages
+                    ? () => _loadUsers(page: _usersPage + 1)
+                    : null,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUsersList() {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return Center(child: Text(_error!));
     if (_users.isEmpty) return const Center(child: Text('No users'));
@@ -587,11 +715,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       itemCount: _users.length,
       itemBuilder: (ctx, i) {
         final user = _users[i];
-        final groups = List<Map<String, dynamic>>.from(
-          user['groups'] as List? ?? [],
-        );
-        final groupNames = groups.map((g) => g['name'] as String).toList();
-        final isAdmin = groupNames.contains('admin');
         final isSelf = user['id'] == context.read<AuthService>().userId;
         final isSystem = user['provider'] == 'system';
         final email = user['email'] as String? ?? '';
@@ -599,11 +722,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
           child: ListTile(
-            leading: _UserAvatar(
-              initial: initial,
-              email: email,
-              isAdmin: isAdmin,
-            ),
+            leading: _UserAvatar(initial: initial, email: email),
             title: Row(
               children: [
                 Text(email),
@@ -618,12 +737,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                   ),
                 ],
               ],
-            ),
-            subtitle: Text(
-              groupNames.isEmpty
-                  ? 'No groups'
-                  : 'Groups: ${groupNames.join(", ")}',
-              style: const TextStyle(color: KColors.textSecondary),
             ),
             onTap: () => _editUser(user),
             trailing: Row(
@@ -724,6 +837,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Re-resolve on each build: AuthService loads permissions asynchronously,
+    // so the first build (before they arrive) would otherwise show no tabs.
+    _resolvePermissions();
     final pendingCount =
         _invitations.where((i) => i['status'] == 'pending').length;
     final tabs = <SkeuoTab>[];
@@ -1138,12 +1254,10 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
 class _UserAvatar extends StatelessWidget {
   final String initial;
   final String email;
-  final bool isAdmin;
 
   const _UserAvatar({
     required this.initial,
     required this.email,
-    required this.isAdmin,
   });
 
   @override
@@ -1166,21 +1280,6 @@ class _UserAvatar extends StatelessWidget {
               ),
             ),
           ),
-          if (isAdmin)
-            Positioned(
-              right: -2,
-              bottom: -2,
-              child: Container(
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                  color: KColors.accentAmber,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: KColors.bgSurface, width: 2),
-                ),
-                child: const Icon(Icons.shield, size: 10, color: Colors.white),
-              ),
-            ),
         ],
       ),
     );
