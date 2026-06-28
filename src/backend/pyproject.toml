@@ -1,6 +1,6 @@
 [project]
 name = "klangk-backend"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Klangk backend: multi-user Pi coding agent web REPL"
 requires-python = ">=3.12"
 dependencies = [
@@ -35,9 +35,16 @@ addopts = "--capture=no --cov=klangk_backend --cov-report=term-missing --no-cov-
 [tool.ruff]
 line-length = 79
 
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0.dev0"
+raw-options.root = "../.."
+raw-options.tag_regex = "^v(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^\\+]*)(?:\\+.*)?$"
+raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["klangk_backend"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
