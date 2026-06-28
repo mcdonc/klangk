@@ -8,6 +8,11 @@ void main() {
       expect(cache.get('ws-1', '/home/x'), isNull);
     });
 
+    test('default TTL is 20 seconds (#979)', () {
+      final cache = FileListCache();
+      expect(cache.ttl, const Duration(seconds: 20));
+    });
+
     test('put then get returns the entries', () {
       final cache = FileListCache();
       final entries = [
