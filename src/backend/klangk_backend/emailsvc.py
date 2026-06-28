@@ -3,7 +3,6 @@
 import asyncio
 import html
 import logging
-import os
 import shutil
 from email.message import EmailMessage
 
@@ -71,7 +70,7 @@ async def send_via_smtp(msg: EmailMessage) -> None:
 
 
 async def send_via_sendmail(msg: EmailMessage) -> None:
-    sendmail = os.environ.get("KLANGK_SENDMAIL_PATH", "sendmail")
+    sendmail = resolve_env_secret("KLANGK_SENDMAIL_PATH", "sendmail")
     logger.info("Using sendmail at: %s", sendmail)
     resolved = shutil.which(sendmail)
     logger.info("Resolved sendmail path: %s", resolved)

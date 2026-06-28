@@ -115,7 +115,7 @@ async def verify_workspace_token(request: Request):
 @router.get("/version")
 async def version():
     """Return build version info, plus loaded plugin metadata."""
-    if version_file := os.environ.get("KLANGK_VERSION_FILE", ""):
+    if version_file := resolve_env_secret("KLANGK_VERSION_FILE", ""):
         if os.path.isfile(version_file):
             with open(version_file) as f:
                 info = json.load(f)

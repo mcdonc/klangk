@@ -92,6 +92,14 @@ fi
 # not at config load time (avoids crash on unresolvable hosts).
 # NOTE: nginx resolver doesn't support search domains, so KLANGK_LLM_BASE_URL
 # must use a FQDN or IP address — bare hostnames won't resolve.
+#
+# These vars are consumed via bash expansion (never the Python resolver),
+# so resolve any file:/cmd: prefix here first — otherwise the prefix would
+# be emitted verbatim into nginx.conf (e.g. "Bearer cmd:..."). The
+# klangk-resolve-secret console script shares the single source of truth
+# in klangk_backend.util.resolve_file_secret (no shell reimplementation).
+KLANGK_LLM_BASE_URL="$(klangk-resolve-secret "${KLANGK_LLM_BASE_URL:-}")"
+KLANGK_LLM_API_KEY="$(klangk-resolve-secret "${KLANGK_LLM_API_KEY:-}")"
 LLM_BLOCK=""
 if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
   LLM_BLOCK="

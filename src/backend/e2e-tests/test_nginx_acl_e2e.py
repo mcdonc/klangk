@@ -127,6 +127,54 @@ class TestNginxAclConfig:
         assert "llm-proxy" in conf
         assert "allow 10.89.0.0/24;" in conf
 
+    def test_llm_api_key_cmd_prefix_resolved(self, tmp_path):
+        """A cmd:-prefixed KLANGK_LLM_API_KEY is resolved (not emitted verbatim).
+
+        nginx.sh consumes KLANGK_LLM_API_KEY via bash expansion, so it must
+        run it through klangk-resolve-secret — otherwise the generated
+        conf would send `Bearer cmd:...` verbatim as the Authorization
+        header.
+        """
+        conf = _run_nginx_sh(
+            {
+                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGK_LLM_API_KEY": "cmd:printf %s resolved-key",
+            },
+            str(tmp_path),
+        )
+        # The resolved value appears; the literal prefix does not.
+        assert 'Authorization "Bearer resolved-key"' in conf
+        assert "cmd:" not in conf
+
+    def test_llm_api_key_file_prefix_resolved(self, tmp_path):
+        """A file:-prefixed KLANGK_LLM_API_KEY is read from the file."""
+        key_file = tmp_path / "llm-key"
+        key_file.write_text("from-file-key\n")
+        conf = _run_nginx_sh(
+            {
+                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGK_LLM_API_KEY": f"file:{key_file}",
+            },
+            str(tmp_path),
+        )
+        assert 'Authorization "Bearer from-file-key"' in conf
+        assert "file:" not in conf
+
+    def test_llm_base_url_cmd_prefix_resolved(self, tmp_path):
+        """A cmd:-prefixed KLANGK_LLM_BASE_URL is resolved to the real URL."""
+        conf = _run_nginx_sh(
+            {
+                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGK_LLM_BASE_URL": "cmd:printf %s http://127.0.0.1:11434",
+            },
+            str(tmp_path),
+        )
+        assert "llm-proxy" in conf
+        # The resolved URL is used; the literal prefix is not.
+        assert "cmd:" not in conf
+
     def test_browser_delegate_has_acl(self, tmp_path):
         """browser-delegate endpoint always gets the ACL."""
         conf = _run_nginx_sh(

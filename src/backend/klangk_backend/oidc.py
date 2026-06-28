@@ -399,7 +399,7 @@ def load_login_hook() -> None:
     If not set, all OIDC logins are accepted with no group sync.
     """
     global _login_hook, _login_hook_is_async
-    raw = os.environ.get("KLANGK_OIDC_LOGIN_HOOK")
+    raw = resolve_env_secret("KLANGK_OIDC_LOGIN_HOOK")
     if not raw:
         _login_hook = None
         _login_hook_is_async = False
