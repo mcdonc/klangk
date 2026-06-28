@@ -25,6 +25,10 @@ from klangk_backend.util import (
     derive_hosting_info,
 )
 from klangk_backend.wshandler import (
+    _constants as _ws_constants,
+    controllers as _ws_controllers,
+)
+from klangk_backend.wshandler import (
     Connection,
     ExecController,
     SafeWebSocket,
@@ -686,7 +690,7 @@ class TestHandleTerminalStart:
         wshandler.state.connections[sock] = conn
 
         with (
-            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
                 return_value=[
@@ -698,7 +702,7 @@ class TestHandleTerminalStart:
                 return_value={},
             ),
             patch("klangk_backend.terminal.restore_windows"),
-            patch.object(wshandler, "attach_browser"),
+            patch.object(_ws_controllers, "attach_browser"),
         ):
             mock_session = _mock_terminal()
             MockTS.return_value = mock_session
@@ -794,7 +798,7 @@ class TestHandleTerminalStart:
         }
 
         with (
-            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
                 return_value=[
@@ -926,7 +930,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         with (
-            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
                 return_value=[
@@ -982,7 +986,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         with (
-            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
                 side_effect=TerminalError("tmux not ready"),
@@ -1028,7 +1032,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         with (
-            patch.object(wshandler, "TerminalSession") as MockTS,
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
             patch(
                 "klangk_backend.terminal.list_windows",
                 return_value=[
@@ -1076,8 +1080,8 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         with (
-            patch.object(wshandler, "TerminalSession") as MockTS,
-            patch.object(wshandler, "attach_browser"),
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
+            patch.object(_ws_controllers, "attach_browser"),
         ):
             mock_session = _mock_terminal()
             MockTS.return_value = mock_session
@@ -1128,7 +1132,7 @@ class TestHandleTerminalStart:
         container.registry.register_browser("bid-old", "ws", sock)
         conn._browser_id = "bid-old"
 
-        with patch.object(wshandler, "attach_browser") as mock_attach:
+        with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({"browser_id": "bid-new"})
 
         assert conn._browser_id == "bid-new"
@@ -1146,7 +1150,7 @@ class TestHandleTerminalStart:
         conn.workspace_id = "ws"
         conn._browser_id = "bid-existing"
 
-        with patch.object(wshandler, "attach_browser") as mock_attach:
+        with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({})
 
         assert conn._browser_id == "bid-existing"
@@ -1159,7 +1163,7 @@ class TestHandleTerminalStart:
         conn.container_id = None
         conn.workspace_id = "ws"
 
-        with patch.object(wshandler, "attach_browser") as mock_attach:
+        with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({"browser_id": "bid-new"})
 
         assert conn._browser_id is None
@@ -1182,8 +1186,10 @@ class TestHandleTerminalStart:
         mock_session.is_alive = True
         MockTS = MagicMock(return_value=mock_session)
         with (
-            patch("klangk_backend.wshandler.TerminalSession", MockTS),
-            patch.object(wshandler, "attach_browser"),
+            patch(
+                "klangk_backend.wshandler.controllers.TerminalSession", MockTS
+            ),
+            patch.object(_ws_controllers, "attach_browser"),
         ):
             await conn.handle_terminal_start(
                 {
@@ -1226,7 +1232,9 @@ class TestHandleTerminalStart:
             side_effect=RuntimeError("podman broke")
         )
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+        with patch(
+            "klangk_backend.wshandler.controllers.TerminalSession", MockTS
+        ):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
@@ -1256,7 +1264,9 @@ class TestHandleTerminalStart:
         mock_session = AsyncMock()
         mock_session.start = AsyncMock(side_effect=SlowClientError())
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+        with patch(
+            "klangk_backend.wshandler.controllers.TerminalSession", MockTS
+        ):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
@@ -1287,7 +1297,9 @@ class TestHandleTerminalStart:
         # trying to send the error message
         sock.send_json = MagicMock(side_effect=RuntimeError("ws gone"))
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+        with patch(
+            "klangk_backend.wshandler.controllers.TerminalSession", MockTS
+        ):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
@@ -1311,7 +1323,9 @@ class TestHandleTerminalStart:
         mock_session = AsyncMock()
         mock_session.start = AsyncMock(side_effect=asyncio.CancelledError)
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+        with patch(
+            "klangk_backend.wshandler.controllers.TerminalSession", MockTS
+        ):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             task = conn.terminal_task
             with pytest.raises(asyncio.CancelledError):
@@ -1346,7 +1360,9 @@ class TestHandleTerminalStart:
 
         mock_session.start = AsyncMock(side_effect=start_and_replace)
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangk_backend.wshandler.TerminalSession", MockTS):
+        with patch(
+            "klangk_backend.wshandler.controllers.TerminalSession", MockTS
+        ):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
@@ -2268,7 +2284,7 @@ class TestExecHandlers:
         mock_session.output = empty_output
         mock_session.returncode = 0
         with patch(
-            "klangk_backend.wshandler.ExecSession",
+            "klangk_backend.wshandler.controllers.ExecSession",
             return_value=mock_session,
         ):
             with patch.object(container.registry, "record_activity"):
@@ -2300,7 +2316,7 @@ class TestExecHandlers:
         mock_session.output = empty_output
         mock_session.returncode = 0
         with patch(
-            "klangk_backend.wshandler.ExecSession",
+            "klangk_backend.wshandler.controllers.ExecSession",
             return_value=mock_session,
         ) as mock_cls:
             with patch.object(container.registry, "record_activity"):
@@ -2489,7 +2505,9 @@ class TestExecController:
         old = AsyncMock()
         ctrl.session = old
         with (
-            patch("klangk_backend.wshandler.ExecSession") as MockExec,
+            patch(
+                "klangk_backend.wshandler.controllers.ExecSession"
+            ) as MockExec,
             patch.object(container.registry, "record_activity"),
         ):
             mock_session = MockExec.return_value
@@ -2511,7 +2529,9 @@ class TestExecController:
             ssh_agent_socket="/tmp/agent.sock",
         )
         with (
-            patch("klangk_backend.wshandler.ExecSession") as MockExec,
+            patch(
+                "klangk_backend.wshandler.controllers.ExecSession"
+            ) as MockExec,
             patch.object(container.registry, "record_activity"),
         ):
             mock_session = MockExec.return_value
@@ -2530,7 +2550,9 @@ class TestExecController:
     async def test_start_defaults_work_dir_when_no_user_home(self):
         ctrl, _, _ = self._controller(user_home=None)
         with (
-            patch("klangk_backend.wshandler.ExecSession") as MockExec,
+            patch(
+                "klangk_backend.wshandler.controllers.ExecSession"
+            ) as MockExec,
             patch.object(container.registry, "record_activity"),
         ):
             mock_session = MockExec.return_value
@@ -2785,7 +2807,7 @@ class TestSSHAgentHandlers:
         mock_proc.wait = AsyncMock()
         with (
             patch(
-                "klangk_backend.wshandler.podman.exec_container",
+                "klangk_backend.wshandler.controllers.podman.exec_container",
                 new=AsyncMock(),
             ),
             patch(
@@ -2835,7 +2857,8 @@ class TestSSHAgentHandlers:
         conn._ssh_agent_socket = "/tmp/test.sock"
         conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
         with patch(
-            "klangk_backend.wshandler.podman.exec_container", new=AsyncMock()
+            "klangk_backend.wshandler.controllers.podman.exec_container",
+            new=AsyncMock(),
         ):
             await conn.handle_ssh_agent_stop()
         assert conn._ssh_agent_proc is None
@@ -2855,7 +2878,8 @@ class TestSSHAgentHandlers:
         conn._ssh_agent_socket = "/tmp/test.sock"
         conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
         with patch(
-            "klangk_backend.wshandler.podman.exec_container", new=AsyncMock()
+            "klangk_backend.wshandler.controllers.podman.exec_container",
+            new=AsyncMock(),
         ):
             await conn._stop_ssh_agent()
         assert conn._ssh_agent_proc is None
@@ -2901,12 +2925,12 @@ class TestSSHAgentHandlers:
         mock_session.output = empty_output
         with (
             patch(
-                "klangk_backend.wshandler.TerminalSession",
+                "klangk_backend.wshandler.controllers.TerminalSession",
                 return_value=mock_session,
             ) as MockTS,
             patch.object(container.registry, "record_activity"),
             patch(
-                "klangk_backend.wshandler.attach_browser",
+                "klangk_backend.wshandler.controllers.attach_browser",
                 new=AsyncMock(),
             ),
             patch(
@@ -2972,7 +2996,9 @@ class TestSshAgentForwarder:
             created.append(t)
             return t
 
-        with patch("klangk_backend.wshandler.asyncio.create_task", _wrap):
+        with patch(
+            "klangk_backend.wshandler.controllers.asyncio.create_task", _wrap
+        ):
             yield created
         for t in created:
             if not t.done():
@@ -2995,7 +3021,7 @@ class TestSshAgentForwarder:
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
             patch(
-                "klangk_backend.wshandler.podman.exec_container",
+                "klangk_backend.wshandler.controllers.podman.exec_container",
                 new=AsyncMock(),
             ),
             patch(
@@ -3032,7 +3058,7 @@ class TestSshAgentForwarder:
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
             patch(
-                "klangk_backend.wshandler.podman.exec_container",
+                "klangk_backend.wshandler.controllers.podman.exec_container",
                 new=AsyncMock(),
             ),
             patch(
@@ -3077,7 +3103,7 @@ class TestSshAgentForwarder:
             side_effect=[b"line one\n", b"line two\n", b""]
         )
         fwd.proc = mock_proc
-        with patch("klangk_backend.wshandler.logger") as lg:
+        with patch("klangk_backend.wshandler.controllers.logger") as lg:
             await fwd.log_stderr()
         info_msgs = [c.args for c in lg.info.call_args_list]
         assert (
@@ -3154,7 +3180,7 @@ class TestSshAgentForwarder:
         fwd.proc = mock_proc
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
-            patch("klangk_backend.wshandler.logger") as lg,
+            patch("klangk_backend.wshandler.controllers.logger") as lg,
         ):
             await fwd.forward_output()
         info_args = [str(c) for c in lg.info.call_args_list]
@@ -3167,7 +3193,7 @@ class TestSshAgentForwarder:
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.read = AsyncMock(side_effect=OSError("boom"))
         fwd.proc = mock_proc
-        with patch("klangk_backend.wshandler.logger") as lg:
+        with patch("klangk_backend.wshandler.controllers.logger") as lg:
             await fwd.forward_output()
         lg.warning.assert_called_once()
         assert "SSH agent output relay error" in str(lg.warning.call_args)
@@ -3195,7 +3221,7 @@ class TestSshAgentForwarder:
         fwd.proc = None
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
-            patch("klangk_backend.wshandler.logger") as lg,
+            patch("klangk_backend.wshandler.controllers.logger") as lg,
         ):
             await fwd.data({"data": base64.b64encode(b"x").decode()})
         assert any(
@@ -3213,7 +3239,7 @@ class TestSshAgentForwarder:
         fwd.proc = mock_proc
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
-            patch("klangk_backend.wshandler.logger") as lg,
+            patch("klangk_backend.wshandler.controllers.logger") as lg,
         ):
             await fwd.data({"data": data})
         mock_proc.stdin.write.assert_called_once_with(b"agent-request")
@@ -3253,10 +3279,10 @@ class TestSshAgentForwarder:
         fwd, _ = self._forwarder()
         fwd.socket = "/tmp/agent.sock"
         with patch(
-            "klangk_backend.wshandler.podman.exec_container",
+            "klangk_backend.wshandler.controllers.podman.exec_container",
             new=AsyncMock(side_effect=OSError("boom")),
         ) as exec_mock:
-            with patch("klangk_backend.wshandler.logger") as lg:
+            with patch("klangk_backend.wshandler.controllers.logger") as lg:
                 await fwd.stop()
         exec_mock.assert_awaited_once()
         lg.warning.assert_called_once()
@@ -3272,7 +3298,8 @@ class TestSshAgentForwarder:
         fwd.socket = None  # skip socket-removal branch
         fwd.task = asyncio.create_task(asyncio.sleep(999))
         with patch(
-            "klangk_backend.wshandler.podman.exec_container", new=AsyncMock()
+            "klangk_backend.wshandler.controllers.podman.exec_container",
+            new=AsyncMock(),
         ):
             await fwd.stop()
         assert fwd.task is None
@@ -4047,7 +4074,7 @@ class TestWsDebugLogging:
 
 class TestLogWsMsg:
     def test_terminal_output_truncated(self):
-        with patch.object(wshandler, "_WS_DEBUG", True):
+        with patch.object(_ws_constants, "_WS_DEBUG", True):
             _log_ws_msg(
                 "RECV",
                 {"type": "terminal_output", "data": "x" * 200},
@@ -4055,18 +4082,18 @@ class TestLogWsMsg:
             )
 
     def test_terminal_input_truncated(self):
-        with patch.object(wshandler, "_WS_DEBUG", True):
+        with patch.object(_ws_constants, "_WS_DEBUG", True):
             _log_ws_msg(
                 "SEND",
                 {"type": "terminal_input", "data": "y" * 50},
             )
 
     def test_other_message(self):
-        with patch.object(wshandler, "_WS_DEBUG", True):
+        with patch.object(_ws_constants, "_WS_DEBUG", True):
             _log_ws_msg("RECV", {"type": "heartbeat"})
 
     def test_other_message_with_user(self):
-        with patch.object(wshandler, "_WS_DEBUG", True):
+        with patch.object(_ws_constants, "_WS_DEBUG", True):
             _log_ws_msg(
                 "RECV",
                 {"cmd": "workspace_connect", "workspaceId": "ws-1"},
@@ -4074,7 +4101,7 @@ class TestLogWsMsg:
             )
 
     def test_noop_when_debug_disabled(self):
-        with patch.object(wshandler, "_WS_DEBUG", False):
+        with patch.object(_ws_constants, "_WS_DEBUG", False):
             _log_ws_msg("RECV", {"type": "heartbeat"})
 
 
@@ -5024,8 +5051,13 @@ class TestTerminalController:
 
         with (
             patch.object(ctrl, "stop", new=AsyncMock()) as stop,
-            patch("klangk_backend.wshandler.TerminalSession") as MockTS,
-            patch("klangk_backend.wshandler.asyncio.create_task", _swallow),
+            patch(
+                "klangk_backend.wshandler.controllers.TerminalSession"
+            ) as MockTS,
+            patch(
+                "klangk_backend.wshandler.controllers.asyncio.create_task",
+                _swallow,
+            ),
             patch.object(container.registry, "record_activity"),
         ):
             MockTS.return_value.start = AsyncMock()
@@ -5233,7 +5265,7 @@ class TestTerminalController:
 
         session.output = fake_output
         sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("ws dead"))
-        with patch("klangk_backend.wshandler._send_event"):
+        with patch("klangk_backend.wshandler.controllers._send_event"):
             await ctrl.forward_output(session)
         session.stop.assert_awaited_once()
 
@@ -5385,7 +5417,8 @@ class TestTerminalController:
             patch.object(container.registry, "revoke_browser") as rev,
             patch.object(container.registry, "register_browser") as reg,
             patch(
-                "klangk_backend.wshandler.attach_browser", new=AsyncMock()
+                "klangk_backend.wshandler.controllers.attach_browser",
+                new=AsyncMock(),
             ) as attach,
         ):
             await ctrl.browser_reattach({"browser_id": "bid"})
@@ -5822,7 +5855,7 @@ class TestShareWindowHandlers:
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
                 ),
-                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch("klangk_backend.terminal.select_window"),
                 patch("klangk_backend.terminal.tmux_command", return_value=""),
             ):
@@ -5907,7 +5940,7 @@ class TestShareWindowHandlers:
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
                 ),
-                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch(
                     "klangk_backend.terminal.tmux_command",
                     new_callable=AsyncMock,
@@ -5953,7 +5986,7 @@ class TestShareWindowHandlers:
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
                 ),
-                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch(
                     "klangk_backend.terminal.tmux_command",
                     new_callable=AsyncMock,
@@ -6011,7 +6044,7 @@ class TestShareWindowHandlers:
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
                 ),
-                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch(
                     "klangk_backend.terminal.select_window",
                     new_callable=AsyncMock,
@@ -6058,7 +6091,7 @@ class TestShareWindowHandlers:
                 patch(
                     "klangk_backend.acl.check_permission", return_value=True
                 ),
-                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
             ):
                 mock_sess = _mock_terminal()
                 mock_sess.start = AsyncMock(
@@ -6838,7 +6871,7 @@ class TestSharedTerminalController:
         ]
         try:
             with (
-                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch("klangk_backend.terminal.tmux_command"),
                 patch("klangk_backend.terminal.select_window"),
             ):
@@ -6869,7 +6902,7 @@ class TestSharedTerminalController:
         ]
         try:
             with (
-                patch.object(wshandler, "TerminalSession") as MockTS,
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch(
                     "klangk_backend.terminal.tmux_command",
                     side_effect=TerminalError("nope"),
