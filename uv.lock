@@ -629,7 +629,6 @@ wheels = [
 
 [[package]]
 name = "klangk-backend"
-version = "0.1.0"
 source = { editable = "src/backend" }
 dependencies = [
     { name = "aiosmtplib" },
