@@ -3190,7 +3190,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch.object(api, "FILE_UPLOAD_SIZE_MAX", 10):
+            with patch.object(api.files, "FILE_UPLOAD_SIZE_MAX", 10):
                 resp = await client.post(
                     f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/big.txt",
                     headers=headers,
@@ -3956,7 +3956,7 @@ class TestAdminEndpoints:
         self, client, admin_user
     ):
         headers = await self._admin_headers(client)
-        with patch("klangk_backend.api.emailsvc") as mock_email:
+        with patch("klangk_backend.api.admin.emailsvc") as mock_email:
             mock_email.send_verification_email = AsyncMock()
             resp = await client.post(
                 "/api/v1/admin/users",
@@ -5522,7 +5522,7 @@ class TestWorkspaceExportImport:
         self, client, user, monkeypatch
     ):
         """If the upload write fails, the temp file is cleaned up."""
-        import klangk_backend.api as api_mod
+        import klangk_backend.api.workspaces as api_mod
 
         headers = await self._user_headers(client)
 
@@ -5707,7 +5707,7 @@ class TestWorkspaceExportImport:
 
     async def test_import_size_limit(self, client, user, monkeypatch):
         """Upload exceeding size limit is rejected."""
-        import klangk_backend.api as api_mod
+        import klangk_backend.api.workspaces as api_mod
 
         monkeypatch.setattr(api_mod, "FILE_UPLOAD_SIZE_MAX", 100)
 
