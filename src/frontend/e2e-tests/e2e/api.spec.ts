@@ -424,7 +424,7 @@ test.describe("API", () => {
     const listResp3 = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
-    const deletedUser = (await listResp3.json()).find(
+    const deletedUser = (await listResp3.json()).users.find(
       (u: any) => u.email === "admin-test@test.example.com",
     );
     expect(deletedUser).toBeUndefined();
