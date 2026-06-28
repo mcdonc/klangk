@@ -285,14 +285,53 @@ async def get_group_by_id(group_id: str) -> dict | None:
     }
 
 
-async def list_groups() -> list[dict]:
-    """List all groups."""
+_ADMIN_GROUP_SORT_COLUMNS = {
+    "name": "name",
+    "created": "created_at",
+}
+
+
+async def list_groups(
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "name",
+    order: str = "asc",
+    q: str | None = None,
+) -> dict:
+    """List groups with server-side pagination, sorting, and filtering.
+
+    Returns a paged envelope ``{"groups", "page", "page_size", "total"}``
+    suitable for forwards/backwards paging. Callers that still want a
+    bare list (e.g. the non-admin ``GET /groups`` endpoint) can read
+    ``result["groups"]``.
+    """
+    sort_col = _ADMIN_GROUP_SORT_COLUMNS.get(sort, "name")
+    direction = "DESC" if order.lower() == "desc" else "ASC"
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    offset = (page - 1) * page_size
+
     async with transaction() as db:
+        where_clause = ""
+        params: list = []
+        if q:
+            where_clause = " WHERE name LIKE ?"
+            params.append(f"%{q}%")
+
+        count_cursor = await db.execute(
+            f"SELECT COUNT(*) AS c FROM groups{where_clause}",
+            params,
+        )
+        total = (await count_cursor.fetchone())["c"]
+
         cursor = await db.execute(
             "SELECT id, name, description, created_at"
-            " FROM groups ORDER BY name"
+            f" FROM groups{where_clause}"
+            f" ORDER BY {sort_col} {direction}, id"
+            " LIMIT ? OFFSET ?",
+            (*params, page_size, offset),
         )
-        return [
+        groups = [
             {
                 "id": row["id"],
                 "name": row["name"],
@@ -301,6 +340,12 @@ async def list_groups() -> list[dict]:
             }
             for row in await cursor.fetchall()
         ]
+        return {
+            "groups": groups,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        }
 
 
 async def delete_group(group_id: str) -> bool:

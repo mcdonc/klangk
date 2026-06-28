@@ -193,7 +193,7 @@ class TestGroupManagement:
     def test_list_groups(self, api, admin_headers):
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
         assert resp.status_code == 200
-        groups = resp.json()
+        groups = resp.json()["groups"]
         assert any(g["name"] == "admin" for g in groups)
 
     def test_create_group(self, api, admin_headers):
@@ -247,7 +247,7 @@ class TestGroupManagement:
         assert resp.status_code == 200
         # Verify gone
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
-        assert not any(g["id"] == group_id for g in resp.json())
+        assert not any(g["id"] == group_id for g in resp.json()["groups"])
 
     def test_add_and_list_members(self, api, admin_headers, user_a):
         # Create a group
@@ -406,7 +406,9 @@ class TestACLIntrospection:
     def test_acl_by_group(self, api, admin_headers):
         # Get admin group ID
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
-        admin_group = next(g for g in resp.json() if g["name"] == "admin")
+        admin_group = next(
+            g for g in resp.json()["groups"] if g["name"] == "admin"
+        )
 
         resp = api.get(
             f"/api/v1/admin/acl/by-principal/group/{admin_group['id']}",
@@ -700,7 +702,9 @@ class TestGrantAdminViaGroup:
 
         # Get admin group and user A's ID
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
-        admin_group = next(g for g in resp.json() if g["name"] == "admin")
+        admin_group = next(
+            g for g in resp.json()["groups"] if g["name"] == "admin"
+        )
 
         resp = api.get(
             "/api/v1/admin/users?page_size=200", headers=admin_headers
@@ -811,7 +815,7 @@ class TestACLCascades:
 
         # Group should be gone
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
-        assert not any(g["id"] == group_id for g in resp.json())
+        assert not any(g["id"] == group_id for g in resp.json()["groups"])
 
 
 class TestSharedWorkspaceAccess:

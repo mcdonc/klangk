@@ -48,6 +48,16 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       TextEditingController();
   Timer? _invitationsQueryDebounce;
 
+  // Admin groups list: server-side pagination / sort / filter state.
+  int _groupsPage = 1;
+  final int _groupsPageSize = 10;
+  int _groupsTotal = 0;
+  String _groupsSort = 'name'; // name | created
+  String _groupsOrder = 'asc'; // asc | desc
+  String _groupsQuery = '';
+  final TextEditingController _groupSearchController = TextEditingController();
+  Timer? _groupsQueryDebounce;
+
   bool _canUsers = false;
   bool _canGroups = false;
   bool _canInvitations = false;
@@ -87,6 +97,14 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       _invitationsQueryDebounce = Timer(
           const Duration(milliseconds: 300), () => _loadInvitations(page: 1));
     });
+    _groupSearchController.addListener(() {
+      final value = _groupSearchController.text;
+      if (value == _groupsQuery) return;
+      _groupsQuery = value;
+      _groupsQueryDebounce?.cancel();
+      _groupsQueryDebounce =
+          Timer(const Duration(milliseconds: 300), () => _loadGroups(page: 1));
+    });
     _loadData();
   }
 
@@ -94,8 +112,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   void dispose() {
     _usersQueryDebounce?.cancel();
     _invitationsQueryDebounce?.cancel();
+    _groupsQueryDebounce?.cancel();
     _searchController.dispose();
     _invitationsSearchController.dispose();
+    _groupSearchController.dispose();
     super.dispose();
   }
 
@@ -184,15 +204,29 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     }
   }
 
-  Future<void> _loadGroups() async {
+  Future<void> _loadGroups({int page = 1}) async {
+    setState(() {
+      _groupsPage = page;
+    });
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet('/api/v1/admin/groups');
+      final query = <String, String>{
+        'page': '$_groupsPage',
+        'page_size': '$_groupsPageSize',
+        'sort': _groupsSort,
+        'order': _groupsOrder,
+      };
+      final q = _groupsQuery.trim();
+      if (q.isNotEmpty) query['q'] = q;
+      final resp = await auth.authGet(
+        '/api/v1/admin/groups?${_encodeQuery(query)}',
+      );
       if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as List;
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
         if (mounted) {
           setState(() {
-            _groups = data.cast<Map<String, dynamic>>();
+            _groups = (data['groups'] as List).cast<Map<String, dynamic>>();
+            _groupsTotal = (data['total'] as num).toInt();
           });
         }
       }
@@ -425,6 +459,46 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   }
 
   Widget _buildGroupsTab() {
+    return Column(
+      children: [
+        _AdminListToolbar(
+          key: const ValueKey('admin-groups-toolbar'),
+          columns: const [
+            ('Name', 'name'),
+            ('Created', 'created'),
+          ],
+          sort: _groupsSort,
+          order: _groupsOrder,
+          onChangeSort: _changeGroupsSort,
+          searchController: _groupSearchController,
+          searchHint: 'Filter by name…',
+          page: _groupsPage,
+          pageSize: _groupsPageSize,
+          total: _groupsTotal,
+          onPage: (p) => _loadGroups(page: p),
+        ),
+        Expanded(child: _buildGroupsList()),
+      ],
+    );
+  }
+
+  /// Select a sort column, or toggle direction if already selected —
+  /// mirrors the users tab sort chips. Resets to page 1 because a
+  /// different sort reorders every row.
+  Future<void> _changeGroupsSort(String sortKey) async {
+    if (_groupsSort == sortKey) {
+      setState(() => _groupsOrder = _groupsOrder == 'asc' ? 'desc' : 'asc');
+    } else {
+      setState(() {
+        _groupsSort = sortKey;
+        // Name reads naturally ascending; created descending.
+        _groupsOrder = sortKey == 'created' ? 'desc' : 'asc';
+      });
+    }
+    await _loadGroups(page: 1);
+  }
+
+  Widget _buildGroupsList() {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_groups.isEmpty) return const Center(child: Text('No groups'));
     return ListView.builder(
@@ -1493,6 +1567,7 @@ class _AdminListToolbar extends StatelessWidget {
   final String order; // 'asc' | 'desc'
   final ValueChanged<String> onChangeSort;
   final TextEditingController searchController;
+  final String searchHint;
   final int page;
   final int pageSize;
   final int total;
@@ -1505,6 +1580,7 @@ class _AdminListToolbar extends StatelessWidget {
     required this.order,
     required this.onChangeSort,
     required this.searchController,
+    this.searchHint = 'Filter by email…',
     required this.page,
     required this.pageSize,
     required this.total,
@@ -1538,9 +1614,9 @@ class _AdminListToolbar extends StatelessWidget {
             width: 220,
             child: TextField(
               controller: searchController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
-                hintText: 'Filter by email…',
+                hintText: searchHint,
                 prefixIcon: Icon(Icons.search, size: 18),
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(

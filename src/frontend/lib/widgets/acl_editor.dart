@@ -104,17 +104,27 @@ class AclEditorState extends State<AclEditor> {
     List<Map<String, dynamic>> users = [];
     List<Map<String, dynamic>> groups = [];
     try {
-      final uResp = await auth.authGet('/api/v1/admin/users');
+      final uResp = await auth.authGet(
+        '/api/v1/admin/users?page_size=200',
+      );
       if (uResp.statusCode == 200) {
-        users = List<Map<String, dynamic>>.from(jsonDecode(uResp.body));
+        final body = jsonDecode(uResp.body) as Map<String, dynamic>;
+        users = (body['users'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
       }
     } catch (e) {
       debugPrint('[AclEditor] fetch users failed: $e');
     }
     try {
-      final gResp = await auth.authGet('/api/v1/admin/groups');
+      final gResp = await auth.authGet(
+        '/api/v1/admin/groups?page_size=200',
+      );
       if (gResp.statusCode == 200) {
-        groups = List<Map<String, dynamic>>.from(jsonDecode(gResp.body));
+        final body = jsonDecode(gResp.body) as Map<String, dynamic>;
+        groups = (body['groups'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
       }
     } catch (e) {
       debugPrint('[AclEditor] fetch groups failed: $e');

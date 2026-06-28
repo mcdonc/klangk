@@ -2440,8 +2440,13 @@ async def _group_resource(request: Request, user: dict) -> str:  # noqa: ARG001
 async def user_list_groups(
     user: dict = Depends(auth.get_current_user),
 ):
-    """List all groups (any authenticated user can see groups)."""
-    return await model.list_groups()
+    """List all groups (any authenticated user can see groups).
+
+    Returns a bare list for backward compatibility; the admin endpoint
+    exposes the paged envelope.
+    """
+    result = await model.list_groups(page_size=200)
+    return result["groups"]
 
 
 @router.post("/groups")
@@ -2553,9 +2558,16 @@ async def user_remove_group_member(
 
 @router.get("/admin/groups")
 async def list_groups(
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "name",
+    order: str = "asc",
+    q: str | None = None,
     admin: dict = Depends(acl.has_permission("admin")),
 ):
-    return await model.list_groups()
+    return await model.list_groups(
+        page=page, page_size=page_size, sort=sort, order=order, q=q
+    )
 
 
 @router.post("/admin/groups")

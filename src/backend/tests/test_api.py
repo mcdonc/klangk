@@ -4184,8 +4184,107 @@ class TestGroupEndpoints:
         headers = await self._admin_headers(client)
         resp = await client.get("/api/v1/admin/groups", headers=headers)
         assert resp.status_code == 200
-        groups = resp.json()
+        body = resp.json()
+        groups = body["groups"]
         assert any(g["name"] == "admin" for g in groups)
+        # Paged envelope metadata.
+        assert body["page"] == 1
+        assert body["page_size"] == 10
+        assert body["total"] >= 1
+
+    async def test_list_groups_default_page_size_is_10(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        for i in range(12):
+            await model.create_group(f"size-{i}")
+        resp = await client.get("/api/v1/admin/groups", headers=headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["page"] == 1
+        assert body["page_size"] == 10
+        assert body["total"] >= 13  # 12 created + admin fixture
+        assert len(body["groups"]) == 10
+
+    async def test_list_groups_pagination_across_pages(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        for i in range(5):
+            await model.create_group(f"pg-{i}")
+        page1 = await client.get(
+            "/api/v1/admin/groups?page=1&page_size=3", headers=headers
+        )
+        page2 = await client.get(
+            "/api/v1/admin/groups?page=2&page_size=3", headers=headers
+        )
+        assert page1.status_code == 200
+        assert page2.status_code == 200
+        b1 = page1.json()
+        b2 = page2.json()
+        assert b1["page"] == 1
+        assert b2["page"] == 2
+        assert b1["page_size"] == 3
+        assert b1["total"] == b2["total"]
+        # Pages don't overlap.
+        ids1 = {g["id"] for g in b1["groups"]}
+        ids2 = {g["id"] for g in b2["groups"]}
+        assert ids1.isdisjoint(ids2)
+        assert len(b1["groups"]) == 3
+        assert len(b2["groups"]) == 3
+
+    async def test_list_groups_sort_by_name(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        for n in ["charlie", "alpha", "bravo"]:
+            await model.create_group(n)
+        resp = await client.get(
+            "/api/v1/admin/groups?sort=name&order=asc&page_size=200",
+            headers=headers,
+        )
+        names = [g["name"] for g in resp.json()["groups"]]
+        assert names == sorted(names, key=str.lower)
+        assert "alpha" in names
+
+    async def test_list_groups_sort_desc_reverses(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        for n in ["charlie", "alpha", "bravo"]:
+            await model.create_group(n)
+        asc = await client.get(
+            "/api/v1/admin/groups?sort=name&order=asc&page_size=200",
+            headers=headers,
+        )
+        desc = await client.get(
+            "/api/v1/admin/groups?sort=name&order=desc&page_size=200",
+            headers=headers,
+        )
+        asc_names = [g["name"] for g in asc.json()["groups"]]
+        desc_names = [g["name"] for g in desc.json()["groups"]]
+        assert asc_names == list(reversed(desc_names))
+
+    async def test_list_groups_filter_by_name(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        await model.create_group("needle-group")
+        await model.create_group("haystack-group")
+        resp = await client.get(
+            "/api/v1/admin/groups?q=needle&page_size=200",
+            headers=headers,
+        )
+        body = resp.json()
+        names = [g["name"] for g in body["groups"]]
+        assert names == ["needle-group"]
+        assert body["total"] == 1
+
+    async def test_list_groups_invalid_sort_falls_back_to_name(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        # An unknown sort column must not 500 (falls back to name).
+        resp = await client.get(
+            "/api/v1/admin/groups?sort=evil%3B%20DROP%20TABLE&order=asc",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["groups"] is not None
 
     async def test_create_group(self, client, admin_user):
         headers = await self._admin_headers(client)
@@ -4384,7 +4483,7 @@ class TestACLEndpoints:
     async def test_get_acl_by_group(self, client, admin_user):
         headers = await self._admin_headers(client)
         # Get the admin group ID
-        groups = await model.list_groups()
+        groups = (await model.list_groups())["groups"]
         admin_group = next(g for g in groups if g["name"] == "admin")
         resp = await client.get(
             f"/api/v1/admin/acl/by-principal/group/{admin_group['id']}",
