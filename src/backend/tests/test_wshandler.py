@@ -320,7 +320,12 @@ class TestTrustedProxyCidrs:
         with caplog.at_level("WARNING", logger="klangk_backend.util"):
             trusted = util._load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
-        assert any("not-an-ip" in r.getMessage() for r in caplog.records)
+        # The invalid entry is logged without echoing its value (env-var-
+        # derived data is treated as potentially sensitive by CodeQL).
+        assert any(
+            "invalid KLANGK_TRUSTED_PROXY_CIDRS entry" in r.getMessage()
+            for r in caplog.records
+        )
 
     def test_load_all_invalid_falls_back_to_loopback(self, monkeypatch):
         import ipaddress

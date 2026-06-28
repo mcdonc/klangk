@@ -107,9 +107,13 @@ def _load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
                 net = ipaddress.ip_network(token, strict=False)
                 trusted.add(net)
             except ValueError:
+                # Log without interpolating the value: CodeQL (correctly, in
+                # general) treats env-var-derived data as potentially
+                # sensitive, so we avoid logging the raw token. Operators can
+                # inspect their own KLANGK_TRUSTED_PROXY_CIDRS to find the bad
+                # entry.
                 logger.warning(
-                    "Ignoring invalid KLANGK_TRUSTED_PROXY_CIDRS entry: %r",
-                    token,
+                    "Ignoring an invalid KLANGK_TRUSTED_PROXY_CIDRS entry"
                 )
     if not trusted:
         trusted.add(ipaddress.ip_address("127.0.0.1"))
