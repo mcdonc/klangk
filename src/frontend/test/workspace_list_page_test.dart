@@ -483,6 +483,106 @@ void main() {
       expect(find.text('Load more shared workspaces'), findsNothing);
     });
 
+    testWidgets('sorting by name requests sort=name and resets to page 1',
+        (tester) async {
+      var lastSort = '';
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          lastSort = request.url.queryParameters['sort'] ?? '';
+          return http.Response(
+            jsonEncode({
+              'items': [
+                {
+                  'id': 'ws-1',
+                  'name': 'Alpha',
+                  'container_id': null,
+                  'created_at': ''
+                },
+              ],
+              'has_more': false,
+              'next_offset': null,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/ws-1/members') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+      expect(lastSort, 'created');
+
+      // Tap the Name sort chip -> request uses sort=name.
+      await tester.tap(find.textContaining('Name'));
+      await tester.pumpAndSettle();
+      expect(lastSort, 'name');
+    });
+
+    testWidgets('filter box sends q= and filters results', (tester) async {
+      var lastQ = '';
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          lastQ = request.url.queryParameters['q'] ?? '';
+          final items = (lastQ.isEmpty)
+              ? [
+                  {
+                    'id': 'ws-1',
+                    'name': 'Alpha',
+                    'container_id': null,
+                    'created_at': ''
+                  },
+                  {
+                    'id': 'ws-2',
+                    'name': 'Beta',
+                    'container_id': null,
+                    'created_at': ''
+                  },
+                ]
+              : [
+                  {
+                    'id': 'ws-1',
+                    'name': 'Alpha',
+                    'container_id': null,
+                    'created_at': ''
+                  },
+                ];
+          return http.Response(
+            jsonEncode(
+                {'items': items, 'has_more': false, 'next_offset': null}),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/ws-1/members' ||
+            request.url.path == '/api/v1/workspaces/ws-2/members') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+      expect(find.text('Alpha'), findsOneWidget);
+      expect(find.text('Beta'), findsOneWidget);
+
+      // Type into the filter box (debounced 300ms).
+      await tester.enterText(find.byType(TextField).first, 'alp');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      expect(lastQ, 'alp');
+      expect(find.text('Alpha'), findsOneWidget);
+      expect(find.text('Beta'), findsNothing);
+    });
+
     testWidgets('shows only shared section when no owned workspaces',
         (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
@@ -684,7 +784,10 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(TextField), findsNWidgets(4));
+      expect(
+          find.descendant(
+              of: find.byType(AlertDialog), matching: find.byType(TextField)),
+          findsNWidgets(4));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -858,7 +961,13 @@ void main() {
       await tester.pumpAndSettle();
 
       // Type workspace name and tap Create
-      await tester.enterText(find.byType(TextField).first, 'New WS');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'New WS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -888,7 +997,13 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).first, 'Duplicate');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'Duplicate');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1095,7 +1210,13 @@ void main() {
       await tester.pumpAndSettle();
 
       // Type and submit via keyboard (onSubmitted)
-      await tester.enterText(find.byType(TextField).first, 'Submitted');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'Submitted');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 
@@ -1150,7 +1271,13 @@ void main() {
       await tester.tap(find.text('klangk-custom').last);
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).first, 'ImgWS');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'ImgWS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1191,8 +1318,20 @@ void main() {
       await tester.pumpAndSettle();
 
       // Enter name and command
-      await tester.enterText(find.byType(TextField).first, 'CmdWS');
-      await tester.enterText(find.byType(TextField).at(1), 'klangk-pi');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'CmdWS');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(1),
+          'klangk-pi');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1246,8 +1385,20 @@ void main() {
       await tester.pumpAndSettle();
 
       // Enter name, then focus command field and submit via Enter
-      await tester.enterText(find.byType(TextField).first, 'CmdSubmit');
-      await tester.enterText(find.byType(TextField).at(1), 'pi');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'CmdSubmit');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(1),
+          'pi');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 
@@ -1274,7 +1425,13 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).first, 'Fail WS');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'Fail WS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1541,11 +1698,22 @@ void main() {
       await tester.pumpAndSettle();
 
       // Enter workspace name
-      await tester.enterText(find.byType(TextField).first, 'MountWS');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'MountWS');
 
       // Add a mount via the mount text field (last TextField) + add button
       await tester.enterText(
-          find.byType(TextField).at(2), '/host/src:/work/src');
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(2),
+          '/host/src:/work/src');
       // Tap the add (+) button next to the mount input
       // The FAB also has an add icon, so find the one inside the dialog
       final addIcons = find.byIcon(Icons.add);
@@ -1557,7 +1725,13 @@ void main() {
       expect(find.text('/host/src:/work/src'), findsOneWidget);
 
       // Add a second mount
-      await tester.enterText(find.byType(TextField).at(2), 'nix-vol:/nix');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(2),
+          'nix-vol:/nix');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.text('nix-vol:/nix'), findsOneWidget);
@@ -1606,10 +1780,22 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).first, 'EnterWS');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'EnterWS');
 
       // Add mount via Enter key on the mount text field
-      await tester.enterText(find.byType(TextField).at(2), '/a:/b');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(2),
+          '/a:/b');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
       expect(find.text('/a:/b'), findsOneWidget);
@@ -1638,7 +1824,13 @@ void main() {
       await tester.pumpAndSettle();
 
       // Try adding invalid mount (no colon)
-      await tester.enterText(find.byType(TextField).at(2), 'bad-mount');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(2),
+          'bad-mount');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
@@ -1647,7 +1839,13 @@ void main() {
       expect(find.text('bad-mount'), findsOneWidget); // still in text field
 
       // Try adding mount with relative container path
-      await tester.enterText(find.byType(TextField).at(2), '/host:relative');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(2),
+          '/host:relative');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
@@ -1655,14 +1853,25 @@ void main() {
 
       // Try adding mount with unknown option
       await tester.enterText(
-          find.byType(TextField).at(2), '/host:/container:bogus');
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(2),
+          '/host:/container:bogus');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Unknown option'), findsOneWidget);
 
       // Valid mount clears the error
-      await tester.enterText(find.byType(TextField).at(2), '/a:/b');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(2),
+          '/a:/b');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
@@ -1699,16 +1908,34 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).first, 'EnvWS');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .first,
+          'EnvWS');
 
       // Add env var via the + button (env add is at index 2: FAB=0, mount=1, env=2)
-      await tester.enterText(find.byType(TextField).at(3), 'FOO=bar');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(3),
+          'FOO=bar');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.text('FOO=bar'), findsOneWidget);
 
       // Add a second env var via Enter key
-      await tester.enterText(find.byType(TextField).at(3), 'X=1');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(3),
+          'X=1');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
       expect(find.text('X=1'), findsOneWidget);
@@ -1744,19 +1971,37 @@ void main() {
       await tester.pumpAndSettle();
 
       // Try adding env var without = sign
-      await tester.enterText(find.byType(TextField).at(3), 'NOEQ');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(3),
+          'NOEQ');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Expected KEY=VALUE'), findsOneWidget);
 
       // Try adding env var with empty key
-      await tester.enterText(find.byType(TextField).at(3), '=value');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(3),
+          '=value');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Key cannot be empty'), findsOneWidget);
 
       // Valid env var clears error
-      await tester.enterText(find.byType(TextField).at(3), 'A=1');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(3),
+          'A=1');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Key cannot'), findsNothing);
@@ -1782,7 +2027,13 @@ void main() {
       expect(find.byTooltip('Copy'), findsNothing);
 
       // Add a mount
-      await tester.enterText(find.byType(TextField).at(2), '/src:/work');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(2),
+          '/src:/work');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
@@ -1810,7 +2061,13 @@ void main() {
       await tester.pumpAndSettle();
 
       // Add an env var
-      await tester.enterText(find.byType(TextField).at(3), 'FOO=bar');
+      await tester.enterText(
+          find
+              .descendant(
+                  of: find.byType(AlertDialog),
+                  matching: find.byType(TextField))
+              .at(3),
+          'FOO=bar');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
 
