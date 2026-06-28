@@ -367,12 +367,11 @@ test.describe("API", () => {
       headers: adminHeaders,
     });
     expect(listResp.ok()).toBeTruthy();
-    const users = await listResp.json();
+    const users = (await listResp.json()).users;
     const testUser = users.find(
       (u: any) => u.email === "admin-test@test.example.com",
     );
     expect(testUser).toBeTruthy();
-    expect(testUser.groups).toEqual([]);
 
     // Non-admin cannot list users
     const forbiddenResp = await request.get(`${API_BASE}/api/v1/admin/users`, {
@@ -397,14 +396,15 @@ test.describe("API", () => {
     );
     expect(addMemberResp.ok()).toBeTruthy();
 
-    // Verify group membership was added
-    const listResp2 = await request.get(`${API_BASE}/api/v1/admin/users`, {
-      headers: adminHeaders,
-    });
-    const updatedUser = (await listResp2.json()).find(
-      (u: any) => u.email === "admin-test@test.example.com",
+    // Verify group membership was added (via the group's members endpoint,
+    // since per-user groups are no longer embedded in the users list)
+    const membersResp = await request.get(
+      `${API_BASE}/api/v1/groups/${editorGroup.id}/members`,
+      { headers: adminHeaders },
     );
-    expect(updatedUser.groups.map((g: any) => g.name)).toContain("editor");
+    expect(membersResp.ok()).toBeTruthy();
+    const members = await membersResp.json();
+    expect(members.some((m: any) => m.id === testUser.id)).toBeTruthy();
 
     // Admin can remove user from group
     const removeMemberResp = await request.delete(
@@ -454,7 +454,7 @@ test.describe("API", () => {
       headers: adminHeaders,
     });
     expect(resp.ok()).toBeTruthy();
-    const users = await resp.json();
+    const users = (await resp.json()).users;
     expect(users.length).toBeGreaterThan(0);
     expect(
       users.some((u: any) => u.email === "admin@example.com"),
@@ -469,7 +469,7 @@ test.describe("API", () => {
     const resp2 = await request.get(`${API_BASE}/api/v1/admin/users`, {
       headers: adminHeaders,
     });
-    const updatedUsers = await resp2.json();
+    const updatedUsers = (await resp2.json()).users;
     const newUser = updatedUsers.find(
       (u: any) => u.email === "e2e-admin-ui@test.example.com",
     );
@@ -490,7 +490,7 @@ test.describe("API", () => {
       headers: adminHeaders,
     });
     expect(
-      (await resp3.json()).some(
+      (await resp3.json()).users.some(
         (u: any) => u.email === "e2e-admin-renamed@test.example.com",
       ),
     ).toBeTruthy();
@@ -507,7 +507,7 @@ test.describe("API", () => {
       headers: adminHeaders,
     });
     expect(
-      (await resp4.json()).some(
+      (await resp4.json()).users.some(
         (u: any) => u.email === "e2e-admin-renamed@test.example.com",
       ),
     ).toBeFalsy();
