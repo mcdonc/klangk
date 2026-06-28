@@ -19,7 +19,7 @@ from jose import jwt as jose_jwt
 
 from . import model
 from .exceptions import ConfigurationError
-from .util import resolve_env_secret, resolve_file_secret
+from .util import resolve_env_value, resolve_file_value
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ def load_config() -> list[OIDCProvider]:
     """Load OIDC provider config from the JSON file specified by
     KLANGK_OIDC_CONFIG. Returns empty list if not configured.
     Raises if the path is set but the file doesn't exist."""
-    config_path = resolve_env_secret("KLANGK_OIDC_CONFIG", "")
+    config_path = resolve_env_value("KLANGK_OIDC_CONFIG", "")
     if not config_path:
         return []
     if not os.path.isfile(config_path):
@@ -97,7 +97,7 @@ def load_config() -> list[OIDCProvider]:
 
     providers = []
     for entry in raw:
-        secret = resolve_file_secret(_get(entry, "client-secret", ""))
+        secret = resolve_file_value(_get(entry, "client-secret", ""))
         # Resolve ca-cert relative to the config file's directory
         ca_cert = _get(entry, "ca-cert", None)
         if ca_cert and not os.path.isabs(ca_cert):
@@ -152,7 +152,7 @@ def is_enabled() -> bool:
 
 def auth_modes() -> str:
     """Return the configured auth mode."""
-    val = resolve_env_secret("KLANGK_AUTH_MODES", "")
+    val = resolve_env_value("KLANGK_AUTH_MODES", "")
     if val in ("oidc", "password", "both"):
         return val
     return "both" if is_enabled() else "password"
@@ -399,7 +399,7 @@ def load_login_hook() -> None:
     If not set, all OIDC logins are accepted with no group sync.
     """
     global _login_hook, _login_hook_is_async
-    raw = resolve_env_secret("KLANGK_OIDC_LOGIN_HOOK")
+    raw = resolve_env_value("KLANGK_OIDC_LOGIN_HOOK")
     if not raw:
         _login_hook = None
         _login_hook_is_async = False

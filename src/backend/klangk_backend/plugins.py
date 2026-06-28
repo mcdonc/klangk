@@ -9,11 +9,11 @@ import json
 import logging
 import os
 
-from .util import resolve_env_secret
+from .util import resolve_env_value
 
 logger = logging.getLogger(__name__)
 
-_PLUGINS_DIR = resolve_env_secret("KLANGK_PLUGINS_DIR") or os.path.join(
+_PLUGINS_DIR = resolve_env_value("KLANGK_PLUGINS_DIR") or os.path.join(
     os.path.expanduser("~"), ".klangk", "plugins"
 )
 
@@ -65,10 +65,10 @@ def load() -> None:
 
     for key, spec in _declarations.items():
         default = spec.get("default", "")
-        # resolve_env_secret (not raw os.environ) so plugin-declared keys
+        # resolve_env_value (not raw os.environ) so plugin-declared keys
         # also honor the file:/cmd: prefixes — plugin config may itself be
         # a secret (e.g. an API token declared by a plugin).
-        _values[key] = resolve_env_secret(key, default) or ""
+        _values[key] = resolve_env_value(key, default) or ""
 
     if _declarations:
         logger.info(

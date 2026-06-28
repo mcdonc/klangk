@@ -4,15 +4,15 @@ from klangk_backend.util import (
     _read_file_value,
     _run_cmd_value,
     resolve_env_bool,
-    resolve_env_secret,
-    resolve_file_secret,
+    resolve_env_value,
+    resolve_file_value,
     sanitize_disposition_name,
 )
 
 
 class TestReadFileValue:
-    """_read_file_value is the shared helper behind resolve_env_secret
-    and resolve_file_secret."""
+    """_read_file_value is the shared helper behind resolve_env_value
+    and resolve_file_value."""
 
     def test_reads_and_strips_contents(self, tmp_path):
         f = tmp_path / "secret"
@@ -75,44 +75,44 @@ class TestRunCmdValue:
         assert err == "no shell"
 
 
-class TestResolveEnvSecret:
+class TestResolveEnvValue:
     def test_plain_value(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "plain-value")
-        assert resolve_env_secret("TEST_SECRET") == "plain-value"
+        assert resolve_env_value("TEST_SECRET") == "plain-value"
 
     def test_file_prefix_reads_file(self, monkeypatch, tmp_path):
         secret_file = tmp_path / "secret.txt"
         secret_file.write_text("from-file\n")
         monkeypatch.setenv("TEST_SECRET", f"file:{secret_file}")
-        assert resolve_env_secret("TEST_SECRET") == "from-file"
+        assert resolve_env_value("TEST_SECRET") == "from-file"
 
     def test_file_missing_returns_none(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "file:/no/such/file")
-        assert resolve_env_secret("TEST_SECRET") is None
+        assert resolve_env_value("TEST_SECRET") is None
 
     def test_unset_returns_none(self, monkeypatch):
         monkeypatch.delenv("TEST_SECRET", raising=False)
-        assert resolve_env_secret("TEST_SECRET") is None
+        assert resolve_env_value("TEST_SECRET") is None
 
     def test_unset_returns_default(self, monkeypatch):
         monkeypatch.delenv("TEST_SECRET", raising=False)
-        assert resolve_env_secret("TEST_SECRET", "fallback") == "fallback"
+        assert resolve_env_value("TEST_SECRET", "fallback") == "fallback"
 
     def test_empty_string_returned_as_is(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "")
-        assert resolve_env_secret("TEST_SECRET") == ""
+        assert resolve_env_value("TEST_SECRET") == ""
 
     def test_cmd_prefix_runs_command(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "cmd:printf 'from-cmd'")
-        assert resolve_env_secret("TEST_SECRET") == "from-cmd"
+        assert resolve_env_value("TEST_SECRET") == "from-cmd"
 
     def test_cmd_prefix_with_pipe(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "cmd:echo hi | tr a-z A-Z")
-        assert resolve_env_secret("TEST_SECRET") == "HI"
+        assert resolve_env_value("TEST_SECRET") == "HI"
 
     def test_cmd_failure_returns_none(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "cmd:false")
-        assert resolve_env_secret("TEST_SECRET") is None
+        assert resolve_env_value("TEST_SECRET") is None
 
 
 class TestResolveEnvBool:
@@ -140,23 +140,23 @@ class TestResolveEnvBool:
         assert resolve_env_bool("TEST_BOOL") is True
 
 
-class TestResolveFileSecret:
+class TestResolveFileValue:
     def test_plain_value(self):
-        assert resolve_file_secret("plain") == "plain"
+        assert resolve_file_value("plain") == "plain"
 
     def test_file_prefix(self, tmp_path):
         f = tmp_path / "secret"
         f.write_text("from-file\n")
-        assert resolve_file_secret(f"file:{f}") == "from-file"
+        assert resolve_file_value(f"file:{f}") == "from-file"
 
     def test_file_missing_returns_empty(self):
-        assert resolve_file_secret("file:/no/such/file") == ""
+        assert resolve_file_value("file:/no/such/file") == ""
 
     def test_cmd_prefix(self):
-        assert resolve_file_secret("cmd:printf from-cmd") == "from-cmd"
+        assert resolve_file_value("cmd:printf from-cmd") == "from-cmd"
 
     def test_cmd_failure_returns_empty(self):
-        assert resolve_file_secret("cmd:false") == ""
+        assert resolve_file_value("cmd:false") == ""
 
 
 class TestSanitizeDispositionName:

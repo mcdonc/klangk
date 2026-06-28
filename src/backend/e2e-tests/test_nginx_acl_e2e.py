@@ -131,7 +131,7 @@ class TestNginxAclConfig:
         """A cmd:-prefixed KLANGK_LLM_API_KEY is resolved (not emitted verbatim).
 
         nginx.sh consumes KLANGK_LLM_API_KEY via bash expansion, so it must
-        run it through klangk-resolve-secret — otherwise the generated
+        run it through klangk-resolve-value — otherwise the generated
         conf would send `Bearer cmd:...` verbatim as the Authorization
         header.
         """

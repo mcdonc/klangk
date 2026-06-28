@@ -8,14 +8,12 @@ import tempfile
 from pathlib import Path
 
 from . import container, model, podman
-from .util import resolve_env_secret
+from .util import resolve_env_value
 
 logger = logging.getLogger(__name__)
 
 _data_dir = Path(
-    resolve_env_secret(
-        "KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data")
-    )
+    resolve_env_value("KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data"))
 )
 WORKSPACES_ROOT = _data_dir / "workspaces"
 

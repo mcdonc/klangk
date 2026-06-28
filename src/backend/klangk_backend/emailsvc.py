@@ -9,32 +9,32 @@ from email.message import EmailMessage
 import aiosmtplib
 
 from .exceptions import SendmailError
-from .util import resolve_env_secret
+from .util import resolve_env_value
 
 logger = logging.getLogger(__name__)
 
 
 def _resolve_password() -> str | None:
-    """Resolve KLANGK_SMTP_PASSWORD via resolve_env_secret."""
-    return resolve_env_secret("KLANGK_SMTP_PASSWORD")
+    """Resolve KLANGK_SMTP_PASSWORD via resolve_env_value."""
+    return resolve_env_value("KLANGK_SMTP_PASSWORD")
 
 
 def smtp_config() -> dict:
     """Read SMTP configuration from environment at call time."""
     return {
-        "host": resolve_env_secret("KLANGK_SMTP_HOST"),
-        "port": int(resolve_env_secret("KLANGK_SMTP_PORT", "587")),
-        "user": resolve_env_secret("KLANGK_SMTP_USER"),
+        "host": resolve_env_value("KLANGK_SMTP_HOST"),
+        "port": int(resolve_env_value("KLANGK_SMTP_PORT", "587")),
+        "user": resolve_env_value("KLANGK_SMTP_USER"),
         "password": _resolve_password(),
-        "from_addr": resolve_env_secret("KLANGK_SMTP_FROM"),
-        "use_tls": resolve_env_secret("KLANGK_SMTP_USE_TLS", "true").lower()
+        "from_addr": resolve_env_value("KLANGK_SMTP_FROM"),
+        "use_tls": resolve_env_value("KLANGK_SMTP_USE_TLS", "true").lower()
         in ("true", "1"),
     }
 
 
 def use_smtp() -> bool:
     """Return True if SMTP is configured, False to use sendmail."""
-    return bool(resolve_env_secret("KLANGK_SMTP_HOST"))
+    return bool(resolve_env_value("KLANGK_SMTP_HOST"))
 
 
 def build_message(to: str, subject: str, body: str) -> EmailMessage:
@@ -70,7 +70,7 @@ async def send_via_smtp(msg: EmailMessage) -> None:
 
 
 async def send_via_sendmail(msg: EmailMessage) -> None:
-    sendmail = resolve_env_secret("KLANGK_SENDMAIL_PATH", "sendmail")
+    sendmail = resolve_env_value("KLANGK_SENDMAIL_PATH", "sendmail")
     logger.info("Using sendmail at: %s", sendmail)
     resolved = shutil.which(sendmail)
     logger.info("Resolved sendmail path: %s", resolved)
@@ -99,7 +99,7 @@ async def send_email(to: str, subject: str, body: str) -> None:
         logger.info(
             "Sending email to %s via SMTP (%s)",
             to,
-            resolve_env_secret("KLANGK_SMTP_HOST"),
+            resolve_env_value("KLANGK_SMTP_HOST"),
         )
         await send_via_smtp(msg)
     else:

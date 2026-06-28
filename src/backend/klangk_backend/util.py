@@ -23,7 +23,7 @@ def _read_file_value(value: str) -> tuple[str | None, OSError | None]:
     file's text stripped of surrounding whitespace, or (None, error)
     on failure, where error is the OSError raised while reading.
 
-    Shared by resolve_env_secret and resolve_file_secret, which differ
+    Shared by resolve_env_value and resolve_file_value, which differ
     only in their default value and log message on failure.
     """
     path = value[5:]
@@ -73,7 +73,7 @@ def _run_cmd_value(value: str) -> tuple[str | None, str | None]:
     return proc.stdout.strip(), None
 
 
-def resolve_env_secret(key: str, default: str | None = None) -> str | None:
+def resolve_env_value(key: str, default: str | None = None) -> str | None:
     """Read an env var, dereferencing 'file:' and 'cmd:' prefixed values.
 
     If the value starts with 'file:', the remainder is treated as a
@@ -112,7 +112,7 @@ def resolve_env_bool(key: str, default: bool = False) -> bool:
     return val.strip().lower() in ("1", "true", "yes")
 
 
-def resolve_file_secret(value: str) -> str:
+def resolve_file_value(value: str) -> str:
     """Resolve a value that may have a 'file:' or 'cmd:' prefix.
 
     If the value starts with 'file:', reads the file and returns its
@@ -164,7 +164,7 @@ _REJECT_PROXY = resolve_env_bool("KLANGK_REJECT_PROXY_HEADERS")
 
 def _load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
     # KLANGK_TRUSTED_PROXY_CIDRS is a public CIDR/IP list (not a secret), so read
-    # it via os.environ rather than resolve_env_secret (which treats its input
+    # it via os.environ rather than resolve_env_value (which treats its input
     # as a secret and would both support an unwanted "file:" prefix and trip
     # CodeQL's clear-text-logging taint check when we log invalid entries).
     raw = os.environ.get("KLANGK_TRUSTED_PROXY_CIDRS", "127.0.0.1,::1")
@@ -235,9 +235,9 @@ def derive_hosting_info(
 
     ``KLANGK_REJECT_PROXY_HEADERS=1`` (back-compat) forces trust off entirely.
     """
-    hostname = resolve_env_secret("KLANGK_HOSTING_HOSTNAME")
-    proto = resolve_env_secret("KLANGK_HOSTING_PROTO")
-    base_path = resolve_env_secret("KLANGK_HOSTING_BASE_PATH")
+    hostname = resolve_env_value("KLANGK_HOSTING_HOSTNAME")
+    proto = resolve_env_value("KLANGK_HOSTING_PROTO")
+    base_path = resolve_env_value("KLANGK_HOSTING_BASE_PATH")
     trust = (not _REJECT_PROXY) and _peer_trusted(client_host)
     if not hostname:
         if trust:
@@ -246,7 +246,7 @@ def derive_hosting_info(
                 hostname = forwarded_host
         if not hostname:
             # Direct access (local dev) — use nginx port for hosted app URLs
-            nginx_port = resolve_env_secret("KLANGK_NGINX_PORT")
+            nginx_port = resolve_env_value("KLANGK_NGINX_PORT")
             host = headers.get("host") or "localhost"
             if nginx_port:
                 host_no_port = host.split(":")[0]

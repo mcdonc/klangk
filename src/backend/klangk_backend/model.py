@@ -14,14 +14,12 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from .util import resolve_env_secret
+from .util import resolve_env_value
 
 logger = logging.getLogger(__name__)
 
 _data_dir = Path(
-    resolve_env_secret(
-        "KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data")
-    )
+    resolve_env_value("KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data"))
 )
 DB_PATH = _data_dir / "klangk.db"
 

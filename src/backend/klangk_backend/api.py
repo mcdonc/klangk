@@ -56,7 +56,7 @@ from .model import (
 from .util import (
     API_PREFIX,
     derive_hosting_info,
-    resolve_env_secret,
+    resolve_env_value,
     sanitize_disposition_name,
 )
 
@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 # Maximum upload size for file uploads and workspace imports (bytes).
 # Default 500 MB; override via KLANGK_FILE_UPLOAD_SIZE_MAX (in bytes).
 FILE_UPLOAD_SIZE_MAX = int(
-    resolve_env_secret("KLANGK_FILE_UPLOAD_SIZE_MAX", str(500 * 1024 * 1024))
+    resolve_env_value("KLANGK_FILE_UPLOAD_SIZE_MAX", str(500 * 1024 * 1024))
 )
 
 root_router = APIRouter()
@@ -115,7 +115,7 @@ async def verify_workspace_token(request: Request):
 @router.get("/version")
 async def version():
     """Return build version info, plus loaded plugin metadata."""
-    if version_file := resolve_env_secret("KLANGK_VERSION_FILE", ""):
+    if version_file := resolve_env_value("KLANGK_VERSION_FILE", ""):
         if os.path.isfile(version_file):
             with open(version_file) as f:
                 info = json.load(f)
@@ -131,7 +131,7 @@ async def version():
 
 # --- Test/debug endpoints (only when KLANGK_TEST_MODE is set) ---
 
-if resolve_env_secret("KLANGK_TEST_MODE"):  # pragma: no cover
+if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
 
     @router.get("/test/idle-timeout")
     async def get_idle_timeout(workspace_id: str | None = None):
@@ -196,8 +196,8 @@ async def _send_email(coro, recipient: str, kind: str = "email") -> None:
 
 # --- Config endpoint ---
 
-LOGIN_BANNER_TITLE = resolve_env_secret("KLANGK_LOGIN_BANNER_TITLE", "")
-LOGIN_BANNER = resolve_env_secret("KLANGK_LOGIN_BANNER", "")
+LOGIN_BANNER_TITLE = resolve_env_value("KLANGK_LOGIN_BANNER_TITLE", "")
+LOGIN_BANNER = resolve_env_value("KLANGK_LOGIN_BANNER", "")
 
 
 @router.get("/config")
@@ -228,7 +228,7 @@ async def register(
             status_code=403,
             detail="Password registration is disabled",
         )
-    if resolve_env_secret("KLANGK_TEST_MODE"):
+    if resolve_env_value("KLANGK_TEST_MODE"):
         # Test mode: auto-verify so E2E tests get immediate access
         result = await auth.register(req, verified=True)
         return result

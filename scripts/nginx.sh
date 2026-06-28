@@ -96,10 +96,10 @@ fi
 # These vars are consumed via bash expansion (never the Python resolver),
 # so resolve any file:/cmd: prefix here first — otherwise the prefix would
 # be emitted verbatim into nginx.conf (e.g. "Bearer cmd:..."). The
-# klangk-resolve-secret console script shares the single source of truth
-# in klangk_backend.util.resolve_file_secret (no shell reimplementation).
-KLANGK_LLM_BASE_URL="$(klangk-resolve-secret "${KLANGK_LLM_BASE_URL:-}")"
-KLANGK_LLM_API_KEY="$(klangk-resolve-secret "${KLANGK_LLM_API_KEY:-}")"
+# klangk-resolve-value console script shares the single source of truth
+# in klangk_backend.util.resolve_file_value (no shell reimplementation).
+KLANGK_LLM_BASE_URL="$(klangk-resolve-value "${KLANGK_LLM_BASE_URL:-}")"
+KLANGK_LLM_API_KEY="$(klangk-resolve-value "${KLANGK_LLM_API_KEY:-}")"
 LLM_BLOCK=""
 if [ -n "${KLANGK_LLM_BASE_URL:-}" ]; then
   LLM_BLOCK="

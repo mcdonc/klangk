@@ -24,7 +24,7 @@ from collections.abc import AsyncGenerator
 
 from . import podman
 from .exceptions import TerminalError
-from .util import BoundedOutputQueue, resolve_env_secret
+from .util import BoundedOutputQueue, resolve_env_value
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def terminal_tmux_enabled() -> bool:
     affects the default per-user terminal; shared/joined terminals are
     built on tmux session groups and always use tmux regardless.
     """
-    val = resolve_env_secret("KLANGK_DISABLE_TMUX", "") or ""
+    val = resolve_env_value("KLANGK_DISABLE_TMUX", "") or ""
     return val.lower() not in ("1", "true", "yes")
 
 

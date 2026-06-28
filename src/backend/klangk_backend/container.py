@@ -17,16 +17,16 @@ def _container_dns_config() -> list[str]:
     (e.g., "100.100.100.100,8.8.8.8" for Tailscale MagicDNS + Google).
     Returns an empty list if not configured.
     """
-    raw = util.resolve_env_secret("KLANGK_DNS_SERVERS", "")
+    raw = util.resolve_env_value("KLANGK_DNS_SERVERS", "")
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
-IMAGE_NAME = util.resolve_env_secret("KLANGK_IMAGE_NAME", "klangk-workspace")
-INSTANCE_ID = util.resolve_env_secret("KLANGK_INSTANCE_ID", "default")
+IMAGE_NAME = util.resolve_env_value("KLANGK_IMAGE_NAME", "klangk-workspace")
+INSTANCE_ID = util.resolve_env_value("KLANGK_INSTANCE_ID", "default")
 
-TERMINAL_BANNER = util.resolve_env_secret("KLANGK_TERMINAL_BANNER", "")
+TERMINAL_BANNER = util.resolve_env_value("KLANGK_TERMINAL_BANNER", "")
 
-_allowed_images_env = util.resolve_env_secret("KLANGK_ALLOWED_IMAGES", "")
+_allowed_images_env = util.resolve_env_value("KLANGK_ALLOWED_IMAGES", "")
 ALLOWED_IMAGES: set[str] = {
     img.strip() for img in _allowed_images_env.split(",") if img.strip()
 }
@@ -42,7 +42,7 @@ def image_pull_policy() -> str:
     locally).  Set ``KLANGK_IMAGE_PULL_POLICY=missing`` to pull from a
     registry when the image isn't present.
     """
-    policy = util.resolve_env_secret("KLANGK_IMAGE_PULL_POLICY", "never")
+    policy = util.resolve_env_value("KLANGK_IMAGE_PULL_POLICY", "never")
     if policy not in _VALID_PULL_POLICIES:
         logger.warning(
             "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
@@ -65,7 +65,7 @@ _VALID_MOUNT_OPTIONS = {
 }
 
 
-_allowed_mount_roots_env = util.resolve_env_secret(
+_allowed_mount_roots_env = util.resolve_env_value(
     "KLANGK_ALLOWED_MOUNT_ROOTS", ""
 )
 ALLOWED_MOUNT_ROOTS: list[str] = [
@@ -94,7 +94,7 @@ def _is_protected(source: str) -> bool:
     """
     resolved = os.path.realpath(source)
     data_dir = os.path.realpath(
-        util.resolve_env_secret(
+        util.resolve_env_value(
             "KLANGK_DATA_DIR", os.path.expanduser("~/.klangk/data")
         )
         or os.path.expanduser("~/.klangk/data")
@@ -154,7 +154,7 @@ def validate_mounts(mounts: list[str]) -> str | None:
 
 def parse_idle_timeout() -> tuple[int, int]:
     default = 30 * 60
-    env_val = util.resolve_env_secret("KLANGK_IDLE_TIMEOUT_SECONDS")
+    env_val = util.resolve_env_value("KLANGK_IDLE_TIMEOUT_SECONDS")
     if env_val is not None:
         try:
             timeout = int(env_val)
@@ -175,7 +175,7 @@ def parse_idle_timeout() -> tuple[int, int]:
 IDLE_TIMEOUT_SECONDS, CHECK_INTERVAL_SECONDS = parse_idle_timeout()
 
 PORT_RANGE_START = int(
-    util.resolve_env_secret("KLANGK_PORT_RANGE_START") or "9000"
+    util.resolve_env_value("KLANGK_PORT_RANGE_START") or "9000"
 )
 CONTAINER_PORT_START = 8000
 DEFAULT_PORTS_PER_WORKSPACE = 5
@@ -465,9 +465,9 @@ class ContainerRegistry:
 
         t_env_start = time.monotonic()
         env_vars = []
-        nginx_port = util.resolve_env_secret("KLANGK_NGINX_PORT", "8995")
+        nginx_port = util.resolve_env_value("KLANGK_NGINX_PORT", "8995")
         proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
-        llm_model = util.resolve_env_secret("KLANGK_LLM_MODEL", "")
+        llm_model = util.resolve_env_value("KLANGK_LLM_MODEL", "")
         env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")
         if llm_model:
             env_vars.append(f"KLANGK_LLM_MODEL={llm_model}")
@@ -577,7 +577,7 @@ class ContainerRegistry:
             env=env_vars,
             init=True,
             interactive=True,
-            userns=util.resolve_env_secret(
+            userns=util.resolve_env_value(
                 "KLANGK_USERNS", "keep-id:uid=1000,gid=1000"
             ),
             pull=image_pull_policy(),
@@ -806,7 +806,7 @@ class ContainerRegistry:
                 "klangk-prewarm",
                 IMAGE_NAME,
                 pull="never",
-                userns=util.resolve_env_secret(
+                userns=util.resolve_env_value(
                     "KLANGK_USERNS", "keep-id:uid=1000,gid=1000"
                 ),
             )
