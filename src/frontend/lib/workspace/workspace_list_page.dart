@@ -319,7 +319,6 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         String? errorMessage;
         String? mountError;
         String? envError;
-        final primary = Theme.of(context).colorScheme.primary;
         final labelStyle = TextStyle(
           color: KColors.textPrimary,
           fontWeight: FontWeight.bold,

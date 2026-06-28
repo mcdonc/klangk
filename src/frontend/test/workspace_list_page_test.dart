@@ -1573,7 +1573,6 @@ void main() {
         return http.Response('Not found', 404);
       });
 
-      String? navigatedTo;
       final router = GoRouter(
         initialLocation: '/',
         routes: [
@@ -1583,10 +1582,7 @@ void main() {
           ),
           GoRoute(
             path: '/workspace/:id',
-            builder: (_, state) {
-              navigatedTo = state.uri.toString();
-              return const Scaffold();
-            },
+            builder: (_, __) => const Scaffold(),
           ),
         ],
       );
