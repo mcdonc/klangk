@@ -337,16 +337,13 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         void tryAddEnv(void Function(void Function()) setState) {
           final v = envController.text.trim();
           if (v.isEmpty) return;
-          if (!v.contains('=')) {
-            setState(() => envError = 'Expected KEY=VALUE format');
+          final err = _validateCreateForm(v);
+          if (err != null) {
+            setState(() => envError = err);
             return;
           }
           final key = v.substring(0, v.indexOf('='));
           final value = v.substring(v.indexOf('=') + 1);
-          if (key.isEmpty) {
-            setState(() => envError = 'Key cannot be empty');
-            return;
-          }
           setState(() {
             envVars[key] = value;
             envController.clear();
@@ -453,140 +450,25 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                       ),
                       onSubmitted: (_) => submit(context, setDialogState),
                     ),
-                    const SizedBox(height: 16),
-                    Text('Mounts', style: labelStyle),
-                    const SizedBox(height: 8),
-                    ...mounts.asMap().entries.map(
-                          (e) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: SelectableText(
-                                    e.value,
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.copy, size: 16),
-                                  tooltip: 'Copy',
-                                  onPressed: () => Clipboard.setData(
-                                    ClipboardData(text: e.value),
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                                const SizedBox(width: 4),
-                                IconButton(
-                                  icon: const Icon(Icons.close, size: 18),
-                                  onPressed: () => setDialogState(
-                                      () => mounts.removeAt(e.key)),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    if (mountError != null) ...[
-                      Text(
-                        mountError!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                    ],
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: mountController,
-                            decoration: const InputDecoration(
-                              hintText: '/host/path:/container/path',
-                              isDense: true,
-                              border: OutlineInputBorder(),
-                            ),
-                            style: const TextStyle(fontSize: 13),
-                            onSubmitted: (_) => tryAddMount(setDialogState),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.add),
-                          onPressed: () => tryAddMount(setDialogState),
-                        ),
-                      ],
+                    ..._buildMountsEditor(
+                      context: context,
+                      mounts: mounts,
+                      mountController: mountController,
+                      mountError: mountError,
+                      labelStyle: labelStyle,
+                      onAdd: () => tryAddMount(setDialogState),
+                      onRemove: (index) =>
+                          setDialogState(() => mounts.removeAt(index)),
                     ),
-                    const SizedBox(height: 16),
-                    Text('Environment Variables', style: labelStyle),
-                    const SizedBox(height: 8),
-                    ...envVars.entries.toList().asMap().entries.map(
-                          (e) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: SelectableText(
-                                    '${e.value.key}=${e.value.value}',
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.copy, size: 16),
-                                  tooltip: 'Copy',
-                                  onPressed: () => Clipboard.setData(
-                                    ClipboardData(
-                                      text: '${e.value.key}=${e.value.value}',
-                                    ),
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                                const SizedBox(width: 4),
-                                IconButton(
-                                  icon: const Icon(Icons.close, size: 18),
-                                  onPressed: () => setDialogState(
-                                    () => envVars.remove(e.value.key),
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    if (envError != null) ...[
-                      Text(
-                        envError!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                    ],
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: envController,
-                            decoration: const InputDecoration(
-                              hintText: 'KEY=VALUE',
-                              isDense: true,
-                              border: OutlineInputBorder(),
-                            ),
-                            style: const TextStyle(fontSize: 13),
-                            onSubmitted: (_) => tryAddEnv(setDialogState),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.add),
-                          onPressed: () => tryAddEnv(setDialogState),
-                        ),
-                      ],
+                    ..._buildEnvVarsEditor(
+                      context: context,
+                      envVars: envVars,
+                      envController: envController,
+                      envError: envError,
+                      labelStyle: labelStyle,
+                      onAdd: () => tryAddEnv(setDialogState),
+                      onRemove: (key) =>
+                          setDialogState(() => envVars.remove(key)),
                     ),
                   ],
                 ),
@@ -611,6 +493,183 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     if (created == true) {
       await _loadWorkspaces();
     }
+  }
+
+  /// Mounts editor for the create-workspace dialog: the "Mounts" label,
+  /// the list of added mount specs (each with copy/remove), the inline
+  /// validation error, and the add-row (text field + add button).
+  ///
+  /// Pure extraction from [_createWorkspace] — all mutable dialog state
+  /// is passed in. Returns a list of widgets spread into the dialog's
+  /// [Column], so widget order (and thus the create-dialog tests) is
+  /// unchanged.
+  List<Widget> _buildMountsEditor({
+    required BuildContext context,
+    required List<String> mounts,
+    required TextEditingController mountController,
+    required String? mountError,
+    required TextStyle labelStyle,
+    required VoidCallback onAdd,
+    required ValueChanged<int> onRemove,
+  }) {
+    return [
+      const SizedBox(height: 16),
+      Text('Mounts', style: labelStyle),
+      const SizedBox(height: 8),
+      ...mounts.asMap().entries.map(
+            (e) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      e.value,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 16),
+                    tooltip: 'Copy',
+                    onPressed: () =>
+                        Clipboard.setData(ClipboardData(text: e.value)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => onRemove(e.key),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      if (mountError != null) ...[
+        Text(
+          mountError,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.error,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 4),
+      ],
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: mountController,
+              decoration: const InputDecoration(
+                hintText: '/host/path:/container/path',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontSize: 13),
+              onSubmitted: (_) => onAdd(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(icon: const Icon(Icons.add), onPressed: onAdd),
+        ],
+      ),
+    ];
+  }
+
+  /// Environment-variables editor for the create-workspace dialog: the
+  /// "Environment Variables" label, the list of added `KEY=VALUE` entries
+  /// (each with copy/remove), the inline validation error, and the
+  /// add-row (text field + add button).
+  ///
+  /// Pure extraction from [_createWorkspace] — see [_buildMountsEditor].
+  List<Widget> _buildEnvVarsEditor({
+    required BuildContext context,
+    required Map<String, String> envVars,
+    required TextEditingController envController,
+    required String? envError,
+    required TextStyle labelStyle,
+    required VoidCallback onAdd,
+    required ValueChanged<String> onRemove,
+  }) {
+    return [
+      const SizedBox(height: 16),
+      Text('Environment Variables', style: labelStyle),
+      const SizedBox(height: 8),
+      ...envVars.entries.toList().asMap().entries.map(
+            (e) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      '${e.value.key}=${e.value.value}',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 16),
+                    tooltip: 'Copy',
+                    onPressed: () => Clipboard.setData(
+                      ClipboardData(text: '${e.value.key}=${e.value.value}'),
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => onRemove(e.value.key),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      if (envError != null) ...[
+        Text(
+          envError,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.error,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 4),
+      ],
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: envController,
+              decoration: const InputDecoration(
+                hintText: 'KEY=VALUE',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontSize: 13),
+              onSubmitted: (_) => onAdd(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(icon: const Icon(Icons.add), onPressed: onAdd),
+        ],
+      ),
+    ];
+  }
+
+  /// Validate a single `KEY=VALUE` entry typed into the create-workspace
+  /// dialog's environment-variables field. Returns an error message to
+  /// surface inline, or `null` when the entry is valid.
+  ///
+  /// Mount-spec entries are validated by the top-level [validateMountSpec].
+  /// Pure extraction of the validation that was previously inline in the
+  /// create-workspace dialog's `tryAddEnv` handler.
+  String? _validateCreateForm(String input) {
+    if (!input.contains('=')) return 'Expected KEY=VALUE format';
+    final key = input.substring(0, input.indexOf('='));
+    if (key.isEmpty) return 'Key cannot be empty';
+    return null;
   }
 
   // coverage:ignore-start
