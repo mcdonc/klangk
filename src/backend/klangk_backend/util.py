@@ -15,6 +15,24 @@ API_PREFIX = "/api/v1"
 logger = logging.getLogger(__name__)
 
 
+def _read_file_value(value: str) -> tuple[str | None, OSError | None]:
+    """Strip a 'file:' prefix and read the referenced file.
+
+    Returns (contents, None) on success, where contents is the
+    file's text stripped of surrounding whitespace, or (None, error)
+    on failure, where error is the OSError raised while reading.
+
+    Shared by resolve_env_secret and resolve_file_secret, which differ
+    only in their default value and log message on failure.
+    """
+    path = value[5:]
+    try:
+        return open(path).read().strip(), None
+    except OSError as e:
+        e.filename = e.filename or path
+        return None, e
+
+
 def resolve_env_secret(key: str, default: str | None = None) -> str | None:
     """Read an env var, dereferencing 'path:' prefixed values.
 
@@ -26,12 +44,11 @@ def resolve_env_secret(key: str, default: str | None = None) -> str | None:
     if val is None:
         return default
     if val.startswith("file:"):
-        path = val[5:]
-        try:
-            return open(path).read().strip()
-        except OSError as e:
-            logger.error("Cannot read %s from %s: %s", key, path, e)
+        contents, err = _read_file_value(val)
+        if err is not None:
+            logger.error("Cannot read %s from %s: %s", key, err.filename, err)
             return None
+        return contents
     return val
 
 
@@ -54,12 +71,12 @@ def resolve_file_secret(value: str) -> str:
     its stripped contents. Otherwise returns the value as-is.
     """
     if value.startswith("file:"):
-        path = value[5:]
-        try:
-            return open(path).read().strip()
-        except OSError as e:
-            logger.error("Cannot read secret file: %s", e)
+        contents, err = _read_file_value(value)
+        if err is not None:
+            logger.error("Cannot read secret file: %s", err)
             return ""
+        assert contents is not None
+        return contents
     return value
 
 
