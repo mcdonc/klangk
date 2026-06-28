@@ -42,7 +42,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 | `display-name`         | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                                                |
 | `issuer`               | Yes      | OIDC issuer URL. Discovery via `{issuer}/.well-known/openid-configuration`                                                  |
 | `client-id`            | Yes      | OIDC client ID registered with the IdP                                                                                      |
-| `client-secret`        | Yes      | OIDC client secret. Supports `file:` prefix for secret management                                                           |
+| `client-secret`        | Yes      | OIDC client secret. Supports `file:`/`cmd:` prefix for secret management                                                    |
 | `scopes`               | No       | Space-separated scopes (default: `openid email profile`)                                                                    |
 | `ca-cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs                                                          |
 | `token-validation-pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                                             |

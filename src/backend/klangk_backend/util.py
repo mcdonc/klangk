@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import os
+import subprocess
 from typing import TypeVar
 
 T = TypeVar("T")
@@ -33,12 +34,53 @@ def _read_file_value(value: str) -> tuple[str | None, OSError | None]:
         return None, e
 
 
+# Maximum time a `cmd:`-prefixed value may run before being killed.
+# Guards against a hung command (e.g. a vault CLI waiting on a prompt)
+# blocking startup.
+_CMD_TIMEOUT_SECONDS = 10
+
+
+def _run_cmd_value(value: str) -> tuple[str | None, str | None]:
+    """Strip a 'cmd:' prefix and run the referenced command.
+
+    Returns (stdout, None) on success, where stdout is the command's
+    output stripped of surrounding whitespace, or (None, error_msg) on
+    failure, where error_msg is a human-readable description. Mirrors
+    [_read_file_value] so the two prefixes share the same resolve flow.
+
+    The command runs via the shell (``shell=True``) so it may use pipes
+    and shell features (e.g. ``cmd:aws secretsmanager get-secret-value
+    ... | jq -r .SecretString``). Only values an operator explicitly
+    prefixes with ``cmd:`` are ever executed.
+    """
+    command = value[4:]
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=_CMD_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"timed out after {_CMD_TIMEOUT_SECONDS}s"
+    except OSError as e:
+        return None, str(e)
+    if proc.returncode != 0:
+        return None, (
+            f"exited with code {proc.returncode}: {proc.stderr.strip()}"
+        )
+    return proc.stdout.strip(), None
+
+
 def resolve_env_secret(key: str, default: str | None = None) -> str | None:
-    """Read an env var, dereferencing 'path:' prefixed values.
+    """Read an env var, dereferencing 'file:' and 'cmd:' prefixed values.
 
     If the value starts with 'file:', the remainder is treated as a
-    file path and the file contents (stripped) are returned. If the
-    file cannot be read, logs an error and returns None.
+    file path and the file contents (stripped) are returned. If it starts
+    with 'cmd:', the remainder is run as a shell command and its stdout
+    (stripped) is returned. On either failing, logs an error and returns
+    None. Otherwise the raw value is returned.
     """
     val = os.environ.get(key)
     if val is None:
@@ -47,6 +89,12 @@ def resolve_env_secret(key: str, default: str | None = None) -> str | None:
         contents, err = _read_file_value(val)
         if err is not None:
             logger.error("Cannot read %s from %s: %s", key, err.filename, err)
+            return None
+        return contents
+    if val.startswith("cmd:"):
+        contents, err = _run_cmd_value(val)
+        if err is not None:
+            logger.error("Cannot resolve %s via cmd: %s", key, err)
             return None
         return contents
     return val
@@ -65,15 +113,23 @@ def resolve_env_bool(key: str, default: bool = False) -> bool:
 
 
 def resolve_file_secret(value: str) -> str:
-    """Resolve a value that may have a 'file:' prefix.
+    """Resolve a value that may have a 'file:' or 'cmd:' prefix.
 
-    If the value starts with 'file:', reads the file and returns
-    its stripped contents. Otherwise returns the value as-is.
+    If the value starts with 'file:', reads the file and returns its
+    stripped contents. If it starts with 'cmd:', runs the command and
+    returns its stripped stdout. Otherwise returns the value as-is.
     """
     if value.startswith("file:"):
         contents, err = _read_file_value(value)
         if err is not None:
             logger.error("Cannot read secret file: %s", err)
+            return ""
+        assert contents is not None
+        return contents
+    if value.startswith("cmd:"):
+        contents, err = _run_cmd_value(value)
+        if err is not None:
+            logger.error("Cannot resolve secret via cmd: %s", err)
             return ""
         assert contents is not None
         return contents
