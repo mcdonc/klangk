@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:provider/provider.dart';
 import 'auth/auth_service.dart';
-import 'auth/pending_redirect.dart';
 import 'utils/web_helpers_stub.dart'
     if (dart.library.js_interop) 'utils/web_helpers_web.dart';
 import 'theme/colors.dart';
@@ -19,6 +18,7 @@ import 'auth/settings_page.dart';
 import 'widgets/stale_build_banner.dart';
 import 'workspace/workspace_list_page.dart';
 import 'workspace/workspace_page.dart';
+import 'app_guards.dart';
 
 class KlangkApp extends StatefulWidget {
   final String initialLocation;
@@ -76,39 +76,16 @@ class _KlangkAppState extends State<KlangkApp> {
       initialLocation: initialLocation,
       refreshListenable: auth,
       redirect: (context, state) {
-        final isLoggedIn = auth.isLoggedIn;
         final loc = state.matchedLocation;
-
-        // Banner gate — blocks everything until accepted
-        if (auth.bannerRequired) {
-          return loc == '/consent' ? null : '/consent';
-        }
-        if (!auth.bannerRequired && loc == '/consent') {
-          return '/login';
-        }
-
-        final publicRoutes = {
-          '/login',
-          '/verify',
-          '/forgot-password',
-          '/reset-password',
-          '/accept-invite',
-          '/oidc-complete',
-          '/consent',
-          ...pluginPaths,
-        };
-        if (!isLoggedIn && !publicRoutes.contains(loc)) {
-          if (loc != '/' && loc != '/workspaces') {
-            pendingRedirect = state.uri.toString();
-          }
-          return '/login';
-        }
-        if (isLoggedIn && publicRoutes.contains(loc) &&
-            !pluginPaths.contains(loc)) {
-          return pendingRedirect ?? '/workspaces';
-        }
-        if (isLoggedIn && loc == '/') return '/workspaces';
-        return null;
+        final routes = {...publicRoutes, ...pluginPaths};
+        return evaluateGuards(
+          isLoggedIn: auth.isLoggedIn,
+          bannerRequired: auth.bannerRequired,
+          loc: loc,
+          currentUri: state.uri.toString(),
+          publicRoutes: routes,
+          pluginPaths: pluginPaths,
+        );
       },
       routes: [
         GoRoute(
