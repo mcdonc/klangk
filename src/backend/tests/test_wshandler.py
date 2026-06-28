@@ -30,6 +30,7 @@ from klangk_backend.wshandler import (
     SafeWebSocket,
     SlowClientError,
     SshAgentForwarder,
+    TerminalController,
     WorkspaceSession,
     state,
     send_error,
@@ -4934,6 +4935,557 @@ class TestTerminalWindowHandlers:
             await conn.handle_terminal_list_windows()
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
+
+
+class TestTerminalController:
+    """Unit tests for the TerminalController collaborator in isolation.
+
+    These exercise the controller directly against a lightweight fake
+    connection (a SimpleNamespace), proving it is decoupled from
+    Connection (issue #961) and covering the branches the existing
+    Connection-level tests reach only indirectly — notably the
+    ``Connection._notify_user_terminal_windows`` backward-compat
+    delegate, the no-session early returns, ``activate_session``
+    supersession, and ``forward_output`` cleanup paths.
+    """
+
+    def _controller(
+        self,
+        *,
+        container_id="cid",
+        workspace_id="ws-1",
+        user_home="/home/alice",
+        sock=None,
+        has_perm=True,
+        user=None,
+    ):
+        if sock is None:
+            sock = _mock_sock()
+        if user is None:
+            user = {
+                "id": "uid",
+                "email": "alice@example.com",
+                "handle": "alice",
+            }
+        conn = SimpleNamespace(
+            sock=sock,
+            container_id=container_id,
+            workspace_id=workspace_id,
+            _user_home=user_home,
+            _ssh_agent_socket=None,
+            _browser_id=None,
+            _viewing_shared=None,
+            user=user,
+            _has_perm=AsyncMock(return_value=has_perm),
+            _broadcast_shared_terminals=MagicMock(),
+            _save_state_snapshot=MagicMock(),
+        )
+        return TerminalController(conn), sock, conn
+
+    # --- start: guard clauses ---
+
+    async def test_start_no_container_skips(self):
+        ctrl, sock, _ = self._controller(container_id=None)
+        await ctrl.start({"cols": 80, "rows": 24})
+        assert ctrl.session is None
+        sock.send_json.assert_not_called()
+
+    async def test_start_no_user_home_sends_error(self):
+        ctrl, sock, _ = self._controller(user_home=None)
+        await ctrl.start({"cols": 80, "rows": 24})
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "error"
+        assert "Handle" in msg["message"]
+
+    async def test_start_no_perm_sends_terminal_started(self):
+        """Spectators get terminal_started (no session) for shared tabs."""
+        ctrl, sock, _ = self._controller(has_perm=False)
+        await ctrl.start({"cols": 80, "rows": 24})
+        msg = sock.send_json.call_args[0][0]
+        assert msg == {"type": "terminal_started"}
+        assert ctrl.session is None
+
+    async def test_start_rapid_debounce_skips(self):
+        ctrl, sock, conn = self._controller()
+        conn._last_terminal_start = time.monotonic()
+        await ctrl.start({"cols": 80, "rows": 24})
+        assert ctrl.session is None
+        sock.send_json.assert_not_called()
+
+    async def test_start_stops_existing_terminal_first(self):
+        ctrl, _, conn = self._controller()
+
+        def _swallow(coro, **kw):
+            # Close the coroutine so it doesn't warn about being
+            # never awaited.
+            coro.close()
+            return MagicMock()
+
+        with (
+            patch.object(ctrl, "stop", new=AsyncMock()) as stop,
+            patch("klangk_backend.wshandler.TerminalSession") as MockTS,
+            patch("klangk_backend.wshandler.asyncio.create_task", _swallow),
+            patch.object(container.registry, "record_activity"),
+        ):
+            MockTS.return_value.start = AsyncMock()
+            await ctrl.start({"cols": 90, "rows": 30})
+        stop.assert_awaited_once()
+        assert ctrl.cols == 90
+        assert ctrl.rows == 30
+        assert ctrl.session is MockTS.return_value
+
+    # --- input ---
+
+    async def test_input_no_session(self):
+        ctrl, _, _ = self._controller()
+        await ctrl.input({"data": "x"})
+
+    async def test_input_dead_session_dropped(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = False
+        ctrl.session = session
+        await ctrl.input({"data": "x"})
+        session.write.assert_not_awaited()
+
+    async def test_input_read_only_blocks_user_text(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = True
+        ctrl.session = session
+        await ctrl.input({"data": "ls"})
+        session.write.assert_not_awaited()
+
+    async def test_input_read_only_allows_escape_sequences(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = True
+        ctrl.session = session
+        with patch.object(container.registry, "record_activity"):
+            await ctrl.input({"data": "\x1b[6n"})
+        session.write.assert_awaited_once_with("\x1b[6n")
+
+    async def test_input_oversized_dropped(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = False
+        ctrl.session = session
+        await ctrl.input({"data": "x" * 70000})
+        session.write.assert_not_awaited()
+
+    async def test_input_writes_and_records_activity(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = False
+        ctrl.session = session
+        with patch.object(container.registry, "record_activity") as rec:
+            await ctrl.input({"data": "ls"})
+        session.write.assert_awaited_once_with("ls")
+        rec.assert_called_once_with("cid")
+
+    # --- resize ---
+
+    async def test_resize_updates_dims_and_session(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        await ctrl.resize({"cols": 120, "rows": 40})
+        assert ctrl.cols == 120
+        assert ctrl.rows == 40
+        session.resize.assert_awaited_once_with(120, 40)
+
+    async def test_resize_no_session_still_updates_dims(self):
+        ctrl, _, _ = self._controller()
+        await ctrl.resize({"cols": 100, "rows": 35})
+        assert ctrl.cols == 100
+        assert ctrl.rows == 35
+
+    async def test_resize_defaults_when_missing(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        await ctrl.resize({})
+        assert ctrl.cols == 80
+        assert ctrl.rows == 24
+        session.resize.assert_awaited_once_with(80, 24)
+
+    # --- stop / claim_and_stop / activate_session ---
+
+    async def test_stop_command_calls_stop(self):
+        ctrl, _, _ = self._controller()
+        with patch.object(ctrl, "stop", new=AsyncMock()) as stop:
+            await ctrl.stop_command()
+        stop.assert_awaited_once()
+
+    async def test_claim_and_stop_no_session(self):
+        ctrl, _, _ = self._controller()
+        await ctrl.claim_and_stop()
+        assert ctrl.session is None
+
+    async def test_claim_and_stop_drops_and_stops(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        await ctrl.claim_and_stop()
+        assert ctrl.session is None
+        session.stop.assert_awaited_once()
+
+    async def test_stop_cancels_task_and_clears_viewing(self):
+        """stop() clears the connection's _viewing_shared and resets debounce."""
+        ctrl, _, conn = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        ctrl.task = asyncio.create_task(asyncio.sleep(999))
+        conn._viewing_shared = {"user_id": "x", "window_id": "@0"}
+        conn._last_terminal_start = 12345.0
+        await ctrl.stop()
+        assert ctrl.task is None
+        assert ctrl.session is None
+        assert conn._viewing_shared is None
+        assert conn._last_terminal_start == 0
+
+    async def test_stop_broadcasts_when_was_viewing(self):
+        ctrl, _, conn = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        conn._viewing_shared = {"user_id": "x", "window_id": "@0"}
+        with patch("klangk_backend.wshandler.state.get_session") as gs:
+            ws_session = MagicMock()
+            gs.return_value = ws_session
+            await ctrl.stop()
+        conn._broadcast_shared_terminals.assert_called_once_with(ws_session)
+
+    async def test_activate_session_superseded_returns_false(self):
+        """If terminal_session changed, activate_session stops the stale one."""
+        ctrl, _, _ = self._controller()
+        stale = AsyncMock()
+        # Controller's current session is a different object.
+        ctrl.session = AsyncMock()
+        result = await ctrl.activate_session(stale, 80, 24)
+        assert result is False
+        stale.stop.assert_awaited_once()
+
+    async def test_activate_session_wires_forward_task(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        with patch.object(container.registry, "record_activity") as rec:
+            result = await ctrl.activate_session(session, 80, 24)
+        assert result is True
+        assert ctrl.task is not None
+        session.resize.assert_awaited_once_with(80, 24)
+        rec.assert_called_once_with("cid")
+        ctrl.task.cancel()
+        try:
+            await ctrl.task
+        except asyncio.CancelledError:
+            pass
+
+    # --- forward_output ---
+
+    async def test_forward_output_relays_and_cleans_up(self):
+        ctrl, sock, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+
+        async def fake_output():
+            yield "chunk1"
+            yield "chunk2"
+
+        session.output = fake_output
+        with patch.object(container.registry, "record_activity"):
+            await ctrl.forward_output(session)
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert calls == [
+            {"type": "terminal_output", "data": "chunk1"},
+            {"type": "terminal_output", "data": "chunk2"},
+        ]
+        session.stop.assert_awaited_once()
+        assert ctrl.session is None
+
+    async def test_forward_output_records_activity_when_container_set(self):
+        ctrl, _, _ = self._controller(container_id="cid")
+        session = AsyncMock()
+        ctrl.session = session
+
+        async def fake_output():
+            yield "data"
+
+        session.output = fake_output
+        with patch.object(container.registry, "record_activity") as rec:
+            await ctrl.forward_output(session)
+        rec.assert_called_once_with("cid")
+
+    async def test_forward_output_swallows_ws_error(self):
+        from klangk_backend.wshandler import _WS_ERRORS
+
+        ctrl, sock, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+
+        async def fake_output():
+            yield "data"
+
+        session.output = fake_output
+        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("ws dead"))
+        with patch("klangk_backend.wshandler._send_event"):
+            await ctrl.forward_output(session)
+        session.stop.assert_awaited_once()
+
+    async def test_forward_output_reraises_cancelled(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        never = asyncio.Event()
+
+        async def blocking_output():
+            yield "first"
+            await never.wait()
+
+        session.output = blocking_output
+        task = asyncio.create_task(ctrl.forward_output(session))
+        for _ in range(3):
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        session.stop.assert_awaited_once()
+        assert ctrl.session is None
+
+    # --- window helpers ---
+
+    async def test_new_window_no_container(self):
+        ctrl, sock, _ = self._controller(container_id=None)
+        await ctrl.new_window({})
+        sock.send_json.assert_not_called()
+
+    async def test_new_window_error_sends_error(self):
+        ctrl, sock, _ = self._controller()
+        with patch(
+            "klangk_backend.terminal.new_window",
+            side_effect=ValueError("boom"),
+        ):
+            await ctrl.new_window({"name": "x"})
+        assert sock.send_json.call_args[0][0]["type"] == "error"
+
+    async def test_close_window_no_container(self):
+        ctrl, sock, _ = self._controller(container_id=None)
+        await ctrl.close_window({})
+        sock.send_json.assert_not_called()
+
+    async def test_rename_window_no_name_sends_error(self):
+        ctrl, sock, _ = self._controller()
+        await ctrl.rename_window({"index": 0, "name": ""})
+        assert sock.send_json.call_args[0][0]["type"] == "error"
+
+    async def test_list_windows_no_container(self):
+        ctrl, sock, _ = self._controller(container_id=None)
+        await ctrl.list_windows()
+        sock.send_json.assert_not_called()
+
+    async def test_list_windows_error_sends_error(self):
+        ctrl, sock, _ = self._controller()
+        with patch(
+            "klangk_backend.terminal.list_windows",
+            side_effect=OSError("boom"),
+        ):
+            await ctrl.list_windows()
+        assert sock.send_json.call_args[0][0]["type"] == "error"
+
+    async def test_select_window_no_container(self):
+        ctrl, sock, _ = self._controller(container_id=None)
+        await ctrl.select_window({"index": 0})
+        sock.send_json.assert_not_called()
+
+    async def test_select_window_uses_grouped_session_name(self):
+        ctrl, _, _ = self._controller()
+        session = MagicMock()
+        session._tmux_session_name = "grouped"
+        ctrl.session = session
+        with patch("klangk_backend.terminal.select_window") as sel:
+            await ctrl.select_window({"window_id": "@2"})
+        sel.assert_called_once_with("cid", "grouped", "@2")
+
+    async def test_select_window_falls_back_to_tmux_session_name(self):
+        ctrl, _, _ = self._controller()
+        session = MagicMock()
+        session._tmux_session_name = None
+        ctrl.session = session
+        with patch("klangk_backend.terminal.select_window") as sel:
+            await ctrl.select_window({"index": 1})
+        sel.assert_called_once_with("cid", "uid", 1)
+
+    # --- sync / notify helpers ---
+
+    async def test_sync_terminal_windows_no_ws_session_noop(self):
+        ctrl, _, _ = self._controller(workspace_id="nope")
+        # No WorkspaceSession for this workspace.
+        ctrl.sync_terminal_windows([{"id": "@0", "index": 0, "name": "bash"}])
+
+    async def test_notify_user_terminal_windows_no_ws_session_sends_directly(
+        self,
+    ):
+        ctrl, sock, _ = self._controller(workspace_id="nope")
+        ctrl.notify_user_terminal_windows([{"id": "@0", "name": "bash"}])
+        sent = sock.send_json.call_args[0][0]
+        assert sent == {
+            "type": "terminal_windows",
+            "windows": [{"id": "@0", "name": "bash"}],
+        }
+
+    async def test_notify_user_terminal_windows_broadcasts_to_user_conns(
+        self, user
+    ):
+        """When a ws_session exists, only this user's sockets receive it."""
+        ctrl, sock, conn = self._controller(user=user)
+        ws_session = wshandler.state.get_or_create_session("ws-1")
+        other_sock = _mock_sock()
+        other_conn = _base_conn(
+            user={"id": "other", "email": "o@x.com", "handle": "o"},
+            ws=other_sock,
+        )
+        other_conn.workspace_id = "ws-1"
+        await ws_session.add_subscriber(sock, "cid")
+        await ws_session.add_subscriber(other_sock, "cid")
+        wshandler.state.connections[sock] = conn
+        wshandler.state.connections[other_sock] = other_conn
+        try:
+            ctrl.notify_user_terminal_windows([{"id": "@0", "name": "bash"}])
+            # user's sock received it; other_sock did not.
+            sent = sock.send_json.call_args[0][0]
+            assert sent["type"] == "terminal_windows"
+            other_sock.send_json.assert_not_called()
+        finally:
+            await ws_session.remove_subscriber(sock)
+            await ws_session.remove_subscriber(other_sock)
+            wshandler.state.connections.pop(sock, None)
+            wshandler.state.connections.pop(other_sock, None)
+            wshandler.state.sessions.pop("ws-1", None)
+
+    # --- browser_reattach ---
+
+    async def test_browser_reattach_no_browser_id(self):
+        ctrl, _, _ = self._controller()
+        await ctrl.browser_reattach({})
+        # No registration, no _browser_id set.
+
+    async def test_browser_reattach_no_container(self):
+        ctrl, _, conn = self._controller(container_id=None)
+        await ctrl.browser_reattach({"browser_id": "bid"})
+        assert conn._browser_id is None
+
+    async def test_browser_reattach_registers_and_attaches(self):
+        ctrl, _, conn = self._controller()
+        with (
+            patch.object(container.registry, "revoke_browser") as rev,
+            patch.object(container.registry, "register_browser") as reg,
+            patch(
+                "klangk_backend.wshandler.attach_browser", new=AsyncMock()
+            ) as attach,
+        ):
+            await ctrl.browser_reattach({"browser_id": "bid"})
+        rev.assert_called_once_with(conn.sock)
+        reg.assert_called_once_with("bid", "ws-1", conn.sock)
+        attach.assert_awaited_once_with("cid", "bid")
+        assert conn._browser_id == "bid"
+
+    # --- tmux_session_name ---
+
+    def test_tmux_session_name_returns_user_id(self):
+        ctrl, _, _ = self._controller()
+        assert ctrl.tmux_session_name() == "uid"
+
+    # --- Connection backward-compat delegates + property shims ---
+
+    async def test_connection_notify_user_terminal_windows_delegate(self):
+        """Connection._notify_user_terminal_windows forwards to controller."""
+        conn = _base_conn()
+        windows = [{"id": "@0", "name": "bash"}]
+        with patch.object(conn.terminal, "notify_user_terminal_windows") as m:
+            conn._notify_user_terminal_windows(windows)
+        m.assert_called_once_with(windows)
+
+    async def test_connection_sync_terminal_windows_delegate(self):
+        conn = _base_conn()
+        windows = [{"id": "@0", "name": "bash"}]
+        with patch.object(conn.terminal, "sync_terminal_windows") as m:
+            conn._sync_terminal_windows(windows)
+        m.assert_called_once_with(windows)
+
+    async def test_connection_tmux_session_name_delegate(self):
+        conn = _base_conn()
+        with patch.object(
+            conn.terminal, "tmux_session_name", return_value="uid"
+        ) as m:
+            assert conn._tmux_session_name() == "uid"
+        m.assert_called_once_with()
+
+    async def test_connection_activate_session_delegate(self):
+        conn = _base_conn()
+        session = AsyncMock()
+        with patch.object(
+            conn.terminal, "activate_session", new=AsyncMock(return_value=True)
+        ) as m:
+            result = await conn._activate_session(session, 80, 24)
+        assert result is True
+        m.assert_awaited_once_with(session, 80, 24)
+
+    async def test_connection_stop_terminal_delegate(self):
+        conn = _base_conn()
+        with patch.object(conn.terminal, "stop", new=AsyncMock()) as m:
+            await conn.stop_terminal()
+        m.assert_awaited_once()
+
+    async def test_connection_forward_terminal_output_delegate(self):
+        conn = _base_conn()
+        session = AsyncMock()
+        with patch.object(
+            conn.terminal, "forward_output", new=AsyncMock()
+        ) as m:
+            await conn.forward_terminal_output(session)
+        m.assert_awaited_once_with(session)
+
+    async def test_connection_claim_and_stop_terminal_delegate(self):
+        conn = _base_conn()
+        with patch.object(
+            conn.terminal, "claim_and_stop", new=AsyncMock()
+        ) as m:
+            await conn._claim_and_stop_terminal()
+        m.assert_awaited_once()
+
+    async def test_terminal_session_property_round_trip(self):
+        conn = _base_conn()
+        sentinel = object()
+        conn.terminal_session = sentinel
+        assert conn.terminal_session is sentinel
+        assert conn.terminal.session is sentinel
+
+    async def test_terminal_task_property_round_trip(self):
+        conn = _base_conn()
+        task = asyncio.create_task(asyncio.sleep(999))
+        try:
+            conn.terminal_task = task
+            assert conn.terminal_task is task
+            assert conn.terminal.task is task
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def test_terminal_cols_rows_property_round_trip(self):
+        conn = _base_conn()
+        conn._terminal_cols = 120
+        conn._terminal_rows = 40
+        assert conn.terminal.cols == 120
+        assert conn.terminal.rows == 40
+        assert conn._terminal_cols == 120
+        assert conn._terminal_rows == 40
 
 
 class TestShareWindowHandlers:
