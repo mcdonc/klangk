@@ -627,6 +627,33 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     );
   }
 
+  /// Select a sort column, or toggle direction if already selected —
+  /// mirrors the WorkspaceListPage sort chips. Resets to page 1 because a
+  /// different sort reorders every row.
+  Future<void> _changeSort(String sortKey) async {
+    if (_usersSort == sortKey) {
+      setState(() => _usersOrder = _usersOrder == 'asc' ? 'desc' : 'asc');
+    } else {
+      setState(() {
+        _usersSort = sortKey;
+        // Email/handle read naturally ascending; created descending.
+        _usersOrder = sortKey == 'created' ? 'desc' : 'asc';
+      });
+    }
+    await _loadUsers(page: 1);
+  }
+
+  Widget _sortChip(String label, String sortKey) {
+    final active = _usersSort == sortKey;
+    final arrow = _usersOrder == 'asc' ? '▲' : '▼';
+    return ActionChip(
+      label: Text(active ? '$label $arrow' : label),
+      onPressed: () => _changeSort(sortKey),
+      backgroundColor:
+          active ? KColors.accentBlue.withValues(alpha: 0.2) : null,
+    );
+  }
+
   Widget _buildUsersToolbar() {
     final totalPages = _usersTotal == 0
         ? 1
@@ -638,6 +665,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         runSpacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
+          _sortChip('Email', 'email'),
+          _sortChip('Handle', 'handle'),
+          _sortChip('Created', 'created'),
+          const SizedBox(width: 12),
           SizedBox(
             width: 220,
             child: TextField(
@@ -647,39 +678,16 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                 hintText: 'Filter by email…',
                 prefixIcon: Icon(Icons.search, size: 18),
                 border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 0,
+                ),
               ),
               onSubmitted: (value) {
                 _usersQuery = value;
                 _loadUsers(page: 1);
               },
             ),
-          ),
-          DropdownButton<String>(
-            value: _usersSort,
-            items: const [
-              DropdownMenuItem(value: 'created', child: Text('Sort: Created')),
-              DropdownMenuItem(value: 'email', child: Text('Sort: Email')),
-              DropdownMenuItem(value: 'handle', child: Text('Sort: Handle')),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() => _usersSort = value);
-              _loadUsers(page: 1);
-            },
-          ),
-          IconButton(
-            tooltip: _usersOrder == 'asc'
-                ? 'Ascending (tap for descending)'
-                : 'Descending (tap for ascending)',
-            icon: Icon(
-              _usersOrder == 'asc' ? Icons.arrow_upward : Icons.arrow_downward,
-            ),
-            onPressed: () {
-              setState(
-                () => _usersOrder = _usersOrder == 'asc' ? 'desc' : 'asc',
-              );
-              _loadUsers(page: 1);
-            },
           ),
           Row(
             mainAxisSize: MainAxisSize.min,

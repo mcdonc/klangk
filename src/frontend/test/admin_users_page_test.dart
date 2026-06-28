@@ -242,23 +242,25 @@ void main() {
 
       await pumpPage(tester);
 
-      // Defaults.
+      // Defaults: created, descending. The active Created chip shows ▼.
       expect(capturedSort, 'created');
       expect(capturedOrder, 'desc');
+      expect(find.text('Created ▼', skipOffstage: false), findsOneWidget);
 
-      // Switch sort to email via the dropdown.
-      await tester.tap(find.text('Sort: Created'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Sort: Email').last);
+      // Tap the Email chip to switch sort (defaults to asc).
+      await tester.tap(find.text('Email'));
       await tester.pumpAndSettle();
 
       expect(capturedSort, 'email');
+      expect(capturedOrder, 'asc');
+      expect(find.text('Email ▲', skipOffstage: false), findsOneWidget);
 
-      // Toggle order to asc.
-      await tester.tap(iconButton('Descending (tap for ascending)'));
+      // Tap Email again to flip direction to desc.
+      await tester.tap(find.text('Email ▲'));
       await tester.pumpAndSettle();
 
-      expect(capturedOrder, 'asc');
+      expect(capturedOrder, 'desc');
+      expect(find.text('Email ▼', skipOffstage: false), findsOneWidget);
     });
 
     testWidgets('sends email filter query on submit', (tester) async {
