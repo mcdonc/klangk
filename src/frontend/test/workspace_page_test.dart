@@ -1,231 +1,171 @@
-/// Tests for the container-stopped and disconnected overlay logic.
-/// WorkspacePage can't be tested directly (depends on klangk_plugins which
-/// uses dart:js_interop). Instead we extract and test the overlay widget
-/// and the event→state logic separately.
+/// Tests for the container-stopped and disconnected overlays in
+/// `WorkspacePage.build`. These exercise the REAL extracted overlay builders
+/// (`buildContainerStoppedOverlay` / `buildDisconnectedOverlay`) rather than
+/// duplicated standalone copies, so the actual page rendering is covered.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-/// Standalone container-stopped overlay matching workspace_page's implementation.
-Widget buildStoppedOverlay({
-  required bool stopped,
-  required bool restarting,
-  required String reason,
-  required VoidCallback onRestart,
-}) {
-  if (!stopped) return const SizedBox();
-  return MaterialApp(
-    home: Scaffold(
-      body: Container(
-        color: Colors.black54,
-        child: Center(
-          child: restarting
-              ? const Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(color: Colors.white),
-                    SizedBox(height: 12),
-                    Text('Restarting...',
-                        style: TextStyle(color: Colors.white)),
-                  ],
-                )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(reason,
-                        style:
-                            const TextStyle(color: Colors.white, fontSize: 16)),
-                    const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      onPressed: onRestart,
-                      icon: const Icon(Icons.refresh, size: 18),
-                      label: const Text('Restart'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF238636),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-        ),
-      ),
-    ),
-  );
-}
-
-/// Standalone disconnected overlay matching workspace_page's implementation.
-Widget buildDisconnectedOverlay({
-  required bool disconnected,
-  required bool stopped,
-  required bool reconnecting,
-  required VoidCallback onReconnect,
-}) {
-  if (!disconnected || stopped) return const SizedBox();
-  return MaterialApp(
-    home: Scaffold(
-      body: Container(
-        color: Colors.black54,
-        child: Center(
-          child: reconnecting
-              ? const Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(color: Colors.white),
-                    SizedBox(height: 12),
-                    Text('Reconnecting...',
-                        style: TextStyle(color: Colors.white)),
-                  ],
-                )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Disconnected from server',
-                        style: TextStyle(color: Colors.white, fontSize: 16)),
-                    const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      onPressed: onReconnect,
-                      icon: const Icon(Icons.refresh, size: 18),
-                      label: const Text('Reconnect'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF238636),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-        ),
-      ),
-    ),
-  );
-}
+import 'package:klangk_frontend/workspace/workspace_overlays.dart';
 
 void main() {
-  group('container stopped overlay', () {
+  Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
+
+  group('container stopped overlay (buildContainerStoppedOverlay)', () {
     testWidgets('shows reason and restart button', (tester) async {
-      await tester.pumpWidget(buildStoppedOverlay(
-        stopped: true,
-        restarting: false,
-        reason: 'Container stopped (idle timeout)',
-        onRestart: () {},
+      await tester.pumpWidget(wrap(
+        buildContainerStoppedOverlay(
+          restarting: false,
+          stopReason: 'Container stopped (idle timeout)',
+          onRestart: () {},
+          onBack: () {},
+        ),
       ));
 
       expect(find.textContaining('idle timeout'), findsOneWidget);
       expect(find.text('Restart'), findsOneWidget);
       expect(find.byIcon(Icons.refresh), findsOneWidget);
+      expect(find.text('Back to workspaces'), findsOneWidget);
     });
 
-    testWidgets('shows generic message without reason', (tester) async {
-      await tester.pumpWidget(buildStoppedOverlay(
-        stopped: true,
-        restarting: false,
-        reason: 'Container stopped',
-        onRestart: () {},
+    testWidgets('shows generic message without a reason', (tester) async {
+      await tester.pumpWidget(wrap(
+        buildContainerStoppedOverlay(
+          restarting: false,
+          stopReason: 'Container stopped',
+          onRestart: () {},
+          onBack: () {},
+        ),
       ));
 
       expect(find.text('Container stopped'), findsOneWidget);
     });
 
     testWidgets('shows spinner when restarting', (tester) async {
-      await tester.pumpWidget(buildStoppedOverlay(
-        stopped: true,
-        restarting: true,
-        reason: '',
-        onRestart: () {},
+      await tester.pumpWidget(wrap(
+        buildContainerStoppedOverlay(
+          restarting: true,
+          stopReason: '',
+          onRestart: () {},
+          onBack: () {},
+        ),
       ));
 
       expect(find.textContaining('Restarting'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      // Restart button is hidden while restarting.
       expect(find.text('Restart'), findsNothing);
     });
 
     testWidgets('restart button calls callback', (tester) async {
       var called = false;
-      await tester.pumpWidget(buildStoppedOverlay(
-        stopped: true,
-        restarting: false,
-        reason: 'Container stopped',
-        onRestart: () => called = true,
+      await tester.pumpWidget(wrap(
+        buildContainerStoppedOverlay(
+          restarting: false,
+          stopReason: 'Container stopped',
+          onRestart: () => called = true,
+          onBack: () {},
+        ),
       ));
 
       await tester.tap(find.text('Restart'));
       expect(called, isTrue);
     });
 
-    testWidgets('not shown when not stopped', (tester) async {
-      await tester.pumpWidget(buildStoppedOverlay(
-        stopped: false,
-        restarting: false,
-        reason: '',
-        onRestart: () {},
+    testWidgets('back button calls callback', (tester) async {
+      var called = false;
+      await tester.pumpWidget(wrap(
+        buildContainerStoppedOverlay(
+          restarting: false,
+          stopReason: 'Container stopped',
+          onRestart: () {},
+          onBack: () => called = true,
+        ),
       ));
 
-      expect(find.text('Restart'), findsNothing);
-      expect(find.textContaining('Container'), findsNothing);
+      await tester.tap(find.text('Back to workspaces'));
+      expect(called, isTrue);
     });
   });
 
-  group('disconnected overlay', () {
-    testWidgets('shows disconnected overlay when disconnected', (tester) async {
-      await tester.pumpWidget(buildDisconnectedOverlay(
-        disconnected: true,
-        stopped: false,
-        reconnecting: false,
-        onReconnect: () {},
+  group('disconnected overlay (buildDisconnectedOverlay)', () {
+    testWidgets('shows disconnected overlay when not reconnecting',
+        (tester) async {
+      await tester.pumpWidget(wrap(
+        buildDisconnectedOverlay(
+          reconnecting: false,
+          reconnectAttempt: 0,
+          onReconnect: () {},
+          onBack: () {},
+        ),
       ));
 
-      expect(find.text('Disconnected from server'), findsOneWidget);
+      expect(find.text('Connection lost'), findsOneWidget);
       expect(find.text('Reconnect'), findsOneWidget);
       expect(find.byIcon(Icons.refresh), findsOneWidget);
+      expect(find.text('Back to workspaces'), findsOneWidget);
     });
 
     testWidgets('reconnect button calls callback', (tester) async {
       var called = false;
-      await tester.pumpWidget(buildDisconnectedOverlay(
-        disconnected: true,
-        stopped: false,
-        reconnecting: false,
-        onReconnect: () => called = true,
+      await tester.pumpWidget(wrap(
+        buildDisconnectedOverlay(
+          reconnecting: false,
+          reconnectAttempt: 0,
+          onReconnect: () => called = true,
+          onBack: () {},
+        ),
       ));
 
       await tester.tap(find.text('Reconnect'));
       expect(called, isTrue);
     });
 
-    testWidgets('disconnected overlay not shown when container stopped',
-        (tester) async {
-      await tester.pumpWidget(buildDisconnectedOverlay(
-        disconnected: true,
-        stopped: true,
-        reconnecting: false,
-        onReconnect: () {},
+    testWidgets('shows reconnecting spinner and attempt count', (tester) async {
+      await tester.pumpWidget(wrap(
+        buildDisconnectedOverlay(
+          reconnecting: true,
+          reconnectAttempt: 3,
+          onReconnect: () {},
+          onBack: () {},
+        ),
       ));
 
-      expect(find.text('Disconnected from server'), findsNothing);
-      expect(find.text('Reconnect'), findsNothing);
-    });
-
-    testWidgets('shows reconnecting spinner', (tester) async {
-      await tester.pumpWidget(buildDisconnectedOverlay(
-        disconnected: true,
-        stopped: false,
-        reconnecting: true,
-        onReconnect: () {},
-      ));
-
-      expect(find.text('Reconnecting...'), findsOneWidget);
+      expect(find.textContaining('Reconnecting'), findsOneWidget);
+      expect(find.textContaining('attempt 3'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      // The plain "Reconnect" button is hidden while reconnecting; only
+      // "Reconnect now" (shown when reconnecting) may appear.
       expect(find.text('Reconnect'), findsNothing);
     });
 
-    testWidgets('not shown when not disconnected', (tester) async {
-      await tester.pumpWidget(buildDisconnectedOverlay(
-        disconnected: false,
-        stopped: false,
-        reconnecting: false,
-        onReconnect: () {},
+    testWidgets('reconnect-now button calls callback while reconnecting',
+        (tester) async {
+      var called = false;
+      await tester.pumpWidget(wrap(
+        buildDisconnectedOverlay(
+          reconnecting: true,
+          reconnectAttempt: 1,
+          onReconnect: () => called = true,
+          onBack: () {},
+        ),
       ));
 
-      expect(find.text('Disconnected from server'), findsNothing);
-      expect(find.text('Reconnect'), findsNothing);
+      await tester.tap(find.text('Reconnect now'));
+      expect(called, isTrue);
+    });
+
+    testWidgets('back button calls callback', (tester) async {
+      var called = false;
+      await tester.pumpWidget(wrap(
+        buildDisconnectedOverlay(
+          reconnecting: false,
+          reconnectAttempt: 0,
+          onReconnect: () {},
+          onBack: () => called = true,
+        ),
+      ));
+
+      await tester.tap(find.text('Back to workspaces'));
+      expect(called, isTrue);
     });
   });
 }

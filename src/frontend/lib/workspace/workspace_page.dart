@@ -19,6 +19,7 @@ import '../layout/ide_layout.dart';
 import '../terminal/ghostty_terminal.dart';
 import '../terminal/terminal_link.dart';
 import 'workspace_file_api.dart';
+import 'workspace_overlays.dart';
 import 'package:http/http.dart' as http;
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
@@ -579,43 +580,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_error != null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Workspace')),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Error: $_error'),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () => context.go('/workspaces'),
-                child: const Text('Back to workspaces'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_connecting) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const AppBarTitle(title: 'Connecting...'),
-          actions: const [AppBarActions()],
-        ),
-        body: const Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Loading, please wait'),
-            ],
-          ),
-        ),
-      );
-    }
+    if (_error != null) return _buildErrorView();
+    if (_connecting) return _buildConnectingView();
 
     final wsClient = context.read<WsClient>();
     final authToken = context.read<AuthService>().token;
@@ -629,159 +595,104 @@ class _WorkspacePageState extends State<WorkspacePage> {
       ),
       body: Stack(
         children: [
-          IdeLayout(
-            fileViewer: FileViewerPanel(
-              key: _fileViewerKey,
-              wsClient: wsClient,
-              workspaceId: widget.workspaceId,
-              authToken: authToken,
-              userHome: wsClient.userHome,
-              registry: _fileRenderers,
-            ),
-            terminal: _buildTerminalWithTabs(wsClient),
-            chat: _hasPerm('chat')
-                ? WorkspaceChat(
-                    key: _chatKey,
-                    wsClient: wsClient,
-                    onUnreadChanged: (count) {
-                      if (mounted) setState(() => _chatUnread = count);
-                    },
-                    onMentionChanged: (mentioned) {
-                      if (mounted) setState(() => _chatMentioned = mentioned);
-                    },
-                  )
-                : null,
-            chatUnread: _chatUnread,
-            chatMentioned: _chatMentioned,
-            settings: _hasPerm('edit')
-                ? WorkspaceSettingsPanel(workspaceId: widget.workspaceId)
-                : null,
-            sharing: _hasPerm('share')
-                ? WorkspaceSharingPanel(workspaceId: widget.workspaceId)
-                : null,
-            terminalKey: _terminalKey,
-            fileViewerKey: _fileViewerKey,
-            chatKey: _chatKey,
-            initialFile: widget.initialFile,
-            initialDir: widget.initialDir,
-            debug: DebugPanel(wsClient: wsClient),
-          ),
+          _buildIdeLayout(wsClient, authToken),
           for (final plugin in _plugins)
             if (plugin.buildOverlay(context) != null)
               plugin.buildOverlay(context)!,
           if (_containerStopped)
-            Container(
-              color: Colors.black54,
-              child: Center(
-                child: _restarting
-                    ? const Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircularProgressIndicator(color: Colors.white),
-                          SizedBox(height: 12),
-                          Text(
-                            'Restarting...',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        ],
-                      )
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _stopReason,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            onPressed: _restartContainer,
-                            icon: const Icon(Icons.refresh, size: 18),
-                            label: const Text('Restart'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: KColors.accentGreen,
-                              foregroundColor: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: () => context.go('/'),
-                            child: const Text(
-                              'Back to workspaces',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
+            buildContainerStoppedOverlay(
+              restarting: _restarting,
+              stopReason: _stopReason,
+              onRestart: _restartContainer,
+              onBack: () => context.go('/workspaces'),
             ),
           if (_disconnected && !_containerStopped)
-            Container(
-              color: Colors.black54,
-              child: Center(
-                child: wsClient.reconnecting
-                    ? Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(color: Colors.white),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Reconnecting (attempt ${wsClient.reconnectAttempt})...',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            onPressed: _reconnect,
-                            icon: const Icon(Icons.refresh, size: 18),
-                            label: const Text('Reconnect now'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: KColors.accentGreen,
-                              foregroundColor: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: () => context.go('/'),
-                            child: const Text(
-                              'Back to workspaces',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                          ),
-                        ],
-                      )
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            'Connection lost',
-                            style: TextStyle(color: Colors.white, fontSize: 16),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            onPressed: _reconnect,
-                            icon: const Icon(Icons.refresh, size: 18),
-                            label: const Text('Reconnect'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: KColors.accentGreen,
-                              foregroundColor: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: () => context.go('/'),
-                            child: const Text(
-                              'Back to workspaces',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
+            buildDisconnectedOverlay(
+              reconnecting: wsClient.reconnecting,
+              reconnectAttempt: wsClient.reconnectAttempt,
+              onReconnect: _reconnect,
+              onBack: () => context.go('/workspaces'),
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildErrorView() {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Workspace')),
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Error: $_error'),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => context.go('/workspaces'),
+              child: const Text('Back to workspaces'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectingView() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const AppBarTitle(title: 'Connecting...'),
+        actions: const [AppBarActions()],
+      ),
+      body: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading, please wait'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIdeLayout(WsClient wsClient, String? authToken) {
+    return IdeLayout(
+      fileViewer: FileViewerPanel(
+        key: _fileViewerKey,
+        wsClient: wsClient,
+        workspaceId: widget.workspaceId,
+        authToken: authToken,
+        userHome: wsClient.userHome,
+        registry: _fileRenderers,
+      ),
+      terminal: _buildTerminalWithTabs(wsClient),
+      chat: _hasPerm('chat')
+          ? WorkspaceChat(
+              key: _chatKey,
+              wsClient: wsClient,
+              onUnreadChanged: (count) {
+                if (mounted) setState(() => _chatUnread = count);
+              },
+              onMentionChanged: (mentioned) {
+                if (mounted) setState(() => _chatMentioned = mentioned);
+              },
+            )
+          : null,
+      chatUnread: _chatUnread,
+      chatMentioned: _chatMentioned,
+      settings: _hasPerm('edit')
+          ? WorkspaceSettingsPanel(workspaceId: widget.workspaceId)
+          : null,
+      sharing: _hasPerm('share')
+          ? WorkspaceSharingPanel(workspaceId: widget.workspaceId)
+          : null,
+      terminalKey: _terminalKey,
+      fileViewerKey: _fileViewerKey,
+      chatKey: _chatKey,
+      initialFile: widget.initialFile,
+      initialDir: widget.initialDir,
+      debug: DebugPanel(wsClient: wsClient),
     );
   }
 }
