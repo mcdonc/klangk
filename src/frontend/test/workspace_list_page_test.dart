@@ -518,7 +518,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(lastSort, 'created');
 
-      // Tap the Name sort chip -> request uses sort=name.
+      // Tap the Name sort chip -> request uses sort=name (asc by default).
+      await tester.tap(find.text('Name'));
+      await tester.pumpAndSettle();
+      expect(lastSort, 'name');
+
+      // Tap the now-active Name chip again -> toggles direction to desc.
       await tester.tap(find.textContaining('Name'));
       await tester.pumpAndSettle();
       expect(lastSort, 'name');
