@@ -1608,43 +1608,21 @@ async def add_workspace_member(
         raise HTTPException(
             status_code=400, detail="Cannot share with yourself"
         )
-    # Add ACL entries granting the target user view+terminal on this workspace
+    # Add ACL entries granting the target user view+terminal+files+chat
+    # on this workspace, packed at the next available positions.
     resource = f"/workspaces/{workspace_id}"
     existing = await model.get_acl_entries(resource)
-    # Find the next available position
-    max_pos = max((e["position"] for e in existing), default=-1)
-    await model.add_acl_entry(
-        resource,
-        max_pos + 1,
-        ACTION_ALLOW,
-        "view",
-        PRINCIPAL_USER,
-        user_id=target["id"],
-    )
-    await model.add_acl_entry(
-        resource,
-        max_pos + 2,
-        ACTION_ALLOW,
-        "terminal",
-        PRINCIPAL_USER,
-        user_id=target["id"],
-    )
-    await model.add_acl_entry(
-        resource,
-        max_pos + 3,
-        ACTION_ALLOW,
-        "files",
-        PRINCIPAL_USER,
-        user_id=target["id"],
-    )
-    await model.add_acl_entry(
-        resource,
-        max_pos + 4,
-        ACTION_ALLOW,
-        "chat",
-        PRINCIPAL_USER,
-        user_id=target["id"],
-    )
+    next_pos = max((e["position"] for e in existing), default=-1) + 1
+    for perm in ("view", "terminal", "files", "chat"):
+        await model.add_acl_entry(
+            resource,
+            next_pos,
+            ACTION_ALLOW,
+            perm,
+            PRINCIPAL_USER,
+            user_id=target["id"],
+        )
+        next_pos += 1
     await _broadcast_workspace_members(workspace_id)
     wshandler.state.notify_user_workspaces_changed(user["id"])
     wshandler.state.notify_user_workspaces_changed(target["id"])
