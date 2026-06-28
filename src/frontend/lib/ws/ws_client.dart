@@ -291,6 +291,37 @@ class WsClient extends ChangeNotifier {
     _listenToChannel();
   }
 
+  /// Dispatch table for incoming WebSocket message types.
+  ///
+  /// Simple pass-throughs are one-line lambdas/tear-offs; stateful
+  /// branches live in named `_on…` methods so the `notifyListeners()`
+  /// calls and mutations stay auditable. See #952.
+  late final Map<String, void Function(Map<String, dynamic>)> _handlers = {
+    'workspace_ready': _onWorkspaceReady,
+    'terminal_output': (json) =>
+        _terminalOutputController.add(json['data'] as String? ?? ''),
+    'error': (json) =>
+        _errorController.add(json['message'] as String? ?? 'Unknown error'),
+    'browser_request': _browserRequestController.add,
+    'chat_message': (json) {
+      chatHistory.add(json);
+      _chatController.add(json);
+    },
+    'chat_history': _onChatHistory,
+    'chat_history_page': _chatHistoryPageController.add,
+    'chat_updated': _chatController.add,
+    'agent_thinking': _chatController.add,
+    'workspace_members': _onWorkspaceMembers,
+    'presence_list': _onPresenceList,
+    'presence_join': _onPresenceJoin,
+    'presence_leave': _onPresenceLeave,
+    'terminal_windows': _onTerminalWindows,
+    'shared_terminals': _onSharedTerminals,
+    'shared_terminal_deleted': _onSharedTerminalDeleted,
+    'workspaces_changed': (json) => _workspacesChangedController.add(null),
+    'event': _customEventController.add,
+  };
+
   void _listenToChannel() {
     _channel!.stream.listen(
       (data) {
@@ -308,85 +339,7 @@ class WsClient extends ChangeNotifier {
             );
           }
 
-          if (type == 'workspace_ready') {
-            _currentWorkspaceId = json['workspaceId'] as String?;
-            _currentUserId = json['userId'] as String?;
-            _defaultCommand = json['defaultCommand'] as String?;
-            _userHome = json['userHome'] as String?;
-            _reconnecting = false;
-            _reconnectAttempt = 0;
-            _pendingWorkspaceId = null;
-            _startHeartbeat();
-            notifyListeners();
-          } else if (type == 'terminal_output') {
-            _terminalOutputController.add(json['data'] as String? ?? '');
-          } else if (type == 'error') {
-            _errorController.add(json['message'] as String? ?? 'Unknown error');
-          } else if (type == 'browser_request') {
-            _browserRequestController.add(json);
-          } else if (type == 'chat_message') {
-            chatHistory.add(json);
-            _chatController.add(json);
-          } else if (type == 'chat_history') {
-            final messages = json['messages'] as List? ?? [];
-            for (final m in messages) {
-              final msg = m as Map<String, dynamic>;
-              chatHistory.add(msg);
-              _chatController.add(msg);
-            }
-          } else if (type == 'chat_history_page') {
-            _chatHistoryPageController.add(json);
-          } else if (type == 'chat_updated') {
-            _chatController.add(json);
-          } else if (type == 'agent_thinking') {
-            _chatController.add(json);
-          } else if (type == 'workspace_members') {
-            final members = json['members'] as List? ?? [];
-            workspaceMembers = members.cast<Map<String, dynamic>>();
-            notifyListeners();
-          } else if (type == 'presence_list') {
-            final users = json['users'] as List? ?? [];
-            presenceUsers = users.cast<Map<String, dynamic>>();
-            notifyListeners();
-          } else if (type == 'presence_join') {
-            final uid = json['user_id'] as String?;
-            if (uid != null && !presenceUsers.any((u) => u['user_id'] == uid)) {
-              presenceUsers = [
-                ...presenceUsers,
-                {
-                  'user_id': uid,
-                  'user_email': json['user_email'],
-                  'user_handle': json['user_handle'] ?? '',
-                },
-              ];
-              notifyListeners();
-            }
-          } else if (type == 'presence_leave') {
-            final uid = json['user_id'] as String?;
-            if (uid != null) {
-              presenceUsers =
-                  presenceUsers.where((u) => u['user_id'] != uid).toList();
-              notifyListeners();
-            }
-          } else if (type == 'terminal_windows') {
-            debugPrint(
-              '[WsClient] terminal_windows received: ${DateTime.now()}',
-            );
-            final windows = json['windows'] as List? ?? [];
-            terminalWindows = windows.cast<Map<String, dynamic>>();
-            notifyListeners();
-          } else if (type == 'shared_terminals') {
-            final terminals = json['terminals'] as List? ?? [];
-            sharedTerminals = terminals.cast<Map<String, dynamic>>();
-            notifyListeners();
-          } else if (type == 'shared_terminal_deleted') {
-            _sharedTerminalDeletedController.add(json);
-            notifyListeners();
-          } else if (type == 'workspaces_changed') {
-            _workspacesChangedController.add(null);
-          } else if (type == 'event') {
-            _customEventController.add(json);
-          }
+          _handlers[type]?.call(json);
         } catch (e) {
           _errorController.add('Parse error: $e');
         }
@@ -422,6 +375,82 @@ class WsClient extends ChangeNotifier {
         }
       },
     );
+  }
+
+  void _onWorkspaceReady(Map<String, dynamic> json) {
+    _currentWorkspaceId = json['workspaceId'] as String?;
+    _currentUserId = json['userId'] as String?;
+    _defaultCommand = json['defaultCommand'] as String?;
+    _userHome = json['userHome'] as String?;
+    _reconnecting = false;
+    _reconnectAttempt = 0;
+    _pendingWorkspaceId = null;
+    _startHeartbeat();
+    notifyListeners();
+  }
+
+  void _onChatHistory(Map<String, dynamic> json) {
+    final messages = json['messages'] as List? ?? [];
+    for (final m in messages) {
+      final msg = m as Map<String, dynamic>;
+      chatHistory.add(msg);
+      _chatController.add(msg);
+    }
+  }
+
+  void _onWorkspaceMembers(Map<String, dynamic> json) {
+    final members = json['members'] as List? ?? [];
+    workspaceMembers = members.cast<Map<String, dynamic>>();
+    notifyListeners();
+  }
+
+  void _onPresenceList(Map<String, dynamic> json) {
+    final users = json['users'] as List? ?? [];
+    presenceUsers = users.cast<Map<String, dynamic>>();
+    notifyListeners();
+  }
+
+  void _onPresenceJoin(Map<String, dynamic> json) {
+    final uid = json['user_id'] as String?;
+    if (uid != null && !presenceUsers.any((u) => u['user_id'] == uid)) {
+      presenceUsers = [
+        ...presenceUsers,
+        {
+          'user_id': uid,
+          'user_email': json['user_email'],
+          'user_handle': json['user_handle'] ?? '',
+        },
+      ];
+      notifyListeners();
+    }
+  }
+
+  void _onPresenceLeave(Map<String, dynamic> json) {
+    final uid = json['user_id'] as String?;
+    if (uid != null) {
+      presenceUsers = presenceUsers.where((u) => u['user_id'] != uid).toList();
+      notifyListeners();
+    }
+  }
+
+  void _onTerminalWindows(Map<String, dynamic> json) {
+    debugPrint(
+      '[WsClient] terminal_windows received: ${DateTime.now()}',
+    );
+    final windows = json['windows'] as List? ?? [];
+    terminalWindows = windows.cast<Map<String, dynamic>>();
+    notifyListeners();
+  }
+
+  void _onSharedTerminals(Map<String, dynamic> json) {
+    final terminals = json['terminals'] as List? ?? [];
+    sharedTerminals = terminals.cast<Map<String, dynamic>>();
+    notifyListeners();
+  }
+
+  void _onSharedTerminalDeleted(Map<String, dynamic> json) {
+    _sharedTerminalDeletedController.add(json);
+    notifyListeners();
   }
 
   void disconnect() {
