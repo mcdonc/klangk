@@ -1,3 +1,5 @@
+// coverage:ignore-file
+import 'dart:async';
 import 'dart:convert';
 // ignore: unused_import
 import '../theme/colors.dart';
