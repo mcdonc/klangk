@@ -49,9 +49,9 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     }
 
     var ws = workspaces.cast<Map<String, dynamic>?>().firstWhere(
-      (w) => w!['id'] == widget.workspaceId,
-      orElse: () => null,
-    );
+          (w) => w!['id'] == widget.workspaceId,
+          orElse: () => null,
+        );
 
     // Try shared workspaces if not found in owned
     if (ws == null) {
@@ -62,9 +62,9 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
           jsonDecode(sharedResp.body),
         );
         ws = shared.cast<Map<String, dynamic>?>().firstWhere(
-          (w) => w!['id'] == widget.workspaceId,
-          orElse: () => null,
-        );
+              (w) => w!['id'] == widget.workspaceId,
+              orElse: () => null,
+            );
       }
     }
 
@@ -220,9 +220,8 @@ class _SettingsFormState extends State<_SettingsForm> {
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
-      'default_command': _cmdCtrl.text.trim().isEmpty
-          ? null
-          : _cmdCtrl.text.trim(),
+      'default_command':
+          _cmdCtrl.text.trim().isEmpty ? null : _cmdCtrl.text.trim(),
       'mounts': _mounts.isNotEmpty ? _mounts : null,
       'env': _envVars.isNotEmpty ? _envVars : null,
     });
@@ -279,339 +278,305 @@ class _SettingsFormState extends State<_SettingsForm> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (widget.saveMessage != null) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: widget.saveMessage!.startsWith('Failed')
-                        ? KColors.accentRed.withValues(alpha: 0.1)
-                        : KColors.accentGreen.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(widget.saveMessage!),
-                ),
+                _buildSaveMessage(),
                 const SizedBox(height: 16),
               ],
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: KColors.borderDefault),
-                  borderRadius: BorderRadius.circular(8),
-                  color: KColors.bgSurface,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.settings,
-                          size: 18,
-                          color: KColors.textSecondary,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Workspace Configuration',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _nameCtrl,
-                      decoration: InputDecoration(
-                        labelText: 'Workspace Name',
-                        labelStyle: labelStyle,
-                        floatingLabelBehavior: FloatingLabelBehavior.always,
-                        border: const OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (widget.allowedImages.isNotEmpty)
-                      DropdownButtonFormField<String>(
-                        value: _selectedImage,
-                        decoration: InputDecoration(
-                          labelText: 'Container Image',
-                          labelStyle: labelStyle,
-                          floatingLabelBehavior: FloatingLabelBehavior.always,
-                          border: const OutlineInputBorder(),
-                        ),
-                        items: widget.allowedImages
-                            .map(
-                              (img) => DropdownMenuItem(
-                                value: img,
-                                child: Text(img),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (v) => setState(
-                          () => _selectedImage = v ?? widget.defaultImage,
-                        ),
-                      ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _cmdCtrl,
-                      decoration: InputDecoration(
-                        labelText: 'Default Shell Command',
-                        labelStyle: labelStyle,
-                        floatingLabelBehavior: FloatingLabelBehavior.always,
-                        border: const OutlineInputBorder(),
-                        hintText: 'Optional — runs on terminal open',
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text('Mounts', style: labelStyle),
-                    const SizedBox(height: 8),
-                    ..._mounts.asMap().entries.map(
-                      (e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: SelectableText(
-                                e.value,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.copy, size: 16),
-                              tooltip: 'Copy',
-                              onPressed: () => Clipboard.setData(
-                                ClipboardData(text: e.value),
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                            const SizedBox(width: 4),
-                            IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () =>
-                                  setState(() => _mounts.removeAt(e.key)),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    if (_mountError != null) ...[
-                      Text(
-                        _mountError!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                    ],
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _mountCtrl,
-                            decoration: const InputDecoration(
-                              hintText: '/host/path:/container/path',
-                              isDense: true,
-                              border: OutlineInputBorder(),
-                            ),
-                            style: const TextStyle(fontSize: 13),
-                            onSubmitted: (_) => _tryAddMount(),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.add),
-                          onPressed: _tryAddMount,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text('Environment Variables', style: labelStyle),
-                    const SizedBox(height: 8),
-                    ..._envVars.entries.toList().asMap().entries.map(
-                      (e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: SelectableText(
-                                '${e.value.key}=${e.value.value}',
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.copy, size: 16),
-                              tooltip: 'Copy',
-                              onPressed: () => Clipboard.setData(
-                                ClipboardData(
-                                  text: '${e.value.key}=${e.value.value}',
-                                ),
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                            const SizedBox(width: 4),
-                            IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () =>
-                                  setState(() => _envVars.remove(e.value.key)),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    if (_envError != null) ...[
-                      Text(
-                        _envError!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                    ],
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _envCtrl,
-                            decoration: const InputDecoration(
-                              hintText: 'KEY=VALUE',
-                              isDense: true,
-                              border: OutlineInputBorder(),
-                            ),
-                            style: const TextStyle(fontSize: 13),
-                            onSubmitted: (_) => _tryAddEnv(),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.add),
-                          onPressed: _tryAddEnv,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: FilledButton.icon(
-                        onPressed: _saving ? null : _save,
-                        icon: _saving
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.save, size: 18),
-                        label: const Text('Save'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _buildConfigCard(labelStyle),
               const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: KColors.borderDefault),
-                  borderRadius: BorderRadius.circular(8),
-                  color: KColors.bgSurface,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.download,
-                          size: 18,
-                          color: KColors.textSecondary,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Export',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: _exporting ? null : _exportWorkspace,
-                      icon: _exporting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.download, size: 18),
-                      label: const Text('Export Workspace'),
-                    ),
-                  ],
-                ),
-              ),
+              _buildExportCard(),
               const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: KColors.borderDefault),
-                  borderRadius: BorderRadius.circular(8),
-                  color: KColors.bgSurface,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.warning_amber,
-                          size: 18,
-                          color: Colors.red,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Danger Zone',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: Colors.red,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: () => _confirmShutdown(context),
-                      icon: const Icon(
-                        Icons.power_settings_new,
-                        size: 18,
-                        color: Colors.red,
-                      ),
-                      label: const Text('Shut Down Container'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                        side: const BorderSide(color: Colors.red),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _buildDangerZoneCard(),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSaveMessage() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: widget.saveMessage!.startsWith('Failed')
+            ? KColors.accentRed.withValues(alpha: 0.1)
+            : KColors.accentGreen.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(widget.saveMessage!),
+    );
+  }
+
+  /// A titled surface card used to group related controls.
+  Widget _card({
+    required IconData icon,
+    required String title,
+    Color? titleColor,
+    required List<Widget> children,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(color: KColors.borderDefault),
+        borderRadius: BorderRadius.circular(8),
+        color: KColors.bgSurface,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: titleColor ?? KColors.textSecondary),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: titleColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildConfigCard(TextStyle labelStyle) {
+    return _card(
+      icon: Icons.settings,
+      title: 'Workspace Configuration',
+      children: [
+        TextField(
+          controller: _nameCtrl,
+          decoration: InputDecoration(
+            labelText: 'Workspace Name',
+            labelStyle: labelStyle,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (widget.allowedImages.isNotEmpty)
+          DropdownButtonFormField<String>(
+            value: _selectedImage,
+            decoration: InputDecoration(
+              labelText: 'Container Image',
+              labelStyle: labelStyle,
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
+            ),
+            items: widget.allowedImages
+                .map(
+                  (img) => DropdownMenuItem(value: img, child: Text(img)),
+                )
+                .toList(),
+            onChanged: (v) =>
+                setState(() => _selectedImage = v ?? widget.defaultImage),
+          ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _cmdCtrl,
+          decoration: InputDecoration(
+            labelText: 'Default Shell Command',
+            labelStyle: labelStyle,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            border: const OutlineInputBorder(),
+            hintText: 'Optional — runs on terminal open',
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildMountsEditor(labelStyle),
+        const SizedBox(height: 16),
+        _buildEnvVarsEditor(labelStyle),
+        const SizedBox(height: 16),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: _saving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.save, size: 18),
+            label: const Text('Save'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMountsEditor(TextStyle labelStyle) {
+    return _buildEditableList(
+      label: 'Mounts',
+      labelStyle: labelStyle,
+      hint: '/host/path:/container/path',
+      controller: _mountCtrl,
+      error: _mountError,
+      onAdd: _tryAddMount,
+      items: _mounts.asMap().entries.map(
+            (e) => _buildEditableListItem(
+              text: e.value,
+              onCopy: e.value,
+              onRemove: () => setState(() => _mounts.removeAt(e.key)),
+            ),
+          ),
+    );
+  }
+
+  Widget _buildEnvVarsEditor(TextStyle labelStyle) {
+    return _buildEditableList(
+      label: 'Environment Variables',
+      labelStyle: labelStyle,
+      hint: 'KEY=VALUE',
+      controller: _envCtrl,
+      error: _envError,
+      onAdd: _tryAddEnv,
+      items: _envVars.entries.toList().asMap().entries.map(
+            (e) => _buildEditableListItem(
+              text: '${e.value.key}=${e.value.value}',
+              onCopy: '${e.value.key}=${e.value.value}',
+              onRemove: () => setState(() => _envVars.remove(e.value.key)),
+            ),
+          ),
+    );
+  }
+
+  /// A list of editable text items (mounts / env vars) with an add row and
+  /// inline error. The two editors only differ in label, hint, and the
+  /// item text/remove callback.
+  Widget _buildEditableList({
+    required String label,
+    required TextStyle labelStyle,
+    required String hint,
+    required TextEditingController controller,
+    required String? error,
+    required void Function() onAdd,
+    required Iterable<Widget> items,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: labelStyle),
+        const SizedBox(height: 8),
+        ...items,
+        if (error != null) ...[
+          Text(
+            error,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                decoration: InputDecoration(
+                  hintText: hint,
+                  isDense: true,
+                  border: const OutlineInputBorder(),
+                ),
+                style: const TextStyle(fontSize: 13),
+                onSubmitted: (_) => onAdd(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(icon: const Icon(Icons.add), onPressed: onAdd),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// One row of an editable list: the text, a copy button, and a remove
+  /// button. ``onCopy`` is the exact string placed on the clipboard.
+  Widget _buildEditableListItem({
+    required String text,
+    required String onCopy,
+    required void Function() onRemove,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: SelectableText(
+              text,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy, size: 16),
+            tooltip: 'Copy',
+            onPressed: () => Clipboard.setData(ClipboardData(text: onCopy)),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: onRemove,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExportCard() {
+    return _card(
+      icon: Icons.download,
+      title: 'Export',
+      children: [
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _exporting ? null : _exportWorkspace,
+          icon: _exporting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.download, size: 18),
+          label: const Text('Export Workspace'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDangerZoneCard() {
+    return _card(
+      icon: Icons.warning_amber,
+      title: 'Danger Zone',
+      titleColor: Colors.red,
+      children: [
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => _confirmShutdown(context),
+          icon: const Icon(
+            Icons.power_settings_new,
+            size: 18,
+            color: Colors.red,
+          ),
+          label: const Text('Shut Down Container'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.red,
+            side: const BorderSide(color: Colors.red),
+          ),
+        ),
+      ],
     );
   }
 
