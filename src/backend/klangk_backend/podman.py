@@ -25,7 +25,7 @@ from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
 
-PODMAN_BIN = util.resolve_env_secret("KLANGK_PODMAN_BIN", "podman")
+PODMAN_BIN = util.resolve_env_value("KLANGK_PODMAN_BIN", "podman")
 
 
 def subprocess_env() -> dict[str, str]:

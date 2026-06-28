@@ -817,9 +817,7 @@ class TestRefreshToken:
         """TOKEN_EXPIRE_HOURS reads from KLANGK_ACCESS_TOKEN_HOURS."""
         monkeypatch.setenv("KLANGK_ACCESS_TOKEN_HOURS", "48")
         # Re-evaluate the module-level constant
-        result = int(
-            auth.resolve_env_secret("KLANGK_ACCESS_TOKEN_HOURS", "24")
-        )
+        result = int(auth.resolve_env_value("KLANGK_ACCESS_TOKEN_HOURS", "24"))
         assert result == 48
 
 

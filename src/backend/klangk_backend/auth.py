@@ -12,16 +12,16 @@ from pydantic import BaseModel
 
 from . import model
 from .exceptions import ConfigurationError
-from .util import resolve_env_secret
+from .util import resolve_env_value
 
 logger = logging.getLogger(__name__)
 
 # --- Rate limiting constants ---
 LOGIN_LOCKOUT_WINDOW = int(
-    resolve_env_secret("KLANGK_LOGIN_LOCKOUT_WINDOW", "300")
+    resolve_env_value("KLANGK_LOGIN_LOCKOUT_WINDOW", "300")
 )
 LOGIN_LOCKOUT_DURATION = int(
-    resolve_env_secret("KLANGK_LOGIN_LOCKOUT_DURATION", "900")
+    resolve_env_value("KLANGK_LOGIN_LOCKOUT_DURATION", "900")
 )
 
 
@@ -81,10 +81,10 @@ def _window_elapsed(attempt_info: dict | None) -> bool:
 
 
 _INSECURE_DEFAULT_SECRET = "klangk-dev-secret-change-in-production"
-SECRET_KEY = resolve_env_secret("KLANGK_JWT_SECRET", _INSECURE_DEFAULT_SECRET)
+SECRET_KEY = resolve_env_value("KLANGK_JWT_SECRET", _INSECURE_DEFAULT_SECRET)
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = float(
-    resolve_env_secret("KLANGK_ACCESS_TOKEN_HOURS", "24")
+    resolve_env_value("KLANGK_ACCESS_TOKEN_HOURS", "24")
 )
 
 
@@ -103,7 +103,7 @@ def require_secure_jwt_secret() -> None:
     if jwt_secret_is_secure():
         return
     prevent = (
-        resolve_env_secret("KLANGK_PREVENT_INSECURE_JWT_SECRET", "") or ""
+        resolve_env_value("KLANGK_PREVENT_INSECURE_JWT_SECRET", "") or ""
     ).lower()
     if prevent in ("1", "true", "yes"):
         raise ConfigurationError(
@@ -116,14 +116,12 @@ def require_secure_jwt_secret() -> None:
     )
 
 
-MIN_PASSWORD_LENGTH = int(
-    resolve_env_secret("KLANGK_MIN_PASSWORD_LENGTH", "4")
-)
+MIN_PASSWORD_LENGTH = int(resolve_env_value("KLANGK_MIN_PASSWORD_LENGTH", "4"))
 MAX_PASSWORD_BYTES = 72  # bcrypt limit
 
 # Set KLANGK_LOGIN_LOCKOUT_FAILURES=0 to disable login lockout.
 LOGIN_LOCKOUT_FAILURES = int(
-    resolve_env_secret("KLANGK_LOGIN_LOCKOUT_FAILURES", "0")
+    resolve_env_value("KLANGK_LOGIN_LOCKOUT_FAILURES", "0")
 )
 
 security = HTTPBearer(auto_error=False)
@@ -212,13 +210,13 @@ def validate_email(email: str) -> None:
 
 def registration_enabled() -> bool:
     """Check if public registration is enabled."""
-    val = resolve_env_secret("KLANGK_DISABLE_REGISTRATION", "")
+    val = resolve_env_value("KLANGK_DISABLE_REGISTRATION", "")
     return val.lower() not in ("1", "true", "yes")
 
 
 def invitations_enabled() -> bool:
     """Check if admin invitations are enabled."""
-    val = resolve_env_secret("KLANGK_DISABLE_INVITES", "")
+    val = resolve_env_value("KLANGK_DISABLE_INVITES", "")
     return val.lower() not in ("1", "true", "yes")
 
 
@@ -352,7 +350,7 @@ async def refresh_token(token: str) -> TokenResponse:
 VERIFY_TOKEN_EXPIRE_HOURS = 72
 RESET_TOKEN_EXPIRE_HOURS = 1
 INVITE_TOKEN_EXPIRE_HOURS = int(
-    resolve_env_secret("KLANGK_INVITE_EXPIRE_HOURS", "72")
+    resolve_env_value("KLANGK_INVITE_EXPIRE_HOURS", "72")
 )
 
 
@@ -426,7 +424,7 @@ def decode_invitation_token(token: str) -> tuple[str, str] | None:
 
 
 WORKSPACE_TOKEN_EXPIRE_HOURS = float(
-    resolve_env_secret("KLANGK_WORKSPACE_TOKEN_HOURS", "24")
+    resolve_env_value("KLANGK_WORKSPACE_TOKEN_HOURS", "24")
 )
 
 

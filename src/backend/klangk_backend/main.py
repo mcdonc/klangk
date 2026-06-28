@@ -24,7 +24,7 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
-from .util import resolve_env_secret
+from .util import resolve_env_value
 from .wshandler import handle_websocket
 
 _LIGHT_BLUE = "\033[94m"
@@ -117,8 +117,8 @@ async def seed_default_user() -> None:
     admin_group_id = await ensure_admin_group()
     await seed_default_acls(admin_group_id)
 
-    email = resolve_env_secret("KLANGK_DEFAULT_USER", "admin@example.com")
-    password = resolve_env_secret("KLANGK_DEFAULT_PASSWORD")
+    email = resolve_env_value("KLANGK_DEFAULT_USER", "admin@example.com")
+    password = resolve_env_value("KLANGK_DEFAULT_PASSWORD")
     existing = await model.get_user_by_email(email)
     if existing is None:
         generated = password is None
@@ -154,10 +154,8 @@ async def seed_agent_user() -> None:
     Reads email/handle from env vars (with defaults) and upserts the
     agent row.  This is the ONLY place the env vars are consulted.
     """
-    email = resolve_env_secret(
-        "KLANGK_CHAT_AGENT_EMAIL", "MrBoops@example.com"
-    )
-    handle = resolve_env_secret("KLANGK_CHAT_AGENT_HANDLE", "MrBoops")
+    email = resolve_env_value("KLANGK_CHAT_AGENT_EMAIL", "MrBoops@example.com")
+    handle = resolve_env_value("KLANGK_CHAT_AGENT_HANDLE", "MrBoops")
     async with model.transaction() as db:
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified,"
@@ -280,12 +278,12 @@ app = FastAPI(title="Klangk", lifespan=lifespan)
 
 def setup_logfire(app: FastAPI) -> bool:
     """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
-    if not resolve_env_secret("LOGFIRE_TOKEN"):
+    if not resolve_env_value("LOGFIRE_TOKEN"):
         return False
     import logfire  # noqa: allow-deferred-import
 
-    base_url = resolve_env_secret("LOGFIRE_BASE_URL")
-    environment = resolve_env_secret("LOGFIRE_ENVIRONMENT")
+    base_url = resolve_env_value("LOGFIRE_BASE_URL")
+    environment = resolve_env_value("LOGFIRE_ENVIRONMENT")
     kwargs: dict = {}
     if base_url:
         kwargs["base_url"] = base_url
@@ -306,14 +304,14 @@ def _cors_origins() -> list[str]:
     Priority: KLANGK_CORS_ORIGINS (comma-separated) > derived from
     hosting env vars > localhost with nginx port.
     """
-    explicit = resolve_env_secret("KLANGK_CORS_ORIGINS")
+    explicit = resolve_env_value("KLANGK_CORS_ORIGINS")
     if explicit:
         return [o.strip() for o in explicit.split(",") if o.strip()]
-    hostname = resolve_env_secret("KLANGK_HOSTING_HOSTNAME")
-    proto = resolve_env_secret("KLANGK_HOSTING_PROTO", "http")
+    hostname = resolve_env_value("KLANGK_HOSTING_HOSTNAME")
+    proto = resolve_env_value("KLANGK_HOSTING_PROTO", "http")
     if hostname:
         return [f"{proto}://{hostname}"]
-    nginx_port = resolve_env_secret("KLANGK_NGINX_PORT", "8995")
+    nginx_port = resolve_env_value("KLANGK_NGINX_PORT", "8995")
     return [f"http://localhost:{nginx_port}"]
 
 
