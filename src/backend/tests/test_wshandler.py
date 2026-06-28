@@ -26,6 +26,7 @@ from klangk_backend.util import (
 )
 from klangk_backend.wshandler import (
     Connection,
+    ExecController,
     SafeWebSocket,
     SlowClientError,
     SshAgentForwarder,
@@ -2425,6 +2426,339 @@ class TestExecHandlers:
         await conn.cleanup()
         session.stop.assert_awaited_once()
         assert conn.exec_session is None
+
+
+class TestExecController:
+    """Unit tests for the ExecController collaborator in isolation.
+
+    These exercise the controller directly against a lightweight fake
+    connection (a SimpleNamespace), proving it is decoupled from
+    Connection (issue #961) and covering the branches that the
+    existing Connection-level tests don't reach directly — notably the
+    ``asyncio.CancelledError`` re-raise in ``forward_output`` and the
+    ``Connection._claim_and_stop_exec`` backward-compat delegate.
+    """
+
+    def _controller(
+        self,
+        *,
+        container_id="cid",
+        user_home=None,
+        ssh_agent_socket=None,
+        sock=None,
+        has_perm=True,
+    ):
+        if sock is None:
+            sock = _mock_sock()
+        conn = SimpleNamespace(
+            sock=sock,
+            container_id=container_id,
+            _user_home=user_home,
+            _ssh_agent_socket=ssh_agent_socket,
+            _has_perm=AsyncMock(return_value=has_perm),
+        )
+        return ExecController(conn), sock, conn
+
+    async def test_start_no_container_noop(self):
+        ctrl, sock, _ = self._controller(container_id=None)
+        await ctrl.start({"command": ["ls"]})
+        assert ctrl.session is None
+        assert ctrl.task is None
+        sock.send_json.assert_not_called()
+
+    async def test_start_no_perm_sends_error(self):
+        ctrl, sock, _ = self._controller(has_perm=False)
+        await ctrl.start({"command": ["ls"]})
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "error"
+        assert "code-in-isolation" in msg["message"]
+        assert ctrl.session is None
+
+    async def test_start_no_command_sends_error(self):
+        ctrl, sock, _ = self._controller()
+        await ctrl.start({"command": []})
+        msg = sock.send_json.call_args[0][0]
+        assert "command" in msg["message"]
+        assert ctrl.session is None
+
+    async def test_start_stops_existing_session_first(self):
+        """start() tears down any in-flight exec before starting a new one."""
+        ctrl, _, _ = self._controller()
+        old = AsyncMock()
+        ctrl.session = old
+        with (
+            patch("klangk_backend.wshandler.ExecSession") as MockExec,
+            patch.object(container.registry, "record_activity"),
+        ):
+            mock_session = MockExec.return_value
+            mock_session.start = AsyncMock()
+            await ctrl.start({"command": ["ls"]})
+            # Drain the spawned output-forwarding task.
+            assert ctrl.task is not None
+            ctrl.task.cancel()
+            try:
+                await ctrl.task
+            except asyncio.CancelledError:
+                pass
+        old.stop.assert_awaited_once()
+        assert ctrl.session is mock_session
+
+    async def test_start_passes_user_home_and_ssh_agent_socket(self):
+        ctrl, _, _ = self._controller(
+            user_home="/home/admin",
+            ssh_agent_socket="/tmp/agent.sock",
+        )
+        with (
+            patch("klangk_backend.wshandler.ExecSession") as MockExec,
+            patch.object(container.registry, "record_activity"),
+        ):
+            mock_session = MockExec.return_value
+            mock_session.start = AsyncMock()
+            await ctrl.start({"command": ["ls"]})
+            ctrl.task.cancel()
+            try:
+                await ctrl.task
+            except asyncio.CancelledError:
+                pass
+        kwargs = MockExec.call_args.kwargs
+        assert "HOME=/home/admin" in kwargs["env"]
+        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in kwargs["env"]
+        assert kwargs["work_dir"] == "/home/admin"
+
+    async def test_start_defaults_work_dir_when_no_user_home(self):
+        ctrl, _, _ = self._controller(user_home=None)
+        with (
+            patch("klangk_backend.wshandler.ExecSession") as MockExec,
+            patch.object(container.registry, "record_activity"),
+        ):
+            mock_session = MockExec.return_value
+            mock_session.start = AsyncMock()
+            await ctrl.start({"command": ["ls"]})
+            ctrl.task.cancel()
+            try:
+                await ctrl.task
+            except asyncio.CancelledError:
+                pass
+        kwargs = MockExec.call_args.kwargs
+        assert kwargs["env"] == []
+        assert kwargs["work_dir"] == "/home/work"
+
+    async def test_input_no_session(self):
+        ctrl, _, _ = self._controller()
+        await ctrl.input({"data": base64.b64encode(b"x").decode()})
+
+    async def test_input_dead_session_dropped(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = False
+        ctrl.session = session
+        await ctrl.input({"data": base64.b64encode(b"x").decode()})
+        session.write.assert_not_awaited()
+
+    async def test_input_oversized_dropped(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        ctrl.session = session
+        big = base64.b64encode(b"x" * 70000).decode()
+        with patch.object(container.registry, "record_activity"):
+            await ctrl.input({"data": big})
+        session.write.assert_not_awaited()
+
+    async def test_input_writes_and_records_activity(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        ctrl.session = session
+        data = base64.b64encode(b"hello").decode()
+        with patch.object(container.registry, "record_activity") as rec:
+            await ctrl.input({"data": data})
+        session.write.assert_awaited_once_with(b"hello")
+        rec.assert_called_once_with("cid")
+
+    async def test_close_stdin_no_session(self):
+        ctrl, _, _ = self._controller()
+        await ctrl.close_stdin()
+
+    async def test_close_stdin_delegates(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        await ctrl.close_stdin()
+        session.close_stdin.assert_awaited_once()
+
+    async def test_stop_command_calls_stop(self):
+        ctrl, _, _ = self._controller()
+        with patch.object(ctrl, "stop", new=AsyncMock()) as stop:
+            await ctrl.stop_command()
+        stop.assert_awaited_once()
+
+    async def test_stop_no_session(self):
+        ctrl, _, _ = self._controller()
+        await ctrl.stop()
+        assert ctrl.session is None
+        assert ctrl.task is None
+
+    async def test_stop_cancels_task_and_stops_session(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        ctrl.task = asyncio.create_task(asyncio.sleep(999))
+        await ctrl.stop()
+        assert ctrl.task is None
+        assert ctrl.session is None
+        session.stop.assert_awaited_once()
+
+    async def test_claim_and_stop_no_session(self):
+        ctrl, _, _ = self._controller()
+        await ctrl.claim_and_stop()
+        assert ctrl.session is None
+
+    async def test_claim_and_stop_drops_and_stops(self):
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+        await ctrl.claim_and_stop()
+        assert ctrl.session is None
+        session.stop.assert_awaited_once()
+
+    async def test_forward_output_relays_chunks_and_exit_code(self):
+        ctrl, sock, _ = self._controller()
+        session = AsyncMock()
+        session.returncode = 7
+        ctrl.session = session
+
+        async def fake_output():
+            yield b"chunk1"
+            yield b"chunk2"
+
+        session.output = fake_output
+        with patch.object(container.registry, "record_activity"):
+            await ctrl.forward_output(session)
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        outputs = [c for c in calls if c["type"] == "exec_output"]
+        exits = [c for c in calls if c["type"] == "exec_exit"]
+        assert len(outputs) == 2
+        assert base64.b64decode(outputs[0]["data"]) == b"chunk1"
+        assert base64.b64decode(outputs[1]["data"]) == b"chunk2"
+        assert exits[0]["code"] == 7
+        # Session claimed and stopped by the finally block.
+        session.stop.assert_awaited_once()
+
+    async def test_forward_output_exit_code_defaults_to_1(self):
+        ctrl, sock, _ = self._controller()
+        session = AsyncMock()
+        session.returncode = None
+        ctrl.session = session
+
+        async def fake_output():
+            return
+            yield  # pragma: no cover
+
+        session.output = fake_output
+        with patch.object(container.registry, "record_activity"):
+            await ctrl.forward_output(session)
+        exits = [
+            c[0][0]
+            for c in sock.send_json.call_args_list
+            if c[0][0]["type"] == "exec_exit"
+        ]
+        assert exits[0]["code"] == 1
+
+    async def test_forward_output_records_activity_when_container_set(self):
+        ctrl, _, _ = self._controller(container_id="cid")
+        session = AsyncMock()
+        session.returncode = 0
+        ctrl.session = session
+
+        async def fake_output():
+            yield b"data"
+
+        session.output = fake_output
+        with patch.object(container.registry, "record_activity") as rec:
+            await ctrl.forward_output(session)
+        rec.assert_called_once_with("cid")
+
+    async def test_forward_output_swallows_ws_error(self):
+        ctrl, sock, _ = self._controller()
+        session = AsyncMock()
+        ctrl.session = session
+
+        async def fake_output():
+            yield b"data"
+
+        session.output = fake_output
+        sock.send_json = MagicMock(side_effect=RuntimeError("ws dead"))
+        with patch.object(container.registry, "record_activity"):
+            # Must not raise; error is logged.
+            await ctrl.forward_output(session)
+        session.stop.assert_awaited_once()
+
+    async def test_forward_output_reraises_cancelled(self):
+        """Cancellation mid-stream re-raises and still cleans up the session."""
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.returncode = 0
+        ctrl.session = session
+        never = asyncio.Event()
+
+        async def blocking_output():
+            yield b"first"
+            await never.wait()  # blocks until cancelled
+
+        session.output = blocking_output
+        task = asyncio.create_task(ctrl.forward_output(session))
+        for _ in range(3):
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # finally block ran claim_and_stop -> session stopped.
+        session.stop.assert_awaited_once()
+        assert ctrl.session is None
+
+    async def test_connection_claim_and_stop_exec_delegate(self):
+        """Connection._claim_and_stop_exec forwards to the controller."""
+        conn = _base_conn()
+        with patch.object(conn.exec, "claim_and_stop", new=AsyncMock()) as m:
+            await conn._claim_and_stop_exec()
+        m.assert_awaited_once()
+
+    async def test_connection_forward_exec_output_delegate(self):
+        """Connection.forward_exec_output forwards to the controller."""
+        conn = _base_conn()
+        session = AsyncMock()
+        with patch.object(conn.exec, "forward_output", new=AsyncMock()) as m:
+            await conn.forward_exec_output(session)
+        m.assert_awaited_once_with(session)
+
+    async def test_connection_stop_exec_delegate(self):
+        """Connection.stop_exec forwards to the controller."""
+        conn = _base_conn()
+        with patch.object(conn.exec, "stop", new=AsyncMock()) as m:
+            await conn.stop_exec()
+        m.assert_awaited_once()
+
+    async def test_exec_session_property_round_trips_to_controller(self):
+        conn = _base_conn()
+        sentinel = object()
+        conn.exec_session = sentinel
+        assert conn.exec_session is sentinel
+        assert conn.exec.session is sentinel
+
+    async def test_exec_task_property_round_trips_to_controller(self):
+        conn = _base_conn()
+        task = asyncio.create_task(asyncio.sleep(999))
+        try:
+            conn.exec_task = task
+            assert conn.exec_task is task
+            assert conn.exec.task is task
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 class TestSSHAgentHandlers:
