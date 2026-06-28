@@ -8,6 +8,11 @@ class FileListCacheEntry {
   FileListCacheEntry(this.entries, this.expiresAt);
 }
 
+/// Default time-to-live for cached listings. Window within which a
+/// revisit returns instantly without re-listing the directory. Tuned so
+/// normal folder-browsing cadence stays within cache; see #979.
+const Duration _defaultTtl = Duration(seconds: 20);
+
 /// A small bounded LRU cache of directory listings, keyed by
 /// `(workspaceId, path)`.
 ///
@@ -35,7 +40,7 @@ class FileListCache {
 
   FileListCache({
     this.capacity = 32,
-    this.ttl = const Duration(seconds: 5),
+    this.ttl = _defaultTtl,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
