@@ -1504,6 +1504,44 @@ void main() {
       expect(loadMore[0]['before_id'], 'msg-0');
     });
 
+    testWidgets('shows loading spinner at top while loading older messages',
+        (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      // Seed enough messages to make the list scrollable.
+      await tester.runAsync(() async {
+        for (int i = 0; i < 30; i++) {
+          channel.serverSend({
+            'type': 'chat_message',
+            'id': 'msg-$i',
+            'user_email': 'user@test.com',
+            'message': 'Message $i',
+            'created_at': '2026-01-01 00:${i.toString().padLeft(2, '0')}:00',
+          });
+        }
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pumpAndSettle();
+
+      // No spinner before loading.
+      expect(
+        find.byKey(const Key('chat-loading-older')),
+        findsNothing,
+      );
+
+      // Scroll to the top to trigger load-more. While the request is in
+      // flight (before the server responds with a history page) the
+      // _loadingOlder spinner is rendered as the first list item.
+      await tester.drag(find.byType(ListView).last, const Offset(0, 5000));
+      await tester.pump();
+
+      expect(
+        find.byType(CircularProgressIndicator),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('history page prepends messages', (tester) async {
       await tester.pumpWidget(buildChat());
 
