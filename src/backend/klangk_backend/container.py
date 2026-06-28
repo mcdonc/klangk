@@ -200,62 +200,39 @@ class ContainerState:
         return IDLE_TIMEOUT_SECONDS
 
 
-class ContainerRegistry:
-    """Singleton managing all container state and podman interactions."""
+class PortAllocator:
+    """Port allocation for workspace containers.
 
-    def __init__(self):
-        self.states: dict[str, ContainerState] = {}
-        # Reverse lookup: container_id -> workspace_id
-        self._cid_to_wsid: dict[str, str] = {}
-        # browser_id -> (workspace_id, sock) for browser-delegate routing.
-        # Browser IDs are browser-generated UUIDs (sessionStorage) sent
-        # with terminal_start.  Unlike the old bridge tokens they survive
-        # browser refresh because the same sessionStorage UUID re-registers
-        # with the new WebSocket.
-        self._browsers: dict[str, tuple[str, object | None]] = {}
-        self.cleanup_task: asyncio.Task | None = None
+    Owns the ``port_lock`` and delegates to ``model`` for DB-backed
+    port tracking.  Extracted from ``ContainerRegistry`` (issue #972).
+    """
+
+    def __init__(self) -> None:
         self.port_lock: asyncio.Lock = asyncio.Lock()
-        # Per-workspace locks to serialize container creation.
-        self._workspace_locks: dict[str, asyncio.Lock] = {}
-        self.on_workspace_killed = None
-        self._cleanup_wake: asyncio.Event | None = None
 
-    def workspace_id_for(self, container_id: str) -> str | None:
-        """Return the workspace_id for a container, or None."""
-        return self._cid_to_wsid.get(container_id)
+    async def allocate_ports(self, workspace_id: str, count: int) -> list[int]:
+        async with self.port_lock:
+            return await model.find_and_allocate_ports(
+                workspace_id, count, PORT_RANGE_START
+            )
 
-    def _get_workspace_lock(self, workspace_id: str) -> asyncio.Lock:
-        """Get or create a per-workspace lock for container operations."""
-        if workspace_id not in self._workspace_locks:
-            self._workspace_locks[workspace_id] = asyncio.Lock()
-        return self._workspace_locks[workspace_id]
+    async def get_workspace_ports(self, workspace_id: str) -> list[int]:
+        return await model.get_workspace_ports(workspace_id)
 
-    def get_cleanup_wake(self) -> asyncio.Event:
-        if self._cleanup_wake is None:
-            self._cleanup_wake = asyncio.Event()
-        return self._cleanup_wake
 
-    # --- State tracking ---
+class BrowserRouter:
+    """Browser-delegate routing: browser_id → (workspace_id, sock).
 
-    def track_activity(self, container_id: str, workspace_id: str) -> None:
-        state = self.states.get(workspace_id)
-        if state is None:
-            state = ContainerState(workspace_id, container_id)
-            self.states[workspace_id] = state
-        else:
-            # Remove old reverse mapping if container changed
-            if state.container_id != container_id:
-                self._cid_to_wsid.pop(state.container_id, None)
-            state.container_id = container_id
-        self._cid_to_wsid[container_id] = workspace_id
-        state.record_activity()
+    Browser IDs are browser-generated UUIDs (sessionStorage) sent
+    with terminal_start.  Unlike the old bridge tokens they survive
+    browser refresh because the same sessionStorage UUID re-registers
+    with the new WebSocket.
 
-    def record_activity(self, container_id: str) -> None:
-        ws_id = self._cid_to_wsid.get(container_id)
-        if ws_id:
-            state = self.states.get(ws_id)
-            if state:
-                state.record_activity()
+    Extracted from ``ContainerRegistry`` (issue #972).
+    """
+
+    def __init__(self) -> None:
+        self._browsers: dict[str, tuple[str, object | None]] = {}
 
     def register_browser(
         self, browser_id: str, workspace_id: str, sock: object
@@ -292,28 +269,166 @@ class ContainerRegistry:
         for bid in to_remove:
             del self._browsers[bid]
 
-    def get_state(self, workspace_id: str) -> ContainerState | None:
-        return self.states.get(workspace_id)
 
-    # --- Idle callbacks ---
+class IdleMonitor:
+    """Idle-timeout tracking and cleanup loop.
+
+    Monitors ``ContainerState.last_activity`` for all tracked
+    workspaces and kills containers that exceed their idle timeout.
+
+    Extracted from ``ContainerRegistry`` (issue #972).
+    """
+
+    def __init__(self, registry: "ContainerRegistry") -> None:
+        self._registry = registry
+        self.cleanup_task: asyncio.Task | None = None
+        self._cleanup_wake: asyncio.Event | None = None
+
+    def get_cleanup_wake(self) -> asyncio.Event:
+        if self._cleanup_wake is None:
+            self._cleanup_wake = asyncio.Event()
+        return self._cleanup_wake
 
     def on_idle_stop(self, workspace_id: str, callback) -> None:
-        state = self.states.get(workspace_id)
+        state = self._registry.states.get(workspace_id)
         if state:
             state.idle_callbacks.append(callback)
 
     def remove_idle_callback(self, workspace_id: str, callback) -> None:
-        state = self.states.get(workspace_id)
+        state = self._registry.states.get(workspace_id)
         if state and callback in state.idle_callbacks:
             state.idle_callbacks.remove(callback)
 
     def set_workspace_idle_timeout(
         self, workspace_id: str, seconds: int
     ) -> None:
-        state = self.states.get(workspace_id)
+        state = self._registry.states.get(workspace_id)
         if state:
             state.idle_timeout = seconds
             self.get_cleanup_wake().set()
+
+    def get_workspace_idle_timeout(self, workspace_id: str) -> int:
+        state = self._registry.states.get(workspace_id)
+        if state:
+            return state.get_idle_timeout()
+        return IDLE_TIMEOUT_SECONDS
+
+    async def cleanup_idle_containers(self) -> None:
+        while True:
+            timeouts = [
+                s.idle_timeout
+                for s in self._registry.states.values()
+                if s.idle_timeout is not None
+            ]
+            if timeouts:
+                interval = max(2, min(timeouts) // 2)
+            else:
+                interval = CHECK_INTERVAL_SECONDS
+            wake = self.get_cleanup_wake()
+            wake.clear()
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+            now = time.time()
+            to_stop = []
+            for ws_id, state in list(self._registry.states.items()):
+                timeout = state.get_idle_timeout()
+                idle_secs = now - state.last_activity
+                logger.debug(
+                    "Idle check: %s idle %.0fs / %ds",
+                    state.container_id[:12],
+                    idle_secs,
+                    timeout,
+                )
+                if idle_secs > timeout:
+                    to_stop.append((state.container_id, ws_id))
+
+            for cid, wid in to_stop:
+                logger.info(
+                    "Stopping idle container %s (workspace %s)",
+                    cid,
+                    wid,
+                )
+                state = self._registry.states.get(wid)
+                if state:
+                    for cb in list(state.idle_callbacks):
+                        try:
+                            await cb(wid)
+                        except Exception as e:
+                            logger.error("Idle callback error: %s", e)
+                await self._registry.stop_and_remove_container(cid)
+                await self._registry._notify_workspace_killed(wid)
+
+    def start_cleanup_loop(self) -> None:
+        logger.info(
+            "Instance: %s, idle timeout: %ds, check interval: %ds",
+            INSTANCE_ID,
+            IDLE_TIMEOUT_SECONDS,
+            CHECK_INTERVAL_SECONDS,
+        )
+        if self.cleanup_task is None:
+            self.cleanup_task = asyncio.create_task(
+                self.cleanup_idle_containers()
+            )
+
+
+class ContainerRegistry:
+    """Singleton managing all container state and podman interactions.
+
+    Composes :class:`PortAllocator`, :class:`BrowserRouter`, and
+    :class:`IdleMonitor` as collaborators.  Backward-compatible proxy
+    methods delegate to the collaborators so existing callers are
+    unchanged.
+    """
+
+    def __init__(self):
+        self.states: dict[str, ContainerState] = {}
+        # Reverse lookup: container_id -> workspace_id
+        self._cid_to_wsid: dict[str, str] = {}
+        # Per-workspace locks to serialize container creation.
+        self._workspace_locks: dict[str, asyncio.Lock] = {}
+        self.on_workspace_killed = None
+
+        # Collaborators
+        self.ports = PortAllocator()
+        self.browsers = BrowserRouter()
+        self.idle = IdleMonitor(self)
+
+    def workspace_id_for(self, container_id: str) -> str | None:
+        """Return the workspace_id for a container, or None."""
+        return self._cid_to_wsid.get(container_id)
+
+    def _get_workspace_lock(self, workspace_id: str) -> asyncio.Lock:
+        """Get or create a per-workspace lock for container operations."""
+        if workspace_id not in self._workspace_locks:
+            self._workspace_locks[workspace_id] = asyncio.Lock()
+        return self._workspace_locks[workspace_id]
+
+    # --- State tracking ---
+
+    def track_activity(self, container_id: str, workspace_id: str) -> None:
+        state = self.states.get(workspace_id)
+        if state is None:
+            state = ContainerState(workspace_id, container_id)
+            self.states[workspace_id] = state
+        else:
+            # Remove old reverse mapping if container changed
+            if state.container_id != container_id:
+                self._cid_to_wsid.pop(state.container_id, None)
+            state.container_id = container_id
+        self._cid_to_wsid[container_id] = workspace_id
+        state.record_activity()
+
+    def record_activity(self, container_id: str) -> None:
+        ws_id = self._cid_to_wsid.get(container_id)
+        if ws_id:
+            state = self.states.get(ws_id)
+            if state:
+                state.record_activity()
+
+    def get_state(self, workspace_id: str) -> ContainerState | None:
+        return self.states.get(workspace_id)
 
     def set_on_workspace_killed(self, callback) -> None:
         self.on_workspace_killed = callback
@@ -324,22 +439,78 @@ class ContainerRegistry:
             self._cid_to_wsid.pop(state.container_id, None)
         self._workspace_locks.pop(workspace_id, None)
 
-    # --- Port allocation ---
+    # --- Proxy: PortAllocator ---
+
+    @property
+    def port_lock(self) -> asyncio.Lock:
+        return self.ports.port_lock
 
     async def allocate_ports(self, workspace_id: str, count: int) -> list[int]:
-        async with self.port_lock:
-            return await model.find_and_allocate_ports(
-                workspace_id, count, PORT_RANGE_START
-            )
-
-    def get_workspace_idle_timeout(self, workspace_id: str) -> int:
-        state = self.states.get(workspace_id)
-        if state:
-            return state.get_idle_timeout()
-        return IDLE_TIMEOUT_SECONDS
+        return await self.ports.allocate_ports(workspace_id, count)
 
     async def get_workspace_ports(self, workspace_id: str) -> list[int]:
-        return await model.get_workspace_ports(workspace_id)
+        return await self.ports.get_workspace_ports(workspace_id)
+
+    # --- Proxy: BrowserRouter ---
+
+    @property
+    def _browsers(self) -> dict:
+        return self.browsers._browsers
+
+    def register_browser(
+        self, browser_id: str, workspace_id: str, sock: object
+    ) -> None:
+        self.browsers.register_browser(browser_id, workspace_id, sock)
+
+    def resolve_browser(self, browser_id: str) -> tuple[str, object] | None:
+        return self.browsers.resolve_browser(browser_id)
+
+    def revoke_workspace_browsers(self, workspace_id: str) -> None:
+        self.browsers.revoke_workspace_browsers(workspace_id)
+
+    def revoke_browser(self, sock: object) -> None:
+        self.browsers.revoke_browser(sock)
+
+    # --- Proxy: IdleMonitor ---
+
+    @property
+    def cleanup_task(self) -> asyncio.Task | None:
+        return self.idle.cleanup_task
+
+    @cleanup_task.setter
+    def cleanup_task(self, value: asyncio.Task | None) -> None:
+        self.idle.cleanup_task = value
+
+    @property
+    def _cleanup_wake(self) -> asyncio.Event | None:  # pragma: no cover
+        return self.idle._cleanup_wake
+
+    @_cleanup_wake.setter
+    def _cleanup_wake(self, value: asyncio.Event | None) -> None:
+        self.idle._cleanup_wake = value
+
+    def get_cleanup_wake(self) -> asyncio.Event:
+        return self.idle.get_cleanup_wake()
+
+    def on_idle_stop(self, workspace_id: str, callback) -> None:
+        self.idle.on_idle_stop(workspace_id, callback)
+
+    def remove_idle_callback(self, workspace_id: str, callback) -> None:
+        self.idle.remove_idle_callback(workspace_id, callback)
+
+    def set_workspace_idle_timeout(
+        self, workspace_id: str, seconds: int
+    ) -> None:
+        self.idle.set_workspace_idle_timeout(workspace_id, seconds)
+
+    def get_workspace_idle_timeout(self, workspace_id: str) -> int:
+        return self.idle.get_workspace_idle_timeout(workspace_id)
+
+    async def cleanup_idle_containers(self) -> None:
+        await self.idle.cleanup_idle_containers()
+
+    def start_cleanup_loop(self) -> None:
+        self.idle.start_cleanup_loop()
 
     # --- Container lifecycle ---
 
@@ -727,67 +898,6 @@ class ContainerRegistry:
             if ws["container_id"]:
                 await self.stop_and_remove_container(ws["container_id"])
                 await self._notify_workspace_killed(ws["id"])
-
-    # --- Idle cleanup loop ---
-
-    async def cleanup_idle_containers(self) -> None:
-        while True:
-            timeouts = [
-                s.idle_timeout
-                for s in self.states.values()
-                if s.idle_timeout is not None
-            ]
-            if timeouts:
-                interval = max(2, min(timeouts) // 2)
-            else:
-                interval = CHECK_INTERVAL_SECONDS
-            wake = self.get_cleanup_wake()
-            wake.clear()
-            try:
-                await asyncio.wait_for(wake.wait(), timeout=interval)
-            except asyncio.TimeoutError:
-                pass
-            now = time.time()
-            to_stop = []
-            for ws_id, state in list(self.states.items()):
-                timeout = state.get_idle_timeout()
-                idle_secs = now - state.last_activity
-                logger.debug(
-                    "Idle check: %s idle %.0fs / %ds",
-                    state.container_id[:12],
-                    idle_secs,
-                    timeout,
-                )
-                if idle_secs > timeout:
-                    to_stop.append((state.container_id, ws_id))
-
-            for cid, wid in to_stop:
-                logger.info(
-                    "Stopping idle container %s (workspace %s)",
-                    cid,
-                    wid,
-                )
-                state = self.states.get(wid)
-                if state:
-                    for cb in list(state.idle_callbacks):
-                        try:
-                            await cb(wid)
-                        except Exception as e:
-                            logger.error("Idle callback error: %s", e)
-                await self.stop_and_remove_container(cid)
-                await self._notify_workspace_killed(wid)
-
-    def start_cleanup_loop(self) -> None:
-        logger.info(
-            "Instance: %s, idle timeout: %ds, check interval: %ds",
-            INSTANCE_ID,
-            IDLE_TIMEOUT_SECONDS,
-            CHECK_INTERVAL_SECONDS,
-        )
-        if self.cleanup_task is None:
-            self.cleanup_task = asyncio.create_task(
-                self.cleanup_idle_containers()
-            )
 
     # --- Pre-warm ---
 
