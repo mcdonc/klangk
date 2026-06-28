@@ -1,11 +1,30 @@
 """Tests for util: file-backed secret resolution."""
 
 from klangk_backend.util import (
+    _read_file_value,
     resolve_env_bool,
     resolve_env_secret,
     resolve_file_secret,
     sanitize_disposition_name,
 )
+
+
+class TestReadFileValue:
+    """_read_file_value is the shared helper behind resolve_env_secret
+    and resolve_file_secret."""
+
+    def test_reads_and_strips_contents(self, tmp_path):
+        f = tmp_path / "secret"
+        f.write_text("from-file\n")
+        contents, err = _read_file_value(f"file:{f}")
+        assert contents == "from-file"
+        assert err is None
+
+    def test_missing_file_returns_error(self):
+        contents, err = _read_file_value("file:/no/such/file")
+        assert contents is None
+        assert isinstance(err, OSError)
+        assert err.filename == "/no/such/file"
 
 
 class TestResolveEnvSecret:
