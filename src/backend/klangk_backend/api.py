@@ -243,7 +243,9 @@ async def register(
     password_hash = auth.hash_password(req.password)
     user_id = str(uuid.uuid4())
 
-    hostname, proto, base_path = derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(
+        request.headers, request.client.host if request.client else None
+    )
     logger.info(
         "Hosting info: hostname=%s proto=%s base_path=%s",
         hostname,
@@ -345,7 +347,9 @@ async def resend_verification(
         )
     _resend_timestamps[req.email] = now
 
-    hostname, proto, base_path = derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(
+        request.headers, request.client.host if request.client else None
+    )
     verification_token = auth.create_verification_token(user["id"])
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
@@ -385,7 +389,9 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
         )
     _reset_timestamps[req.email] = now
 
-    hostname, proto, base_path = derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(
+        request.headers, request.client.host if request.client else None
+    )
     reset_token = auth.create_password_reset_token(user["id"])
     reset_url = (
         f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
@@ -513,7 +519,9 @@ async def change_email(
             (user["id"],),
         )
 
-    hostname, proto, base_path = derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(
+        request.headers, request.client.host if request.client else None
+    )
     token = auth.create_verification_token(user["id"])
     url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
     await _send_email(
@@ -582,7 +590,10 @@ async def logout(
     if db_user and db_user.get("provider", "local") != "local":
         provider = oidc.get_provider(db_user["provider"])
         if provider:
-            hostname, proto, base_path = derive_hosting_info(request.headers)
+            hostname, proto, base_path = derive_hosting_info(
+                request.headers,
+                request.client.host if request.client else None,
+            )
             post_logout_uri = f"{proto}://{hostname}{base_path}/#/login"
             logout_url = await oidc.build_logout_url(provider, post_logout_uri)
             if logout_url:
@@ -662,7 +673,9 @@ async def send_invitation(
     invitation = await model.create_invitation(req.email, admin["id"])
     token = auth.create_invitation_token(invitation["id"], req.email)
 
-    hostname, proto, base_path = derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(
+        request.headers, request.client.host if request.client else None
+    )
     invite_url = (
         f"{proto}://{hostname}{base_path}/#/accept-invite?token={token}"
     )
@@ -718,7 +731,9 @@ async def resend_invitation(
         )
 
     token = auth.create_invitation_token(invitation["id"], invitation["email"])
-    hostname, proto, base_path = derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(
+        request.headers, request.client.host if request.client else None
+    )
     invite_url = (
         f"{proto}://{hostname}{base_path}/#/accept-invite?token={token}"
     )
@@ -774,7 +789,9 @@ async def oidc_login(
     verifier, challenge = oidc.generate_pkce()
     state = secrets.token_urlsafe(32)
 
-    hostname, proto, base_path = derive_hosting_info(request.headers)
+    hostname, proto, base_path = derive_hosting_info(
+        request.headers, request.client.host if request.client else None
+    )
     redirect_uri = f"{proto}://{hostname}{base_path}{API_PREFIX}/auth/oidc/{provider_id}/callback"
 
     auth_url = await oidc.build_auth_url(
@@ -930,7 +947,9 @@ async def oidc_callback(
     else:
         # Web flow (also the safe fallback when the cookie's
         # cli_redirect was missing or tampered to a non-localhost host).
-        hostname, proto, base_path = derive_hosting_info(request.headers)
+        hostname, proto, base_path = derive_hosting_info(
+            request.headers, request.client.host if request.client else None
+        )
         redirect_url = (
             f"{proto}://{hostname}{base_path}"
             f"/#/oidc-complete?token={access_token}"
@@ -2258,7 +2277,9 @@ async def admin_create_user(
         # password via the verification link.
         password_hash = auth.hash_password(uuid.uuid4().hex[:24])
 
-        hostname, proto, base_path = derive_hosting_info(request.headers)
+        hostname, proto, base_path = derive_hosting_info(
+            request.headers, request.client.host if request.client else None
+        )
         verification_token = auth.create_verification_token(user_id)
         verification_url = (
             f"{proto}://{hostname}{base_path}"

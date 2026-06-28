@@ -115,7 +115,19 @@ ${CONTAINER_ACL}
 "
 fi
 
-cat >"$NGINX_STATE/nginx.conf" <<NGINX
+# Security: by default klangk's nginx OVERWRITES client-supplied
+# X-Forwarded-Host/-Proto with authoritative values ($http_host / $scheme)
+# so an attacker hitting nginx cannot poison the verification/reset/OIDC
+# links the backend generates. Set KLANGK_TRUST_OUTER_PROXY=1 (or true)
+# ONLY when a trusted outer proxy sits in front of klangk's nginx and you
+# need its X-Forwarded-* values to survive (and that outer proxy itself
+# overwrites, not passes through, these headers).
+TRUST_OUTER_PROXY=0
+case "${KLANGK_TRUST_OUTER_PROXY:-}" in
+1 | true | TRUE | yes | YES) TRUST_OUTER_PROXY=1 ;;
+esac
+
+cat >"$NGINX_STATE/nginx.conf" <<EOF_SECURE
 daemon off;
 pid /tmp/nginx.pid;
 error_log stderr;
@@ -219,12 +231,32 @@ ${CONTAINER_ACL}
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
       proxy_http_version 1.1;
-      # Pass through X-Forwarded-* from outer proxy, or set defaults for direct access
-      set \$fwd_proto \$http_x_forwarded_proto;
-      if (\$fwd_proto = "") { set \$fwd_proto \$scheme; }
-      proxy_set_header X-Forwarded-Proto \$fwd_proto;
+      # Security: X-Forwarded-Host/Proto are derived from trusted values
+      # (the Host nginx received and nginx's own scheme), NOT passed
+      # through from client-supplied headers. Previously this forwarded
+      # \$http_x_forwarded_host verbatim, so an attacker hitting nginx
+      # could set X-Forwarded-Host: evil.com and poison the
+      # verification/reset/OIDC links the backend generates (the backend
+      # trusts these headers by default; see util.derive_hosting_info).
+      #
+      # KLANGK_TRUST_OUTER_PROXY=1 (or true/yes): opt-in for a TRUSTED
+      # outer proxy in front of klangk's nginx whose X-Forwarded-* values
+      # must survive. Only set this if that outer proxy itself overwrites,
+      # not passes through, these headers.
+EOF_SECURE
+if [ "$TRUST_OUTER_PROXY" = "1" ]; then
+  cat >>"$NGINX_STATE/nginx.conf" <<NGINX
+      proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;
       proxy_set_header X-Forwarded-Host \$http_x_forwarded_host;
       proxy_set_header X-Forwarded-Prefix \$http_x_forwarded_prefix;
+NGINX
+else
+  cat >>"$NGINX_STATE/nginx.conf" <<NGINX
+      proxy_set_header X-Forwarded-Proto \$scheme;
+      proxy_set_header X-Forwarded-Host \$http_host;
+NGINX
+fi
+cat >>"$NGINX_STATE/nginx.conf" <<NGINX
       proxy_set_header Upgrade \$http_upgrade;
       proxy_set_header Connection \$connection_upgrade;
     }
