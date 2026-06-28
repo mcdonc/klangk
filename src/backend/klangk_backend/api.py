@@ -695,10 +695,23 @@ async def send_invitation(
 
 @router.get("/admin/invitations")
 async def list_invitations(
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
     admin: dict = Depends(acl.has_permission("admin")),
 ):
-    """List all invitations (admin only)."""
-    return await model.list_invitations()
+    """List invitations (admin only), server-side paginated/sorted/filtered.
+
+    Returns a paged envelope ``{invitations, page, page_size, total,
+    pending_count}`` supporting forwards/backwards paging. ``sort`` is one
+    of ``email`` | ``invited_by`` | ``created``, ``order`` is ``asc`` |
+    ``desc``, and ``q`` is a substring filter on the invitee email.
+    """
+    return await model.list_invitations(
+        page=page, page_size=page_size, sort=sort, order=order, q=q
+    )
 
 
 @router.delete("/admin/invitations/{invitation_id}")

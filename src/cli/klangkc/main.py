@@ -1586,10 +1586,10 @@ def list_invitations() -> None:
     """List all invitations (admin only)."""
     _require_auth()
     client = _client()
-    resp = client.get("/api/v1/admin/invitations")
+    resp = client.get("/api/v1/admin/invitations?page_size=200")
     client._check_auth(resp)
     resp.raise_for_status()
-    data = resp.json()
+    data = resp.json().get("invitations", [])
     if not data:
         typer.echo("No invitations.")
         return

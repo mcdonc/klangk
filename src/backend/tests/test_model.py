@@ -1080,12 +1080,18 @@ class TestInvitations:
     async def test_list(self, db, admin_user):
         await model.create_invitation("x@b.com", admin_user["id"])
         await model.create_invitation("y@b.com", admin_user["id"])
-        invs = await model.list_invitations()
+        result = await model.list_invitations()
+        invs = result["invitations"]
         assert len(invs) >= 2
         emails = [i["email"] for i in invs]
         assert "x@b.com" in emails
         assert "y@b.com" in emails
         assert invs[0]["invited_by_email"] == "testadmin@example.com"
+        # Paged envelope metadata + global pending count.
+        assert result["page"] == 1
+        assert result["page_size"] == 10
+        assert result["total"] >= 2
+        assert result["pending_count"] >= 2
 
     async def test_mark_accepted(self, db, admin_user):
         inv = await model.create_invitation("acc@b.com", admin_user["id"])

@@ -34,6 +34,19 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   String _usersOrder = 'desc'; // asc | desc
   String _usersQuery = '';
   final TextEditingController _searchController = TextEditingController();
+  Timer? _usersQueryDebounce;
+
+  // Admin invitations list: server-side pagination / sort / filter state.
+  int _invitationsPage = 1;
+  final int _invitationsPageSize = 10;
+  int _invitationsTotal = 0;
+  int _invitationsPending = 0; // global pending count (drives the tab badge)
+  String _invitationsSort = 'created'; // email | invited_by | created
+  String _invitationsOrder = 'desc'; // asc | desc
+  String _invitationsQuery = '';
+  final TextEditingController _invitationsSearchController =
+      TextEditingController();
+  Timer? _invitationsQueryDebounce;
 
   bool _canUsers = false;
   bool _canGroups = false;
@@ -54,12 +67,35 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   @override
   void initState() {
     super.initState();
+    // Live filter: re-query the backend as the user types, debounced so
+    // we don't fire a request per keystroke. Restarts the debounce timer
+    // on every change and resets to page 1 (a narrower result set may
+    // collapse the previous page range).
+    _searchController.addListener(() {
+      final value = _searchController.text;
+      if (value == _usersQuery) return;
+      _usersQuery = value;
+      _usersQueryDebounce?.cancel();
+      _usersQueryDebounce =
+          Timer(const Duration(milliseconds: 300), () => _loadUsers(page: 1));
+    });
+    _invitationsSearchController.addListener(() {
+      final value = _invitationsSearchController.text;
+      if (value == _invitationsQuery) return;
+      _invitationsQuery = value;
+      _invitationsQueryDebounce?.cancel();
+      _invitationsQueryDebounce = Timer(
+          const Duration(milliseconds: 300), () => _loadInvitations(page: 1));
+    });
     _loadData();
   }
 
   @override
   void dispose() {
+    _usersQueryDebounce?.cancel();
+    _invitationsQueryDebounce?.cancel();
     _searchController.dispose();
+    _invitationsSearchController.dispose();
     super.dispose();
   }
 
@@ -117,15 +153,29 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     }
   }
 
-  Future<void> _loadInvitations() async {
+  Future<void> _loadInvitations({int page = 1}) async {
+    setState(() {
+      _invitationsPage = page;
+    });
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet('/api/v1/admin/invitations');
+      final q = _invitationsQuery.trim();
+      final query = 'page=$_invitationsPage'
+          '&page_size=$_invitationsPageSize'
+          '&sort=${Uri.encodeQueryComponent(_invitationsSort)}'
+          '&order=${Uri.encodeQueryComponent(_invitationsOrder)}'
+          '${q.isNotEmpty ? '&q=${Uri.encodeQueryComponent(q)}' : ''}';
+      final resp = await auth.authGet(
+        '/api/v1/admin/invitations?$query',
+      );
       if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as List;
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
         if (mounted) {
           setState(() {
-            _invitations = data.cast<Map<String, dynamic>>();
+            _invitations =
+                (data['invitations'] as List).cast<Map<String, dynamic>>();
+            _invitationsTotal = (data['total'] as num).toInt();
+            _invitationsPending = (data['pending_count'] as num).toInt();
           });
         }
       }
@@ -435,7 +485,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       body: jsonEncode({'email': email}),
     );
     if (resp.statusCode == 200) {
-      _loadInvitations();
+      // New invitation sorts to the top (created desc) — jump to page 1
+      // so the admin sees it immediately.
+      _loadInvitations(page: 1);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -483,7 +535,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       '/api/v1/admin/invitations/$invitationId',
     );
     if (resp.statusCode == 200) {
-      _loadInvitations();
+      // Revoked invitations stay in the list (status filter is out of
+      // scope), so just refresh the current page to show the new status.
+      _loadInvitations(page: _invitationsPage);
     } else {
       if (mounted) {
         final error = jsonDecode(resp.body);
@@ -623,7 +677,22 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Widget _buildUsersTab() {
     return Column(
       children: [
-        _buildUsersToolbar(),
+        _AdminListToolbar(
+          key: const ValueKey('admin-users-toolbar'),
+          columns: const [
+            ('Email', 'email'),
+            ('Handle', 'handle'),
+            ('Created', 'created'),
+          ],
+          sort: _usersSort,
+          order: _usersOrder,
+          onChangeSort: _changeSort,
+          searchController: _searchController,
+          page: _usersPage,
+          pageSize: _usersPageSize,
+          total: _usersTotal,
+          onPage: (p) => _loadUsers(page: p),
+        ),
         Expanded(child: _buildUsersList()),
       ],
     );
@@ -643,77 +712,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       });
     }
     await _loadUsers(page: 1);
-  }
-
-  Widget _sortChip(String label, String sortKey) {
-    final active = _usersSort == sortKey;
-    final arrow = _usersOrder == 'asc' ? '▲' : '▼';
-    return ActionChip(
-      label: Text(active ? '$label $arrow' : label),
-      onPressed: () => _changeSort(sortKey),
-      backgroundColor:
-          active ? KColors.accentBlue.withValues(alpha: 0.2) : null,
-    );
-  }
-
-  Widget _buildUsersToolbar() {
-    final totalPages = _usersTotal == 0
-        ? 1
-        : (_usersTotal + _usersPageSize - 1) ~/ _usersPageSize;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          _sortChip('Email', 'email'),
-          _sortChip('Handle', 'handle'),
-          _sortChip('Created', 'created'),
-          const SizedBox(width: 12),
-          SizedBox(
-            width: 220,
-            child: TextField(
-              controller: _searchController,
-              decoration: const InputDecoration(
-                isDense: true,
-                hintText: 'Filter by email…',
-                prefixIcon: Icon(Icons.search, size: 18),
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 0,
-                ),
-              ),
-              onSubmitted: (value) {
-                _usersQuery = value;
-                _loadUsers(page: 1);
-              },
-            ),
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'Previous page',
-                icon: const Icon(Icons.chevron_left),
-                onPressed: _usersPage > 1
-                    ? () => _loadUsers(page: _usersPage - 1)
-                    : null,
-              ),
-              Text('$_usersPage / $totalPages'),
-              IconButton(
-                tooltip: 'Next page',
-                icon: const Icon(Icons.chevron_right),
-                onPressed: _usersPage < totalPages
-                    ? () => _loadUsers(page: _usersPage + 1)
-                    : null,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildUsersList() {
@@ -771,6 +769,47 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   }
 
   Widget _buildInvitationsTab() {
+    return Column(
+      children: [
+        _AdminListToolbar(
+          key: const ValueKey('admin-invitations-toolbar'),
+          columns: const [
+            ('Email', 'email'),
+            ('Invited by', 'invited_by'),
+            ('Created', 'created'),
+          ],
+          sort: _invitationsSort,
+          order: _invitationsOrder,
+          onChangeSort: _changeInvitationsSort,
+          searchController: _invitationsSearchController,
+          page: _invitationsPage,
+          pageSize: _invitationsPageSize,
+          total: _invitationsTotal,
+          onPage: (p) => _loadInvitations(page: p),
+        ),
+        Expanded(child: _buildInvitationsList()),
+      ],
+    );
+  }
+
+  /// Select a sort column, or toggle direction if already selected —
+  /// resets to page 1 because a different sort reorders every row.
+  Future<void> _changeInvitationsSort(String sortKey) async {
+    if (_invitationsSort == sortKey) {
+      setState(() {
+        _invitationsOrder = _invitationsOrder == 'asc' ? 'desc' : 'asc';
+      });
+    } else {
+      setState(() {
+        _invitationsSort = sortKey;
+        // Email/invited_by read naturally ascending; created descending.
+        _invitationsOrder = sortKey == 'created' ? 'desc' : 'asc';
+      });
+    }
+    await _loadInvitations(page: 1);
+  }
+
+  Widget _buildInvitationsList() {
     if (_invitations.isEmpty) {
       return const Center(child: Text('No invitations'));
     }
@@ -850,8 +889,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     // Re-resolve on each build: AuthService loads permissions asynchronously,
     // so the first build (before they arrive) would otherwise show no tabs.
     _resolvePermissions();
-    final pendingCount =
-        _invitations.where((i) => i['status'] == 'pending').length;
+    final pendingCount = _invitationsPending;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
     final tabTypes = _tabTypes;
@@ -1440,6 +1478,99 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Shared toolbar for the admin list tabs (Users, Invitations): sort chips,
+/// a debounced email filter, and prev/next paging. The owning State holds
+/// the sort/order/page/total fields and the search controller (whose
+/// listener debounces a backend re-query); this widget just renders the
+/// controls and reports interactions back via callbacks.
+class _AdminListToolbar extends StatelessWidget {
+  final List<(String, String)> columns; // (label, sortKey)
+  final String sort;
+  final String order; // 'asc' | 'desc'
+  final ValueChanged<String> onChangeSort;
+  final TextEditingController searchController;
+  final int page;
+  final int pageSize;
+  final int total;
+  final ValueChanged<int> onPage; // requested page number
+
+  const _AdminListToolbar({
+    super.key,
+    required this.columns,
+    required this.sort,
+    required this.order,
+    required this.onChangeSort,
+    required this.searchController,
+    required this.page,
+    required this.pageSize,
+    required this.total,
+    required this.onPage,
+  });
+
+  Widget _sortChip(String label, String sortKey) {
+    final active = sort == sortKey;
+    final arrow = order == 'asc' ? '▲' : '▼';
+    return ActionChip(
+      label: Text(active ? '$label $arrow' : label),
+      onPressed: () => onChangeSort(sortKey),
+      backgroundColor:
+          active ? KColors.accentBlue.withValues(alpha: 0.2) : null,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final totalPages = total == 0 ? 1 : (total + pageSize - 1) ~/ pageSize;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (final (label, key) in columns) _sortChip(label, key),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 220,
+            child: TextField(
+              controller: searchController,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: 'Filter by email…',
+                prefixIcon: Icon(Icons.search, size: 18),
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 0,
+                ),
+              ),
+              // Enter submits immediately; the live debounce runs via the
+              // controller listener in the owning State.
+              onSubmitted: (_) => onPage(1),
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Previous page',
+                icon: const Icon(Icons.chevron_left),
+                onPressed: page > 1 ? () => onPage(page - 1) : null,
+              ),
+              Text('$page / $totalPages'),
+              IconButton(
+                tooltip: 'Next page',
+                icon: const Icon(Icons.chevron_right),
+                onPressed: page < totalPages ? () => onPage(page + 1) : null,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

@@ -5938,11 +5938,206 @@ class TestInvitations:
             )
         resp = await client.get("/api/v1/admin/invitations", headers=headers)
         assert resp.status_code == 200
-        data = resp.json()
-        emails = [inv["email"] for inv in data]
+        body = resp.json()
+        invitations = body["invitations"]
+        emails = [inv["email"] for inv in invitations]
         assert "list1@example.com" in emails
         assert "list2@example.com" in emails
-        assert data[0]["invited_by_email"] == "testadmin@example.com"
+        assert invitations[0]["invited_by_email"] == "testadmin@example.com"
+        # Paged envelope metadata.
+        assert body["page"] == 1
+        assert body["page_size"] == 10
+        assert body["total"] >= 2
+        # Two freshly-created pending invitations are reflected in the
+        # global pending count (used by the UI badge).
+        assert body["pending_count"] >= 2
+
+    async def test_list_invitations_default_page_size_is_10(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            for i in range(12):
+                await client.post(
+                    "/api/v1/admin/invitations",
+                    headers=headers,
+                    json={"email": f"page{i}@example.com"},
+                )
+        resp = await client.get("/api/v1/admin/invitations", headers=headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["page"] == 1
+        assert body["page_size"] == 10
+        assert body["total"] >= 12
+        assert len(body["invitations"]) == 10
+
+    async def test_list_invitations_pagination_across_pages(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            for i in range(6):
+                await client.post(
+                    "/api/v1/admin/invitations",
+                    headers=headers,
+                    json={"email": f"pg{i}@example.com"},
+                )
+        page1 = await client.get(
+            "/api/v1/admin/invitations?page=1&page_size=3", headers=headers
+        )
+        page2 = await client.get(
+            "/api/v1/admin/invitations?page=2&page_size=3", headers=headers
+        )
+        assert page1.status_code == 200
+        assert page2.status_code == 200
+        b1 = page1.json()
+        b2 = page2.json()
+        assert b1["page"] == 1
+        assert b2["page"] == 2
+        assert b1["page_size"] == 3
+        assert b1["total"] == b2["total"]
+        # Pages don't overlap.
+        ids1 = {inv["id"] for inv in b1["invitations"]}
+        ids2 = {inv["id"] for inv in b2["invitations"]}
+        assert ids1.isdisjoint(ids2)
+        assert len(b1["invitations"]) == 3
+        assert len(b2["invitations"]) == 3
+
+    async def test_list_invitations_sort_by_email(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            for e in [
+                "charlie@example.com",
+                "alpha@example.com",
+                "bravo@example.com",
+            ]:
+                await client.post(
+                    "/api/v1/admin/invitations",
+                    headers=headers,
+                    json={"email": e},
+                )
+        resp = await client.get(
+            "/api/v1/admin/invitations?sort=email&order=asc&page_size=50",
+            headers=headers,
+        )
+        emails = [inv["email"] for inv in resp.json()["invitations"]]
+        assert emails == sorted(emails, key=str.lower)
+        assert emails[0] == "alpha@example.com"
+
+    async def test_list_invitations_sort_by_invited_by(
+        self, client, admin_user
+    ):
+        # Two invitations from two different inviters. Sorting by
+        # ``invited_by`` must track the inviter's email (the value the UI
+        # displays), not the invitee's email.
+        inviter_a = await model.create_user(
+            "aaa-admin@example.com", None, verified=True
+        )
+        inviter_z = await model.create_user(
+            "zzz-admin@example.com", None, verified=True
+        )
+        await model.create_invitation("zeta@example.com", inviter_z["id"])
+        await model.create_invitation("alpha@example.com", inviter_a["id"])
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            "/api/v1/admin/invitations?sort=invited_by&order=asc&page_size=50",
+            headers=headers,
+        )
+        rows = resp.json()["invitations"]
+        # Only the two we just created are relevant; confirm the inviter
+        # ordering among them and that it tracks invited_by_email.
+        ours = [
+            r
+            for r in rows
+            if r["email"] in {"zeta@example.com", "alpha@example.com"}
+        ]
+        inviters = [r["invited_by_email"] for r in ours]
+        assert inviters == sorted(inviters, key=str.lower)
+        assert ours[0]["invited_by_email"] == "aaa-admin@example.com"
+        assert ours[0]["email"] == "alpha@example.com"
+
+    async def test_list_invitations_sort_desc_reverses(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            for e in [
+                "charlie@example.com",
+                "alpha@example.com",
+                "bravo@example.com",
+            ]:
+                await client.post(
+                    "/api/v1/admin/invitations",
+                    headers=headers,
+                    json={"email": e},
+                )
+        asc = await client.get(
+            "/api/v1/admin/invitations?sort=email&order=asc&page_size=50",
+            headers=headers,
+        )
+        desc = await client.get(
+            "/api/v1/admin/invitations?sort=email&order=desc&page_size=50",
+            headers=headers,
+        )
+        asc_emails = [inv["email"] for inv in asc.json()["invitations"]]
+        desc_emails = [inv["email"] for inv in desc.json()["invitations"]]
+        assert asc_emails == list(reversed(desc_emails))
+
+    async def test_list_invitations_filter_by_email(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        with patch.object(
+            api.emailsvc,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            await client.post(
+                "/api/v1/admin/invitations",
+                headers=headers,
+                json={"email": "needle@example.com"},
+            )
+            await client.post(
+                "/api/v1/admin/invitations",
+                headers=headers,
+                json={"email": "haystack@example.com"},
+            )
+        resp = await client.get(
+            "/api/v1/admin/invitations?q=needle&page_size=50",
+            headers=headers,
+        )
+        body = resp.json()
+        emails = [inv["email"] for inv in body["invitations"]]
+        assert emails == ["needle@example.com"]
+        assert body["total"] == 1
+        # The filter narrows the page but not the global pending count.
+        assert body["pending_count"] >= 2
+
+    async def test_list_invitations_invalid_sort_falls_back_to_created(
+        self, client, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        # An unknown sort column must not 500 (falls back to created_at).
+        resp = await client.get(
+            "/api/v1/admin/invitations?sort=evil%3B%20DROP%20TABLE&order=asc",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["invitations"] is not None
 
     async def test_revoke_invitation(self, client, admin_user):
         headers = await self._admin_headers(client)
