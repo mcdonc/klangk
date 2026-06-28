@@ -53,8 +53,9 @@ class _LoginPageState extends State<LoginPage> {
         if (mounted) {
           setState(() {
             _registrationEnabled = data['registration_enabled'] ?? true;
-            _oidcProviders =
-                List<Map<String, dynamic>>.from(data['oidc_providers'] ?? []);
+            _oidcProviders = List<Map<String, dynamic>>.from(
+              data['oidc_providers'] ?? [],
+            );
             _authModes = data['auth_modes'] ?? 'password';
           });
         }
@@ -116,6 +117,162 @@ class _LoginPageState extends State<LoginPage> {
     });
   }
 
+  List<Widget> _buildOidcButtons() {
+    return [
+      const SizedBox(height: 24),
+      for (final provider in _oidcProviders)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.login),
+              label: Text('Log in with ${provider['display_name']}'),
+              onPressed: () {
+                final id = provider['id'];
+                final url = '${baseUrl}/api/v1/auth/oidc/$id/login';
+                navigateTo(url);
+              },
+            ),
+          ),
+        ),
+      if (_showPasswordForm) ...[
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Expanded(child: Divider()),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text('or', style: TextStyle(color: KColors.textMuted)),
+            ),
+            const Expanded(child: Divider()),
+          ],
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _buildErrorSection(BuildContext context) {
+    if (_error == null) return [];
+    return [
+      const SizedBox(height: 16),
+      Text(
+        _error!,
+        style: TextStyle(color: Theme.of(context).colorScheme.error),
+      ),
+      if (_needsVerification) ...[
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: _resending ? null : _resendVerification,
+          child: _resending
+              ? const SizedBox(
+                  height: 16,
+                  width: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Resend verification email'),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _buildPasswordForm(BuildContext context, AuthService auth) {
+    return [
+      const SizedBox(height: 24),
+      TextFormField(
+        controller: _emailController,
+        decoration: InputDecoration(
+          labelText: 'Email',
+          border: const OutlineInputBorder(),
+        ),
+        validator: (v) {
+          if (v == null || v.trim().isEmpty) return 'Required';
+          if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) {
+            return 'Enter a valid email address';
+          }
+          return null;
+        },
+        onFieldSubmitted: (_) => _submit(),
+      ),
+      const SizedBox(height: 16),
+      TextFormField(
+        controller: _passwordController,
+        decoration: InputDecoration(
+          labelText: 'Password',
+          border: const OutlineInputBorder(),
+          suffixIcon: IconButton(
+            icon: Icon(
+              _obscurePassword ? Icons.visibility_off : Icons.visibility,
+            ),
+            onPressed: () {
+              setState(() {
+                _obscurePassword = !_obscurePassword;
+              });
+            },
+          ),
+        ),
+        obscureText: _obscurePassword,
+        validator: (v) {
+          if (v == null || v.isEmpty) return 'Required';
+          if (_isRegister && v.length < 4) return 'Min 4 characters';
+          return null;
+        },
+        onFieldSubmitted: (_) => _submit(),
+      ),
+      ..._buildErrorSection(context),
+      const SizedBox(height: 24),
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton(
+          onPressed: auth.loading ? null : _submit,
+          style: _isRegister
+              ? FilledButton.styleFrom(
+                  backgroundColor: KColors.accentGreen,
+                  foregroundColor: Colors.white,
+                )
+              : null,
+          child: auth.loading
+              ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(_isRegister ? 'Create Account' : 'Log In'),
+        ),
+      ),
+      if (pendingRedirect != null) ...[
+        const SizedBox(height: 12),
+        Text(
+          'Please log in to continue.',
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+      ],
+      if (_registrationEnabled) ...[
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: () {
+            setState(() {
+              _isRegister = !_isRegister;
+              _error = null;
+            });
+          },
+          child: Text(
+            _isRegister
+                ? 'Already have an account? Log in'
+                : 'Need an account? Create one',
+          ),
+        ),
+      ],
+      // coverage:ignore-start
+      if (!_isRegister)
+        TextButton(
+          onPressed: () => context.go('/forgot-password'),
+          child: const Text('Forgot password?'),
+        ),
+      // coverage:ignore-end
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
@@ -138,160 +295,8 @@ class _LoginPageState extends State<LoginPage> {
                       _isRegister ? 'Create Account' : 'Log In',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
-                    if (_oidcProviders.isNotEmpty) ...[
-                      const SizedBox(height: 24),
-                      for (final provider in _oidcProviders)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              icon: const Icon(Icons.login),
-                              label: Text(
-                                  'Log in with ${provider['display_name']}'),
-                              onPressed: () {
-                                final id = provider['id'];
-                                final url =
-                                    '${baseUrl}/api/v1/auth/oidc/$id/login';
-                                navigateTo(url);
-                              },
-                            ),
-                          ),
-                        ),
-                      if (_showPasswordForm) ...[
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Expanded(child: Divider()),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 16),
-                              child: Text('or',
-                                  style: TextStyle(color: KColors.textMuted)),
-                            ),
-                            const Expanded(child: Divider()),
-                          ],
-                        ),
-                      ],
-                    ],
-                    if (_showPasswordForm) ...[
-                      const SizedBox(height: 24),
-                      TextFormField(
-                        controller: _emailController,
-                        decoration: InputDecoration(
-                          labelText: 'Email',
-                          border: const OutlineInputBorder(),
-                        ),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) return 'Required';
-                          if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-                              .hasMatch(v.trim())) {
-                            return 'Enter a valid email address';
-                          }
-                          return null;
-                        },
-                        onFieldSubmitted: (_) => _submit(),
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _passwordController,
-                        decoration: InputDecoration(
-                          labelText: 'Password',
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            icon: Icon(_obscurePassword
-                                ? Icons.visibility_off
-                                : Icons.visibility),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                        ),
-                        obscureText: _obscurePassword,
-                        validator: (v) {
-                          if (v == null || v.isEmpty) return 'Required';
-                          if (_isRegister && v.length < 4)
-                            return 'Min 4 characters';
-                          return null;
-                        },
-                        onFieldSubmitted: (_) => _submit(),
-                      ),
-                      if (_error != null) ...[
-                        const SizedBox(height: 16),
-                        Text(_error!,
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error)),
-                        if (_needsVerification) ...[
-                          const SizedBox(height: 8),
-                          TextButton(
-                            onPressed: _resending ? null : _resendVerification,
-                            child: _resending
-                                ? const SizedBox(
-                                    height: 16,
-                                    width: 16,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  )
-                                : const Text('Resend verification email'),
-                          ),
-                        ],
-                      ],
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: auth.loading ? null : _submit,
-                          style: _isRegister
-                              ? FilledButton.styleFrom(
-                                  backgroundColor: KColors.accentGreen,
-                                  foregroundColor: Colors.white,
-                                )
-                              : null,
-                          child: auth.loading
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : Text(_isRegister ? 'Create Account' : 'Log In'),
-                        ),
-                      ),
-                      if (pendingRedirect != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          'Please log in to continue.',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ],
-                      if (_registrationEnabled) ...[
-                        const SizedBox(height: 8),
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _isRegister = !_isRegister;
-                              _error = null;
-                            });
-                          },
-                          child: Text(
-                            _isRegister
-                                ? 'Already have an account? Log in'
-                                : 'Need an account? Create one',
-                          ),
-                        ),
-                      ],
-                      // coverage:ignore-start
-                      if (!_isRegister)
-                        TextButton(
-                          onPressed: () => context.go('/forgot-password'),
-                          child: const Text('Forgot password?'),
-                        ),
-                      // coverage:ignore-end
-                    ], // end _showPasswordForm
+                    if (_oidcProviders.isNotEmpty) ..._buildOidcButtons(),
+                    if (_showPasswordForm) ..._buildPasswordForm(context, auth),
                   ],
                 ),
               ),

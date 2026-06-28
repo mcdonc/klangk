@@ -137,13 +137,8 @@ class IdeLayoutState extends State<IdeLayout> {
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final hasDebug = widget.debug != null;
-    final hasChat = widget.chat != null;
-    final hasSettings = widget.settings != null;
-
-    // Build dynamic tab list: Terminal(0), Files(1), Chat?(2), Settings?(last)
+  /// Build the dynamic tab bar and content pane lists.
+  ({List<Widget> tabs, List<Widget> content}) _buildTabsAndContent() {
     final tabs = <Widget>[
       SkeuoTab(
         label: 'Terminal',
@@ -164,59 +159,94 @@ class IdeLayoutState extends State<IdeLayout> {
         padding: const EdgeInsets.only(left: 6, top: 4),
         child: widget.terminal,
       ),
-      // Material (not a plain ColoredBox) so the file viewer's ListTiles paint
-      // their background/ink on a Material ancestor instead of this pane's
-      // colored box — newer Flutter asserts on ListTile-in-ColoredBox.
-      Material(
-        color: KColors.bgCanvas,
-        child: widget.fileViewer,
-      ),
+      Material(color: KColors.bgCanvas, child: widget.fileViewer),
     ];
-    if (hasChat) {
-      final chatIndex = tabs.length;
-      tabs.add(SkeuoTab(
-        label: 'Chat',
-        icon: Icons.chat_outlined,
-        isSelected: _selectedIndex == chatIndex,
+
+    void addTab(
+      String label,
+      IconData icon,
+      Widget child, {
+      int? badge,
+      bool badgeHighlight = false,
+    }) {
+      final index = tabs.length;
+      tabs.add(
+        SkeuoTab(
+          label: label,
+          icon: icon,
+          isSelected: _selectedIndex == index,
+          badge: badge,
+          badgeHighlight: badgeHighlight,
+          onTap: () => _selectTab(index),
+        ),
+      );
+      content.add(Container(color: KColors.bgCanvas, child: child));
+    }
+
+    if (widget.chat != null) {
+      addTab(
+        'Chat',
+        Icons.chat_outlined,
+        widget.chat!,
         badge: widget.chatUnread > 0 ? widget.chatUnread : null,
         badgeHighlight: widget.chatMentioned,
-        onTap: () => _selectTab(chatIndex),
-      ));
-      content.add(Container(
-        color: KColors.bgCanvas,
-        child: widget.chat!,
-      ));
+      );
     }
     if (widget.sharing != null) {
-      final sharingIndex = tabs.length;
-      tabs.add(SkeuoTab(
-        label: 'Sharing',
-        icon: Icons.people_outline,
-        isSelected: _selectedIndex == sharingIndex,
-        onTap: () => _selectTab(sharingIndex),
-      ));
-      content.add(Container(
-        color: KColors.bgCanvas,
-        child: widget.sharing!,
-      ));
+      addTab('Sharing', Icons.people_outline, widget.sharing!);
     }
-    if (hasSettings) {
-      final settingsIndex = tabs.length;
-      tabs.add(SkeuoTab(
-        label: 'Settings',
-        icon: Icons.settings,
-        isSelected: _selectedIndex == settingsIndex,
-        onTap: () => _selectTab(settingsIndex),
-      ));
-      content.add(Container(
-        color: KColors.bgCanvas,
-        child: widget.settings!,
-      ));
+    if (widget.settings != null) {
+      addTab('Settings', Icons.settings, widget.settings!);
     }
+
+    return (tabs: tabs, content: content);
+  }
+
+  List<Widget> _buildDebugPane() {
+    if (widget.debug == null) return [];
+    return [
+      GestureDetector(
+        onVerticalDragUpdate: (details) {
+          setState(() {
+            _debugHeight = (_debugHeight - details.delta.dy).clamp(
+              _minDebugHeight,
+              _maxDebugHeight,
+            );
+          });
+        },
+        onDoubleTap: () {
+          setState(() {
+            _debugHeight = _debugHeight > 0 ? 0 : 200;
+          });
+        },
+        child: MouseRegion(
+          cursor: SystemMouseCursors.resizeRow,
+          child: Container(
+            height: _dividerHeight,
+            color: KColors.borderMuted,
+            child: Center(
+              child: Container(
+                width: 40,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: KColors.textMuted,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      SizedBox(height: _debugHeight, child: widget.debug!),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (:tabs, :content) = _buildTabsAndContent();
 
     return Column(
       children: [
-        // Tab bar
         Container(
           height: 40,
           color: KColors.bgCanvas,
@@ -225,52 +255,12 @@ class IdeLayoutState extends State<IdeLayout> {
             children: tabs.map((t) => Expanded(child: t)).toList(),
           ),
         ),
-        // Content area
         Expanded(
           child: ClipRect(
-            child: IndexedStack(
-              index: _selectedIndex,
-              children: content,
-            ),
+            child: IndexedStack(index: _selectedIndex, children: content),
           ),
         ),
-        // Debug divider + pane
-        if (hasDebug) ...[
-          GestureDetector(
-            onVerticalDragUpdate: (details) {
-              setState(() {
-                _debugHeight = (_debugHeight - details.delta.dy)
-                    .clamp(_minDebugHeight, _maxDebugHeight);
-              });
-            },
-            onDoubleTap: () {
-              setState(() {
-                _debugHeight = _debugHeight > 0 ? 0 : 200;
-              });
-            },
-            child: MouseRegion(
-              cursor: SystemMouseCursors.resizeRow,
-              child: Container(
-                height: _dividerHeight,
-                color: KColors.borderMuted,
-                child: Center(
-                  child: Container(
-                    width: 40,
-                    height: 3,
-                    decoration: BoxDecoration(
-                      color: KColors.textMuted,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          SizedBox(
-            height: _debugHeight,
-            child: widget.debug!,
-          ),
-        ],
+        ..._buildDebugPane(),
       ],
     );
   }
