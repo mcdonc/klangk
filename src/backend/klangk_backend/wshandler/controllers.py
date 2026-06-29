@@ -393,6 +393,23 @@ class TerminalController:
                 {"type": "shared_terminals", "terminals": terminals}
             )
 
+    async def _setup_state_for_workspace(self) -> str:
+        """Fetch the workspace's setup_state fresh from the DB (#1033).
+
+        Returns the literal lifecycle value, defaulting to 'complete'
+        if the workspace can't be loaded or the lookup fails. A failed
+        lookup must NOT crash terminal_start -- defaulting to
+        'complete' preserves the historical fire-by-default behaviour
+        rather than silently disabling default commands.
+        """
+        try:
+            ws = await model.get_workspace(self._conn.workspace_id)
+        except Exception:
+            return "complete"
+        if ws is None:
+            return "complete"
+        return ws.get("setup_state") or "complete"
+
     async def start(self, msg: dict) -> None:
 
         logger.info(
@@ -442,6 +459,13 @@ class TerminalController:
             user_handle=self._conn.user.get("handle"),
             ssh_agent_socket=self._conn._ssh_agent_socket,
             default_command=self._conn._default_command,
+            # Read setup_state FRESH from the DB -- not from a cached
+            # connection field. The setup-owner connection caches its
+            # state as 'pending' at connect time, but by the time it
+            # sends terminal_start (after setup.sh returns) the DB
+            # holds 'complete'. A cached value would wrongly block
+            # the post-setup fire (#1033).
+            setup_state=await self._setup_state_for_workspace(),
         )
 
         browser_id = msg.get("browser_id")

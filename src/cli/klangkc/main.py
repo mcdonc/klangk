@@ -891,6 +891,9 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
 
     Called once after workspace creation, before the shell starts.
     The caller has already connected and called _wait_workspace_ready.
+
+    Returns the setup script's exit code, or ``None`` if no setup
+    command was configured (in which case there is nothing to fail).
     """
     # Copy files into container home.
     for host_path, container_dest in build_copy_pairs(
@@ -943,6 +946,8 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
             _err.print(f"[yellow]Setup timed out after {timeout}s[/yellow]")
         elif exit_code != 0:
             _err.print(f"[yellow]Setup exited with code {exit_code}[/yellow]")
+        return exit_code
+    return None
 
 
 @app.command()
@@ -1008,6 +1013,9 @@ def sandbox(
             default_command=config.default_command,
             auto_start=config.auto_start,
             mounts=all_mounts,
+            setup_state="pending"
+            if resolve_setup_command(config, handle)
+            else None,
         )
         _err.print(f"Workspace [bold]{workspace}[/bold] created.")
         created = True
@@ -1026,6 +1034,7 @@ def sandbox(
                     sandbox_root,
                     handle,
                     max_size=_ws_max_size(),
+                    client=client,
                 )
             )
         except websockets.InvalidStatus as e:  # pragma: no cover
@@ -1054,18 +1063,63 @@ async def _sandbox_setup_only(
     sandbox_root,
     handle,
     max_size=None,
+    client=None,
 ):
-    """Connect to workspace, run setup, then disconnect (no shell)."""
+    """Connect to workspace, run setup, then disconnect (no shell).
+
+    After setup.sh returns, marks the workspace's ``setup_state``
+    (#1033): ``complete`` on success (or when no setup command is
+    configured), ``failed`` otherwise. Only fires the default command
+    via ``terminal_start`` on success -- a failed setup must not
+    auto-run the default command (that is the failure-masquerade the
+    issue objects to). The state is marked BEFORE ``terminal_start``
+    is sent, so the server reads ``complete`` from the DB when it
+    decides whether to create the default-cmd window.
+    """
     kwargs = {}
     if max_size is not None:
         kwargs["max_size"] = max_size
     async with websockets.connect(f"{ws_url}?token={token}", **kwargs) as ws:
         await _wait_workspace_ready(ws, workspace_id)
-        await _sandbox_setup(ws, config, sandbox_root, handle)
+        # Re-enter 'pending' before running setup (#1033). On first
+        # create the workspace is already 'pending', but on --force
+        # re-setup it may be 'complete'/'failed'; either way this is
+        # idempotent and ensures a visitor during (re-)setup is blocked
+        # from firing the default command prematurely.
+        if client is not None:
+            try:
+                await asyncio.to_thread(
+                    client.set_setup_state, workspace_id, "pending"
+                )
+            except Exception as e:  # pragma: no cover
+                _err.print(
+                    f"[yellow]Warning: could not mark setup_state"
+                    f" = pending: {e}[/yellow]"
+                )
+        exit_code = await _sandbox_setup(ws, config, sandbox_root, handle)
+
+        # Mark setup_state before anything else (#1033). 'complete'
+        # when setup ran and returned 0, or when there was no setup
+        # command at all (nothing to fail); 'failed' otherwise.
+        setup_ok = exit_code is None or exit_code == 0
+        new_state = "complete" if setup_ok else "failed"
+        if client is not None:
+            try:
+                await asyncio.to_thread(
+                    client.set_setup_state, workspace_id, new_state
+                )
+            except Exception as e:  # pragma: no cover
+                _err.print(
+                    f"[yellow]Warning: could not mark setup_state"
+                    f" = {new_state}: {e}[/yellow]"
+                )
+
         # After setup, start a terminal so the default command runs
         # in a dedicated "default-cmd" tmux window (visible as a tab
-        # but not occupying the user's interactive window 0).
-        if config.default_command:
+        # but not occupying the user's interactive window 0). Skipped
+        # on setup failure -- the default command's prerequisites are
+        # not met.
+        if config.default_command and setup_ok:
             await ws.send(
                 json.dumps({"cmd": "terminal_start", "cols": 80, "rows": 24})
             )

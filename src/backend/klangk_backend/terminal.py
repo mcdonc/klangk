@@ -24,6 +24,7 @@ from collections.abc import AsyncGenerator
 
 from . import podman
 from .exceptions import TerminalError
+from .model.workspaces import SETUP_STATE_COMPLETE
 from .util import BoundedOutputQueue, resolve_env_value
 
 logger = logging.getLogger(__name__)
@@ -97,28 +98,8 @@ _WORKSPACE_STATE_FILE = ".workspace-state.json"
 DEFAULT_CMD_WINDOW = "default-cmd"
 
 
-async def _ensure_base_session(
-    container_id: str,
-    session_name: str,
-    user_home: str | None = None,
-    ssh_agent_socket: str | None = None,
-    default_command: str | None = None,
-) -> bool:
-    """Create the base tmux session (detached) if it doesn't exist.
-
-    Grouped sessions require a target session.  This ensures the base
-    session exists before any grouped session tries to link to it.
-
-    If *default_command* is set and the session is freshly created,
-    the command is run in a dedicated detached window named
-    ``DEFAULT_CMD_WINDOW`` so the user's window 0 stays free for
-    interactive use.  The command runs as a foreground process in
-    that window's bash shell — Ctrl-C stops it and returns to the
-    prompt.
-
-    Returns ``True`` if the session was freshly created.
-    """
-    # Check if the session already exists.
+async def _has_tmux_session(container_id: str, session_name: str) -> bool:
+    """Return True if a tmux session named *session_name* exists."""
     try:
         rc, _, _ = await podman.exec_container(
             container_id,
@@ -126,34 +107,128 @@ async def _ensure_base_session(
             user=CONTAINER_USER,
             timeout=5,
         )
-        if rc == 0:
-            return False  # already exists
     except Exception:
-        pass  # assume it doesn't exist
+        return False
+    return rc == 0
 
-    # Create detached base session.  HOME / SSH_AUTH_SOCK are passed as
-    # tmux's own ``-e`` flags (part of the command), not podman's.
-    env_args: list[str] = []
-    if user_home is not None:
-        env_args += ["-e", f"HOME={user_home}"]
-    if ssh_agent_socket is not None:
-        env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+
+async def _default_cmd_window_exists(
+    container_id: str, session_name: str
+) -> bool:
+    """Return True if the ``default-cmd`` window exists in *session_name*.
+
+    This is the ephemeral "has the default command already fired in
+    THIS container" check (#1033). Unlike ``setup_state`` it is
+    per-container: it resets on container recreation, so the boot path
+    re-fires the default command for an already-``complete`` workspace.
+    tmux allows duplicate window names, so we must inspect the list
+    rather than rely on ``new-window`` failing.
+    """
     try:
-        await podman.exec_container(
+        rc, stdout, _ = await podman.exec_container(
             container_id,
-            ["tmux", "new-session", "-d", "-s", session_name, *env_args],
+            [
+                "tmux",
+                "list-windows",
+                "-t",
+                session_name,
+                "-F",
+                "#{window_name}",
+            ],
             user=CONTAINER_USER,
-            timeout=10,
+            timeout=5,
         )
     except Exception:
-        logger.warning("Failed to create base tmux session %s", session_name)
         return False
+    if rc != 0:
+        return False
+    return DEFAULT_CMD_WINDOW in {
+        line.strip() for line in stdout.splitlines() if line.strip()
+    }
 
-    # Run the default command in a detached window named
-    # DEFAULT_CMD_WINDOW so the user's window 0 stays free for
-    # interactive use.  ``-d`` keeps window 0 as the active window,
-    # so no select-window is needed afterwards.
-    if default_command:
+
+def _should_fire_default_command(
+    default_command: str | None, setup_state: str
+) -> bool:
+    """The setup-phase half of the firing predicate (#1033).
+
+    The default command may fire iff it is configured AND setup is
+    complete. ``pending`` and ``failed`` both block. ``setup_state`` is
+    always one of the three lifecycle values -- the DB column is
+    ``NOT NULL DEFAULT 'complete'`` and every SELECT includes it -- so
+    there is no ``None`` case to handle here.
+
+    The other half -- "the default-cmd window doesn't already exist" --
+    is checked by the caller via :func:`_default_cmd_window_exists`,
+    since it is per-container and ephemeral.
+    """
+    if not default_command:
+        return False
+    return setup_state == SETUP_STATE_COMPLETE
+
+
+async def _ensure_base_session(
+    container_id: str,
+    session_name: str,
+    user_home: str | None = None,
+    ssh_agent_socket: str | None = None,
+    default_command: str | None = None,
+    setup_state: str = SETUP_STATE_COMPLETE,
+) -> bool:
+    """Ensure the base tmux session exists and maybe fire the default cmd.
+
+    Two independent jobs, split out so that an early visitor's
+    ``terminal_start`` no longer swallows the post-setup one (#1033):
+
+    1. *Base session + window 0* -- created idempotently and ALWAYS.
+       A visitor connecting mid-setup still gets a working interactive
+       shell. This is what every ``terminal_start`` needs regardless of
+       setup state.
+
+    2. *The ``default-cmd`` window* -- created only when the firing
+       predicate holds:
+
+           default_command is set  AND  setup_state == complete
+                                 AND  the window doesn't already exist
+
+       Crucially this runs EVEN IF the session already exists (created
+       by an earlier visitor). Previously the whole function returned
+       ``False`` the moment the session existed, so once an early
+       visitor made the session, the post-setup ``terminal_start`` was
+       a no-op and the default command never ran.
+
+    Returns ``True`` if the base session was freshly created.
+    """
+    session_existed = await _has_tmux_session(container_id, session_name)
+    if not session_existed:
+        # Create detached base session.  HOME / SSH_AUTH_SOCK are passed
+        # as tmux's own ``-e`` flags (part of the command), not
+        # podman's.
+        env_args: list[str] = []
+        if user_home is not None:
+            env_args += ["-e", f"HOME={user_home}"]
+        if ssh_agent_socket is not None:
+            env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+        try:
+            await podman.exec_container(
+                container_id,
+                ["tmux", "new-session", "-d", "-s", session_name, *env_args],
+                user=CONTAINER_USER,
+                timeout=10,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to create base tmux session %s", session_name
+            )
+            return False
+
+    # The default-cmd window: fire iff the predicate holds AND it
+    # doesn't already exist (exactly-once-per-container). This block
+    # is reached even when the session pre-existed (early visitor),
+    # which is the #1033 fix.
+    if _should_fire_default_command(
+        default_command, setup_state
+    ) and not await _default_cmd_window_exists(container_id, session_name):
         try:
             await podman.exec_container(
                 container_id,
@@ -199,7 +274,7 @@ async def _ensure_base_session(
                     "Failed to send default command to %s", session_name
                 )
 
-    return True
+    return not session_existed
 
 
 def _build_shell_command(
@@ -705,6 +780,7 @@ class TerminalSession:
         user_handle: str | None = None,
         ssh_agent_socket: str | None = None,
         default_command: str | None = None,
+        setup_state: str = SETUP_STATE_COMPLETE,
     ):
         self.container_id = container_id
         self.session_name = session_name
@@ -716,6 +792,7 @@ class TerminalSession:
         self.user_handle = user_handle
         self.ssh_agent_socket = ssh_agent_socket
         self.default_command = default_command
+        self.setup_state = setup_state
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -746,6 +823,7 @@ class TerminalSession:
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
                 default_command=self.default_command,
+                setup_state=self.setup_state,
             )
         env = _build_environment(
             self.user_home,

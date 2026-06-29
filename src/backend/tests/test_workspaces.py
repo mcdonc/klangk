@@ -38,6 +38,18 @@ class TestCreateWorkspace:
         with pytest.raises(Exception):
             await ws_mod.create_workspace(user["id"], "unique")
 
+    async def test_invalid_setup_state_rejected(self, user):
+        """Invalid setup_state raises ValueError (#1033)."""
+        with pytest.raises(ValueError, match="Invalid setup_state"):
+            await ws_mod.create_workspace(
+                user["id"], "bad-state", setup_state="bogus"
+            )
+
+    async def test_setup_state_defaults_to_complete(self, user):
+        """Workspaces without a setup command default to 'complete'."""
+        ws = await ws_mod.create_workspace(user["id"], "default-state")
+        assert ws["setup_state"] == "complete"
+
     async def test_allocate_ports_failure_cleans_up(self, user):
         """If allocate_ports raises, DB record and directories are removed."""
         with patch.object(
@@ -56,6 +68,28 @@ class TestCreateWorkspace:
         # Name should be reusable (proves full cleanup)
         ws = await ws_mod.create_workspace(user["id"], "boom")
         assert ws["name"] == "boom"
+
+
+async def test_update_workspace_invalid_setup_state_rejected(user):
+    """update_workspace rejects an invalid setup_state (#1033)."""
+    from klangk_backend.model import update_workspace
+
+    ws = await ws_mod.create_workspace(user["id"], "upd-state")
+    with pytest.raises(ValueError, match="Invalid setup_state"):
+        await update_workspace(ws["id"], ws["user_id"], setup_state="bogus")
+
+
+async def test_update_workspace_sets_setup_state(user):
+    """update_workspace can transition setup_state (#1033)."""
+    from klangk_backend.model import get_workspace, update_workspace
+
+    ws = await ws_mod.create_workspace(
+        user["id"], "upd-ok", setup_state="pending"
+    )
+    assert ws["setup_state"] == "pending"
+    await update_workspace(ws["id"], ws["user_id"], setup_state="complete")
+    refreshed = await get_workspace(ws["id"])
+    assert refreshed["setup_state"] == "complete"
 
 
 class TestListWorkspaces:
@@ -359,6 +393,7 @@ class TestEagerStartWorkspace:
                 user["id"],
                 user_home=mock_session.call_args[1]["user_home"],
                 default_command="openclaw gateway",
+                setup_state="complete",
             )
         finally:
             container.registry.states.pop(ws["id"], None)

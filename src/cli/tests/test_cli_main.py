@@ -2870,6 +2870,7 @@ class TestSandboxSetupOnly:
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
             await _sandbox_setup_only(
                 "ws://test",
                 "token",
@@ -2909,6 +2910,7 @@ class TestSandboxSetupOnly:
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
             await _sandbox_setup_only(
                 "ws://test",
                 "token",
@@ -2948,12 +2950,13 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangkc.main.websockets.connect") as mock_connect,
-            patch("klangkc.main._sandbox_setup"),
+            patch("klangkc.main._sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
             # Must not raise / hang waiting for terminal_started.
             await _sandbox_setup_only(
                 "ws://test",

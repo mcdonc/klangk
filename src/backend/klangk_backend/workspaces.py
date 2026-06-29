@@ -234,6 +234,7 @@ async def create_workspace(
     auto_start: bool = False,
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
+    setup_state: str | None = None,
 ) -> dict:
     workspace = await model.create_workspace(
         user_id,
@@ -243,6 +244,7 @@ async def create_workspace(
         auto_start=auto_start,
         mounts=mounts,
         env=env,
+        setup_state=setup_state or model.SETUP_STATE_COMPLETE,
     )
     home = home_path(user_id, workspace["id"])
     home.mkdir(parents=True, exist_ok=True)
@@ -448,6 +450,7 @@ async def eager_start_workspace(
                 owner_id,
                 user_home=user_home,
                 default_command=default_command,
+                setup_state=ws.get("setup_state"),
             )
 
     return cid, status
