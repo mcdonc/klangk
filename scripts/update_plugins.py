@@ -36,7 +36,6 @@ _DEFAULT_PLUGINS = [
     "browser-fetch",
     "boingball",
     "git-credential",
-    "claude-code",
 ]
 
 
