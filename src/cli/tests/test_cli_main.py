@@ -1472,7 +1472,9 @@ class TestMainCLI:
 
         # keep name, keep image, change command, skip add mount, skip add env
         with patch.object(main, "_client", return_value=client):
-            with patch("builtins.input", side_effect=["", "", "pi", "", ""]):
+            with patch(
+                "builtins.input", side_effect=["", "", "pi", "", "", ""]
+            ):
                 from typer.testing import CliRunner
 
                 runner = CliRunner()
@@ -1503,7 +1505,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["renamed", "klangk-custom", "pi", "", ""],
+                side_effect=["renamed", "klangk-custom", "pi", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1533,7 +1535,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "/host:/container", "", "", ""],
+                side_effect=["", "", "", "", "/host:/container", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1561,7 +1563,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "1", "", "", ""],
+                side_effect=["", "", "", "", "", "1", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1592,7 +1594,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "/new:/new", "", "1", "", "", ""],
+                side_effect=["", "", "", "", "/new:/new", "", "1", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1623,7 +1625,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "99", "", "abc", "", "", ""],
+                side_effect=["", "", "", "", "", "99", "", "abc", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1653,7 +1655,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "1", "", ""],
+                side_effect=["", "", "", "", "", "1", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1683,7 +1685,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "bad", "/a:/b", "", "", ""],
+                side_effect=["", "", "", "", "bad", "/a:/b", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1798,7 +1800,7 @@ class TestMainCLI:
 
         # keep name, image, command; skip add mount (no mounts, no remove prompt)
         with patch.object(main, "_client", return_value=client):
-            with patch("builtins.input", side_effect=["", "", "", "", ""]):
+            with patch("builtins.input", side_effect=["", "", "", "", "", ""]):
                 from typer.testing import CliRunner
 
                 runner = CliRunner()
@@ -1824,7 +1826,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "FOO=bar", "", ""],
+                side_effect=["", "", "", "", "", "FOO=bar", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1853,7 +1855,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "bad", "A=1", "", ""],
+                side_effect=["", "", "", "", "", "bad", "A=1", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1888,6 +1890,7 @@ class TestMainCLI:
             auto_start=False,
             mounts=None,
             env={"FOO": "bar", "X": "1"},
+            health_check=None,
         )
 
     def test_create_with_invalid_env_flag(self, logged_in_cfg, monkeypatch):
@@ -1920,7 +1923,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "1", "", ""],
+                side_effect=["", "", "", "", "", "", "1", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1950,7 +1953,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "99", "", "abc", "", ""],
+                side_effect=["", "", "", "", "", "", "99", "", "abc", "", ""],
             ):
                 from typer.testing import CliRunner
 

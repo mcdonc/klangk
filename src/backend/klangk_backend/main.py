@@ -268,6 +268,7 @@ async def lifespan(app: FastAPI):
     await container.registry.prewarm_podman()
     await container.registry.adopt_orphaned_containers()
     container.registry.start_cleanup_loop()
+    container.registry.start_health_loop()
     n = await workspaces.auto_start_workspaces()
     if n:  # pragma: no cover
         logger.info("Auto-started %d workspace(s)", n)

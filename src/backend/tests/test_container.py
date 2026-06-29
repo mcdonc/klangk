@@ -1934,3 +1934,232 @@ class TestTrackActivityContainerChanged:
         assert "old-cid" not in container.registry._cid_to_wsid
         container.registry.states.pop("ws-chg", None)
         container.registry._cid_to_wsid.pop("new-cid", None)
+
+
+def _mock_sock_for_health():
+    """A minimal mock websocket for health broadcast fan-out tests."""
+    from unittest.mock import MagicMock
+
+    sock = MagicMock()
+    sock.send_json = MagicMock()
+    return sock
+
+
+def _health_state(
+    *,
+    workspace_id="ws-h",
+    container_id="cid1234567890",
+    health_check="curl -sf http://localhost:8080/health",
+    owner_id="uid-owner",
+    setup_state="complete",
+    health_status=None,
+):
+    """Build a ContainerState wired up for health checks."""
+    st = container.ContainerState(workspace_id, container_id)
+    st.health_check = health_check
+    st.owner_id = owner_id
+    st.setup_state = setup_state
+    st.health_status = health_status
+    return st
+
+
+class TestHealthMonitorRunOne:
+    """_run_one: rc 0 → healthy, non-zero/error → unhealthy."""
+
+    async def test_exit_zero_is_healthy(self):
+        monitor = container.registry.health
+        st = _health_state()
+        exec_mock = AsyncMock(return_value=(0, "", ""))
+        with (
+            patch.object(podman, "exec_container", exec_mock),
+            patch.object(
+                model, "get_user_handle", AsyncMock(return_value="owner")
+            ),
+            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
+            patch(
+                "klangk_backend.workspaces.ensure_home_symlink",
+                return_value=("/home/klangk", False),
+            ),
+        ):
+            assert await monitor._run_one(st) == "healthy"
+        # The check runs as the workspace user with HOME set, and is
+        # logged with the container id (first 12 chars).
+        call = exec_mock.call_args
+        assert call.args[0] == "cid1234567890"
+        assert call.kwargs["user"] == "klangk"
+        assert call.kwargs["extra_env"] == {"HOME": "/home/klangk"}
+        assert call.kwargs["timeout"] == container.HEALTH_CHECK_TIMEOUT_SECONDS
+
+    async def test_nonzero_exit_is_unhealthy(self):
+        monitor = container.registry.health
+        st = _health_state()
+        with (
+            patch.object(
+                podman,
+                "exec_container",
+                AsyncMock(return_value=(1, "", "err")),
+            ),
+            patch.object(
+                model, "get_user_handle", AsyncMock(return_value="owner")
+            ),
+            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
+            patch(
+                "klangk_backend.workspaces.ensure_home_symlink",
+                return_value=("/home/klangk", False),
+            ),
+        ):
+            assert await monitor._run_one(st) == "unhealthy"
+
+    async def test_exec_error_is_unhealthy(self):
+        monitor = container.registry.health
+        st = _health_state()
+        with (
+            patch.object(
+                podman,
+                "exec_container",
+                AsyncMock(side_effect=podman.PodmanError(500, "nope")),
+            ),
+            patch.object(
+                model, "get_user_handle", AsyncMock(return_value="owner")
+            ),
+            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
+            patch(
+                "klangk_backend.workspaces.ensure_home_symlink",
+                return_value=("/home/klangk", False),
+            ),
+        ):
+            assert await monitor._run_one(st) == "unhealthy"
+
+    async def test_no_owner_is_unhealthy(self):
+        monitor = container.registry.health
+        st = _health_state(owner_id=None)
+        with patch.object(podman, "exec_container") as exec_mock:
+            assert await monitor._run_one(st) == "unhealthy"
+        exec_mock.assert_not_called()
+
+
+class TestHealthMonitorCheckWorkspace:
+    """_check_workspace: records status and broadcasts on transitions."""
+
+    async def test_broadcasts_on_transition_to_unhealthy(self):
+        monitor = container.registry.health
+        st = _health_state(health_status=None)  # unknown → unhealthy
+        with (
+            patch.object(
+                monitor, "_run_one", AsyncMock(return_value="unhealthy")
+            ),
+            patch.object(monitor, "_broadcast") as bcast,
+        ):
+            await monitor._check_workspace(st)
+        assert st.health_status == "unhealthy"
+        assert st.health_checked_at is not None
+        bcast.assert_called_once_with("ws-h", "unhealthy")
+
+    async def test_no_broadcast_when_status_unchanged(self):
+        monitor = container.registry.health
+        st = _health_state(health_status="healthy")  # stays healthy
+        with (
+            patch.object(
+                monitor, "_run_one", AsyncMock(return_value="healthy")
+            ),
+            patch.object(monitor, "_broadcast") as bcast,
+        ):
+            await monitor._check_workspace(st)
+        assert st.health_status == "healthy"
+        bcast.assert_not_called()
+
+
+class TestHealthMonitorBroadcast:
+    """_broadcast fans out to ALL connections, not just the session."""
+
+    def test_fans_out_via_notify_service_health(self):
+        from klangk_backend.wshandler import state as _ws_state
+
+        monitor = container.registry.health
+        sock = _mock_sock_for_health()
+        try:
+            _ws_state.connections[sock] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"}
+            )
+            # No WorkspaceSession registered for this workspace — yet
+            # the event must still reach the connection.
+            monitor._broadcast("ws-h", "unhealthy")
+        finally:
+            _ws_state.connections.pop(sock, None)
+        sock.send_json.assert_called_once_with(
+            {
+                "type": "service_health",
+                "workspace_id": "ws-h",
+                "healthy": False,
+            }
+        )
+
+
+class TestHealthMonitorLoopSkips:
+    """run_health_loop skips setup-incomplete and checkless workspaces."""
+
+    async def test_skips_setup_incomplete(self):
+        monitor = container.registry.health
+        st = _health_state(setup_state="pending")
+        container.registry.states[st.workspace_id] = st
+        try:
+            with (
+                patch.object(
+                    monitor, "_check_workspace", AsyncMock()
+                ) as check,
+                patch.object(container, "HEALTH_CHECK_INTERVAL_SECONDS", 0.01),
+            ):
+                task = asyncio.create_task(monitor.run_health_loop())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            check.assert_not_called()
+        finally:
+            container.registry.states.pop(st.workspace_id, None)
+
+    async def test_skips_when_no_health_check(self):
+        monitor = container.registry.health
+        st = _health_state(health_check=None)
+        container.registry.states[st.workspace_id] = st
+        try:
+            with (
+                patch.object(
+                    monitor, "_check_workspace", AsyncMock()
+                ) as check,
+                patch.object(container, "HEALTH_CHECK_INTERVAL_SECONDS", 0.01),
+            ):
+                task = asyncio.create_task(monitor.run_health_loop())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            check.assert_not_called()
+        finally:
+            container.registry.states.pop(st.workspace_id, None)
+
+    async def test_runs_when_setup_complete(self):
+        monitor = container.registry.health
+        st = _health_state(setup_state="complete")
+        container.registry.states[st.workspace_id] = st
+        try:
+            with (
+                patch.object(
+                    monitor, "_check_workspace", AsyncMock()
+                ) as check,
+                patch.object(container, "HEALTH_CHECK_INTERVAL_SECONDS", 0.01),
+            ):
+                task = asyncio.create_task(monitor.run_health_loop())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            check.assert_called()
+        finally:
+            container.registry.states.pop(st.workspace_id, None)

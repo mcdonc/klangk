@@ -23,6 +23,7 @@ nav = [
     { "The Shell" = "features/the-shell.md" },
     { "Default Command" = "features/default-command.md" },
     { "Auto-Start" = "features/auto-start.md" },
+    { "Health Check" = "features/health-check.md" },
     { "Sandbox" = "features/sandbox.md" },
     { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },

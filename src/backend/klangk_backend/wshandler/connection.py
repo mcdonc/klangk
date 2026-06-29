@@ -315,6 +315,8 @@ class Connection:
             extra_mounts=workspace.get("mounts"),
             extra_env=workspace.get("env"),
             user_id=self.user["id"],
+            health_check=workspace.get("health_check"),
+            setup_state=workspace.get("setup_state"),
         )
         self.container_status = container_status
         self.workspace_id = workspace_id

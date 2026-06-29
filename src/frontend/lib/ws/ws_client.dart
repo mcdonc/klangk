@@ -17,7 +17,7 @@ class WsDebugEntry {
   final Map<String, dynamic>? data;
 
   WsDebugEntry({required this.direction, required this.summary, this.data})
-      : timestamp = DateTime.now();
+    : timestamp = DateTime.now();
 }
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
@@ -108,6 +108,8 @@ class WsClient extends ChangeNotifier {
   final _workspacesChangedController = StreamController<void>.broadcast();
   final _containerStatusController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _serviceHealthController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _debugLogController = StreamController<WsDebugEntry>.broadcast();
 
   Stream<String> get errors => _errorController.stream;
@@ -154,6 +156,8 @@ class WsClient extends ChangeNotifier {
   /// Fires when a container starts or stops.
   Stream<Map<String, dynamic>> get containerStatus =>
       _containerStatusController.stream;
+  Stream<Map<String, dynamic>> get serviceHealth =>
+      _serviceHealthController.stream;
 
   /// Debug log of all WebSocket messages (sent and received).
   Stream<WsDebugEntry> get debugLog => _debugLogController.stream;
@@ -226,8 +230,10 @@ class WsClient extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     if (_connected || _connecting || _auth?.token == null) {
-      debugPrint('[WsClient] connect() early return: connected=$_connected '
-          'connecting=$_connecting token=${_auth?.token != null}');
+      debugPrint(
+        '[WsClient] connect() early return: connected=$_connected '
+        'connecting=$_connecting token=${_auth?.token != null}',
+      );
       return;
     }
 
@@ -245,7 +251,8 @@ class WsClient extends ChangeNotifier {
     debugPrint('[WsClient] _waitForServer() start: ${DateTime.now()}');
     final serverUp = await _waitForServer();
     debugPrint(
-        '[WsClient] _waitForServer() done: serverUp=$serverUp ${DateTime.now()}');
+      '[WsClient] _waitForServer() done: serverUp=$serverUp ${DateTime.now()}',
+    );
     if (!serverUp) {
       return;
     }
@@ -263,10 +270,12 @@ class WsClient extends ChangeNotifier {
       // coverage:ignore-start
       final uri = Uri.parse('$_wsBaseUrl?token=${_auth!.token}');
       debugPrint(
-          '[WsClient] WebSocketChannel.connect() start: ${DateTime.now()}');
+        '[WsClient] WebSocketChannel.connect() start: ${DateTime.now()}',
+      );
       _channel = WebSocketChannel.connect(uri);
       debugPrint(
-          '[WsClient] WebSocketChannel.connect() returned: ${DateTime.now()}');
+        '[WsClient] WebSocketChannel.connect() returned: ${DateTime.now()}',
+      );
       // coverage:ignore-end
     }
 
@@ -326,6 +335,7 @@ class WsClient extends ChangeNotifier {
     'shared_terminal_deleted': _onSharedTerminalDeleted,
     'workspaces_changed': (json) => _workspacesChangedController.add(null),
     'container_status': _containerStatusController.add,
+    'service_health': _serviceHealthController.add,
     'event': _customEventController.add,
   };
 
@@ -450,9 +460,7 @@ class WsClient extends ChangeNotifier {
   }
 
   void _onTerminalWindows(Map<String, dynamic> json) {
-    debugPrint(
-      '[WsClient] terminal_windows received: ${DateTime.now()}',
-    );
+    debugPrint('[WsClient] terminal_windows received: ${DateTime.now()}');
     final windows = json['windows'] as List? ?? [];
     terminalWindows = windows.cast<Map<String, dynamic>>();
     notifyListeners();
@@ -548,7 +556,7 @@ class WsClient extends ChangeNotifier {
       debugPrint('[WsClient] browser_reattach: $bid'); // coverage:ignore-start
       _send({
         'cmd': 'browser_reattach',
-        'browser_id': bid
+        'browser_id': bid,
       }); // coverage:ignore-end
     }
   }
@@ -729,6 +737,7 @@ class WsClient extends ChangeNotifier {
     _sharedTerminalDeletedController.close();
     _workspacesChangedController.close();
     _containerStatusController.close();
+    _serviceHealthController.close();
     _debugLogController.close();
     super.dispose();
   }

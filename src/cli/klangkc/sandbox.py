@@ -17,6 +17,7 @@ class SandboxConfig:
     image: str | None = None
     default_command: str | None = None
     auto_start: bool = False
+    health_check: str | None = None
     # sandbox
     mount_at: str = "~/work"
     setup: str | None = None
@@ -61,6 +62,9 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
         ),
         auto_start=bool(
             workspace.get("auto-start", workspace.get("auto_start", False))
+        ),
+        health_check=workspace.get(
+            "health-check", workspace.get("health_check")
         ),
         mount_at=sandbox.get("mount-at", sandbox.get("mount_at", "~/work")),
         setup=sandbox.get("setup"),

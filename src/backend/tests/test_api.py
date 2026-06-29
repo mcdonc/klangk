@@ -5094,6 +5094,7 @@ class TestWorkspaceMetadata:
             "auto_start": True,
             "mounts": ["/data:/data"],
             "env": {"FOO": "bar"},
+            "health_check": None,
             "num_ports": 3,
         }
 

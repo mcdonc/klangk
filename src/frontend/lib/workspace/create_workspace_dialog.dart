@@ -26,6 +26,7 @@ class CreateWorkspaceDialog extends StatefulWidget {
 class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _nameController = TextEditingController();
   final _cmdController = TextEditingController();
+  final _healthCheckController = TextEditingController();
   final _mountController = TextEditingController();
   final _envController = TextEditingController();
   late String _selectedImage;
@@ -50,6 +51,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   void dispose() {
     _nameController.dispose();
     _cmdController.dispose();
+    _healthCheckController.dispose();
     _mountController.dispose();
     _envController.dispose();
     super.dispose();
@@ -98,11 +100,13 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     final name = _nameController.text.trim();
     if (name.isEmpty) return;
     final command = _cmdController.text.trim();
+    final healthCheck = _healthCheckController.text.trim();
     final body = <String, dynamic>{'name': name};
     if (command.isNotEmpty) body['default_command'] = command;
     if (_selectedImage != widget.defaultImage) {
       body['image'] = _selectedImage;
     }
+    if (healthCheck.isNotEmpty) body['health_check'] = healthCheck;
     if (_mounts.isNotEmpty) body['mounts'] = List<String>.from(_mounts);
     if (_envVars.isNotEmpty) {
       body['env'] = Map<String, String>.from(_envVars);
@@ -144,9 +148,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
               if (_errorMessage != null) ...[
                 Text(
                   _errorMessage!,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
                 const SizedBox(height: 12),
               ],
@@ -177,9 +179,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                       (img) => DropdownMenuItem(value: img, child: Text(img)),
                     )
                     .toList(),
-                onChanged: (v) => setState(
-                  () => _selectedImage = v ?? widget.defaultImage,
-                ),
+                onChanged: (v) =>
+                    setState(() => _selectedImage = v ?? widget.defaultImage),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -190,6 +191,19 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                   floatingLabelStyle: _labelStyle,
                   floatingLabelBehavior: FloatingLabelBehavior.always,
                   border: const OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _healthCheckController,
+                decoration: InputDecoration(
+                  labelText: 'Health check command (optional)',
+                  labelStyle: _labelStyle,
+                  floatingLabelStyle: _labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'e.g. curl -sf http://localhost:8080/health',
                 ),
                 onSubmitted: (_) => _submit(),
               ),
@@ -205,10 +219,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
           style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: _submit,
-          child: const Text('Create'),
-        ),
+        FilledButton(onPressed: _submit, child: const Text('Create')),
       ],
     );
   }
@@ -219,35 +230,35 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
       Text('Mounts', style: _labelStyle),
       const SizedBox(height: 8),
       ..._mounts.asMap().entries.map(
-            (e) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SelectableText(
-                      e.value,
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 16),
-                    tooltip: 'Copy',
-                    onPressed: () =>
-                        Clipboard.setData(ClipboardData(text: e.value)),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => setState(() => _mounts.removeAt(e.key)),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
+        (e) => Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  e.value,
+                  style: const TextStyle(fontSize: 13),
+                ),
               ),
-            ),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 16),
+                tooltip: 'Copy',
+                onPressed: () =>
+                    Clipboard.setData(ClipboardData(text: e.value)),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () => setState(() => _mounts.removeAt(e.key)),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
           ),
+        ),
+      ),
       if (_mountError != null) ...[
         Text(
           _mountError!,
@@ -285,37 +296,36 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
       Text('Environment Variables', style: _labelStyle),
       const SizedBox(height: 8),
       ..._envVars.entries.toList().asMap().entries.map(
-            (e) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SelectableText(
-                      '${e.value.key}=${e.value.value}',
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 16),
-                    tooltip: 'Copy',
-                    onPressed: () => Clipboard.setData(
-                      ClipboardData(text: '${e.value.key}=${e.value.value}'),
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () =>
-                        setState(() => _envVars.remove(e.value.key)),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
+        (e) => Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  '${e.value.key}=${e.value.value}',
+                  style: const TextStyle(fontSize: 13),
+                ),
               ),
-            ),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 16),
+                tooltip: 'Copy',
+                onPressed: () => Clipboard.setData(
+                  ClipboardData(text: '${e.value.key}=${e.value.value}'),
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () => setState(() => _envVars.remove(e.value.key)),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
           ),
+        ),
+      ),
       if (_envError != null) ...[
         Text(
           _envError!,

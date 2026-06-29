@@ -479,6 +479,32 @@ class WebSocketState:
             self.connections.pop(sock, None)
             asyncio.create_task(conn.cleanup())
 
+    def notify_service_health(self, workspace_id: str, healthy: bool) -> None:
+        """Broadcast service-health status to all connections.
+
+        Fanned out to every connection (like
+        :meth:`notify_container_status`) so the workspace list page can
+        reflect health transitions for auto-started services even when no
+        one is connected to that workspace's terminal session (#1015).
+        The frontend ignores events for workspaces it doesn't display.
+        """
+        message = {
+            "type": "service_health",
+            "workspace_id": workspace_id,
+            "healthy": healthy,
+        }
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except _WS_ERRORS:
+                dead.append((sock, conn))
+        for sock, conn in dead:
+            self.connections.pop(sock, None)
+            asyncio.create_task(conn.cleanup())
+
     def notify_user_workspaces_changed(self, user_id: str) -> None:
         """Send ``workspaces_changed`` to all of a user's connections.
 

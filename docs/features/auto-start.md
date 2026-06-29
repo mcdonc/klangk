@@ -68,18 +68,22 @@ alongside the running service.
 ## Typical setup
 
 A service workspace usually combines auto-start with a default
-command:
+command, and often a health check to confirm the service is actually
+serving:
 
 ```yaml
 workspace:
   default-command: openclaw gateway
   auto-start: true
+  health-check: curl -sf http://localhost:8080/health
 ```
 
 This gives you:
 
 1. Server starts → container starts → `openclaw gateway` runs
-2. User runs `klangkc shell my-service` → sees gateway output
-3. User runs `klangkc shell my-service shell` → gets a bash prompt
+2. Health check confirms the gateway is responding — see
+   [Health Check](health-check.md)
+3. User runs `klangkc shell my-service` → sees gateway output
+4. User runs `klangkc shell my-service shell` → gets a bash prompt
    in a separate tmux window
-4. Ctrl+C in the gateway window stops it; up-arrow + Enter restarts
+5. Ctrl+C in the gateway window stops it; up-arrow + Enter restarts

@@ -83,6 +83,10 @@ async def init_db() -> None:
                 -- Descriptive, not proscriptive: a workspace is created
                 -- in whichever state matches reality (see #1033).
                 setup_state TEXT NOT NULL DEFAULT 'complete',
+                -- shell command polled via `podman exec` to gauge
+                -- service health inside the container (see #1015).
+                -- NULL means no health monitoring.
+                health_check TEXT,
                 mounts TEXT,  -- JSON array of host:container mount specs
                 env TEXT,  -- JSON dict of custom environment variables
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -104,6 +108,12 @@ async def init_db() -> None:
             await db.execute(
                 "ALTER TABLE workspaces"
                 " ADD COLUMN setup_state TEXT NOT NULL DEFAULT 'complete'"
+            )
+        # Migration: add health_check column (#1015). NULL by default
+        # so existing workspaces keep the no-health-monitoring behavior.
+        if "health_check" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces ADD COLUMN health_check TEXT"
             )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (

@@ -49,9 +49,9 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     }
 
     var ws = workspaces.cast<Map<String, dynamic>?>().firstWhere(
-          (w) => w!['id'] == widget.workspaceId,
-          orElse: () => null,
-        );
+      (w) => w!['id'] == widget.workspaceId,
+      orElse: () => null,
+    );
 
     // Try shared workspaces if not found in owned
     if (ws == null) {
@@ -62,9 +62,9 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
           jsonDecode(sharedResp.body),
         );
         ws = shared.cast<Map<String, dynamic>?>().firstWhere(
-              (w) => w!['id'] == widget.workspaceId,
-              orElse: () => null,
-            );
+          (w) => w!['id'] == widget.workspaceId,
+          orElse: () => null,
+        );
       }
     }
 
@@ -161,6 +161,7 @@ class _SettingsForm extends StatefulWidget {
 class _SettingsFormState extends State<_SettingsForm> {
   late TextEditingController _nameCtrl;
   late TextEditingController _cmdCtrl;
+  late TextEditingController _healthCheckCtrl;
   final _mountCtrl = TextEditingController();
   final _envCtrl = TextEditingController();
   late String _selectedImage;
@@ -179,6 +180,9 @@ class _SettingsFormState extends State<_SettingsForm> {
     );
     _cmdCtrl = TextEditingController(
       text: widget.workspace['default_command'] as String? ?? '',
+    );
+    _healthCheckCtrl = TextEditingController(
+      text: widget.workspace['health_check'] as String? ?? '',
     );
     _selectedImage =
         widget.workspace['image'] as String? ?? widget.defaultImage;
@@ -207,12 +211,17 @@ class _SettingsFormState extends State<_SettingsForm> {
         widget.workspace['default_command']) {
       _cmdCtrl.text = widget.workspace['default_command'] as String? ?? '';
     } // coverage:ignore-end
+    if (old.workspace['health_check'] != widget.workspace['health_check']) {
+      // coverage:ignore-start
+      _healthCheckCtrl.text = widget.workspace['health_check'] as String? ?? '';
+    } // coverage:ignore-end
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _cmdCtrl.dispose();
+    _healthCheckCtrl.dispose();
     _mountCtrl.dispose();
     _envCtrl.dispose();
     super.dispose();
@@ -223,8 +232,12 @@ class _SettingsFormState extends State<_SettingsForm> {
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
-      'default_command':
-          _cmdCtrl.text.trim().isEmpty ? null : _cmdCtrl.text.trim(),
+      'default_command': _cmdCtrl.text.trim().isEmpty
+          ? null
+          : _cmdCtrl.text.trim(),
+      'health_check': _healthCheckCtrl.text.trim().isEmpty
+          ? null
+          : _healthCheckCtrl.text.trim(),
       'mounts': _mounts.isNotEmpty ? _mounts : null,
       'env': _envVars.isNotEmpty ? _envVars : null,
     });
@@ -372,9 +385,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               border: const OutlineInputBorder(),
             ),
             items: widget.allowedImages
-                .map(
-                  (img) => DropdownMenuItem(value: img, child: Text(img)),
-                )
+                .map((img) => DropdownMenuItem(value: img, child: Text(img)))
                 .toList(),
             onChanged: (v) =>
                 setState(() => _selectedImage = v ?? widget.defaultImage),
@@ -388,6 +399,17 @@ class _SettingsFormState extends State<_SettingsForm> {
             floatingLabelBehavior: FloatingLabelBehavior.always,
             border: const OutlineInputBorder(),
             hintText: 'Optional — runs on terminal open',
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _healthCheckCtrl,
+          decoration: InputDecoration(
+            labelText: 'Health Check Command',
+            labelStyle: labelStyle,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            border: const OutlineInputBorder(),
+            hintText: 'Optional — polled to gauge service health',
           ),
         ),
         const SizedBox(height: 16),
@@ -425,12 +447,12 @@ class _SettingsFormState extends State<_SettingsForm> {
       error: _mountError,
       onAdd: _tryAddMount,
       items: _mounts.asMap().entries.map(
-            (e) => _buildEditableListItem(
-              text: e.value,
-              onCopy: e.value,
-              onRemove: () => setState(() => _mounts.removeAt(e.key)),
-            ),
-          ),
+        (e) => _buildEditableListItem(
+          text: e.value,
+          onCopy: e.value,
+          onRemove: () => setState(() => _mounts.removeAt(e.key)),
+        ),
+      ),
     );
   }
 
@@ -443,12 +465,12 @@ class _SettingsFormState extends State<_SettingsForm> {
       error: _envError,
       onAdd: _tryAddEnv,
       items: _envVars.entries.toList().asMap().entries.map(
-            (e) => _buildEditableListItem(
-              text: '${e.value.key}=${e.value.value}',
-              onCopy: '${e.value.key}=${e.value.value}',
-              onRemove: () => setState(() => _envVars.remove(e.value.key)),
-            ),
-          ),
+        (e) => _buildEditableListItem(
+          text: '${e.value.key}=${e.value.value}',
+          onCopy: '${e.value.key}=${e.value.value}',
+          onRemove: () => setState(() => _envVars.remove(e.value.key)),
+        ),
+      ),
     );
   }
 
@@ -514,10 +536,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       child: Row(
         children: [
           Expanded(
-            child: SelectableText(
-              text,
-              style: const TextStyle(fontSize: 13),
-            ),
+            child: SelectableText(text, style: const TextStyle(fontSize: 13)),
           ),
           IconButton(
             icon: const Icon(Icons.copy, size: 16),
