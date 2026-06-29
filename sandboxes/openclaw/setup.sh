@@ -103,6 +103,18 @@ cfg['gateway']['port'] = 8000
 cfg['models']['providers']['llm-proxy']['request'] = {'allowPrivateNetwork': True}
 cfg['gateway']['bind'] = 'lan'
 cfg['gateway']['http'] = {'endpoints': {'chatCompletions': {'enabled': True}}}
+# Trust the Klangk reverse proxy and allow the hosted origin for
+# WebSocket connections (required since openclaw v2026.2.26).
+hosting_proto = os.environ.get('KLANGK_HOSTING_PROTO', 'http')
+hosting_hostname = os.environ.get('KLANGK_HOSTING_HOSTNAME', 'localhost:8995')
+hosted_origin = f'{hosting_proto}://{hosting_hostname}'
+cfg['gateway']['controlUi'] = cfg.get('gateway', {}).get('controlUi', {})
+cfg['gateway']['controlUi']['allowedOrigins'] = [
+    hosted_origin,
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+]
+cfg['gateway']['trustedProxies'] = ['0.0.0.0/0']
 cfg['secrets'] = {
     'providers': {
         'klangk': {
