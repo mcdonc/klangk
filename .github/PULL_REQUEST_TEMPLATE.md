@@ -1,8 +1,8 @@
 # Pull request
 
 <!--
-  Once the default-closed policy automation is live, this PR will be closed
-  automatically (see CONTRIBUTING.md). To have it reconsidered, fill in the
+  By default, this PR is closed automatically (see CONTRIBUTING.md). To have it
+  reconsidered, fill in the
   sections below with real context:
   what it changes, why, and how it was tested. A substantive description
   clears that filter; a one-line "reopen pls" will not.
