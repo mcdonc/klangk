@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/workspace/workspace_list_page.dart';
+import 'package:klangk_frontend/workspace/import_workspace_dialog.dart';
 import 'package:klangk_frontend/theme/colors.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_frontend/widgets/klangk_logo.dart';
@@ -121,6 +122,7 @@ void main() {
   tearDown(() {
     testBaseUrlOverride = null;
     testAuthHttpClientOverride = null;
+    testPickFileBytesOverride = null;
   });
 
   String makeJwt(Map<String, dynamic> payload) {
@@ -769,6 +771,83 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('No workspaces'), findsOneWidget);
+    });
+
+    testWidgets('import FAB opens import workspace dialog', (tester) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Import Workspace'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Import Workspace'), findsOneWidget);
+      expect(find.text('Select .tar.gz file'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('Import'), findsOneWidget);
+
+      // Cancel closes it
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Import Workspace'), findsNothing);
+    });
+
+    testWidgets('successful import refreshes workspace list', (tester) async {
+      var importCalled = false;
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'GET') {
+          if (importCalled) {
+            return http.Response(
+              jsonEncode(_envelope([
+                {
+                  'id': 'ws-imp',
+                  'name': 'Imported WS',
+                  'container_id': null,
+                  'created_at': '2026-06-29',
+                },
+              ])),
+              200,
+            );
+          }
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/import' &&
+            request.method == 'POST') {
+          importCalled = true;
+          return http.Response(
+            jsonEncode({'id': 'ws-imp', 'name': 'Imported WS'}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      testPickFileBytesOverride = ({String accept = ''}) async => [1, 2, 3];
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Import Workspace'));
+      await tester.pumpAndSettle();
+
+      // Pick a file
+      await tester.tap(find.text('Select .tar.gz file'));
+      await tester.pumpAndSettle();
+
+      // Tap Import
+      await tester.tap(find.text('Import'));
+      await tester.pumpAndSettle();
+
+      expect(importCalled, isTrue);
+      expect(find.text('Imported WS'), findsOneWidget);
     });
 
     testWidgets('shows delete button for each workspace', (tester) async {
