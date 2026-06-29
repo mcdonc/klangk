@@ -2065,6 +2065,31 @@ class TestCreateWorkspaceClient:
         body = mock_post.call_args.kwargs.get("json")
         assert body["auto_start"] is True
 
+    def test_create_workspace_with_setup_state(self):
+        """setup_state is forwarded in the create body (#1033)."""
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "ws-state",
+            "name": "state-ws",
+            "created_at": "2025-01-01",
+        }
+        with patch.object(client, "post", return_value=mock_resp) as mock_post:
+            client.create_workspace("state-ws", setup_state="pending")
+        body = mock_post.call_args.kwargs.get("json")
+        assert body["setup_state"] == "pending"
+
+    def test_set_setup_state(self):
+        """set_setup_state PUTs the lifecycle field (#1033)."""
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        with patch.object(client, "put", return_value=mock_resp) as mock_put:
+            client.set_setup_state("ws-123", "complete")
+        assert mock_put.call_args.args[0] == "/api/v1/workspaces/ws-123"
+        assert mock_put.call_args.kwargs["json"] == {"setup_state": "complete"}
+
 
 class TestListImagesClient:
     def test_list_images(self):

@@ -727,6 +727,7 @@ class TestHandleTerminalStart:
             user_handle="testuser",
             ssh_agent_socket=None,
             default_command=None,
+            setup_state="complete",
         )
         # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -1208,6 +1209,7 @@ class TestHandleTerminalStart:
             user_handle="testuser",
             ssh_agent_socket=None,
             default_command="pi",
+            setup_state="complete",
         )
 
         conn.terminal_task.cancel()
@@ -2965,6 +2967,7 @@ class TestSSHAgentHandlers:
             user_handle="testuser",
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             default_command=None,
+            setup_state="complete",
         )
 
 
@@ -5097,6 +5100,44 @@ class TestTerminalController:
         msg = sock.send_json.call_args[0][0]
         assert msg == {"type": "terminal_started"}
         assert ctrl.session is None
+
+    # --- _setup_state_for_workspace: defensive fallbacks (#1033) ---
+
+    async def test_setup_state_db_error_defaults_to_complete(self):
+        """If the setup_state lookup raises, default to 'complete'."""
+        ctrl, _, _ = self._controller()
+        with patch.object(
+            _ws_controllers.model,
+            "get_workspace",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("db down"),
+        ):
+            result = await ctrl._setup_state_for_workspace()
+        assert result == "complete"
+
+    async def test_setup_state_workspace_missing_defaults_to_complete(self):
+        """If get_workspace returns None, default to 'complete'."""
+        ctrl, _, _ = self._controller()
+        with patch.object(
+            _ws_controllers.model,
+            "get_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = await ctrl._setup_state_for_workspace()
+        assert result == "complete"
+
+    async def test_setup_state_returns_workspace_value(self):
+        """Returns the workspace's actual setup_state when present (#1033)."""
+        ctrl, _, _ = self._controller()
+        with patch.object(
+            _ws_controllers.model,
+            "get_workspace",
+            new_callable=AsyncMock,
+            return_value={"setup_state": "pending"},
+        ):
+            result = await ctrl._setup_state_for_workspace()
+        assert result == "pending"
 
     async def test_start_rapid_debounce_skips(self):
         ctrl, sock, conn = self._controller()

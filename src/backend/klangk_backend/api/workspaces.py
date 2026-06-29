@@ -126,6 +126,7 @@ class CreateWorkspaceRequest(BaseModel):
     auto_start: bool = False
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
+    setup_state: Literal["pending", "complete", "failed"] | None = None
 
 
 @router.post("/workspaces")
@@ -157,6 +158,7 @@ async def create_workspace(
             auto_start=body.auto_start,
             mounts=body.mounts,
             env=body.env,
+            setup_state=body.setup_state or "complete",
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -240,6 +242,7 @@ class UpdateWorkspaceRequest(BaseModel):
     auto_start: bool | None = None
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
+    setup_state: Literal["pending", "complete", "failed"] | None = None
 
 
 @router.put("/workspaces/{workspace_id}")

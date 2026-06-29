@@ -78,6 +78,11 @@ async def init_db() -> None:
                 image TEXT,  -- custom container image; NULL means use default
                 default_command TEXT,  -- auto-run in terminal on connect
                 auto_start INTEGER NOT NULL DEFAULT 0,  -- start on server boot
+                -- setup lifecycle: pending (setup expected/running) /
+                -- complete (prereqs met, default cmd may fire) / failed.
+                -- Descriptive, not proscriptive: a workspace is created
+                -- in whichever state matches reality (see #1033).
+                setup_state TEXT NOT NULL DEFAULT 'complete',
                 mounts TEXT,  -- JSON array of host:container mount specs
                 env TEXT,  -- JSON dict of custom environment variables
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -91,6 +96,14 @@ async def init_db() -> None:
             await db.execute(
                 "ALTER TABLE workspaces"
                 " ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0"
+            )
+        # Migration: add setup_state column (#1033). Defaults to
+        # 'complete' so existing workspaces (already set up in their
+        # persisted volumes) keep firing their default command.
+        if "setup_state" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces"
+                " ADD COLUMN setup_state TEXT NOT NULL DEFAULT 'complete'"
             )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (

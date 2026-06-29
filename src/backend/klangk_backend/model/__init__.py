@@ -111,6 +111,10 @@ from .workspaces import (
     list_workspaces,
     update_workspace,
     update_workspace_container,
+    SETUP_STATE_COMPLETE,
+    SETUP_STATE_FAILED,
+    SETUP_STATE_PENDING,
+    SETUP_STATES,
 )
 from .ports import (
     MAX_PORT,
@@ -246,6 +250,11 @@ __all__ = (
     "list_workspaces",
     "update_workspace",
     "update_workspace_container",
+    # setup_state lifecycle (#1033)
+    "SETUP_STATE_COMPLETE",
+    "SETUP_STATE_FAILED",
+    "SETUP_STATE_PENDING",
+    "SETUP_STATES",
     # ports
     "MAX_PORT",
     "_port_in_use",

@@ -351,6 +351,7 @@ class KlangkClient:
         auto_start: bool = False,
         mounts: list[str] | None = None,
         env: dict[str, str] | None = None,
+        setup_state: str | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
         if image:
@@ -363,6 +364,8 @@ class KlangkClient:
             body["mounts"] = mounts
         if env:
             body["env"] = env
+        if setup_state:
+            body["setup_state"] = setup_state
         resp = self.post("/api/v1/workspaces", json=body)
         self._check_auth(resp)
         self._raise_for_status(resp)
@@ -370,6 +373,20 @@ class KlangkClient:
         return Workspace(
             id=w["id"], name=w["name"], created_at=w["created_at"]
         )
+
+    def set_setup_state(self, workspace_id: str, setup_state: str) -> None:
+        """Update a workspace's setup_state lifecycle field (#1033).
+
+        Used by the sandbox driver to mark pending before running
+        setup.sh and complete/failed after it returns. Safe to call
+        from an async context via ``asyncio.to_thread``.
+        """
+        resp = self.put(
+            f"/api/v1/workspaces/{workspace_id}",
+            json={"setup_state": setup_state},
+        )
+        self._check_auth(resp)
+        self._raise_for_status(resp)
 
     def list_images(self) -> dict:
         resp = self.get("/api/v1/images")

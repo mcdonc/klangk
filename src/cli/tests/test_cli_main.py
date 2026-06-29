@@ -2870,6 +2870,7 @@ class TestSandboxSetupOnly:
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
             await _sandbox_setup_only(
                 "ws://test",
                 "token",
@@ -2909,6 +2910,7 @@ class TestSandboxSetupOnly:
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
             await _sandbox_setup_only(
                 "ws://test",
                 "token",
@@ -2948,12 +2950,13 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangkc.main.websockets.connect") as mock_connect,
-            patch("klangkc.main._sandbox_setup"),
+            patch("klangkc.main._sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
             # Must not raise / hang waiting for terminal_started.
             await _sandbox_setup_only(
                 "ws://test",
@@ -2964,8 +2967,95 @@ class TestSandboxSetupOnly:
                 "admin",
             )
 
+    async def test_marks_setup_state_pending_then_complete(self):
+        """With a client, _sandbox_setup_only marks pending then complete (#1033)."""
+        from pathlib import Path
 
-class TestSandboxSetup:
+        from klangkc.main import _sandbox_setup_only
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            setup="setup.sh", default_command="openclaw gateway"
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "terminal_started"}),
+            ]
+        )
+        mock_client = MagicMock()
+        mock_client.set_setup_state = MagicMock()
+
+        with (
+            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.main._sandbox_setup") as mock_setup,
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
+            await _sandbox_setup_only(
+                "ws://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+                client=mock_client,
+            )
+
+        # set_setup_state called twice: pending (before setup),
+        # complete (after setup returns 0).
+        calls = [c.args for c in mock_client.set_setup_state.call_args_list]
+        assert ("ws-id", "pending") in calls
+        assert ("ws-id", "complete") in calls
+
+    async def test_marks_setup_state_failed_on_setup_failure(self):
+        """A non-zero setup exit marks setup_state as 'failed' (#1033)."""
+        from pathlib import Path
+
+        from klangkc.main import _sandbox_setup_only
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            setup="setup.sh", default_command="openclaw gateway"
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "workspace_ready"})
+        )
+        mock_client = MagicMock()
+        mock_client.set_setup_state = MagicMock()
+
+        with (
+            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.main._sandbox_setup") as mock_setup,
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 1  # setup failed
+            await _sandbox_setup_only(
+                "ws://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+                client=mock_client,
+            )
+
+        calls = [c.args for c in mock_client.set_setup_state.call_args_list]
+        assert ("ws-id", "failed") in calls
+        # terminal_start NOT sent on failure
+        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
+        assert not any(m.get("cmd") == "terminal_start" for m in sent)
+
     async def test_copies_files(self, tmp_path):
         from klangkc.main import _sandbox_setup
         from klangkc.sandbox import SandboxConfig

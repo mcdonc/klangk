@@ -1240,6 +1240,7 @@ class TestEnsureBaseSession:
                 side_effect=[
                     (1, "", ""),  # has-session fails
                     (0, "", ""),  # new-session ok
+                    (0, "", ""),  # list-windows: default-cmd absent
                     (0, "", ""),  # new-window ok
                     (0, "", ""),  # send-keys ok
                 ],
@@ -1252,12 +1253,14 @@ class TestEnsureBaseSession:
                 "cid", "my-session", default_command="openclaw gateway"
             )
         assert created is True
-        assert mock_exec.await_count == 4
-        new_window_cmd = mock_exec.call_args_list[2].args[1]
+        assert mock_exec.await_count == 5
+        list_cmd = mock_exec.call_args_list[2].args[1]
+        assert "list-windows" in list_cmd
+        new_window_cmd = mock_exec.call_args_list[3].args[1]
         assert "new-window" in new_window_cmd
         assert "-d" in new_window_cmd  # detached -> window 0 stays active
         assert "default-cmd" in new_window_cmd
-        send_cmd = mock_exec.call_args_list[3].args[1]
+        send_cmd = mock_exec.call_args_list[4].args[1]
         assert "send-keys" in send_cmd
         assert "my-session:default-cmd" in send_cmd
         assert "openclaw gateway" in send_cmd
@@ -1266,19 +1269,119 @@ class TestEnsureBaseSession:
             "select-window" not in c.args[1] for c in mock_exec.call_args_list
         )
 
-    async def test_default_command_skipped_when_session_exists(self):
-        """Default command is not sent if session already exists."""
+    async def test_default_command_fires_even_when_session_exists(self):
+        """#1033: default-cmd window is created even if session pre-exists.
+
+        An early visitor may have created the base session mid-setup.
+        The post-setup terminal_start must STILL create the default-cmd
+        window. Previously the whole function returned False the moment
+        the session existed, swallowing the post-setup fire.
+        """
+        from klangk_backend.terminal import _ensure_base_session
+
+        with (
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "", ""),  # has-session succeeds (pre-exists)
+                    (0, "", ""),  # list-windows: default-cmd absent
+                    (0, "", ""),  # new-window ok
+                    (0, "", ""),  # send-keys ok
+                ],
+            ) as mock_exec,
+            patch(
+                "klangk_backend.terminal.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
+            created = await _ensure_base_session(
+                "cid",
+                "my-session",
+                default_command="openclaw gateway",
+                setup_state="complete",
+            )
+        # Session pre-existed, so not freshly created.
+        assert created is False
+        # But the default-cmd window WAS created (the #1033 fix).
+        assert mock_exec.await_count == 4
+        assert "new-session" not in mock_exec.call_args_list[0].args[1]
+        assert "new-window" in mock_exec.call_args_list[2].args[1]
+
+    async def test_default_command_skipped_when_window_already_exists(self):
+        """Exactly-once: don't re-create default-cmd if it already exists."""
         from klangk_backend.terminal import _ensure_base_session
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
-            return_value=(0, "", ""),  # has-session succeeds
+            side_effect=[
+                (0, "", ""),  # has-session succeeds
+                (0, "bash\ndefault-cmd\n", ""),  # list-windows: present
+            ],
+        ) as mock_exec:
+            created = await _ensure_base_session(
+                "cid",
+                "my-session",
+                default_command="openclaw gateway",
+                setup_state="complete",
+            )
+        assert created is False
+        # No new-window / send-keys: the window already exists.
+        assert mock_exec.await_count == 2
+        assert all(
+            "new-window" not in c.args[1] for c in mock_exec.call_args_list
+        )
+        assert all(
+            "send-keys" not in c.args[1] for c in mock_exec.call_args_list
+        )
+
+    async def test_default_command_blocked_when_setup_pending(self):
+        """#1033: pending setup_state blocks the default command entirely."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[
+                (1, "", ""),  # has-session fails
+                (0, "", ""),  # new-session ok
+            ],
+        ) as mock_exec:
+            created = await _ensure_base_session(
+                "cid",
+                "my-session",
+                default_command="openclaw gateway",
+                setup_state="pending",
+            )
+        assert created is True
+        # Base session created, but NO default-cmd window (setup pending).
+        assert mock_exec.await_count == 2
+        assert all(
+            "new-window" not in c.args[1] for c in mock_exec.call_args_list
+        )
+
+    async def test_default_command_blocked_when_setup_failed(self):
+        """#1033: failed setup_state also blocks the default command."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[
+                (0, "", ""),  # has-session succeeds
+            ],
         ) as mock_exec:
             await _ensure_base_session(
-                "cid", "my-session", default_command="openclaw gateway"
+                "cid",
+                "my-session",
+                default_command="openclaw gateway",
+                setup_state="failed",
             )
-        mock_exec.assert_awaited_once()
+        # No window creation at all.
+        assert mock_exec.await_count == 1
+        assert all(
+            "new-window" not in c.args[1] for c in mock_exec.call_args_list
+        )
 
     async def test_default_command_window_failure_logs_warning(self):
         """Warning logged when the default-cmd window can't be created."""
@@ -1290,6 +1393,7 @@ class TestEnsureBaseSession:
             side_effect=[
                 (1, "", ""),  # has-session fails
                 (0, "", ""),  # new-session ok
+                (0, "", ""),  # list-windows: default-cmd absent
                 OSError("new-window failed"),  # new-window fails
             ],
         ) as mock_exec:
@@ -1298,7 +1402,7 @@ class TestEnsureBaseSession:
             )
         assert created is True
         # Window creation failed, so the command was never sent.
-        assert mock_exec.await_count == 3
+        assert mock_exec.await_count == 4
         assert all(
             "send-keys" not in c.args[1] for c in mock_exec.call_args_list
         )
@@ -1314,6 +1418,7 @@ class TestEnsureBaseSession:
                 side_effect=[
                     (1, "", ""),  # has-session fails
                     (0, "", ""),  # new-session ok
+                    (0, "", ""),  # list-windows: default-cmd absent
                     (0, "", ""),  # new-window ok
                     OSError("send-keys failed"),  # send-keys fails
                 ],
@@ -1326,4 +1431,40 @@ class TestEnsureBaseSession:
                 "cid", "my-session", default_command="openclaw gateway"
             )
         assert created is True
-        assert mock_exec.await_count == 4
+        assert mock_exec.await_count == 5
+
+    async def test_default_cmd_window_exists_exception_returns_false(self):
+        """_default_cmd_window_exists returns False if list-windows raises."""
+        from klangk_backend.terminal import _default_cmd_window_exists
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=OSError("boom"),
+        ):
+            result = await _default_cmd_window_exists("cid", "my-session")
+        assert result is False
+
+    async def test_default_cmd_window_exists_rc_nonzero_returns_false(self):
+        """_default_cmd_window_exists returns False if list-windows fails."""
+        from klangk_backend.terminal import _default_cmd_window_exists
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "", ""),  # list-windows fails
+        ):
+            result = await _default_cmd_window_exists("cid", "my-session")
+        assert result is False
+
+    async def test_has_tmux_session_exception_returns_false(self):
+        """_has_tmux_session returns False if has-session raises."""
+        from klangk_backend.terminal import _has_tmux_session
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=OSError("boom"),
+        ):
+            result = await _has_tmux_session("cid", "my-session")
+        assert result is False

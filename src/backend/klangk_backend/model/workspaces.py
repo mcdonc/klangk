@@ -11,6 +11,16 @@ from .users import get_user_group_ids
 # Must match the DB default and container.DEFAULT_PORTS_PER_WORKSPACE.
 _DEFAULT_PORTS_PER_WORKSPACE = 5
 
+# setup_state lifecycle values (#1033). A workspace always holds
+# exactly one. Descriptive, not proscriptive: created in whichever
+# state matches reality.
+SETUP_STATE_PENDING = "pending"
+SETUP_STATE_COMPLETE = "complete"
+SETUP_STATE_FAILED = "failed"
+SETUP_STATES = frozenset(
+    {SETUP_STATE_PENDING, SETUP_STATE_COMPLETE, SETUP_STATE_FAILED}
+)
+
 
 async def create_workspace(
     user_id: str,
@@ -20,7 +30,10 @@ async def create_workspace(
     auto_start: bool = False,
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
+    setup_state: str = SETUP_STATE_COMPLETE,
 ) -> dict:
+    if setup_state not in SETUP_STATES:
+        raise ValueError(f"Invalid setup_state: {setup_state!r}")
     async with transaction() as db:
         workspace_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -29,8 +42,8 @@ async def create_workspace(
         await db.execute(
             "INSERT INTO workspaces"
             " (id, user_id, name, image, default_command, auto_start,"
-            " mounts, env, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " setup_state, mounts, env, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 workspace_id,
                 user_id,
@@ -38,6 +51,7 @@ async def create_workspace(
                 image,
                 default_command,
                 1 if auto_start else 0,
+                setup_state,
                 mounts_json,
                 env_json,
                 created_at,
@@ -50,6 +64,7 @@ async def create_workspace(
             "image": image,
             "default_command": default_command,
             "auto_start": auto_start,
+            "setup_state": setup_state,
             "mounts": mounts,
             "env": env,
             "num_ports": _DEFAULT_PORTS_PER_WORKSPACE,
@@ -101,7 +116,8 @@ async def list_workspaces(
     async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, container_id, image, default_command,"
-            " auto_start, mounts, env, created_at FROM workspaces"
+            " auto_start, setup_state, mounts, env, created_at"
+            " FROM workspaces"
             f" {where} {order_by} LIMIT ? OFFSET ?",
             tuple(params),
         )
@@ -114,6 +130,7 @@ async def list_workspaces(
                 "image": row["image"],
                 "default_command": row["default_command"],
                 "auto_start": bool(row["auto_start"]),
+                "setup_state": row["setup_state"],
                 "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
                 "env": json.loads(row["env"]) if row["env"] else None,
                 "created_at": row["created_at"],
@@ -156,8 +173,8 @@ async def list_shared_workspaces(
         )
         cursor = await db.execute(
             "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
-            " w.default_command, w.auto_start, w.mounts, w.env, w.created_at,"
-            " u.email AS owner_email"
+            " w.default_command, w.auto_start, w.setup_state, w.mounts,"
+            " w.env, w.created_at, u.email AS owner_email"
             " FROM workspaces w"
             " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
             " JOIN users u ON w.user_id = u.id"
@@ -187,6 +204,7 @@ async def list_shared_workspaces(
                 "image": row["image"],
                 "default_command": row["default_command"],
                 "auto_start": bool(row["auto_start"]),
+                "setup_state": row["setup_state"],
                 "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
                 "env": json.loads(row["env"]) if row["env"] else None,
                 "created_at": row["created_at"],
@@ -214,14 +232,14 @@ async def get_workspace(
         if user_id is not None:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
-                " default_command, auto_start, mounts, env"
+                " default_command, auto_start, setup_state, mounts, env"
                 " FROM workspaces WHERE id = ? AND user_id = ?",
                 (workspace_id, user_id),
             )
         else:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
-                " default_command, auto_start, mounts, env"
+                " default_command, auto_start, setup_state, mounts, env"
                 " FROM workspaces WHERE id = ?",
                 (workspace_id,),
             )
@@ -237,6 +255,7 @@ async def get_workspace(
             "image": row["image"],
             "default_command": row["default_command"],
             "auto_start": bool(row["auto_start"]),
+            "setup_state": row["setup_state"],
             "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
             "env": json.loads(row["env"]) if row["env"] else None,
         }
@@ -246,7 +265,7 @@ async def get_workspace_by_id(workspace_id: str) -> dict | None:
     """Get a workspace by ID without access control (for admin use)."""
     row = await _fetchone(
         "SELECT id, user_id, name, container_id, num_ports, image,"
-        " default_command, mounts, env"
+        " default_command, setup_state, mounts, env"
         " FROM workspaces WHERE id = ?",
         (workspace_id,),
     )
@@ -260,6 +279,7 @@ async def get_workspace_by_id(workspace_id: str) -> dict | None:
         "num_ports": row["num_ports"],
         "image": row["image"],
         "default_command": row["default_command"],
+        "setup_state": row["setup_state"],
         "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
         "env": json.loads(row["env"]) if row["env"] else None,
     }
@@ -360,6 +380,7 @@ async def update_workspace(
         "image",
         "default_command",
         "auto_start",
+        "setup_state",
         "mounts",
         "env",
     }
@@ -367,7 +388,11 @@ async def update_workspace(
     for k, v in fields.items():
         if k not in allowed:
             continue
-        if k in ("mounts", "env"):
+        if k == "setup_state":
+            if v not in SETUP_STATES:
+                raise ValueError(f"Invalid setup_state: {v!r}")
+            to_set[k] = v
+        elif k in ("mounts", "env"):
             to_set[k] = json.dumps(v) if v is not None else None
         elif k == "auto_start":
             to_set[k] = 1 if v else 0
@@ -404,7 +429,7 @@ async def list_auto_start_workspaces() -> list[dict]:
     async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, user_id, name, container_id, num_ports, image,"
-            " default_command, auto_start, mounts, env"
+            " default_command, auto_start, setup_state, mounts, env"
             " FROM workspaces WHERE auto_start = 1",
         )
         rows = await cursor.fetchall()
@@ -418,6 +443,7 @@ async def list_auto_start_workspaces() -> list[dict]:
                 "image": row["image"],
                 "default_command": row["default_command"],
                 "auto_start": True,
+                "setup_state": row["setup_state"],
                 "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
                 "env": json.loads(row["env"]) if row["env"] else None,
             }
