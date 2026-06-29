@@ -1236,6 +1236,96 @@ void main() {
       expect(client.currentWorkspaceId, isNull);
     });
 
+    test('server close clears stale presence and terminal data', () async {
+      // Populate data first
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {'user_id': 'u1', 'email': 'a@test.com'}
+        ],
+      });
+      channel.serverSend({
+        'type': 'terminal_windows',
+        'windows': [
+          {'index': 0, 'name': 'bash', 'active': true}
+        ],
+      });
+      channel.serverSend({
+        'type': 'shared_terminals',
+        'terminals': [
+          {
+            'name': 'dev',
+            'sessions': ['alice']
+          }
+        ],
+      });
+      channel.serverSend({
+        'type': 'workspace_members',
+        'members': [
+          {'user_id': 'u1', 'email': 'a@test.com', 'role': 'admin'}
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.presenceUsers, isNotEmpty);
+      expect(client.terminalWindows, isNotEmpty);
+      expect(client.sharedTerminals, isNotEmpty);
+      expect(client.workspaceMembers, isNotEmpty);
+
+      // Disconnect
+      channel.serverClose();
+      await Future.delayed(Duration.zero);
+
+      expect(client.presenceUsers, isEmpty);
+      expect(client.terminalWindows, isEmpty);
+      expect(client.sharedTerminals, isEmpty);
+      expect(client.workspaceMembers, isEmpty);
+    });
+
+    test('server error clears stale presence and terminal data', () async {
+      // Populate data first
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {'user_id': 'u1', 'email': 'a@test.com'}
+        ],
+      });
+      channel.serverSend({
+        'type': 'terminal_windows',
+        'windows': [
+          {'index': 0, 'name': 'bash', 'active': true}
+        ],
+      });
+      channel.serverSend({
+        'type': 'shared_terminals',
+        'terminals': [
+          {
+            'name': 'dev',
+            'sessions': ['alice']
+          }
+        ],
+      });
+      channel.serverSend({
+        'type': 'workspace_members',
+        'members': [
+          {'user_id': 'u1', 'email': 'a@test.com', 'role': 'admin'}
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.presenceUsers, isNotEmpty);
+      expect(client.terminalWindows, isNotEmpty);
+      expect(client.sharedTerminals, isNotEmpty);
+      expect(client.workspaceMembers, isNotEmpty);
+
+      // Error
+      channel.serverError(Exception('boom'));
+      await Future.delayed(Duration.zero);
+
+      expect(client.presenceUsers, isEmpty);
+      expect(client.terminalWindows, isEmpty);
+      expect(client.sharedTerminals, isEmpty);
+      expect(client.workspaceMembers, isEmpty);
+    });
+
     test('server error emits to error stream', () async {
       final errors = <String>[];
       client.errors.listen(errors.add);

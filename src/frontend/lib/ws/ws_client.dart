@@ -358,6 +358,10 @@ class WsClient extends ChangeNotifier {
         _currentWorkspaceId = null;
         _defaultCommand = null;
         _userHome = null;
+        presenceUsers = [];
+        terminalWindows = [];
+        sharedTerminals = [];
+        workspaceMembers = [];
         final code = _channel?.closeCode;
         notifyListeners();
         if (code == 4001 || code == 4002) {
@@ -373,6 +377,10 @@ class WsClient extends ChangeNotifier {
         _connected = false;
         _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
+        presenceUsers = [];
+        terminalWindows = [];
+        sharedTerminals = [];
+        workspaceMembers = [];
         notifyListeners();
         final code = _channel?.closeCode;
         if (code == 4001 || code == 4002) {
