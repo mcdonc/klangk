@@ -33,6 +33,17 @@ if ! grep -q OPENCLAW_HOME ~/.bashrc 2>/dev/null; then
   echo "export OPENCLAW_HOME=\"$INSTALL_DIR\"" >>~/.bashrc
 fi
 
+# Test hook (no-op in production): the e2e test in sandboxes/tests/openclaw/
+# drops a sentinel file on the mount to hold setup here, spawns a terminal
+# mid-setup, and asserts the exports above are already in the spawned
+# shell's environment. This guards the #1039 invariant: every .bashrc
+# export the default_command depends on must be written before any
+# long-running step, so a shell spawned at any point sees the full set.
+# The sentinel never exists outside that test.
+while [ -f "$INSTALL_DIR/.klangk-test-pause" ]; do
+  sleep 0.5
+done
+
 # Install Node.js 24 via nvm into /openclaw/.nvm.
 export NVM_DIR="$INSTALL_DIR/.nvm"
 
