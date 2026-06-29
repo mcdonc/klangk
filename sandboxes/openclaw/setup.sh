@@ -9,6 +9,7 @@ export NVM_DIR="$INSTALL_DIR/.nvm"
 
 if [ ! -d "$NVM_DIR" ]; then
   echo "Installing nvm..."
+  mkdir -p "$NVM_DIR"
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 fi
 
