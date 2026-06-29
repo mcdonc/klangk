@@ -389,6 +389,7 @@ class ContainerRegistry:
         # Per-workspace locks to serialize container creation.
         self._workspace_locks: dict[str, asyncio.Lock] = {}
         self.on_workspace_killed = None
+        self.on_container_status_changed = None
 
         # Collaborators
         self.ports = PortAllocator()
@@ -409,7 +410,8 @@ class ContainerRegistry:
 
     def track_activity(self, container_id: str, workspace_id: str) -> None:
         state = self.states.get(workspace_id)
-        if state is None:
+        was_new = state is None
+        if was_new:
             state = ContainerState(workspace_id, container_id)
             self.states[workspace_id] = state
         else:
@@ -419,6 +421,8 @@ class ContainerRegistry:
             state.container_id = container_id
         self._cid_to_wsid[container_id] = workspace_id
         state.record_activity()
+        if was_new:
+            self._notify_status_changed(workspace_id, True)
 
     def record_activity(self, container_id: str) -> None:
         ws_id = self._cid_to_wsid.get(container_id)
@@ -432,6 +436,13 @@ class ContainerRegistry:
 
     def set_on_workspace_killed(self, callback) -> None:
         self.on_workspace_killed = callback
+
+    def set_on_container_status_changed(self, callback) -> None:
+        self.on_container_status_changed = callback
+
+    def _notify_status_changed(self, workspace_id: str, running: bool) -> None:
+        if self.on_container_status_changed:
+            self.on_container_status_changed(workspace_id, running)
 
     def remove_state(self, workspace_id: str) -> None:
         state = self.states.pop(workspace_id, None)
@@ -948,6 +959,7 @@ class ContainerRegistry:
 
     async def _notify_workspace_killed(self, workspace_id: str) -> None:
         """Call the on_workspace_killed callback, logging any errors."""
+        self._notify_status_changed(workspace_id, False)
         if self.on_workspace_killed:
             try:
                 await self.on_workspace_killed(workspace_id)

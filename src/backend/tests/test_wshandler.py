@@ -3960,6 +3960,65 @@ class TestNotifyUserWorkspacesChanged:
             wshandler.state.connections.pop(sock, None)
 
 
+class TestNotifyContainerStatus:
+    """notify_container_status broadcasts to all authenticated connections."""
+
+    def _register(self, sock, user):
+        conn = _base_conn(user=user, ws=sock)
+        wshandler.state.connections[sock] = conn
+        return conn
+
+    def test_sends_to_all_authenticated(self):
+        sock_a = _mock_sock()
+        sock_b = _mock_sock()
+        try:
+            self._register(sock_a, {"id": "uid-1", "email": "a@x"})
+            self._register(sock_b, {"id": "uid-2", "email": "b@x"})
+            wshandler.state.notify_container_status("ws-123", True)
+        finally:
+            wshandler.state.connections.pop(sock_a, None)
+            wshandler.state.connections.pop(sock_b, None)
+        expected = {
+            "type": "container_status",
+            "workspace_id": "ws-123",
+            "running": True,
+        }
+        sock_a.send_json.assert_called_once_with(expected)
+        sock_b.send_json.assert_called_once_with(expected)
+
+    def test_sends_stopped(self):
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"})
+            wshandler.state.notify_container_status("ws-456", False)
+        finally:
+            wshandler.state.connections.pop(sock, None)
+        msg = sock.send_json.call_args[0][0]
+        assert msg["running"] is False
+        assert msg["workspace_id"] == "ws-456"
+
+    def test_skips_unauthenticated(self):
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": None, "email": ""})
+            wshandler.state.notify_container_status("ws-1", True)
+        finally:
+            wshandler.state.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    def test_dead_socket_is_pruned(self):
+        from klangk_backend.wshandler import _WS_ERRORS
+
+        sock = _mock_sock()
+        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"})
+            wshandler.state.notify_container_status("ws-1", True)
+            assert sock not in wshandler.state.connections
+        finally:
+            wshandler.state.connections.pop(sock, None)
+
+
 class TestRemoveSessionLocked:
     async def test_removes_session(self):
         session = wshandler.state.get_or_create_session("ws-locked-rm")

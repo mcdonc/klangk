@@ -167,7 +167,14 @@ def create_workspace(server, auth):
 
 
 async def ws_connect(server, auth, workspace_id):
-    """Open a WebSocket, connect to workspace, return ws."""
+    """Open a WebSocket, connect to workspace, return ws.
+
+    Drains messages until ``workspace_ready`` arrives. A
+    ``container_status`` broadcast (sent to all authenticated
+    connections when a container starts) can land before the ready
+    response, because the container is started during the
+    ``workspace_connect`` handshake.
+    """
     ws_url = server["url"].replace("http://", "ws://")
     ws = await websockets.connect(
         f"{ws_url}/ws?token={auth['token']}", max_size=2**20
@@ -180,8 +187,16 @@ async def ws_connect(server, auth, workspace_id):
             }
         )
     )
-    resp = json.loads(await ws.recv())
-    assert resp["type"] == "workspace_ready"
+    deadline = asyncio.get_event_loop().time() + 30
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+        except asyncio.TimeoutError:
+            continue
+        if resp.get("type") == "workspace_ready":
+            break
+    else:
+        raise AssertionError("workspace_ready not received within 30s")
     await ws.send(json.dumps({"cmd": "ui_ready"}))
     return ws
 

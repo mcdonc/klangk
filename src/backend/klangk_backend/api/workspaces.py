@@ -53,6 +53,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _annotate_running(items: list[dict]) -> list[dict]:
+    """Add ``running`` boolean to each workspace dict."""
+    for ws in items:
+        ws["running"] = container.registry.get_state(ws["id"]) is not None
+    return items
+
+
 @router.get("/workspaces")
 async def list_workspaces(
     user: dict = Depends(auth.get_current_user),
@@ -78,6 +85,7 @@ async def list_workspaces(
         order=order,
         q=q,
     )
+    _annotate_running(result["items"])
     if limit is None and offset is None:
         return result["items"]
     return result
@@ -105,6 +113,7 @@ async def list_shared_workspaces(
         order=order,
         q=q,
     )
+    _annotate_running(result["items"])
     if limit is None and offset is None:
         return result["items"]
     return result

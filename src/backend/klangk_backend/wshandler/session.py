@@ -454,6 +454,30 @@ class WebSocketState:
             )
             await self.reset_workspace(ws["id"])
 
+    def notify_container_status(
+        self, workspace_id: str, running: bool
+    ) -> None:
+        """Broadcast container running/stopped status to all connections.
+
+        Sent when a workspace container starts or is killed so the
+        workspace list page can update status icons in real time.
+        """
+        message = {
+            "type": "container_status",
+            "workspace_id": workspace_id,
+            "running": running,
+        }
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except _WS_ERRORS:
+                dead.append(sock)
+        for sock in dead:
+            self.connections.pop(sock, None)
+
     def notify_user_workspaces_changed(self, user_id: str) -> None:
         """Send ``workspaces_changed`` to all of a user's connections.
 

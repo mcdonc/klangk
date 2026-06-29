@@ -96,6 +96,20 @@ class TestActivityTracking:
         container.registry.track_activity("cid-1", "ws-1")
         assert container.registry.states["ws-1"].container_id == "cid-1"
 
+    def test_track_activity_fires_status_changed_on_new(self):
+        calls = []
+        container.registry.set_on_container_status_changed(
+            lambda ws_id, running: calls.append((ws_id, running))
+        )
+        try:
+            container.registry.track_activity("cid-new", "ws-new")
+            assert calls == [("ws-new", True)]
+            # Second call for same workspace should NOT fire again
+            container.registry.track_activity("cid-new", "ws-new")
+            assert calls == [("ws-new", True)]
+        finally:
+            container.registry.on_container_status_changed = None
+
     def test_remove_state_cleans_up_reverse_mapping(self):
         container.registry.track_activity("cid-rm", "ws-rm")
         assert "cid-rm" in container.registry._cid_to_wsid
