@@ -343,6 +343,145 @@ class AclEditorState extends State<AclEditor> {
     });
   }
 
+  Widget _buildHeader() {
+    return Row(
+      children: [
+        const Text('Access Control Entries',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        const Spacer(),
+        TextButton.icon(
+          onPressed: _addEntry,
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('Add'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMessage() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        _message!,
+        style: TextStyle(
+          color: _message!.startsWith('Failed')
+              ? KColors.accentRed
+              : KColors.accentGreen,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEntryRow(int i) {
+    final entry = _entries[i];
+    final action = entry['action'] as int;
+    final principal = entry['principal'] as String? ?? '?';
+    final permission = entry['permission'] as String;
+
+    return ReorderableDragStartListener(
+      key: ValueKey('ace-$i-${entry['id'] ?? i}'),
+      index: i,
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 2),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            children: [
+              const Icon(Icons.drag_handle, size: 18, color: KColors.textMuted),
+              const SizedBox(width: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: action == 1
+                      ? KColors.accentGreen.withValues(alpha: 0.2)
+                      : KColors.accentRed.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  action == 1 ? 'Allow' : 'Deny',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color:
+                        action == 1 ? KColors.accentGreen : KColors.accentRed,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(principal, style: const TextStyle(fontSize: 12)),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: KColors.bgCanvas,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: KColors.borderDefault),
+                ),
+                child: Text(permission, style: const TextStyle(fontSize: 11)),
+              ),
+              const SizedBox(width: 4),
+              InkWell(
+                onTap: () => _removeEntry(i),
+                child:
+                    const Icon(Icons.close, size: 16, color: KColors.textMuted),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEntryList() {
+    if (_entries.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Text('No ACL entries',
+            style: TextStyle(color: KColors.textSecondary, fontSize: 12)),
+      );
+    }
+    return ReorderableListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: _entries.length,
+      onReorder: (oldIndex, newIndex) {
+        setState(() {
+          if (newIndex > oldIndex) newIndex--;
+          final item = _entries.removeAt(oldIndex);
+          _entries.insert(newIndex, item);
+        });
+      },
+      buildDefaultDragHandles: false,
+      itemBuilder: (context, i) => _buildEntryRow(i),
+    );
+  }
+
+  Widget _buildDirtyFooter() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        TextButton(
+          onPressed: _discard,
+          child: const Text('Discard'),
+        ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed: _saving ? null : _save,
+          icon: _saving
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.save, size: 16),
+          label: const Text('Save ACL'),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -352,145 +491,12 @@ class AclEditorState extends State<AclEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Text('Access Control Entries',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-            const Spacer(),
-            TextButton.icon(
-              onPressed: _addEntry,
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('Add'),
-            ),
-          ],
-        ),
-        if (_message != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              _message!,
-              style: TextStyle(
-                color: _message!.startsWith('Failed')
-                    ? KColors.accentRed
-                    : KColors.accentGreen,
-                fontSize: 12,
-              ),
-            ),
-          ),
-        if (_entries.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Text('No ACL entries',
-                style: TextStyle(color: KColors.textSecondary, fontSize: 12)),
-          )
-        else
-          ReorderableListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: _entries.length,
-            onReorder: (oldIndex, newIndex) {
-              setState(() {
-                if (newIndex > oldIndex) newIndex--;
-                final item = _entries.removeAt(oldIndex);
-                _entries.insert(newIndex, item);
-              });
-            },
-            buildDefaultDragHandles: false,
-            itemBuilder: (context, i) {
-              final entry = _entries[i];
-              final action = entry['action'] as int;
-              final principal = entry['principal'] as String? ?? '?';
-              final permission = entry['permission'] as String;
-
-              return ReorderableDragStartListener(
-                key: ValueKey('ace-$i-${entry['id'] ?? i}'),
-                index: i,
-                child: Card(
-                  margin: const EdgeInsets.only(bottom: 2),
-                  child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.drag_handle,
-                            size: 18, color: KColors.textMuted),
-                        const SizedBox(width: 4),
-                        // Allow/Deny badge
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: action == 1
-                                ? KColors.accentGreen.withValues(alpha: 0.2)
-                                : KColors.accentRed.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            action == 1 ? 'Allow' : 'Deny',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: action == 1
-                                  ? KColors.accentGreen
-                                  : KColors.accentRed,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        // Principal
-                        Expanded(
-                          child: Text(principal,
-                              style: const TextStyle(fontSize: 12)),
-                        ),
-                        // Permission
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: KColors.bgCanvas,
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: KColors.borderDefault),
-                          ),
-                          child: Text(permission,
-                              style: const TextStyle(fontSize: 11)),
-                        ),
-                        const SizedBox(width: 4),
-                        // Remove
-                        InkWell(
-                          onTap: () => _removeEntry(i),
-                          child: const Icon(Icons.close,
-                              size: 16, color: KColors.textMuted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
+        _buildHeader(),
+        if (_message != null) _buildMessage(),
+        _buildEntryList(),
         if (_dirty) ...[
           const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: _discard,
-                child: const Text('Discard'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.save, size: 16),
-                label: const Text('Save ACL'),
-              ),
-            ],
-          ),
+          _buildDirtyFooter(),
         ],
       ],
     );
