@@ -2,17 +2,17 @@
 
 # Sandbox
 
-`klangkc sandbox` creates and connects to a workspace using a
-project-level config file. It's the single command for "get me into
-this project" — create the workspace on the first run, reconnect on
-subsequent runs.
+`klangkc sandbox` creates a workspace using a project-level config
+file. It reads `.klangk-sandbox.yaml`, creates the workspace with the
+configured image, mounts, and volumes, copies files, and runs the
+setup script. Use `klangkc shell` afterwards to connect.
 
 `klangkc sandbox` is a quality-of-life feature of the
 [`klangkc` CLI](../reference/cli.md) that combines several of
 Klangk's individual features — workspace creation, bind mounts,
-file copying, command execution, and shell access — into a single
-step driven by a config file. Everything it does can be done manually
-with `klangkc create`, `klangkc exec`, and `klangkc shell`, but the
+file copying, and command execution — into a single step driven by
+a config file. Everything it does can be done manually with
+`klangkc create`, `klangkc exec`, and `klangkc shell`, but the
 sandbox command makes it easy to check a `.klangk-sandbox.yaml` into
 your repo so you or your teammates can spin up an identical sandboxed
 environment with one command.
@@ -34,11 +34,16 @@ Then run:
 
 ```bash
 klangkc sandbox myworkspace
+klangkc shell myworkspace
 ```
 
-This creates a workspace named `myproj`, mounts the sandbox root
-into the myworkspace container at `~/myproj`, and drops you into a shell.
-Run the same command again to reconnect to the existing workspace.
+The first command creates a workspace named `myworkspace`, mounts the
+sandbox root into the container at `~/myproj`, and runs any setup
+script. The second command connects you to an interactive shell.
+
+Run `klangkc sandbox myworkspace` again on an existing workspace and
+it will error — pass `--force` to re-apply the config and re-run
+setup.
 
 ## Config file reference
 
@@ -79,8 +84,8 @@ sandbox:
 | `setup`         | no       | (none)   | Script to run inside the container after creation. Relative to `mount-at`, or absolute if starts with `/`. |
 | `setup-timeout` | no       | `300`    | Maximum seconds the setup script may run before being killed. Set to `0` to disable.                       |
 
-The setup script runs once — on workspace creation, not on reconnect.
-It runs as the `klangk` user inside the container. If
+The setup script runs once — on workspace creation, not on
+reconnect. It runs as the `klangk` user inside the container. If
 `KLANGK_ALLOW_SUDO` is enabled on the server, the script can use
 `sudo` for system-level setup (installing packages, etc.).
 
@@ -170,16 +175,14 @@ next shell session without recreating the workspace.
 ## Command reference
 
 ```text
-klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup] [--open/-o MODE]
+klangkc sandbox WORKSPACE [PATH] [--force]
 ```
 
-| Argument/Flag        | Default | Description                                                             |
-| -------------------- | ------- | ----------------------------------------------------------------------- |
-| `WORKSPACE`          |         | Workspace name (required).                                              |
-| `PATH`               | `.`     | Path to the sandbox root (directory containing `.klangk-sandbox.yaml`). |
-| `--forward-agent/-A` | `false` | Forward local SSH agent into the container.                             |
-| `--force-setup`      | `false` | Re-run copy and setup steps even if the workspace exists.               |
-| `--open/-o MODE`     | `shell` | What to open after setup: `shell` (default), `browser`, or `none`.      |
+| Argument/Flag | Default | Description                                                             |
+| ------------- | ------- | ----------------------------------------------------------------------- |
+| `WORKSPACE`   |         | Workspace name (required).                                              |
+| `PATH`        | `.`     | Path to the sandbox root (directory containing `.klangk-sandbox.yaml`). |
+| `--force`     | `false` | Re-apply config and re-run setup on an existing workspace.              |
 
 ### Behavior
 
@@ -191,59 +194,58 @@ klangkc sandbox WORKSPACE [PATH] [--forward-agent/-A] [--force-setup] [--open/-o
 3. Mount the sandbox root at `mount-at`
 4. Copy files listed in `copy` into the container home
 5. Run the `setup` script inside the container (if configured)
-6. Connect to the workspace shell
+6. Print a message to run `klangkc shell` to connect
 
 **Subsequent runs** (workspace already exists):
 
-1. Connect to the existing workspace shell
+- Without `--force`: error with a message to use `--force`
+- With `--force`: re-apply config and re-run the copy and setup steps
 
-### Open modes
+### Connecting after sandbox
 
-The `--open` / `-o` flag controls what happens after the workspace is
-ready:
-
-- **`shell`** (default): Open an interactive terminal shell inside the
-  container. This is the original behavior.
-- **`browser`**: Open the workspace in your default web browser
-  (Klangk's web UI). Setup still runs if needed, but no CLI shell is
-  started.
-- **`none`**: Create the workspace and run setup, then exit. Useful for
-  provisioning workspaces in scripts or CI without opening anything.
-
-Examples:
+After `klangkc sandbox` completes, connect with:
 
 ```bash
-klangkc sandbox myws -o browser      # create + open in browser
-klangkc sandbox myws -o none         # create + setup only, no shell
-klangkc sandbox myws                 # create + open shell (default)
+klangkc shell myworkspace
 ```
 
-The copy and setup steps only run on first creation. On reconnect,
-the command skips straight to the shell — it does not re-copy files
-or re-run the setup script. This means:
+To forward your SSH agent into the container:
+
+```bash
+klangkc shell myworkspace -A
+```
+
+If the workspace has a `default-command` configured (e.g.
+`openclaw gateway`), that command runs in the first terminal
+window. To get an interactive shell alongside it, connect to a
+named terminal window:
+
+```bash
+klangkc shell myworkspace dev
+```
+
+This creates a new terminal window called `dev` where you can
+work interactively while the default command continues running in
+the first window.
+
+The copy and setup steps only run during `klangkc sandbox`. On
+`klangkc shell`, the command connects directly to the existing
+workspace. This means:
 
 - **Mounts** are always current (they're live links to host paths).
 - **Copied files** reflect the state at creation time. To update
-  them, delete the workspace and recreate it.
+  them, delete the workspace and recreate it, or use `--force`.
 - **Setup script changes** are not re-applied automatically. Use
-  `--force-setup` to re-run the copy and setup steps on an existing
+  `--force` to re-run the copy and setup steps on an existing
   workspace.
 - **Config changes** (new mounts, different image) require
-  restarting (`klangkc restart myws`) or deleting and recreating
-  the workspace. A warning is shown if the config has changed
-  since creation.
+  deleting and recreating the workspace.
 
 ## Setup scripts
 
 The setup script runs inside the container as the `klangk` user. It
 has access to everything that's been mounted and copied. The working
 directory is the sandbox root (the `mount-at` path).
-
-**SSH agent forwarding** is active during setup when `-A` /
-`--forward-agent` is used. This means `git clone git@github.com:...`
-and other SSH operations work in your setup script without any extra
-configuration. SSH host key checking is set to `accept-new` during
-setup (new hosts are automatically trusted on first connect).
 
 **Important:** The `klangk` user does not have sudo access by
 default. Without it, setup scripts are limited to user-space
@@ -278,10 +280,10 @@ fi
 If the setup script is interrupted (Ctrl+C, network failure, etc.),
 the workspace is left in an inconsistent state. To recover:
 
-- **If your script is idempotent:** re-run with `--force-setup`:
-  `klangkc sandbox myws --force-setup`
+- **If your script is idempotent:** re-run with `--force`:
+  `klangkc sandbox myws --force`
 - **If not:** restart the container and try again:
-  `klangkc restart myws && klangkc sandbox myws --force-setup`.
+  `klangkc restart myws && klangkc sandbox myws --force`.
   Or delete the workspace entirely and start over:
   `klangkc rm myws && klangkc sandbox myws`.
 
@@ -289,12 +291,12 @@ the workspace is left in an inconsistent state. To recover:
 
 - **Make scripts idempotent.** Check if tools are already installed
   before installing them (e.g. `if ! command -v nix`). This makes
-  `--force-setup` safe to use after interruptions. If your script
-  isn't idempotent, an interrupted setup means you'll need to
-  destroy the workspace and recreate it.
+  `--force` safe to use after interruptions. If your script isn't
+  idempotent, an interrupted setup means you'll need to destroy the
+  workspace and recreate it.
 - **Use named volumes for large installs.** Mount `/nix` as a named
   volume so the nix store persists across workspace recreations.
-- **Keep it fast.** The setup script blocks before you get a shell.
+- **Keep it fast.** The setup script blocks before you can connect.
   Move slow one-time setup into a volume that persists.
 
 ## Example
@@ -363,9 +365,11 @@ Usage:
 
 ```bash
 cd ~/projects/klangk
-klangkc sandbox myproj -A
-# First run: creates workspace, mounts everything, installs nix, drops into shell
-# Subsequent runs: reconnects to existing workspace
+klangkc sandbox myproj
+klangkc shell myproj -A
+# First sandbox: creates workspace, mounts everything, installs nix
+# shell: connects with SSH agent forwarding
+# Subsequent sandbox calls: error unless --force
 ```
 
 ## Interaction with server settings

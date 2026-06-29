@@ -154,11 +154,9 @@ klangkc edit my-project --env FOO=bar    # set env var via flag
 klangkc dup my-project my-copy           # duplicate a workspace
 klangkc shell my-project                 # drop into bash inside the container
 klangkc shell my-project debug           # attach to the "debug" terminal window (created if it doesn't exist)
-klangkc sandbox myws                     # create/reconnect from .klangk-sandbox.yaml
+klangkc sandbox myws                     # create workspace from .klangk-sandbox.yaml
 klangkc sandbox myws ~/projects/myapp    # specify sandbox root explicitly
-klangkc sandbox myws --force-setup       # re-run copy and setup on existing workspace
-klangkc sandbox myws -o browser          # create/reconnect and open in web browser
-klangkc sandbox myws -o none             # create and run setup only, no shell or browser
+klangkc sandbox myws --force             # re-apply config and re-run setup on existing workspace
 klangkc exec my-project ls /home/klangk/work         # run a command in the container
 klangkc sync ~/src my-project:/home/klangk/work      # sync files to/from the container
 klangkc rm my-project                # delete a workspace
