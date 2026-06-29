@@ -1680,6 +1680,29 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
 
+    async def test_duplicate_workspace_creates_role_groups(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "dup-roles-src"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/duplicate",
+            json={"name": "dup-roles-target"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        dup_id = resp.json()["id"]
+        for suffix in ["owners", "coders", "collaborators", "spectators"]:
+            group = await model.get_group_by_name(f"{suffix}-{dup_id}")
+            assert group is not None, f"expected {suffix} group on duplicate"
+        # Creator should be in the owners group
+        owners = await model.get_group_by_name(f"owners-{dup_id}")
+        members = await model.get_group_members(owners["id"])
+        assert any(m["id"] == user["id"] for m in members)
+
 
 # --- Workspace sharing ---
 
@@ -6096,6 +6119,36 @@ class TestWorkspaceExportImport:
         resp = await client.get("/api/v1/workspaces", headers=headers)
         names = [w["name"] for w in resp.json()]
         assert "traversal-test" not in names
+
+    async def test_import_workspace_creates_role_groups(self, client, user):
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "import-roles-test"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+        for suffix in ["owners", "coders", "collaborators", "spectators"]:
+            group = await model.get_group_by_name(f"{suffix}-{ws_id}")
+            assert group is not None, f"expected {suffix} group on import"
+        # Importer should be in the owners group
+        owners = await model.get_group_by_name(f"owners-{ws_id}")
+        members = await model.get_group_members(owners["id"])
+        assert any(m["id"] == user["id"] for m in members)
 
 
 # --- Invitation endpoints ---

@@ -129,51 +129,16 @@ class CreateWorkspaceRequest(BaseModel):
     setup_state: Literal["pending", "complete", "failed"] | None = None
 
 
-@router.post("/workspaces")
-async def create_workspace(
-    body: CreateWorkspaceRequest, user: dict = Depends(auth.get_current_user)
-):
-    if body.auto_start and not resolve_env_bool("KLANGK_ALLOW_AUTOSTART"):
-        raise HTTPException(
-            status_code=400,
-            detail="Auto-start is not enabled on this server"
-            " (set KLANGK_ALLOW_AUTOSTART=1)",
-        )
-    if body.image and body.image not in container.ALLOWED_IMAGES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Image {body.image!r} is not allowed. "
-            f"Allowed: {sorted(container.ALLOWED_IMAGES)}",
-        )
-    if body.mounts:
-        mount_err = container.validate_mounts(body.mounts)
-        if mount_err:
-            raise HTTPException(status_code=400, detail=mount_err)
-    try:
-        ws = await workspaces.create_workspace(
-            user["id"],
-            body.name,
-            image=body.image,
-            default_command=body.default_command,
-            auto_start=body.auto_start,
-            mounts=body.mounts,
-            env=body.env,
-            setup_state=body.setup_state or "complete",
-        )
-    except SAIntegrityError:
-        raise HTTPException(
-            status_code=409,
-            detail=f"A workspace named {body.name!r} already exists",
-        )
-    except OSError as e:  # pragma: no cover
-        raise HTTPException(status_code=400, detail=str(e))
-    # Grant owner full access via ACL
+async def _grant_owner_and_create_role_groups(ws: dict, user_id: str) -> None:
+    """Grant owner ACL and create the four role groups for a workspace.
+
+    Used by create_workspace, duplicate_workspace, and import_workspace.
+    """
     resource = f"/workspaces/{ws['id']}"
     await model.add_acl_entry(
-        resource, 0, ACTION_ALLOW, "*", PRINCIPAL_USER, user_id=user["id"]
+        resource, 0, ACTION_ALLOW, "*", PRINCIPAL_USER, user_id=user_id
     )
 
-    # Create workspace role groups and their ACL entries.
     role_groups = {
         f"owners-{ws['id']}": ["*"],
         f"coders-{ws['id']}": [
@@ -213,9 +178,49 @@ async def create_workspace(
                 group_id=group["id"],
             )
             pos += 1
-        # Add the creator to the owners group.
         if group_name.startswith("owners-"):
-            await model.add_user_to_group(user["id"], group["id"])
+            await model.add_user_to_group(user_id, group["id"])
+
+
+@router.post("/workspaces")
+async def create_workspace(
+    body: CreateWorkspaceRequest, user: dict = Depends(auth.get_current_user)
+):
+    if body.auto_start and not resolve_env_bool("KLANGK_ALLOW_AUTOSTART"):
+        raise HTTPException(
+            status_code=400,
+            detail="Auto-start is not enabled on this server"
+            " (set KLANGK_ALLOW_AUTOSTART=1)",
+        )
+    if body.image and body.image not in container.ALLOWED_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Image {body.image!r} is not allowed. "
+            f"Allowed: {sorted(container.ALLOWED_IMAGES)}",
+        )
+    if body.mounts:
+        mount_err = container.validate_mounts(body.mounts)
+        if mount_err:
+            raise HTTPException(status_code=400, detail=mount_err)
+    try:
+        ws = await workspaces.create_workspace(
+            user["id"],
+            body.name,
+            image=body.image,
+            default_command=body.default_command,
+            auto_start=body.auto_start,
+            mounts=body.mounts,
+            env=body.env,
+            setup_state=body.setup_state or "complete",
+        )
+    except SAIntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A workspace named {body.name!r} already exists",
+        )
+    except OSError as e:  # pragma: no cover
+        raise HTTPException(status_code=400, detail=str(e))
+    await _grant_owner_and_create_role_groups(ws, user["id"])
 
     # Eagerly start the container so it's running by the time the
     # user connects.  Errors are logged but don't fail the create.
@@ -312,15 +317,7 @@ async def duplicate_workspace(
             status_code=409,
             detail=f"A workspace named {body.name!r} already exists",
         )
-    # Grant owner full access via ACL
-    await model.add_acl_entry(
-        f"/workspaces/{ws['id']}",
-        0,
-        ACTION_ALLOW,
-        "*",
-        PRINCIPAL_USER,
-        user_id=user["id"],
-    )
+    await _grant_owner_and_create_role_groups(ws, user["id"])
     return ws
 
 
@@ -665,14 +662,7 @@ async def import_workspace(
                 detail=f"A workspace named {meta['name']!r} already exists",
             )
 
-        await model.add_acl_entry(
-            f"/workspaces/{ws['id']}",
-            0,
-            ACTION_ALLOW,
-            "*",
-            PRINCIPAL_USER,
-            user_id=user["id"],
-        )
+        await _grant_owner_and_create_role_groups(ws, user["id"])
 
         try:
             await _extract_home_directory(archive_path, user["id"], ws["id"])
