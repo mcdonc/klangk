@@ -297,3 +297,29 @@ class TestAutoStartWorkspaces:
             ):
                 result = await ws_mod.auto_start_workspaces()
         assert result == 0
+
+
+class TestEagerStartWorkspace:
+    async def test_starts_container_and_disables_idle(self, user):
+        ws = await ws_mod.create_workspace(
+            user["id"], "eager-ws", auto_start=True
+        )
+        from klangk_backend.container import ContainerState
+
+        container.registry.states[ws["id"]] = ContainerState(
+            ws["id"], "cid-eager"
+        )
+        try:
+            with patch.object(
+                container.registry,
+                "start_container",
+                new_callable=AsyncMock,
+                return_value=("cid-eager", "created"),
+            ) as mock_start:
+                cid, status = await ws_mod.eager_start_workspace(ws)
+            assert cid == "cid-eager"
+            assert status == "created"
+            mock_start.assert_awaited_once()
+            assert container.registry.states[ws["id"]].idle_timeout == 0
+        finally:
+            container.registry.states.pop(ws["id"], None)

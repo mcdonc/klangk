@@ -206,6 +206,18 @@ async def create_workspace(
         if group_name.startswith("owners-"):
             await model.add_user_to_group(user["id"], group["id"])
 
+    # Eagerly start the container so it's running by the time the
+    # user connects.  Errors are logged but don't fail the create.
+    if body.auto_start:
+        try:
+            await workspaces.eager_start_workspace(ws)
+        except Exception:
+            logger.warning(
+                "Eager start failed for workspace %s",
+                ws["id"],
+                exc_info=True,
+            )
+
     wshandler.state.notify_user_workspaces_changed(user["id"])
     return ws
 

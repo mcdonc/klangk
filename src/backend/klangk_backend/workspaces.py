@@ -392,6 +392,35 @@ async def populate_home_skel(
         )
 
 
+async def eager_start_workspace(ws: dict) -> tuple[str, str]:
+    """Start a container for a workspace immediately.
+
+    Sets ``idle_timeout = 0`` so the container does not idle out.
+    Returns ``(container_id, status)``.
+    """
+    owner_id = ws["user_id"]
+    workspace_id = ws["id"]
+    host_path = str(get_workspace_host_path(owner_id, workspace_id))
+    h_path = str(get_home_host_path(owner_id, workspace_id))
+    cfg_path = str(get_config_host_path(owner_id, workspace_id))
+    cid, status = await container.registry.start_container(
+        workspace_id,
+        host_path,
+        h_path,
+        ws.get("container_id"),
+        num_ports=ws.get("num_ports", container.DEFAULT_PORTS_PER_WORKSPACE),
+        image=ws.get("image"),
+        config_path=cfg_path,
+        extra_mounts=ws.get("mounts"),
+        extra_env=ws.get("env"),
+        user_id=owner_id,
+    )
+    state = container.registry.states.get(workspace_id)
+    if state:
+        state.idle_timeout = 0
+    return cid, status
+
+
 async def auto_start_workspaces() -> int:
     """Start containers for all workspaces with auto_start enabled.
 
@@ -406,30 +435,8 @@ async def auto_start_workspaces() -> int:
     for i, ws in enumerate(ws_list):
         if i > 0:
             await asyncio.sleep(random.uniform(0.5, 2.0))
-        owner_id = ws["user_id"]
-        workspace_id = ws["id"]
-        host_path = str(get_workspace_host_path(owner_id, workspace_id))
-        h_path = str(get_home_host_path(owner_id, workspace_id))
-        cfg_path = str(get_config_host_path(owner_id, workspace_id))
         try:
-            cid, status = await container.registry.start_container(
-                workspace_id,
-                host_path,
-                h_path,
-                ws.get("container_id"),
-                num_ports=ws.get(
-                    "num_ports", container.DEFAULT_PORTS_PER_WORKSPACE
-                ),
-                image=ws.get("image"),
-                config_path=cfg_path,
-                extra_mounts=ws.get("mounts"),
-                extra_env=ws.get("env"),
-                user_id=owner_id,
-            )
-            # Auto-started containers should not idle out.
-            state = container.registry.states.get(workspace_id)
-            if state:
-                state.idle_timeout = 0
+            cid, status = await eager_start_workspace(ws)
             logger.info(
                 "Auto-started workspace %s (%s): %s",
                 ws["name"],
@@ -441,7 +448,7 @@ async def auto_start_workspaces() -> int:
             logger.warning(
                 "Failed to auto-start workspace %s (%s)",
                 ws["name"],
-                workspace_id,
+                ws["id"],
                 exc_info=True,
             )
     return started
