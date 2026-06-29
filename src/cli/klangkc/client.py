@@ -221,11 +221,31 @@ class KlangkClient:
         if resp.status_code == 401:
             raise AuthError("Session expired — run `klangkc login`")
 
+    @staticmethod
+    def _raise_for_status(resp: httpx.Response) -> None:
+        """Like ``resp.raise_for_status()`` but includes the server's
+        error detail in the exception message when available."""
+        if 200 <= resp.status_code < 300:
+            return
+        detail = ""
+        try:
+            body = resp.json()
+            detail = body.get("detail", "")
+        except Exception:
+            pass
+        if detail:
+            raise httpx.HTTPStatusError(
+                f"{resp.status_code}: {detail}",
+                request=resp.request,
+                response=resp,
+            )
+        resp.raise_for_status()
+
     def get_handle(self) -> str:
         """Return the current user's handle via ``GET /auth/me``."""
         resp = self.get("/api/v1/auth/me")
         self._check_auth(resp)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()["handle"]
 
     def list_workspaces(
@@ -300,7 +320,7 @@ class KlangkClient:
         while True:
             resp = self.get(path, params=params)
             self._check_auth(resp)
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             body = resp.json()
             for w in body["items"]:
                 workspaces.append(self._workspace_from_json(w, shared=shared))
@@ -345,7 +365,7 @@ class KlangkClient:
             body["env"] = env
         resp = self.post("/api/v1/workspaces", json=body)
         self._check_auth(resp)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         w = resp.json()
         return Workspace(
             id=w["id"], name=w["name"], created_at=w["created_at"]
@@ -354,7 +374,7 @@ class KlangkClient:
     def list_images(self) -> dict:
         resp = self.get("/api/v1/images")
         self._check_auth(resp)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def resolve_workspace(self, name: str) -> Workspace:
@@ -374,13 +394,13 @@ class KlangkClient:
         ws = self.resolve_workspace(name)
         resp = self.delete(f"/api/v1/workspaces/{ws.id}")
         self._check_auth(resp)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
 
     def list_workspace_members(self, name: str) -> list[dict]:
         ws = self.resolve_workspace(name)
         resp = self.get(f"/api/v1/workspaces/{ws.id}/members")
         self._check_auth(resp)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def add_workspace_member(
@@ -392,7 +412,7 @@ class KlangkClient:
             json={"email": email, "role": role},
         )
         self._check_auth(resp)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def remove_workspace_member(self, name: str, email: str) -> None:
@@ -406,13 +426,13 @@ class KlangkClient:
             raise WorkspaceNotFoundError(
                 f"User '{email}' is not a member of '{name}'"
             )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
 
     def restart_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
         resp = self.post(f"/api/v1/workspaces/{ws.id}/restart")
         self._check_auth(resp)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
 
     def export_workspace(
         self,
@@ -434,7 +454,7 @@ class KlangkClient:
             self._check_auth(resp)
             if not resp.is_success:
                 resp.read()  # consume body so .text is available
-                resp.raise_for_status()
+                self._raise_for_status(resp)
             # Use Content-Length if available, otherwise fall back to
             # the server's compressed size estimate.
             if "content-length" in resp.headers:
@@ -497,7 +517,7 @@ class KlangkClient:
                 timeout=300.0,
             )
         self._check_auth(resp)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         w = resp.json()
         return Workspace(
             id=w["id"], name=w["name"], created_at=w["created_at"]

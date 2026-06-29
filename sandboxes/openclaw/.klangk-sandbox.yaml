@@ -1,3 +1,7 @@
 sandbox:
-  mount-at: ~/openclaw
+  mount-at: /openclaw
   setup: setup.sh
+
+workspace:
+  default-command: openclaw gateway
+  auto-start: true
