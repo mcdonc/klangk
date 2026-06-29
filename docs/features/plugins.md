@@ -67,7 +67,6 @@ These plugins are included in the default `plugins.yaml`:
 
 | Plugin           | What it does                                              |
 | ---------------- | --------------------------------------------------------- |
-| `claude-code`    | Installs Claude Code CLI agent at image build time        |
 | `git-credential` | Git credential helper with browser-based PAT/OAuth dialog |
 | `word-count`     | File stats tool for Pi (lines, words, characters, size)   |
 | `pig-latin`      | Text-to-Pig-Latin converter for Pi                        |
@@ -75,3 +74,14 @@ These plugins are included in the default `plugins.yaml`:
 | `beep`           | Plays an audible beep via Web Audio API                   |
 | `browser-fetch`  | HTTP fetch using browser session cookies via Pi           |
 | `boingball`      | Bouncing Boing Ball animation overlay via Pi              |
+
+## Additional plugins
+
+These plugins ship with klangk but are **not** included in the default
+`plugins.yaml`. Add them manually to enable:
+
+| Plugin        | What it does                                           |
+| ------------- | ------------------------------------------------------ |
+| `claude-code` | Installs Claude Code CLI agent at image build time     |
+| `bobdobbs`    | Bob Dobbs overlay via Pi                               |
+| `hermes`      | Hermes agent — NousResearch's terminal-based assistant |
