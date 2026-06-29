@@ -568,6 +568,95 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     );
   }
 
+  Widget _buildPathBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
+      decoration: BoxDecoration(color: KColors.bgCanvas),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => _navigateTo(widget.userHome ?? '/'),
+            child: const Icon(Icons.home, size: 16),
+          ),
+          const SizedBox(width: 4),
+          Expanded(child: _buildBreadcrumbs()),
+          if (_currentPath != '/')
+            IconButton(
+              icon: const Icon(Icons.arrow_upward, size: 28),
+              onPressed: () {
+                final lastSlash = _currentPath.lastIndexOf('/');
+                final parent =
+                    lastSlash <= 0 ? '/' : _currentPath.substring(0, lastSlash);
+                _navigateTo(parent);
+              },
+              iconSize: 28,
+              tooltip: 'Up',
+            ),
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 28),
+            onPressed: () => _loadFiles(force: true),
+            iconSize: 28,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    if (_selectedFile != null) {
+      return _FileViewer(
+        // Key by path so switching files (e.g. PDF → .md) directly —
+        // without going through the list — recreates the viewer with
+        // the new file's renderers instead of reusing stale ones.
+        key: ValueKey(_selectedFile),
+        registry: _registry,
+        file: _renderableFor(_selectedFile!),
+        onClose: () => setState(() => _selectedFile = null),
+        onDownload: () {
+          final path = _selectedFile!;
+          final name = path.contains('/')
+              ? path.substring(path.lastIndexOf('/') + 1)
+              : path;
+          _downloadPath(path, name, false);
+        },
+      );
+    }
+    return _buildFileList();
+  }
+
+  Widget _buildFileListItem(int index) {
+    final entry = _entries[index];
+    final isDir = entry['is_dir'] as bool;
+    final name = entry['name'] as String;
+    final path = entry['path'] as String;
+    return GestureDetector(
+      onSecondaryTapDown: (details) {
+        _showContextMenu(details.globalPosition, path, name, isDir);
+      },
+      child: ListTile(
+        dense: true,
+        leading: Icon(
+          isDir ? Icons.folder : Icons.insert_drive_file,
+          size: 18,
+        ),
+        title: Text(name, style: const TextStyle(fontSize: 13)),
+        subtitle: isDir
+            ? null
+            : Text(
+                '${entry['size'] ?? 0} bytes  ${formatMtime(entry['mtime'])}',
+                style: const TextStyle(fontSize: 11),
+              ),
+        onTap: () {
+          if (isDir) {
+            _navigateTo(path);
+          } else {
+            setState(() => _selectedFile = path);
+          }
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SuppressBrowserContextMenu(
@@ -579,60 +668,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         onUploadComplete: _onUploadComplete,
         child: Column(
           children: [
-            // Path bar
-            Container(
-              padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
-              decoration: BoxDecoration(color: KColors.bgCanvas),
-              child: Row(
-                children: [
-                  InkWell(
-                    onTap: () => _navigateTo(widget.userHome ?? '/'),
-                    child: const Icon(Icons.home, size: 16),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(child: _buildBreadcrumbs()),
-                  if (_currentPath != '/')
-                    IconButton(
-                      icon: const Icon(Icons.arrow_upward, size: 28),
-                      onPressed: () {
-                        final lastSlash = _currentPath.lastIndexOf('/');
-                        final parent = lastSlash <= 0
-                            ? '/'
-                            : _currentPath.substring(0, lastSlash);
-                        _navigateTo(parent);
-                      },
-                      iconSize: 28,
-                      tooltip: 'Up',
-                    ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh, size: 28),
-                    onPressed: () => _loadFiles(force: true),
-                    iconSize: 28,
-                  ),
-                ],
-              ),
-            ),
-            // File list or content
-            Expanded(
-              child: _selectedFile != null
-                  ? _FileViewer(
-                      // Key by path so switching files (e.g. PDF → .md) directly —
-                      // without going through the list — recreates the viewer with
-                      // the new file's renderers instead of reusing stale ones.
-                      key: ValueKey(_selectedFile),
-                      registry: _registry,
-                      file: _renderableFor(_selectedFile!),
-                      onClose: () => setState(() => _selectedFile = null),
-                      onDownload: () {
-                        final path = _selectedFile!;
-                        final name = path.contains('/')
-                            ? path.substring(path.lastIndexOf('/') + 1)
-                            : path;
-                        _downloadPath(path, name, false);
-                      },
-                    )
-                  : _buildFileList(),
-            ),
+            _buildPathBar(),
+            Expanded(child: _buildContent()),
           ],
         ),
       ),
@@ -661,38 +698,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           child: ListView.builder(
             padding: EdgeInsets.zero,
             itemCount: _entries.length,
-            itemBuilder: (context, index) {
-              final entry = _entries[index];
-              final isDir = entry['is_dir'] as bool;
-              final name = entry['name'] as String;
-              final path = entry['path'] as String;
-              return GestureDetector(
-                onSecondaryTapDown: (details) {
-                  _showContextMenu(details.globalPosition, path, name, isDir);
-                },
-                child: ListTile(
-                  dense: true,
-                  leading: Icon(
-                    isDir ? Icons.folder : Icons.insert_drive_file,
-                    size: 18,
-                  ),
-                  title: Text(name, style: const TextStyle(fontSize: 13)),
-                  subtitle: isDir
-                      ? null
-                      : Text(
-                          '${entry['size'] ?? 0} bytes  ${formatMtime(entry['mtime'])}',
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                  onTap: () {
-                    if (isDir) {
-                      _navigateTo(path);
-                    } else {
-                      setState(() => _selectedFile = path);
-                    }
-                  },
-                ),
-              );
-            },
+            itemBuilder: (context, index) => _buildFileListItem(index),
           ),
         ),
         Padding(
