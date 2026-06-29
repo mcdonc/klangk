@@ -29,6 +29,7 @@ from .. import workspaces as workspaces  # noqa: F401
 from ._constants import (
     _MAX_INPUT_SIZE as _MAX_INPUT_SIZE,
     _SEND_QUEUE_SIZE as _SEND_QUEUE_SIZE,
+    _WS_RECEIVE_TIMEOUT as _WS_RECEIVE_TIMEOUT,
     _WS_DEBUG as _WS_DEBUG,
     _agent_conversations as _agent_conversations,
     _agent_tasks as _agent_tasks,
@@ -38,6 +39,7 @@ from ._constants import (
     bridge_idle_timeout as bridge_idle_timeout,
 )
 from .safe_websocket import (
+    ReceiveTimeoutError as ReceiveTimeoutError,
     SafeWebSocket as SafeWebSocket,
     SlowClientError as SlowClientError,
     _WS_ERRORS as _WS_ERRORS,

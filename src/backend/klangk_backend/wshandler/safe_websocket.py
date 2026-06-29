@@ -5,7 +5,7 @@ import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from ._constants import _SEND_QUEUE_SIZE
+from ._constants import _SEND_QUEUE_SIZE, _WS_RECEIVE_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +14,14 @@ class SlowClientError(Exception):
     """Raised when the outbound queue is full (client can't keep up)."""
 
 
+class ReceiveTimeoutError(Exception):
+    """Raised when no inbound message arrives within the deadline."""
+
+
 # Exceptions that indicate a dead or broken WebSocket connection.
 _WS_ERRORS = (
     SlowClientError,
+    ReceiveTimeoutError,
     WebSocketDisconnect,
     RuntimeError,
     ConnectionError,
@@ -99,7 +104,14 @@ class SafeWebSocket:
         await self._sock.accept()
 
     async def receive_text(self) -> str:
-        return await self._sock.receive_text()
+        try:
+            return await asyncio.wait_for(
+                self._sock.receive_text(), timeout=_WS_RECEIVE_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            raise ReceiveTimeoutError(
+                f"no message received for {_WS_RECEIVE_TIMEOUT}s"
+            )
 
     async def close(self, code: int = 1000) -> None:
         await self._sock.close(code=code)

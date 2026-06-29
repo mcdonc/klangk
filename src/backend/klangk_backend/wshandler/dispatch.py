@@ -6,7 +6,7 @@ import logging
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .. import auth
-from .safe_websocket import SafeWebSocket, SlowClientError
+from .safe_websocket import SafeWebSocket, SlowClientError, ReceiveTimeoutError
 from .helpers import send_error, _log_ws_msg
 from .session import state
 from .connection import Connection
@@ -125,6 +125,8 @@ async def handle_websocket(websocket: WebSocket) -> None:
         logger.info("WebSocket disconnected for user %s: %s", user["email"], e)
     except SlowClientError:
         logger.warning("Slow client dropped for user %s", user["email"])
+    except ReceiveTimeoutError:
+        logger.warning("Receive timeout for user %s", user["email"])
     except Exception as e:
         logger.exception("WebSocket error: %s", e)
     finally:

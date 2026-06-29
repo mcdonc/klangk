@@ -22,6 +22,12 @@ _MAX_INPUT_SIZE = 65536
 # Max outbound messages before we declare the client too slow and close.
 _SEND_QUEUE_SIZE = 256
 
+# Seconds to wait for any inbound WebSocket message before assuming the
+# connection is dead.  The client sends heartbeats every 60 s, so 90 s
+# gives 50 % headroom.  This is a belt-and-suspenders guard on top of
+# uvicorn's protocol-level --ws-ping-interval / --ws-ping-timeout.
+_WS_RECEIVE_TIMEOUT = 90
+
 
 def bridge_idle_timeout() -> float:
     """Max seconds between streamed browser chunks before giving up.

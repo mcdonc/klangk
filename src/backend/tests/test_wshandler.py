@@ -33,6 +33,7 @@ from klangk_backend.wshandler import (
     ExecController,
     SafeWebSocket,
     SharedTerminalController,
+    ReceiveTimeoutError,
     SlowClientError,
     SshAgentForwarder,
     TerminalController,
@@ -7403,6 +7404,42 @@ class TestSendQueueBehavior:
         with patch.object(container.registry, "record_activity"):
             await conn.forward_exec_output(session)
         # Should not raise
+
+
+class TestReceiveTimeout:
+    """Tests for application-layer receive timeout on ghost connections."""
+
+    async def test_receive_text_raises_on_timeout(self):
+        """SafeWebSocket.receive_text raises ReceiveTimeoutError when idle."""
+        raw = AsyncMock()
+
+        async def hang_forever():
+            await asyncio.sleep(3600)
+
+        raw.receive_text = hang_forever
+        sw = SafeWebSocket(raw)
+        with patch(
+            "klangk_backend.wshandler.safe_websocket._WS_RECEIVE_TIMEOUT", 0.05
+        ):
+            with pytest.raises(ReceiveTimeoutError):
+                await sw.receive_text()
+
+    async def test_timeout_closes_connection(self, user):
+        """handle_websocket exits cleanly on ReceiveTimeoutError."""
+        from klangk_backend import auth as auth_mod
+
+        token = auth_mod.create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+
+        async def hang_forever():
+            await asyncio.sleep(3600)
+
+        websocket.receive_text = hang_forever
+
+        with patch(
+            "klangk_backend.wshandler.safe_websocket._WS_RECEIVE_TIMEOUT", 0.05
+        ):
+            await asyncio.wait_for(handle_websocket(websocket), timeout=5.0)
 
 
 class TestMentionsAgent:
