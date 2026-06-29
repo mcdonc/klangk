@@ -1,20 +1,19 @@
-name: "E2E: openclaw sandbox"
+name: "E2E: Sandbox Tests"
 
 on:
   workflow_dispatch:
   pull_request:
     branches: [main]
     paths:
-      - "sandboxes/openclaw/**"
-      - "sandboxes/tests/openclaw/**"
-      - ".github/workflows/sandbox-openclaw-e2e.yml"
+      - "sandboxes/**"
+      - ".github/workflows/sandbox-e2e-tests.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  test-openclaw-sandbox:
+  test-sandbox-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -30,7 +29,12 @@ jobs:
         with:
           build-tasks: klangk:build-workspace-image
 
-      - name: Run openclaw sandbox e2e
+      # Runs every sandbox test suite under sandboxes/tests/. There is
+      # currently only openclaw; more will be added over time. Each suite
+      # is responsible for its own server/container teardown (SIGKILL on
+      # shutdown) so they don't leak across runs. Requires network (real
+      # installs).
+      - name: Run sandbox e2e tests
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- pytest sandboxes/tests/openclaw -v -p no:xdist --no-cov
+          devenv shell -- pytest sandboxes/tests -v -p no:xdist --no-cov
