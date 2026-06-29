@@ -1384,6 +1384,33 @@ void main() {
       expect(messages[1]['message'], 'second');
     });
 
+    test('chat_history clears existing messages before appending', () async {
+      // Regression: after reconnect, chat_history appended to the old list,
+      // causing duplicate messages in the UI.
+      channel.serverSend({
+        'type': 'chat_history',
+        'messages': [
+          {'id': 'msg-1', 'message': 'old', 'created_at': '2026-01-01'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.chatHistory.length, 1);
+
+      // Second chat_history (as sent on reconnect) must replace, not append.
+      channel.serverSend({
+        'type': 'chat_history',
+        'messages': [
+          {'id': 'msg-1', 'message': 'old', 'created_at': '2026-01-01'},
+          {'id': 'msg-2', 'message': 'new', 'created_at': '2026-01-02'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.chatHistory.length, 2,
+          reason: 'chat_history must clear before appending');
+      expect(client.chatHistory[0]['id'], 'msg-1');
+      expect(client.chatHistory[1]['id'], 'msg-2');
+    });
+
     test('chat_updated routed to chatMessages stream', () async {
       final messages = <Map<String, dynamic>>[];
       client.chatMessages.listen(messages.add);

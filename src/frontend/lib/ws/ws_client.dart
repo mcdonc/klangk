@@ -405,6 +405,7 @@ class WsClient extends ChangeNotifier {
   }
 
   void _onChatHistory(Map<String, dynamic> json) {
+    chatHistory.clear();
     final messages = json['messages'] as List? ?? [];
     for (final m in messages) {
       final msg = m as Map<String, dynamic>;
