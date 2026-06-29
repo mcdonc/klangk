@@ -681,16 +681,15 @@ class WsClient extends ChangeNotifier {
 
   Future<void> _attemptReconnect() async {
     _reconnectTimer = null;
+    // Reset before connect() so that if the WebSocket drops during
+    // connect() or the subsequent connectWorkspace(), the onDone
+    // handler can trigger a fresh _scheduleReconnect() cycle.
+    _reconnecting = false;
     await connect();
     if (_connected && _pendingWorkspaceId != null) {
       connectWorkspace(_pendingWorkspaceId!);
-    } else {
-      // Clear _reconnecting here: when connected with no pending
-      // workspace the server sends no workspace_ready frame (which
-      // otherwise clears it), so _scheduleReconnect would otherwise
-      // short-circuit on the next drop.
-      _reconnecting = false;
-      if (!_connected) _scheduleReconnect();
+    } else if (!_connected) {
+      _scheduleReconnect();
     }
   }
 
