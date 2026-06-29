@@ -12,7 +12,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, container, model, oidc, plugins, wshandler
+from . import auth, container, model, oidc, plugins, workspaces, wshandler
 from .api import root_router, router
 from .util import API_PREFIX
 from .model import (
@@ -265,6 +265,9 @@ async def lifespan(app: FastAPI):
     await container.registry.prewarm_podman()
     await container.registry.adopt_orphaned_containers()
     container.registry.start_cleanup_loop()
+    n = await workspaces.auto_start_workspaces()
+    if n:  # pragma: no cover
+        logger.info("Auto-started %d workspace(s)", n)
     logger.info("Klangk backend started")
     yield
     await container.registry.shutdown()

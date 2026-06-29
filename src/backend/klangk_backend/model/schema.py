@@ -77,6 +77,7 @@ async def init_db() -> None:
                 num_ports INTEGER NOT NULL DEFAULT 5,
                 image TEXT,  -- custom container image; NULL means use default
                 default_command TEXT,  -- auto-run in terminal on connect
+                auto_start INTEGER NOT NULL DEFAULT 0,  -- start on server boot
                 mounts TEXT,  -- JSON array of host:container mount specs
                 env TEXT,  -- JSON dict of custom environment variables
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),

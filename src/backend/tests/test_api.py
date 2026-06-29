@@ -1082,6 +1082,29 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 400
         assert "Invalid mount" in resp.json()["detail"]
 
+    async def test_create_auto_start_rejected_without_env(self, client, user):
+        headers = await _auth_headers(client)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KLANGK_ALLOW_AUTOSTART", None)
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "auto-ws", "auto_start": True},
+            )
+        assert resp.status_code == 400
+        assert "Auto-start is not enabled" in resp.json()["detail"]
+
+    async def test_create_auto_start_allowed_with_env(self, client, user):
+        headers = await _auth_headers(client)
+        with patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "auto-ws", "auto_start": True},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["auto_start"] is True
+
     async def test_create_with_valid_mount(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -1424,6 +1447,34 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 400
         assert "Invalid mount" in resp.json()["detail"]
+
+    async def test_update_auto_start_rejected_without_env(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "no-auto-upd"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KLANGK_ALLOW_AUTOSTART", None)
+            resp = await client.put(
+                f"/api/v1/workspaces/{ws_id}",
+                json={"auto_start": True},
+                headers=headers,
+            )
+        assert resp.status_code == 400
+        assert "Auto-start is not enabled" in resp.json()["detail"]
+
+    async def test_workspace_response_includes_auto_start(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "check-field"},
+        )
+        assert resp.status_code == 200
+        assert "auto_start" in resp.json()
 
     async def test_duplicate_workspace(self, client, user):
         headers = await _auth_headers(client)
@@ -4881,6 +4932,7 @@ class TestWorkspaceMetadata:
             "name": "myws",
             "image": "ubuntu",
             "default_command": "bash",
+            "auto_start": True,
             "mounts": ["/data:/data"],
             "env": {"FOO": "bar"},
             "num_ports": 3,
@@ -4890,6 +4942,7 @@ class TestWorkspaceMetadata:
             "name": "myws",
             "image": "ubuntu",
             "default_command": "bash",
+            "auto_start": True,
             "mounts": ["/data:/data"],
             "env": {"FOO": "bar"},
             "num_ports": 3,

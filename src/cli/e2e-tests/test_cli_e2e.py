@@ -685,6 +685,83 @@ class TestDefaultCommand:
             _run(["klangkc", "rm", "e2e-defcmd"], env=env)
 
 
+class TestAutoStart:
+    """Verify auto-start workspace creation and editing."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    @staticmethod
+    def autostart_server(tmp_path_factory, request):
+        data_dir = tempfile.mkdtemp(prefix="klangk-autostart-")
+        proc, base_url = _start_server(
+            data_dir,
+            "18996",
+            "autostart-e2e",
+            extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
+        )
+        config_dir = tmp_path_factory.mktemp("klangk-autostart-config")
+        env = {**os.environ, "HOME": str(config_dir)}
+        klangk_config_dir = config_dir / ".config" / "klangk"
+        klangk_config_dir.mkdir(parents=True)
+        _run(
+            [
+                "klangkc",
+                "login",
+                base_url,
+                "test@example.com",
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+        request.cls._env = env
+        request.cls._base_url = base_url
+        yield
+        _stop_server(proc, data_dir, "autostart-e2e")
+
+    def test_create_with_auto_start(self):
+        env = self._env
+        try:
+            result = _run(
+                ["klangkc", "create", "e2e-autostart", "--auto-start"],
+                env=env,
+            )
+            assert result.returncode == 0
+            assert "e2e-autostart" in result.stdout
+        finally:
+            _run(["klangkc", "rm", "e2e-autostart"], env=env)
+
+    def test_edit_auto_start_on_off(self):
+        env = self._env
+        _run(["klangkc", "create", "e2e-autostart2"], env=env)
+        try:
+            result = _run(
+                ["klangkc", "edit", "e2e-autostart2", "--auto-start"],
+                env=env,
+            )
+            assert result.returncode == 0
+            assert "Updated" in result.stdout
+
+            result = _run(
+                ["klangkc", "edit", "e2e-autostart2", "--no-auto-start"],
+                env=env,
+            )
+            assert result.returncode == 0
+            assert "Updated" in result.stdout
+        finally:
+            _run(["klangkc", "rm", "e2e-autostart2"], env=env)
+
+    def test_create_auto_start_rejected_without_env(self, cli_config):
+        """auto_start=True is rejected when KLANGK_ALLOW_AUTOSTART is unset."""
+        env = cli_config["env"]
+        result = _run(
+            ["klangkc", "create", "e2e-autostart-no", "--auto-start"],
+            env=env,
+        )
+        assert result.returncode != 0
+        assert "not enabled" in result.stdout or "not enabled" in result.stderr
+
+
 class TestMounts:
     @staticmethod
     def _login(cli_config):

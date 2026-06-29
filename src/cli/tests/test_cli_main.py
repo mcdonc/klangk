@@ -1883,7 +1883,11 @@ class TestMainCLI:
         )
         assert result.exit_code == 0
         client.create_workspace.assert_called_once_with(
-            "ws", image=None, mounts=None, env={"FOO": "bar", "X": "1"}
+            "ws",
+            image=None,
+            auto_start=False,
+            mounts=None,
+            env={"FOO": "bar", "X": "1"},
         )
 
     def test_create_with_invalid_env_flag(self, logged_in_cfg, monkeypatch):
@@ -1977,6 +1981,28 @@ class TestMainCLI:
 
         body = client.put.call_args[1]["json"]
         assert body["env"] == {"A": "1"}
+
+    def test_edit_with_auto_start_flag(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["edit", "my-ws", "--auto-start"])
+            assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["auto_start"] is True
 
     def test_dup_workspace(self, logged_in_cfg, monkeypatch):
         from klangkc import main

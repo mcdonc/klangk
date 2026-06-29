@@ -17,6 +17,7 @@ async def create_workspace(
     name: str,
     image: str | None = None,
     default_command: str | None = None,
+    auto_start: bool = False,
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
 ) -> dict:
@@ -27,15 +28,16 @@ async def create_workspace(
         env_json = json.dumps(env) if env else None
         await db.execute(
             "INSERT INTO workspaces"
-            " (id, user_id, name, image, default_command, mounts,"
-            " env, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " (id, user_id, name, image, default_command, auto_start,"
+            " mounts, env, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 workspace_id,
                 user_id,
                 name,
                 image,
                 default_command,
+                1 if auto_start else 0,
                 mounts_json,
                 env_json,
                 created_at,
@@ -47,6 +49,7 @@ async def create_workspace(
             "name": name,
             "image": image,
             "default_command": default_command,
+            "auto_start": auto_start,
             "mounts": mounts,
             "env": env,
             "num_ports": _DEFAULT_PORTS_PER_WORKSPACE,
@@ -98,7 +101,7 @@ async def list_workspaces(
     async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, container_id, image, default_command,"
-            " mounts, env, created_at FROM workspaces"
+            " auto_start, mounts, env, created_at FROM workspaces"
             f" {where} {order_by} LIMIT ? OFFSET ?",
             tuple(params),
         )
@@ -110,6 +113,7 @@ async def list_workspaces(
                 "container_id": row["container_id"],
                 "image": row["image"],
                 "default_command": row["default_command"],
+                "auto_start": bool(row["auto_start"]),
                 "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
                 "env": json.loads(row["env"]) if row["env"] else None,
                 "created_at": row["created_at"],
@@ -152,7 +156,7 @@ async def list_shared_workspaces(
         )
         cursor = await db.execute(
             "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
-            " w.default_command, w.mounts, w.env, w.created_at,"
+            " w.default_command, w.auto_start, w.mounts, w.env, w.created_at,"
             " u.email AS owner_email"
             " FROM workspaces w"
             " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
@@ -182,6 +186,7 @@ async def list_shared_workspaces(
                 "container_id": row["container_id"],
                 "image": row["image"],
                 "default_command": row["default_command"],
+                "auto_start": bool(row["auto_start"]),
                 "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
                 "env": json.loads(row["env"]) if row["env"] else None,
                 "created_at": row["created_at"],
@@ -209,14 +214,14 @@ async def get_workspace(
         if user_id is not None:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
-                " default_command, mounts, env"
+                " default_command, auto_start, mounts, env"
                 " FROM workspaces WHERE id = ? AND user_id = ?",
                 (workspace_id, user_id),
             )
         else:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
-                " default_command, mounts, env"
+                " default_command, auto_start, mounts, env"
                 " FROM workspaces WHERE id = ?",
                 (workspace_id,),
             )
@@ -231,6 +236,7 @@ async def get_workspace(
             "num_ports": row["num_ports"],
             "image": row["image"],
             "default_command": row["default_command"],
+            "auto_start": bool(row["auto_start"]),
             "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
             "env": json.loads(row["env"]) if row["env"] else None,
         }
@@ -349,13 +355,22 @@ async def update_workspace(
     **fields: str | None,
 ) -> bool:
     """Update workspace fields. Only provided fields are changed."""
-    allowed = {"name", "image", "default_command", "mounts", "env"}
+    allowed = {
+        "name",
+        "image",
+        "default_command",
+        "auto_start",
+        "mounts",
+        "env",
+    }
     to_set = {}
     for k, v in fields.items():
         if k not in allowed:
             continue
         if k in ("mounts", "env"):
             to_set[k] = json.dumps(v) if v is not None else None
+        elif k == "auto_start":
+            to_set[k] = 1 if v else 0
         else:
             to_set[k] = v
     if not to_set:
@@ -380,5 +395,31 @@ async def get_user_workspaces_with_containers(user_id: str) -> list[dict]:
         rows = await cursor.fetchall()
         return [
             {"id": row["id"], "container_id": row["container_id"]}
+            for row in rows
+        ]
+
+
+async def list_auto_start_workspaces() -> list[dict]:
+    """List all workspaces with auto_start enabled."""
+    async with transaction() as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, name, container_id, num_ports, image,"
+            " default_command, auto_start, mounts, env"
+            " FROM workspaces WHERE auto_start = 1",
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "user_id": row["user_id"],
+                "name": row["name"],
+                "container_id": row["container_id"],
+                "num_ports": row["num_ports"],
+                "image": row["image"],
+                "default_command": row["default_command"],
+                "auto_start": True,
+                "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
+                "env": json.loads(row["env"]) if row["env"] else None,
+            }
             for row in rows
         ]

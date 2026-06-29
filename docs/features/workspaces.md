@@ -15,14 +15,43 @@ optionally configure:
   `klangk-workspace`)
 - **Default command** — a command to run when you open the terminal
   (e.g., `pi` to start the AI agent automatically). If unset, the
-  terminal starts a tmux session with a login shell.
+  terminal starts a tmux session with a login shell. See
+  [Default Command](default-command.md).
+- **Auto-start** — start the container automatically when the
+  Klangk server starts. Useful for service workspaces that should
+  be running before any user connects. If the workspace also has a
+  default command, it will already be running when you connect.
 - **Bind mounts** — mount host directories into the container.
   If `KLANGK_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
   paths), only directories under those roots can be bind-mounted.
   Protected paths like the Docker/Podman socket are always blocked.
 - **Environment variables** — set custom env vars for the container
 
-You can change all of these later from the workspace Settings tab.
+You can change all of these later from the workspace **Settings** tab.
+
+## Auto-start
+
+Workspaces with **auto-start** enabled start their containers
+automatically when the Klangk server starts. This is useful for
+service workspaces where a long-running process (configured via
+[Default Command](default-command.md)) should be available
+immediately — without waiting for a user to connect.
+
+Auto-start requires the server to have `KLANGK_ALLOW_AUTOSTART`
+set to `1`/`true`/`yes`. When disabled (the default), the
+auto-start option is hidden in the UI, CLI, and API.
+
+Toggle auto-start from the workspace **Settings** tab, or via the
+CLI:
+
+```bash
+klangkc edit my-project --auto-start
+klangkc edit my-project --no-auto-start
+```
+
+When the server starts, it starts containers for all auto-start
+workspaces. If the workspace has a default command, the command
+is already running by the time any user connects.
 
 ## What's inside a workspace
 

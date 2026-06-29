@@ -37,6 +37,7 @@ from ..model import (
     PRINCIPAL_USER,
 )
 from ..util import (
+    resolve_env_bool,
     sanitize_disposition_name,
 )
 from ._common import (
@@ -112,6 +113,7 @@ class CreateWorkspaceRequest(BaseModel):
     name: str
     image: str | None = None
     default_command: str | None = None
+    auto_start: bool = False
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
 
@@ -120,6 +122,12 @@ class CreateWorkspaceRequest(BaseModel):
 async def create_workspace(
     body: CreateWorkspaceRequest, user: dict = Depends(auth.get_current_user)
 ):
+    if body.auto_start and not resolve_env_bool("KLANGK_ALLOW_AUTOSTART"):
+        raise HTTPException(
+            status_code=400,
+            detail="Auto-start is not enabled on this server"
+            " (set KLANGK_ALLOW_AUTOSTART=1)",
+        )
     if body.image and body.image not in container.ALLOWED_IMAGES:
         raise HTTPException(
             status_code=400,
@@ -136,6 +144,7 @@ async def create_workspace(
             body.name,
             image=body.image,
             default_command=body.default_command,
+            auto_start=body.auto_start,
             mounts=body.mounts,
             env=body.env,
         )
@@ -204,6 +213,7 @@ class UpdateWorkspaceRequest(BaseModel):
     name: str | None = None
     image: str | None = None
     default_command: str | None = None
+    auto_start: bool | None = None
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
 
@@ -215,6 +225,14 @@ async def update_workspace(
     user: dict = Depends(acl.has_permission("edit", _workspace_resource)),
 ):
     fields = body.model_dump(exclude_unset=True)
+    if fields.get("auto_start") and not resolve_env_bool(
+        "KLANGK_ALLOW_AUTOSTART"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Auto-start is not enabled on this server"
+            " (set KLANGK_ALLOW_AUTOSTART=1)",
+        )
     if "image" in fields and fields["image"] is not None:
         if fields["image"] not in container.ALLOWED_IMAGES:
             raise HTTPException(
@@ -258,6 +276,7 @@ async def duplicate_workspace(
             body.name,
             image=source.get("image"),
             default_command=source.get("default_command"),
+            auto_start=source.get("auto_start", False),
             mounts=source.get("mounts"),
             env=source.get("env"),
         )
@@ -518,6 +537,7 @@ async def import_workspace(
                 ws_name,
                 image=image,
                 default_command=metadata.get("default_command"),
+                auto_start=metadata.get("auto_start", False),
                 mounts=mounts,
                 env=env,
             )
