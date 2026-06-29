@@ -20,8 +20,6 @@ class AdminUsersPage extends StatefulWidget {
 
 class _AdminUsersPageState extends State<AdminUsersPage> {
   List<Map<String, dynamic>> _users = [];
-  List<Map<String, dynamic>> _invitations = [];
-  List<Map<String, dynamic>> _groups = [];
   bool _loading = true;
   String? _error;
   int _selectedIndex = 0;
@@ -36,31 +34,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   final TextEditingController _searchController = TextEditingController();
   Timer? _usersQueryDebounce;
 
-  // Admin invitations list: server-side pagination / sort / filter state.
-  int _invitationsPage = 1;
-  final int _invitationsPageSize = 10;
-  int _invitationsTotal = 0;
-  int _invitationsPending = 0; // global pending count (drives the tab badge)
-  String _invitationsSort = 'created'; // email | invited_by | created
-  String _invitationsOrder = 'desc'; // asc | desc
-  String _invitationsQuery = '';
-  final TextEditingController _invitationsSearchController =
-      TextEditingController();
-  Timer? _invitationsQueryDebounce;
-
-  // Admin groups list: server-side pagination / sort / filter state.
-  int _groupsPage = 1;
-  final int _groupsPageSize = 10;
-  int _groupsTotal = 0;
-  String _groupsSort = 'name'; // name | created
-  String _groupsOrder = 'asc'; // asc | desc
-  String _groupsQuery = '';
-  final TextEditingController _groupSearchController = TextEditingController();
-  Timer? _groupsQueryDebounce;
-
   bool _canUsers = false;
   bool _canGroups = false;
   bool _canInvitations = false;
+
+  // Pending invitation count for the tab badge — updated by the
+  // _InvitationsTab widget via callback.
+  int _invitationsPending = 0;
 
   /// URL-encode a query param map (sorted for stable, cacheable URLs).
   static String _encodeQuery(Map<String, String> params) {
@@ -77,10 +57,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   @override
   void initState() {
     super.initState();
-    // Live filter: re-query the backend as the user types, debounced so
-    // we don't fire a request per keystroke. Restarts the debounce timer
-    // on every change and resets to page 1 (a narrower result set may
-    // collapse the previous page range).
     _searchController.addListener(() {
       final value = _searchController.text;
       if (value == _usersQuery) return;
@@ -89,33 +65,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       _usersQueryDebounce =
           Timer(const Duration(milliseconds: 300), () => _loadUsers(page: 1));
     });
-    _invitationsSearchController.addListener(() {
-      final value = _invitationsSearchController.text;
-      if (value == _invitationsQuery) return;
-      _invitationsQuery = value;
-      _invitationsQueryDebounce?.cancel();
-      _invitationsQueryDebounce = Timer(
-          const Duration(milliseconds: 300), () => _loadInvitations(page: 1));
-    });
-    _groupSearchController.addListener(() {
-      final value = _groupSearchController.text;
-      if (value == _groupsQuery) return;
-      _groupsQuery = value;
-      _groupsQueryDebounce?.cancel();
-      _groupsQueryDebounce =
-          Timer(const Duration(milliseconds: 300), () => _loadGroups(page: 1));
-    });
-    _loadData();
+    _loadUsers();
   }
 
   @override
   void dispose() {
     _usersQueryDebounce?.cancel();
-    _invitationsQueryDebounce?.cancel();
-    _groupsQueryDebounce?.cancel();
     _searchController.dispose();
-    _invitationsSearchController.dispose();
-    _groupSearchController.dispose();
     super.dispose();
   }
 
@@ -127,10 +83,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         auth.hasPermission('/admin/groups', 'view');
     _canInvitations = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/invitations', 'view');
-  }
-
-  Future<void> _loadData() async {
-    await Future.wait([_loadUsers(), _loadInvitations(), _loadGroups()]);
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -173,280 +125,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     }
   }
 
-  Future<void> _loadInvitations({int page = 1}) async {
-    setState(() {
-      _invitationsPage = page;
-    });
-    try {
-      final auth = context.read<AuthService>();
-      final q = _invitationsQuery.trim();
-      final query = 'page=$_invitationsPage'
-          '&page_size=$_invitationsPageSize'
-          '&sort=${Uri.encodeQueryComponent(_invitationsSort)}'
-          '&order=${Uri.encodeQueryComponent(_invitationsOrder)}'
-          '${q.isNotEmpty ? '&q=${Uri.encodeQueryComponent(q)}' : ''}';
-      final resp = await auth.authGet(
-        '/api/v1/admin/invitations?$query',
-      );
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        if (mounted) {
-          setState(() {
-            _invitations =
-                (data['invitations'] as List).cast<Map<String, dynamic>>();
-            _invitationsTotal = (data['total'] as num).toInt();
-            _invitationsPending = (data['pending_count'] as num).toInt();
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('[AdminUsersPage] load invitations failed: $e');
-    }
-  }
-
-  Future<void> _loadGroups({int page = 1}) async {
-    setState(() {
-      _groupsPage = page;
-    });
-    try {
-      final auth = context.read<AuthService>();
-      final query = <String, String>{
-        'page': '$_groupsPage',
-        'page_size': '$_groupsPageSize',
-        'sort': _groupsSort,
-        'order': _groupsOrder,
-      };
-      final q = _groupsQuery.trim();
-      if (q.isNotEmpty) query['q'] = q;
-      final resp = await auth.authGet(
-        '/api/v1/admin/groups?${_encodeQuery(query)}',
-      );
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        if (mounted) {
-          setState(() {
-            _groups = (data['groups'] as List).cast<Map<String, dynamic>>();
-            _groupsTotal = (data['total'] as num).toInt();
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('[AdminUsersPage] load groups failed: $e');
-    }
-  }
-
-  Future<void> _createGroup() async {
-    final nameCtrl = TextEditingController();
-    final descCtrl = TextEditingController();
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Create Group'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(labelText: 'Group name'),
-              autofocus: true,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: descCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Description (optional)',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
-    if (result != true || nameCtrl.text.trim().isEmpty) return;
-    final auth = context.read<AuthService>();
-    final resp = await auth.authPost(
-      '/api/v1/admin/groups',
-      body: jsonEncode({
-        'name': nameCtrl.text.trim(),
-        if (descCtrl.text.trim().isNotEmpty)
-          'description': descCtrl.text.trim(),
-      }),
-    );
-    if (!mounted) return;
-    if (resp.statusCode == 200) {
-      _loadGroups();
-    } else {
-      _showSnack(resp);
-    }
-  }
-
-  Future<void> _deleteGroup(String groupId, String groupName) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Group'),
-        content: Text(
-          'Delete group "$groupName"? All ACL entries for this group '
-          'will be removed.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: KColors.accentRed),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    final auth = context.read<AuthService>();
-    final resp = await auth.authDelete('/api/v1/admin/groups/$groupId');
-    if (!mounted) return;
-    if (resp.statusCode == 200) {
-      _loadGroups();
-    } else {
-      _showSnack(resp);
-    }
-  }
-
-  Future<void> _manageMembers(Map<String, dynamic> group) async {
-    final auth = context.read<AuthService>();
-    final groupId = group['id'] as String;
-    final groupName = group['name'] as String;
-
-    final membersResp = await auth.authGet(
-      '/api/v1/admin/groups/$groupId/members',
-    );
-    final usersResp = await auth.authGet(
-      '/api/v1/admin/users?page_size=200',
-    );
-    if (!mounted) return;
-    if (membersResp.statusCode != 200 || usersResp.statusCode != 200) return;
-
-    var members = List<Map<String, dynamic>>.from(jsonDecode(membersResp.body));
-    final allUsers = List<Map<String, dynamic>>.from(
-      (jsonDecode(usersResp.body) as Map<String, dynamic>)['users'] as List,
-    );
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          final memberIds = members.map((m) => m['id']).toSet();
-          final nonMembers =
-              allUsers.where((u) => !memberIds.contains(u['id'])).toList();
-
-          return AlertDialog(
-            title: Text('Members of "$groupName"'),
-            content: SizedBox(
-              width: 400,
-              height: 400,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (nonMembers.isNotEmpty)
-                    DropdownButton<String>(
-                      isExpanded: true,
-                      hint: const Text('Add member...'),
-                      items: nonMembers.map((u) {
-                        return DropdownMenuItem(
-                          value: u['id'] as String,
-                          child: Text(u['email'] as String),
-                        );
-                      }).toList(),
-                      onChanged: (userId) async {
-                        if (userId == null) return;
-                        final resp = await auth.authPost(
-                          '/api/v1/admin/groups/$groupId/members',
-                          body: jsonEncode({'user_id': userId}),
-                        );
-                        if (resp.statusCode == 200) {
-                          final r = await auth.authGet(
-                            '/api/v1/admin/groups/$groupId/members',
-                          );
-                          if (r.statusCode == 200) {
-                            setDialogState(() {
-                              members = List<Map<String, dynamic>>.from(
-                                jsonDecode(r.body),
-                              );
-                            });
-                          }
-                        }
-                      },
-                    ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: members.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No members',
-                              style: TextStyle(color: KColors.textSecondary),
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: members.length,
-                            itemBuilder: (ctx, i) {
-                              final member = members[i];
-                              return ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: KColors.accentBlue,
-                                  child: Text(
-                                    (member['email'] as String)[0]
-                                        .toUpperCase(),
-                                    style: const TextStyle(color: Colors.white),
-                                  ),
-                                ),
-                                title: Text(member['email'] as String),
-                                trailing: IconButton(
-                                  icon: const Icon(
-                                    Icons.remove_circle_outline,
-                                    color: KColors.accentRed,
-                                  ),
-                                  tooltip: 'Remove from group',
-                                  onPressed: () async {
-                                    final resp = await auth.authDelete(
-                                      '/api/v1/admin/groups/$groupId/members/${member['id']}',
-                                    );
-                                    if (resp.statusCode == 200) {
-                                      setDialogState(() {
-                                        members.removeAt(i);
-                                      });
-                                    }
-                                  },
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Done'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-    _loadGroups();
-  }
-
   void _showSnack(dynamic resp) {
     String msg;
     try {
@@ -456,193 +134,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       msg = 'Error: ${resp.statusCode}';
     }
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
-  Widget _buildGroupsTab() {
-    return Column(
-      children: [
-        _AdminListToolbar(
-          key: const ValueKey('admin-groups-toolbar'),
-          columns: const [
-            ('Name', 'name'),
-            ('Created', 'created'),
-          ],
-          sort: _groupsSort,
-          order: _groupsOrder,
-          onChangeSort: _changeGroupsSort,
-          searchController: _groupSearchController,
-          searchHint: 'Filter by name…',
-          page: _groupsPage,
-          pageSize: _groupsPageSize,
-          total: _groupsTotal,
-          onPage: (p) => _loadGroups(page: p),
-        ),
-        Expanded(child: _buildGroupsList()),
-      ],
-    );
-  }
-
-  /// Select a sort column, or toggle direction if already selected —
-  /// mirrors the users tab sort chips. Resets to page 1 because a
-  /// different sort reorders every row.
-  Future<void> _changeGroupsSort(String sortKey) async {
-    if (_groupsSort == sortKey) {
-      setState(() => _groupsOrder = _groupsOrder == 'asc' ? 'desc' : 'asc');
-    } else {
-      setState(() {
-        _groupsSort = sortKey;
-        // Name reads naturally ascending; created descending.
-        _groupsOrder = sortKey == 'created' ? 'desc' : 'asc';
-      });
-    }
-    await _loadGroups(page: 1);
-  }
-
-  Widget _buildGroupsList() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_groups.isEmpty) return const Center(child: Text('No groups'));
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _groups.length,
-      itemBuilder: (ctx, i) {
-        final group = _groups[i];
-        final name = group['name'] as String;
-        final desc = group['description'] as String? ?? '';
-        return Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: KColors.colorForString(name),
-              child: const Icon(Icons.group, color: Colors.white),
-            ),
-            title: Text(name),
-            subtitle: Text(
-              desc.isNotEmpty ? desc : ' ',
-              style: const TextStyle(color: KColors.textSecondary),
-            ),
-            onTap: () => _manageMembers(group),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (name != 'admin')
-                  IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      color: KColors.accentRed,
-                    ),
-                    tooltip: 'Delete group',
-                    onPressed: () => _deleteGroup(group['id'], name),
-                  ),
-                IconButton(
-                  icon: const Icon(Icons.people, color: KColors.accentBlue),
-                  tooltip: 'Manage members',
-                  onPressed: () => _manageMembers(group),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _inviteUser() async {
-    final email = await showDialog<String>(
-      context: context,
-      builder: (ctx) => _InviteUserDialog(),
-    );
-    if (email == null) return;
-
-    final auth = context.read<AuthService>();
-    final resp = await auth.authPost(
-      '/api/v1/admin/invitations',
-      body: jsonEncode({'email': email}),
-    );
-    if (resp.statusCode == 200) {
-      // New invitation sorts to the top (created desc) — jump to page 1
-      // so the admin sees it immediately.
-      _loadInvitations(page: 1);
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Invitation sent to $email')));
-      }
-    } else {
-      if (mounted) {
-        final error = jsonDecode(resp.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error['detail'] ?? 'Failed to send invitation'),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _revokeInvitation(String invitationId, String email) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Revoke Invitation'),
-        content: Text('Revoke the invitation for "$email"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: KColors.accentRed,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Revoke'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-
-    final auth = context.read<AuthService>();
-    final resp = await auth.authDelete(
-      '/api/v1/admin/invitations/$invitationId',
-    );
-    if (resp.statusCode == 200) {
-      // Revoked invitations stay in the list (status filter is out of
-      // scope), so just refresh the current page to show the new status.
-      _loadInvitations(page: _invitationsPage);
-    } else {
-      if (mounted) {
-        final error = jsonDecode(resp.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error['detail'] ?? 'Failed to revoke invitation'),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _resendInvitation(String invitationId, String email) async {
-    final auth = context.read<AuthService>();
-    final resp = await auth.authPost(
-      '/api/v1/admin/invitations/$invitationId/resend',
-    );
-    if (mounted) {
-      if (resp.statusCode == 200) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Invitation resent to $email')));
-      } else {
-        final error = jsonDecode(resp.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error['detail'] ?? 'Failed to resend invitation'),
-          ),
-        );
-      }
-    }
   }
 
   Future<void> _addUser() async {
@@ -842,32 +333,763 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     );
   }
 
-  Widget _buildInvitationsTab() {
-    return Column(
-      children: [
-        _AdminListToolbar(
-          key: const ValueKey('admin-invitations-toolbar'),
-          columns: const [
-            ('Email', 'email'),
-            ('Invited by', 'invited_by'),
-            ('Created', 'created'),
-          ],
-          sort: _invitationsSort,
-          order: _invitationsOrder,
-          onChangeSort: _changeInvitationsSort,
-          searchController: _invitationsSearchController,
-          page: _invitationsPage,
-          pageSize: _invitationsPageSize,
-          total: _invitationsTotal,
-          onPage: (p) => _loadInvitations(page: p),
+  /// Map from tab index to tab type for FAB selection.
+  List<String> get _tabTypes {
+    final types = <String>[];
+    if (_canUsers) types.add('users');
+    if (_canGroups) types.add('groups');
+    if (_canInvitations) types.add('invitations');
+    if (types.isNotEmpty) types.add('acl');
+    return types;
+  }
+
+  (List<SkeuoTab>, List<Widget>) _buildTabsAndViews() {
+    final pendingCount = _invitationsPending;
+    final tabs = <SkeuoTab>[];
+    final views = <Widget>[];
+    final tabTypes = _tabTypes;
+
+    void addTab({
+      required String label,
+      required IconData icon,
+      required Widget view,
+      int? badge,
+    }) {
+      final idx = tabs.length;
+      tabs.add(
+        SkeuoTab(
+          label: label,
+          icon: icon,
+          isSelected: _selectedIndex == idx,
+          badge: badge,
+          onTap: () => setState(() => _selectedIndex = idx),
         ),
-        Expanded(child: _buildInvitationsList()),
-      ],
+      );
+      views.add(view);
+    }
+
+    if (_canUsers) {
+      addTab(label: 'Users', icon: Icons.people, view: _buildUsersTab());
+    }
+    if (_canGroups) {
+      addTab(
+        label: 'Groups',
+        icon: Icons.group,
+        view: _GroupsTab(key: const ValueKey('groups-tab')),
+      );
+    }
+    if (_canInvitations) {
+      addTab(
+        label: 'Invitations',
+        icon: Icons.mail_outline,
+        badge: pendingCount > 0 ? pendingCount : null,
+        view: _InvitationsTab(
+          key: const ValueKey('invitations-tab'),
+          onPendingCountChanged: (count) {
+            if (_invitationsPending != count) {
+              setState(() => _invitationsPending = count);
+            }
+          },
+        ),
+      );
+    }
+    if (tabTypes.isNotEmpty) {
+      addTab(
+        label: 'Access Control',
+        icon: Icons.security,
+        view: const _AclBrowserTab(),
+      );
+    }
+
+    if (tabs.isEmpty) {
+      views.add(const Center(child: Text('No admin sections available')));
+    }
+
+    return (tabs, views);
+  }
+
+  Widget? _buildFab() {
+    final tabTypes = _tabTypes;
+    final currentType = tabTypes.isNotEmpty && _selectedIndex < tabTypes.length
+        ? tabTypes[_selectedIndex]
+        : '';
+    return switch (currentType) {
+      'users' => FloatingActionButton(
+          heroTag: 'add',
+          onPressed: _addUser,
+          tooltip: 'Add user',
+          child: const Icon(Icons.person_add),
+        ),
+      'invitations' || 'groups' => null, // FABs handled inside tab widgets
+      _ => null,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Re-resolve on each build: AuthService loads permissions asynchronously,
+    // so the first build (before they arrive) would otherwise show no tabs.
+    _resolvePermissions();
+    final (tabs, views) = _buildTabsAndViews();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const AppBarTitle(title: 'Admin'),
+        actions: const [AppBarActions()],
+      ),
+      floatingActionButton: _buildFab(),
+      body: Column(
+        children: [
+          if (tabs.isNotEmpty)
+            Container(
+              height: 40,
+              color: KColors.bgCanvas,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: tabs.map((t) => Expanded(child: t)).toList(),
+              ),
+            ),
+          Expanded(
+            child: IndexedStack(
+              index: _selectedIndex < views.length ? _selectedIndex : 0,
+              children: views,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Groups tab
+// ---------------------------------------------------------------------------
+
+class _GroupsTab extends StatefulWidget {
+  const _GroupsTab({super.key});
+
+  @override
+  State<_GroupsTab> createState() => _GroupsTabState();
+}
+
+class _GroupsTabState extends State<_GroupsTab> {
+  List<Map<String, dynamic>> _groups = [];
+  bool _loading = true;
+
+  int _groupsPage = 1;
+  final int _groupsPageSize = 10;
+  int _groupsTotal = 0;
+  String _groupsSort = 'name';
+  String _groupsOrder = 'asc';
+  String _groupsQuery = '';
+  final TextEditingController _groupSearchController = TextEditingController();
+  Timer? _groupsQueryDebounce;
+
+  /// URL-encode a query param map (sorted for stable, cacheable URLs).
+  static String _encodeQuery(Map<String, String> params) {
+    final pairs = <String>[];
+    for (final key in params.keys.toList()..sort()) {
+      pairs.add(
+        '${Uri.encodeQueryComponent(key)}='
+        '${Uri.encodeQueryComponent(params[key]!)}',
+      );
+    }
+    return pairs.join('&');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _groupSearchController.addListener(() {
+      final value = _groupSearchController.text;
+      if (value == _groupsQuery) return;
+      _groupsQuery = value;
+      _groupsQueryDebounce?.cancel();
+      _groupsQueryDebounce =
+          Timer(const Duration(milliseconds: 300), () => _loadGroups(page: 1));
+    });
+    _loadGroups();
+  }
+
+  @override
+  void dispose() {
+    _groupsQueryDebounce?.cancel();
+    _groupSearchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadGroups({int page = 1}) async {
+    setState(() {
+      _groupsPage = page;
+      _loading = true;
+    });
+    try {
+      final auth = context.read<AuthService>();
+      final query = <String, String>{
+        'page': '$_groupsPage',
+        'page_size': '$_groupsPageSize',
+        'sort': _groupsSort,
+        'order': _groupsOrder,
+      };
+      final q = _groupsQuery.trim();
+      if (q.isNotEmpty) query['q'] = q;
+      final resp = await auth.authGet(
+        '/api/v1/admin/groups?${_encodeQuery(query)}',
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        if (mounted) {
+          setState(() {
+            _groups = (data['groups'] as List).cast<Map<String, dynamic>>();
+            _groupsTotal = (data['total'] as num).toInt();
+            _loading = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _loading = false);
+      }
+    } catch (e) {
+      debugPrint('[AdminUsersPage] load groups failed: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _createGroup() async {
+    final nameCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Create Group'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Group name'),
+              autofocus: true,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: descCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    if (result != true || nameCtrl.text.trim().isEmpty) return;
+    final auth = context.read<AuthService>();
+    final resp = await auth.authPost(
+      '/api/v1/admin/groups',
+      body: jsonEncode({
+        'name': nameCtrl.text.trim(),
+        if (descCtrl.text.trim().isNotEmpty)
+          'description': descCtrl.text.trim(),
+      }),
+    );
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      _loadGroups();
+    } else {
+      _showSnack(resp);
+    }
+  }
+
+  Future<void> _deleteGroup(String groupId, String groupName) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Group'),
+        content: Text(
+          'Delete group "$groupName"? All ACL entries for this group '
+          'will be removed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: KColors.accentRed),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final auth = context.read<AuthService>();
+    final resp = await auth.authDelete('/api/v1/admin/groups/$groupId');
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      _loadGroups();
+    } else {
+      _showSnack(resp);
+    }
+  }
+
+  Future<void> _manageMembers(Map<String, dynamic> group) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _ManageMembersDialog(group: group),
+    );
+    _loadGroups();
+  }
+
+  void _showSnack(dynamic resp) {
+    String msg;
+    try {
+      msg = jsonDecode(resp.body)['detail'] ?? 'Error';
+    } catch (e) {
+      debugPrint('[AdminUsersPage] parse error detail failed: $e');
+      msg = 'Error: ${resp.statusCode}';
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _changeGroupsSort(String sortKey) async {
+    if (_groupsSort == sortKey) {
+      setState(() => _groupsOrder = _groupsOrder == 'asc' ? 'desc' : 'asc');
+    } else {
+      setState(() {
+        _groupsSort = sortKey;
+        _groupsOrder = sortKey == 'created' ? 'desc' : 'asc';
+      });
+    }
+    await _loadGroups(page: 1);
+  }
+
+  Widget _buildGroupsList() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_groups.isEmpty) return const Center(child: Text('No groups'));
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _groups.length,
+      itemBuilder: (ctx, i) {
+        final group = _groups[i];
+        final name = group['name'] as String;
+        final desc = group['description'] as String? ?? '';
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: KColors.colorForString(name),
+              child: const Icon(Icons.group, color: Colors.white),
+            ),
+            title: Text(name),
+            subtitle: Text(
+              desc.isNotEmpty ? desc : ' ',
+              style: const TextStyle(color: KColors.textSecondary),
+            ),
+            onTap: () => _manageMembers(group),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (name != 'admin')
+                  IconButton(
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: KColors.accentRed,
+                    ),
+                    tooltip: 'Delete group',
+                    onPressed: () => _deleteGroup(group['id'], name),
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.people, color: KColors.accentBlue),
+                  tooltip: 'Manage members',
+                  onPressed: () => _manageMembers(group),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
-  /// Select a sort column, or toggle direction if already selected —
-  /// resets to page 1 because a different sort reorders every row.
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'add-group',
+        onPressed: _createGroup,
+        tooltip: 'Create group',
+        child: const Icon(Icons.group_add),
+      ),
+      body: Column(
+        children: [
+          _AdminListToolbar(
+            key: const ValueKey('admin-groups-toolbar'),
+            columns: const [
+              ('Name', 'name'),
+              ('Created', 'created'),
+            ],
+            sort: _groupsSort,
+            order: _groupsOrder,
+            onChangeSort: _changeGroupsSort,
+            searchController: _groupSearchController,
+            searchHint: 'Filter by name…',
+            page: _groupsPage,
+            pageSize: _groupsPageSize,
+            total: _groupsTotal,
+            onPage: (p) => _loadGroups(page: p),
+          ),
+          Expanded(child: _buildGroupsList()),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Manage-members dialog (extracted from _manageMembers)
+// ---------------------------------------------------------------------------
+
+class _ManageMembersDialog extends StatefulWidget {
+  final Map<String, dynamic> group;
+
+  const _ManageMembersDialog({required this.group});
+
+  @override
+  State<_ManageMembersDialog> createState() => _ManageMembersDialogState();
+}
+
+class _ManageMembersDialogState extends State<_ManageMembersDialog> {
+  List<Map<String, dynamic>> _members = [];
+  List<Map<String, dynamic>> _allUsers = [];
+  bool _loading = true;
+
+  String get _groupId => widget.group['id'] as String;
+  String get _groupName => widget.group['name'] as String;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final auth = context.read<AuthService>();
+    final membersResp = await auth.authGet(
+      '/api/v1/admin/groups/$_groupId/members',
+    );
+    final usersResp = await auth.authGet(
+      '/api/v1/admin/users?page_size=200',
+    );
+    if (!mounted) return;
+    if (membersResp.statusCode != 200 || usersResp.statusCode != 200) {
+      setState(() => _loading = false);
+      return;
+    }
+    setState(() {
+      _members = List<Map<String, dynamic>>.from(jsonDecode(membersResp.body));
+      _allUsers = List<Map<String, dynamic>>.from(
+        (jsonDecode(usersResp.body) as Map<String, dynamic>)['users'] as List,
+      );
+      _loading = false;
+    });
+  }
+
+  Future<void> _addMember(String userId) async {
+    final auth = context.read<AuthService>();
+    final resp = await auth.authPost(
+      '/api/v1/admin/groups/$_groupId/members',
+      body: jsonEncode({'user_id': userId}),
+    );
+    if (resp.statusCode == 200) {
+      final r = await auth.authGet(
+        '/api/v1/admin/groups/$_groupId/members',
+      );
+      if (r.statusCode == 200 && mounted) {
+        setState(() {
+          _members = List<Map<String, dynamic>>.from(jsonDecode(r.body));
+        });
+      }
+    }
+  }
+
+  Future<void> _removeMember(int index) async {
+    final member = _members[index];
+    final auth = context.read<AuthService>();
+    final resp = await auth.authDelete(
+      '/api/v1/admin/groups/$_groupId/members/${member['id']}',
+    );
+    if (resp.statusCode == 200 && mounted) {
+      setState(() => _members.removeAt(index));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const AlertDialog(
+        content: SizedBox(
+          height: 100,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    final memberIds = _members.map((m) => m['id']).toSet();
+    final nonMembers =
+        _allUsers.where((u) => !memberIds.contains(u['id'])).toList();
+
+    return AlertDialog(
+      title: Text('Members of "$_groupName"'),
+      content: SizedBox(
+        width: 400,
+        height: 400,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (nonMembers.isNotEmpty)
+              DropdownButton<String>(
+                isExpanded: true,
+                hint: const Text('Add member...'),
+                items: nonMembers.map((u) {
+                  return DropdownMenuItem(
+                    value: u['id'] as String,
+                    child: Text(u['email'] as String),
+                  );
+                }).toList(),
+                onChanged: (userId) {
+                  if (userId != null) _addMember(userId);
+                },
+              ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: _members.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No members',
+                        style: TextStyle(color: KColors.textSecondary),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _members.length,
+                      itemBuilder: (ctx, i) {
+                        final member = _members[i];
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: KColors.accentBlue,
+                            child: Text(
+                              (member['email'] as String)[0].toUpperCase(),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                          title: Text(member['email'] as String),
+                          trailing: IconButton(
+                            icon: const Icon(
+                              Icons.remove_circle_outline,
+                              color: KColors.accentRed,
+                            ),
+                            tooltip: 'Remove from group',
+                            onPressed: () => _removeMember(i),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Done'),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Invitations tab
+// ---------------------------------------------------------------------------
+
+class _InvitationsTab extends StatefulWidget {
+  final ValueChanged<int>? onPendingCountChanged;
+
+  const _InvitationsTab({super.key, this.onPendingCountChanged});
+
+  @override
+  State<_InvitationsTab> createState() => _InvitationsTabState();
+}
+
+class _InvitationsTabState extends State<_InvitationsTab> {
+  List<Map<String, dynamic>> _invitations = [];
+
+  int _invitationsPage = 1;
+  final int _invitationsPageSize = 10;
+  int _invitationsTotal = 0;
+  String _invitationsSort = 'created';
+  String _invitationsOrder = 'desc';
+  String _invitationsQuery = '';
+  final TextEditingController _invitationsSearchController =
+      TextEditingController();
+  Timer? _invitationsQueryDebounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _invitationsSearchController.addListener(() {
+      final value = _invitationsSearchController.text;
+      if (value == _invitationsQuery) return;
+      _invitationsQuery = value;
+      _invitationsQueryDebounce?.cancel();
+      _invitationsQueryDebounce = Timer(
+          const Duration(milliseconds: 300), () => _loadInvitations(page: 1));
+    });
+    _loadInvitations();
+  }
+
+  @override
+  void dispose() {
+    _invitationsQueryDebounce?.cancel();
+    _invitationsSearchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadInvitations({int page = 1}) async {
+    setState(() {
+      _invitationsPage = page;
+    });
+    try {
+      final auth = context.read<AuthService>();
+      final q = _invitationsQuery.trim();
+      final query = 'page=$_invitationsPage'
+          '&page_size=$_invitationsPageSize'
+          '&sort=${Uri.encodeQueryComponent(_invitationsSort)}'
+          '&order=${Uri.encodeQueryComponent(_invitationsOrder)}'
+          '${q.isNotEmpty ? '&q=${Uri.encodeQueryComponent(q)}' : ''}';
+      final resp = await auth.authGet(
+        '/api/v1/admin/invitations?$query',
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        if (mounted) {
+          final pendingCount = (data['pending_count'] as num).toInt();
+          setState(() {
+            _invitations =
+                (data['invitations'] as List).cast<Map<String, dynamic>>();
+            _invitationsTotal = (data['total'] as num).toInt();
+          });
+          widget.onPendingCountChanged?.call(pendingCount);
+        }
+      }
+    } catch (e) {
+      debugPrint('[AdminUsersPage] load invitations failed: $e');
+    }
+  }
+
+  Future<void> _inviteUser() async {
+    final email = await showDialog<String>(
+      context: context,
+      builder: (ctx) => _InviteUserDialog(),
+    );
+    if (email == null) return;
+
+    final auth = context.read<AuthService>();
+    final resp = await auth.authPost(
+      '/api/v1/admin/invitations',
+      body: jsonEncode({'email': email}),
+    );
+    if (resp.statusCode == 200) {
+      _loadInvitations(page: 1);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Invitation sent to $email')));
+      }
+    } else {
+      if (mounted) {
+        final error = jsonDecode(resp.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error['detail'] ?? 'Failed to send invitation'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _revokeInvitation(String invitationId, String email) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Revoke Invitation'),
+        content: Text('Revoke the invitation for "$email"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: KColors.accentRed,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Revoke'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    final auth = context.read<AuthService>();
+    final resp = await auth.authDelete(
+      '/api/v1/admin/invitations/$invitationId',
+    );
+    if (resp.statusCode == 200) {
+      _loadInvitations(page: _invitationsPage);
+    } else {
+      if (mounted) {
+        final error = jsonDecode(resp.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error['detail'] ?? 'Failed to revoke invitation'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _resendInvitation(String invitationId, String email) async {
+    final auth = context.read<AuthService>();
+    final resp = await auth.authPost(
+      '/api/v1/admin/invitations/$invitationId/resend',
+    );
+    if (mounted) {
+      if (resp.statusCode == 200) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Invitation resent to $email')));
+      } else {
+        final error = jsonDecode(resp.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error['detail'] ?? 'Failed to resend invitation'),
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _changeInvitationsSort(String sortKey) async {
     if (_invitationsSort == sortKey) {
       setState(() {
@@ -876,7 +1098,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     } else {
       setState(() {
         _invitationsSort = sortKey;
-        // Email/invited_by read naturally ascending; created descending.
         _invitationsOrder = sortKey == 'created' ? 'desc' : 'asc';
       });
     }
@@ -948,133 +1169,43 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     );
   }
 
-  /// Map from tab index to tab type for FAB selection.
-  List<String> get _tabTypes {
-    final types = <String>[];
-    if (_canUsers) types.add('users');
-    if (_canGroups) types.add('groups');
-    if (_canInvitations) types.add('invitations');
-    if (types.isNotEmpty) types.add('acl');
-    return types;
-  }
-
-  (List<SkeuoTab>, List<Widget>) _buildTabsAndViews() {
-    final pendingCount = _invitationsPending;
-    final tabs = <SkeuoTab>[];
-    final views = <Widget>[];
-    final tabTypes = _tabTypes;
-
-    void addTab({
-      required String label,
-      required IconData icon,
-      required Widget view,
-      int? badge,
-    }) {
-      final idx = tabs.length;
-      tabs.add(
-        SkeuoTab(
-          label: label,
-          icon: icon,
-          isSelected: _selectedIndex == idx,
-          badge: badge,
-          onTap: () => setState(() => _selectedIndex = idx),
-        ),
-      );
-      views.add(view);
-    }
-
-    if (_canUsers) {
-      addTab(label: 'Users', icon: Icons.people, view: _buildUsersTab());
-    }
-    if (_canGroups) {
-      addTab(label: 'Groups', icon: Icons.group, view: _buildGroupsTab());
-    }
-    if (_canInvitations) {
-      addTab(
-        label: 'Invitations',
-        icon: Icons.mail_outline,
-        badge: pendingCount > 0 ? pendingCount : null,
-        view: _buildInvitationsTab(),
-      );
-    }
-    if (tabTypes.isNotEmpty) {
-      addTab(
-        label: 'Access Control',
-        icon: Icons.security,
-        view: const _AclBrowserTab(),
-      );
-    }
-
-    if (tabs.isEmpty) {
-      views.add(const Center(child: Text('No admin sections available')));
-    }
-
-    return (tabs, views);
-  }
-
-  Widget? _buildFab() {
-    final tabTypes = _tabTypes;
-    final currentType = tabTypes.isNotEmpty && _selectedIndex < tabTypes.length
-        ? tabTypes[_selectedIndex]
-        : '';
-    return switch (currentType) {
-      'users' => FloatingActionButton(
-          heroTag: 'add',
-          onPressed: _addUser,
-          tooltip: 'Add user',
-          child: const Icon(Icons.person_add),
-        ),
-      'invitations' => FloatingActionButton(
-          heroTag: 'invite',
-          onPressed: _inviteUser,
-          tooltip: 'Invite user',
-          child: const Icon(Icons.mail_outline),
-        ),
-      'groups' => FloatingActionButton(
-          heroTag: 'add-group',
-          onPressed: _createGroup,
-          tooltip: 'Create group',
-          child: const Icon(Icons.group_add),
-        ),
-      _ => null,
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
-    // Re-resolve on each build: AuthService loads permissions asynchronously,
-    // so the first build (before they arrive) would otherwise show no tabs.
-    _resolvePermissions();
-    final (tabs, views) = _buildTabsAndViews();
-
     return Scaffold(
-      appBar: AppBar(
-        title: const AppBarTitle(title: 'Admin'),
-        actions: const [AppBarActions()],
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'invite',
+        onPressed: _inviteUser,
+        tooltip: 'Invite user',
+        child: const Icon(Icons.mail_outline),
       ),
-      floatingActionButton: _buildFab(),
       body: Column(
         children: [
-          if (tabs.isNotEmpty)
-            Container(
-              height: 40,
-              color: KColors.bgCanvas,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: tabs.map((t) => Expanded(child: t)).toList(),
-              ),
-            ),
-          Expanded(
-            child: IndexedStack(
-              index: _selectedIndex < views.length ? _selectedIndex : 0,
-              children: views,
-            ),
+          _AdminListToolbar(
+            key: const ValueKey('admin-invitations-toolbar'),
+            columns: const [
+              ('Email', 'email'),
+              ('Invited by', 'invited_by'),
+              ('Created', 'created'),
+            ],
+            sort: _invitationsSort,
+            order: _invitationsOrder,
+            onChangeSort: _changeInvitationsSort,
+            searchController: _invitationsSearchController,
+            page: _invitationsPage,
+            pageSize: _invitationsPageSize,
+            total: _invitationsTotal,
+            onPage: (p) => _loadInvitations(page: p),
           ),
+          Expanded(child: _buildInvitationsList()),
         ],
       ),
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Dialogs
+// ---------------------------------------------------------------------------
 
 class _AddUserDialog extends StatefulWidget {
   @override
@@ -1368,6 +1499,10 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Small shared widgets
+// ---------------------------------------------------------------------------
 
 class _UserAvatar extends StatelessWidget {
   final String initial;
