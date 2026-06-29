@@ -2,13 +2,14 @@ import asyncio
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import tempfile
 from pathlib import Path
 
 from . import container, model, podman
-from .util import resolve_env_value
+from .util import resolve_env_bool, resolve_env_value
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ def workspace_metadata(ws: dict) -> dict:
         "name": ws["name"],
         "image": ws.get("image"),
         "default_command": ws.get("default_command"),
+        "auto_start": ws.get("auto_start", False),
         "mounts": ws.get("mounts"),
         "env": ws.get("env"),
         "num_ports": ws.get("num_ports", 5),
@@ -229,6 +231,7 @@ async def create_workspace(
     name: str,
     image: str | None = None,
     default_command: str | None = None,
+    auto_start: bool = False,
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
 ) -> dict:
@@ -237,6 +240,7 @@ async def create_workspace(
         name,
         image=image,
         default_command=default_command,
+        auto_start=auto_start,
         mounts=mounts,
         env=env,
     )
@@ -386,3 +390,58 @@ async def populate_home_skel(
             container_id,
             exc_info=True,
         )
+
+
+async def auto_start_workspaces() -> int:
+    """Start containers for all workspaces with auto_start enabled.
+
+    Skipped entirely if ``KLANGK_ALLOW_AUTOSTART`` is not set.
+    Returns the number of containers started.
+    """
+    if not resolve_env_bool("KLANGK_ALLOW_AUTOSTART"):
+        return 0
+
+    ws_list = await model.list_auto_start_workspaces()
+    started = 0
+    for i, ws in enumerate(ws_list):
+        if i > 0:
+            await asyncio.sleep(random.uniform(0.5, 2.0))
+        owner_id = ws["user_id"]
+        workspace_id = ws["id"]
+        host_path = str(get_workspace_host_path(owner_id, workspace_id))
+        h_path = str(get_home_host_path(owner_id, workspace_id))
+        cfg_path = str(get_config_host_path(owner_id, workspace_id))
+        try:
+            cid, status = await container.registry.start_container(
+                workspace_id,
+                host_path,
+                h_path,
+                ws.get("container_id"),
+                num_ports=ws.get(
+                    "num_ports", container.DEFAULT_PORTS_PER_WORKSPACE
+                ),
+                image=ws.get("image"),
+                config_path=cfg_path,
+                extra_mounts=ws.get("mounts"),
+                extra_env=ws.get("env"),
+                user_id=owner_id,
+            )
+            # Auto-started containers should not idle out.
+            state = container.registry.states.get(workspace_id)
+            if state:
+                state.idle_timeout = 0
+            logger.info(
+                "Auto-started workspace %s (%s): %s",
+                ws["name"],
+                cid[:12],
+                status,
+            )
+            started += 1
+        except Exception:
+            logger.warning(
+                "Failed to auto-start workspace %s (%s)",
+                ws["name"],
+                workspace_id,
+                exc_info=True,
+            )
+    return started

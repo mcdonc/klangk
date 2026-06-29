@@ -264,6 +264,32 @@ class TestWorkspaces:
         with pytest.raises(Exception):
             await model.create_workspace(user["id"], "unique-name")
 
+    async def test_create_workspace_with_auto_start(self, user):
+        ws = await model.create_workspace(
+            user["id"], "auto-ws", auto_start=True
+        )
+        assert ws["auto_start"] is True
+        found = await model.get_workspace(ws["id"], user["id"])
+        assert found["auto_start"] is True
+
+    async def test_update_workspace_auto_start(self, user):
+        ws = await model.create_workspace(user["id"], "no-auto")
+        assert ws["auto_start"] is False
+        updated = await model.update_workspace(
+            ws["id"], user["id"], auto_start=True
+        )
+        assert updated is True
+        found = await model.get_workspace(ws["id"], user["id"])
+        assert found["auto_start"] is True
+
+    async def test_list_auto_start_workspaces(self, user):
+        await model.create_workspace(user["id"], "normal-ws")
+        await model.create_workspace(user["id"], "auto-ws", auto_start=True)
+        result = await model.list_auto_start_workspaces()
+        assert len(result) == 1
+        assert result[0]["name"] == "auto-ws"
+        assert result[0]["auto_start"] is True
+
 
 class TestWorkspaceSharing:
     async def _share(self, workspace_id, user_id):

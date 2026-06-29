@@ -63,6 +63,14 @@ disconnect and reconnect, you pick up the tmux session exactly
 where you left off (the process may still be running, or you may
 be at a bash prompt if it exited).
 
+### Auto-start workspaces
+
+If the workspace has [auto-start](workspaces.md#auto-start) enabled,
+the container starts when the Klangk server starts and the default
+command begins running immediately — before any user connects. When
+you later run `klangkc shell`, you walk up to the service already
+running in tmux window 0.
+
 ## Shell features
 
 The command is sent as keystrokes into a bash shell, so any shell

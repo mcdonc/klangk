@@ -22,6 +22,7 @@ nav = [
     { "Terminal" = "features/terminal.md" },
     { "The Shell" = "features/the-shell.md" },
     { "Default Command" = "features/default-command.md" },
+    { "Auto-Start" = "features/auto-start.md" },
     { "Sandbox" = "features/sandbox.md" },
     { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },

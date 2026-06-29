@@ -289,6 +289,11 @@ def create(
     image: str | None = typer.Option(
         None, "--image", help="Container image to use (see `klangkc images`)"
     ),
+    auto_start: bool = typer.Option(
+        False,
+        "--auto-start",
+        help="Start container automatically on server boot",
+    ),
     mount: list[str] | None = typer.Option(
         None,
         "--mount",
@@ -311,7 +316,11 @@ def create(
     env_dict = _parse_env_list(env) if isinstance(env, list) else None
     try:
         ws = _client().create_workspace(
-            name, image=image, mounts=mount or None, env=env_dict
+            name,
+            image=image,
+            auto_start=auto_start,
+            mounts=mount or None,
+            env=env_dict,
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)
@@ -558,6 +567,11 @@ def edit(
     command: str | None = typer.Option(
         None, "--command", "-c", help="Default shell command (use '' to clear)"
     ),
+    auto_start: bool | None = typer.Option(
+        None,
+        "--auto-start/--no-auto-start",
+        help="Start container automatically on server boot",
+    ),
     mount: list[str] | None = typer.Option(
         None,
         "--mount",
@@ -586,6 +600,7 @@ def edit(
         name is not None
         or image is not None
         or command is not None
+        or auto_start is not None
         or isinstance(mount, list)
         or isinstance(env, list)
     )
@@ -704,6 +719,8 @@ def edit(
             body["image"] = image or None
         if command is not None:
             body["default_command"] = command or None
+        if auto_start is not None:
+            body["auto_start"] = auto_start
         if isinstance(mount, list):
             for m in mount:
                 err = validate_mount_spec(m)
@@ -989,6 +1006,7 @@ def sandbox(
             workspace,
             image=config.image,
             default_command=config.default_command,
+            auto_start=config.auto_start,
             mounts=all_mounts,
         )
         _err.print(f"Workspace [bold]{workspace}[/bold] created.")

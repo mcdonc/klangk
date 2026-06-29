@@ -59,12 +59,14 @@ placed in `~/work`.
 workspace:
   image: klangk-workspace
   default-command: openclaw gateway
+  auto-start: true
 ```
 
 | Field             | Required | Default              | Description                                                                                                            |
 | ----------------- | -------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `image`           | no       | server default image | Container image. Must be in the server's allowed images list.                                                          |
 | `default-command` | no       | (none)               | Command to run automatically in the first terminal window on first connect. See [Default Command](default-command.md). |
+| `auto-start`      | no       | `false`              | Start the container automatically when the Klangk server starts. See [Auto-start](workspaces.md#auto-start).           |
 
 The workspace name is not in the config file — it's always
 specified as a positional argument on the command line.

@@ -237,3 +237,63 @@ class TestPopulateHomeSkel:
         ):
             # Should not raise
             await ws_mod.populate_home_skel("cid-123", "uid-456")
+
+
+class TestAutoStartWorkspaces:
+    async def test_returns_zero_when_env_not_set(self, user):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KLANGK_ALLOW_AUTOSTART", None)
+            result = await ws_mod.auto_start_workspaces()
+        assert result == 0
+
+    async def test_starts_auto_start_workspaces(self, user):
+        ws1 = await ws_mod.create_workspace(
+            user["id"], "auto-ws1", auto_start=True
+        )
+        ws2 = await ws_mod.create_workspace(
+            user["id"], "auto-ws2", auto_start=True
+        )
+        await ws_mod.create_workspace(user["id"], "normal-ws")
+
+        # Pre-populate states so idle_timeout can be set.
+        from klangk_backend.container import ContainerState
+
+        container.registry.states[ws1["id"]] = ContainerState(
+            ws1["id"], "cid-1"
+        )
+        container.registry.states[ws2["id"]] = ContainerState(
+            ws2["id"], "cid-2"
+        )
+        try:
+            with patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}):
+                with patch.object(
+                    container.registry,
+                    "start_container",
+                    new_callable=AsyncMock,
+                    return_value=("cid-abc", "started"),
+                ) as mock_start:
+                    with patch(
+                        "klangk_backend.workspaces.asyncio.sleep",
+                        new_callable=AsyncMock,
+                    ) as mock_sleep:
+                        result = await ws_mod.auto_start_workspaces()
+            assert result == 2
+            assert mock_start.await_count == 2
+            mock_sleep.assert_awaited_once()
+            assert container.registry.states[ws1["id"]].idle_timeout == 0
+            assert container.registry.states[ws2["id"]].idle_timeout == 0
+        finally:
+            container.registry.states.pop(ws1["id"], None)
+            container.registry.states.pop(ws2["id"], None)
+
+    async def test_handles_start_failure_gracefully(self, user):
+        await ws_mod.create_workspace(user["id"], "fail-ws", auto_start=True)
+        with patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}):
+            with patch.object(
+                container.registry,
+                "start_container",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("container failed"),
+            ):
+                result = await ws_mod.auto_start_workspaces()
+        assert result == 0

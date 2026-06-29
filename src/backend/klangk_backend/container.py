@@ -341,7 +341,7 @@ class IdleMonitor:
                     idle_secs,
                     timeout,
                 )
-                if idle_secs > timeout:
+                if timeout > 0 and idle_secs > timeout:
                     to_stop.append((state.container_id, ws_id))
 
             for cid, wid in to_stop:

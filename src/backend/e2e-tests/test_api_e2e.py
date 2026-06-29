@@ -1018,3 +1018,130 @@ class TestAdminResourceACL:
             headers=user_a["headers"],
         )
         assert resp.status_code == 403
+
+
+class TestAutoStartWithDefaultCommand:
+    """Verify auto_start + default_command workspace creation via API.
+
+    Uses a separate server with KLANGK_ALLOW_AUTOSTART=1.
+    """
+
+    @pytest.fixture(autouse=True, scope="class")
+    @staticmethod
+    def autostart_server(request):
+        data_dir = tempfile.mkdtemp(prefix="klangk-autostart-e2e-")
+        env = {
+            **_clean_env(),
+            "KLANGK_PORT": "18992",
+            "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_JWT_SECRET": "autostart-e2e-secret",
+            "KLANGK_DEFAULT_USER": "admin@example.com",
+            "KLANGK_DEFAULT_PASSWORD": "adminpass",
+            "KLANGK_TEST_MODE": "1",
+            "KLANGK_INSTANCE_ID": "autostart-e2e",
+            "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+            "KLANGK_PORT_RANGE_START": "9300",
+            "KLANGK_ALLOW_AUTOSTART": "1",
+            "LOGFIRE_TOKEN": "",
+        }
+        proc = subprocess.Popen(
+            [
+                "uvicorn",
+                "klangk_backend.main:app",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "18992",
+                "--ws-max-size",
+                "16777216",
+            ],
+            cwd=os.path.join(os.path.dirname(__file__), ".."),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        base_url = "http://localhost:18992"
+        for _ in range(60):
+            try:
+                if (
+                    httpx.get(f"{base_url}/health", timeout=2).status_code
+                    == 200
+                ):
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        else:
+            proc.kill()
+            stdout = proc.stdout.read().decode() if proc.stdout else ""
+            raise RuntimeError(f"Server failed to start:\n{stdout}")
+        request.cls._base_url = base_url
+        request.cls._proc = proc
+        request.cls._data_dir = data_dir
+        yield
+        _stop_server(proc, data_dir, "autostart-e2e")
+
+    @pytest.fixture()
+    def api(self):
+        with httpx.Client(base_url=self._base_url, timeout=10.0) as client:
+            yield client
+
+    @pytest.fixture()
+    def admin(self, api):
+        return _login(api, "admin@example.com", "adminpass")
+
+    def test_create_with_auto_start_and_default_command(self, api, admin):
+        """Create a workspace with auto_start + default_command."""
+        ws_name = _ws_name("autostart-cmd")
+        resp = api.post(
+            "/api/v1/workspaces",
+            json={
+                "name": ws_name,
+                "auto_start": True,
+                "default_command": "echo hello",
+            },
+            headers=admin,
+        )
+        assert resp.status_code == 200
+        ws = resp.json()
+        assert ws["auto_start"] is True
+        assert ws["default_command"] == "echo hello"
+
+        # Verify via list (bare list without pagination params)
+        resp = api.get("/api/v1/workspaces", headers=admin)
+        assert resp.status_code == 200
+        items = resp.json()
+        match = [w for w in items if w["name"] == ws_name]
+        assert len(match) == 1
+        assert match[0]["auto_start"] is True
+        assert match[0]["default_command"] == "echo hello"
+
+        # Clean up
+        api.delete(f"/api/v1/workspaces/{ws['id']}", headers=admin)
+
+    def test_update_auto_start(self, api, admin):
+        """Toggle auto_start via PUT."""
+        ws_name = _ws_name("autostart-toggle")
+        resp = api.post(
+            "/api/v1/workspaces",
+            json={"name": ws_name},
+            headers=admin,
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+        try:
+            resp = api.put(
+                f"/api/v1/workspaces/{ws_id}",
+                json={"auto_start": True},
+                headers=admin,
+            )
+            assert resp.status_code == 200
+
+            resp = api.put(
+                f"/api/v1/workspaces/{ws_id}",
+                json={"auto_start": False},
+                headers=admin,
+            )
+            assert resp.status_code == 200
+        finally:
+            api.delete(f"/api/v1/workspaces/{ws_id}", headers=admin)

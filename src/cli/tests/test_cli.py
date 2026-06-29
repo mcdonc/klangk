@@ -2025,6 +2025,20 @@ class TestCreateWorkspaceClient:
         body = mock_post.call_args.kwargs.get("json")
         assert body["default_command"] == "openclaw gateway"
 
+    def test_create_workspace_with_auto_start(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "ws-auto",
+            "name": "auto-ws",
+            "created_at": "2025-01-01",
+        }
+        with patch.object(client, "post", return_value=mock_resp) as mock_post:
+            client.create_workspace("auto-ws", auto_start=True)
+        body = mock_post.call_args.kwargs.get("json")
+        assert body["auto_start"] is True
+
 
 class TestListImagesClient:
     def test_list_images(self):

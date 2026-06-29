@@ -149,6 +149,7 @@ class Workspace:
     created_at: str
     image: str | None = None
     default_command: str | None = None
+    auto_start: bool = False
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
     owner_email: str | None = None
@@ -316,6 +317,7 @@ class KlangkClient:
             created_at=w["created_at"],
             image=w.get("image"),
             default_command=w.get("default_command"),
+            auto_start=bool(w.get("auto_start", False)),
             mounts=w.get("mounts"),
             env=w.get("env"),
             owner_email=w.get("owner_email") if shared else None,
@@ -326,6 +328,7 @@ class KlangkClient:
         name: str,
         image: str | None = None,
         default_command: str | None = None,
+        auto_start: bool = False,
         mounts: list[str] | None = None,
         env: dict[str, str] | None = None,
     ) -> Workspace:
@@ -334,6 +337,8 @@ class KlangkClient:
             body["image"] = image
         if default_command:
             body["default_command"] = default_command
+        if auto_start:
+            body["auto_start"] = True
         if mounts:
             body["mounts"] = mounts
         if env:
