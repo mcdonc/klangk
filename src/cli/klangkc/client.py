@@ -1024,7 +1024,10 @@ class _ShellSession:
                     "[ssh-agent] relay: got %d bytes from queue", len(data)
                 )
             try:
-                response = _query_local_ssh_agent(self.ssh_agent_sock, data)
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None, _query_local_ssh_agent, self.ssh_agent_sock, data
+                )
                 if response is not None:
                     if self._debug_agent:  # pragma: no cover
                         logger.info(
