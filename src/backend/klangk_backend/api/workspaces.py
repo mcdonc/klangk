@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Literal
 
 from fastapi import (
@@ -347,6 +348,45 @@ async def restart_workspace(
         await container.registry.stop_and_remove_container(cid)
     await wshandler.reset_workspace_state(workspace_id)
     return {"status": "restarted"}
+
+
+@router.get("/workspaces/{workspace_id}/status")
+async def workspace_status(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("terminal", _workspace_resource)),
+):
+    """Return container status for a workspace.
+
+    Returns running state, container health, idle timeout info,
+    and allocated ports.
+    """
+    workspace = await model.get_workspace(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    live_state = container.registry.get_state(workspace_id)
+    if live_state is None:
+        return {
+            "running": False,
+            "container_id": None,
+            "health": None,
+            "idle_seconds": None,
+            "idle_timeout": None,
+            "ports": [],
+        }
+
+    idle_secs = time.time() - live_state.last_activity
+    idle_timeout = live_state.get_idle_timeout()
+    ports = await container.registry.get_workspace_ports(workspace_id)
+
+    return {
+        "running": True,
+        "container_id": live_state.container_id,
+        "health": None,  # placeholder for #1015
+        "idle_seconds": round(idle_secs, 1),
+        "idle_timeout": idle_timeout,
+        "ports": ports,
+    }
 
 
 # --- Workspace export/import endpoints ---

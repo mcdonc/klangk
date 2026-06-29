@@ -1331,6 +1331,46 @@ No request body.
 
 ---
 
+### GET `/api/v1/workspaces/{id}/status`
+
+Return the container status for a workspace.
+
+**Auth:** JWT required. User must have `terminal` permission on
+`/workspaces/{id}`.
+
+No request body.
+
+**Response when running:**
+
+```json
+{
+  "running": true,
+  "container_id": "abc123...",
+  "health": null,
+  "idle_seconds": 42.5,
+  "idle_timeout": 1800,
+  "ports": [9000, 9001]
+}
+```
+
+**Response when stopped:**
+
+```json
+{
+  "running": false,
+  "container_id": null,
+  "health": null,
+  "idle_seconds": null,
+  "idle_timeout": null,
+  "ports": []
+}
+```
+
+The `health` field is a placeholder (`null`) until a container
+health check is implemented (#1015).
+
+---
+
 ### POST `/api/v1/workspaces/{id}/roles/{role}`
 
 Add a user to a workspace role. Valid roles: `owners`, `coders`,

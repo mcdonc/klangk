@@ -1291,6 +1291,72 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 404
 
+    async def test_workspace_status_running(self, client, user):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "status-ws"},
+        )
+        ws_id = create_resp.json()["id"]
+
+        # Simulate a running container.
+        api.container.registry.track_activity("cid-status", ws_id)
+
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/status",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["running"] is True
+        assert data["container_id"] == "cid-status"
+        assert data["health"] is None  # placeholder
+        assert isinstance(data["idle_seconds"], (int, float))
+        assert data["idle_timeout"] == api.container.IDLE_TIMEOUT_SECONDS
+        assert isinstance(data["ports"], list)
+
+        # Clean up registry state.
+        api.container.registry.states.pop(ws_id, None)
+        api.container.registry._cid_to_wsid.pop("cid-status", None)
+
+    async def test_workspace_status_not_running(self, client, user):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "status-stopped"},
+        )
+        ws_id = create_resp.json()["id"]
+
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/status",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["running"] is False
+        assert data["container_id"] is None
+        assert data["idle_seconds"] is None
+        assert data["ports"] == []
+
+    async def test_workspace_status_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        fake_id = "fake-status-id"
+        await model.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "terminal",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{fake_id}/status",
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
     async def test_list_no_auth(self, client):
         resp = await client.get("/api/v1/workspaces")
         assert resp.status_code == 401
