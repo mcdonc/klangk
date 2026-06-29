@@ -1270,6 +1270,32 @@ class TestKlangkClient:
                 with pytest.raises(httpx.HTTPStatusError):
                     client.delete_workspace("ws1")
 
+    def test_raise_for_status_includes_server_detail(self):
+        client = KlangkClient("http://test:8995", "token")
+        resp = MagicMock()
+        resp.status_code = 400
+        resp.json.return_value = {"detail": "Image not allowed"}
+        resp.request = MagicMock()
+        with pytest.raises(httpx.HTTPStatusError, match="Image not allowed"):
+            client._raise_for_status(resp)
+
+    def test_raise_for_status_falls_back_without_detail(self):
+        client = KlangkClient("http://test:8995", "token")
+        resp = MagicMock()
+        resp.status_code = 500
+        resp.json.side_effect = ValueError("not json")
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock()
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            client._raise_for_status(resp)
+
+    def test_raise_for_status_noop_on_success(self):
+        client = KlangkClient("http://test:8995", "token")
+        resp = MagicMock()
+        resp.status_code = 200
+        client._raise_for_status(resp)  # should not raise
+
     def test_no_token_uses_empty_string(self):
         client = KlangkClient("http://test:8995")
         headers = client._headers()
