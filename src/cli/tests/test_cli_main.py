@@ -2883,6 +2883,87 @@ class TestSandboxSetupOnly:
                 mock_ws, config, Path("/tmp"), "admin"
             )
 
+    async def test_starts_terminal_after_setup_when_default_command(self):
+        from pathlib import Path
+
+        from klangkc.main import _sandbox_setup_only
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            setup="setup.sh", default_command="openclaw gateway"
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "terminal_started"}),
+            ]
+        )
+
+        with (
+            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.main._sandbox_setup") as mock_setup,
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            await _sandbox_setup_only(
+                "ws://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+            )
+            mock_setup.assert_called_once_with(
+                mock_ws, config, Path("/tmp"), "admin"
+            )
+
+        # terminal_start was sent after setup so the default command runs.
+        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
+        assert any(m.get("cmd") == "terminal_start" for m in sent)
+
+    async def test_terminal_start_disconnect_is_not_fatal(self):
+        """A closed connection while awaiting terminal_started is tolerated."""
+        from pathlib import Path
+
+        import websockets
+
+        from klangkc.main import _sandbox_setup_only
+        from klangkc.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            setup="setup.sh", default_command="openclaw gateway"
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "workspace_ready"}),
+                websockets.ConnectionClosed(None, None),
+            ]
+        )
+
+        with (
+            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.main._sandbox_setup"),
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            # Must not raise / hang waiting for terminal_started.
+            await _sandbox_setup_only(
+                "ws://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+            )
+
 
 class TestSandboxSetup:
     async def test_copies_files(self, tmp_path):

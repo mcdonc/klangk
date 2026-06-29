@@ -762,6 +762,176 @@ class TestAutoStart:
         assert "not enabled" in result.stdout or "not enabled" in result.stderr
 
 
+def _poll_exec(env, workspace, shell_cmd, expect, timeout=30, interval=1.0):
+    """Run ``klangkc exec`` repeatedly until *expect* appears in stdout.
+
+    The default command runs asynchronously in a tmux window, so its
+    effect isn't visible the instant ``klangkc sandbox`` returns.  This
+    polls until it is (or fails loudly on timeout).
+    """
+    deadline = time.monotonic() + timeout
+    last = ""
+    while time.monotonic() < deadline:
+        r = _run(
+            ["klangkc", "exec", workspace, "bash", "-c", shell_cmd],
+            env=env,
+            timeout=30,
+        )
+        last = r.stdout
+        if expect in r.stdout:
+            return r.stdout
+        time.sleep(interval)
+    raise AssertionError(
+        f"timed out after {timeout}s waiting for {expect!r} from"
+        f" `klangkc exec {workspace} {shell_cmd}`; last stdout:"
+        f" {last!r}"
+    )
+
+
+class TestSandboxAutoStartDefaultCommand:
+    """Auto-started workspace: default_command runs only after setup.
+
+    This is the path PR #1032 guarantees: when a workspace is created
+    with ``auto_start`` the default command is *not* run eagerly at
+    container start (the software isn't installed yet).  ``klangkc
+    sandbox`` runs ``setup.sh`` (which installs the command), then sends
+    ``terminal_start``, which launches the command in a dedicated tmux
+    window.  We verify the command actually ran *and* that it only
+    succeeded after the thing ``setup.sh`` installs became available --
+    which fails if the eager-start path regresses to running the default
+    command before setup.
+    """
+
+    WS = "e2e-sandbox-defcmd"
+    # Own port + instance id so it never collides with TestAutoStart
+    # (18996) or the session server (18995).
+    PORT = "18997"
+
+    @pytest.fixture(autouse=True, scope="class")
+    @staticmethod
+    def autostart_server(tmp_path_factory, request):
+        data_dir = tempfile.mkdtemp(prefix="klangk-sandbox-defcmd-")
+        proc, base_url = _start_server(
+            data_dir,
+            TestSandboxAutoStartDefaultCommand.PORT,
+            "sandbox-defcmd-e2e",
+            extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
+        )
+        config_dir = tmp_path_factory.mktemp("klangk-sandbox-defcmd-config")
+        env = {**os.environ, "HOME": str(config_dir)}
+        klangk_config_dir = config_dir / ".config" / "klangk"
+        klangk_config_dir.mkdir(parents=True)
+        _run(
+            [
+                "klangkc",
+                "login",
+                base_url,
+                "test@example.com",
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=env,
+        )
+        request.cls._env = env
+        yield
+        _stop_server(proc, data_dir, "sandbox-defcmd-e2e")
+
+    def test_default_command_runs_only_after_setup(self, tmp_path):
+        """default_command (installed by setup.sh) runs post-setup.
+
+        ``setup.sh`` sleeps ~5s to simulate installing software, then
+        creates ``/tmp/myapp``.  The workspace's default_command is
+        ``/tmp/myapp``, which does not exist until setup runs -- so it
+        can only succeed once the sandbox setup phase has completed.
+        """
+        env = self._env
+
+        sandbox_root = tmp_path / "sb"
+        sandbox_root.mkdir()
+        (sandbox_root / ".klangk-sandbox.yaml").write_text(
+            "sandbox:\n"
+            "  mount-at: /sandbox\n"
+            "  setup: setup.sh\n"
+            "workspace:\n"
+            "  default-command: /tmp/myapp\n"
+            "  auto-start: true\n"
+        )
+        # setup.sh: slow "install", then drop a marker-writing script at
+        # /tmp/myapp and record (epoch seconds) when setup finished.
+        # Must be executable: _sandbox_setup runs it directly
+        # (``bash -c '/sandbox/setup.sh'``), not via ``bash <script>``.
+        setup_sh = sandbox_root / "setup.sh"
+        setup_sh.write_text(
+            "#!/bin/sh\n"
+            "# Simulate a slow software install (e.g. openclaw).\n"
+            "sleep 5\n"
+            "cat > /tmp/myapp <<'APP'\n"
+            "#!/bin/sh\n"
+            "date +%s > /tmp/default-cmd-when\n"
+            "echo ran > /tmp/default-cmd-ran\n"
+            "APP\n"
+            "chmod +x /tmp/myapp\n"
+            "date +%s > /tmp/setup-done\n"
+        )
+        setup_sh.chmod(0o755)
+        try:
+            # Sandbox creates the auto-start workspace, runs setup.sh
+            # (sleep 5 + install), then sends terminal_start so the
+            # default command runs in the persistent default-cmd window.
+            result = _run(
+                ["klangkc", "sandbox", self.WS, str(sandbox_root)],
+                env=env,
+                timeout=120,
+            )
+            assert result.returncode == 0, result.stderr
+
+            # (1) The default command actually ran (async in tmux).
+            _poll_exec(
+                env,
+                self.WS,
+                "cat /tmp/default-cmd-ran 2>/dev/null",
+                expect="ran",
+                timeout=30,
+            )
+
+            # (2) setup.sh did install /tmp/myapp -- proving setup ran
+            # and therefore myapp did NOT exist at eager-start time.
+            installed = _run(
+                ["klangkc", "exec", self.WS, "test", "-x", "/tmp/myapp"],
+                env=env,
+                timeout=30,
+            )
+            assert installed.returncode == 0, (
+                "/tmp/myapp missing or not executable; setup never installed it"
+            )
+
+            # (3) The default command ran at/after setup completed.
+            # setup-done is written last in setup.sh; default-cmd-when is
+            # written by myapp when the default command runs.  Under the
+            # run_default_command=True regression myapp wouldn't exist at
+            # eager-start, so default-cmd-when would never be written.
+            ordering = _run(
+                [
+                    "klangkc",
+                    "exec",
+                    self.WS,
+                    "bash",
+                    "-c",
+                    '[ "$(cat /tmp/setup-done)" -le'
+                    ' "$(cat /tmp/default-cmd-when)" ] && echo ordered',
+                ],
+                env=env,
+                timeout=30,
+            )
+            assert "ordered" in ordering.stdout, (
+                "default command ran before setup completed: "
+                f"{ordering.stdout!r}"
+            )
+        finally:
+            _run(["klangkc", "rm", self.WS], env=env, timeout=60)
+
+
 class TestMounts:
     @staticmethod
     def _login(cli_config):

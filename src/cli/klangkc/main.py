@@ -1069,13 +1069,20 @@ async def _sandbox_setup_only(
             await ws.send(
                 json.dumps({"cmd": "terminal_start", "cols": 80, "rows": 24})
             )
-            try:
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    if msg.get("type") == "terminal_started":
-                        break
-            except websockets.ConnectionClosed:
-                pass
+            # Wait (bounded) for the terminal to start so the default
+            # command actually runs before we disconnect.  Other
+            # messages are ignored.
+            deadline = asyncio.get_event_loop().time() + 30
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                except (asyncio.TimeoutError, websockets.ConnectionClosed):
+                    break
+                if json.loads(raw).get("type") == "terminal_started":
+                    break
 
 
 terminal_app = typer.Typer(

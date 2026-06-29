@@ -92,6 +92,10 @@ def _build_environment(
 
 _WORKSPACE_STATE_FILE = ".workspace-state.json"
 
+# Name of the dedicated tmux window that runs a workspace's
+# default_command, leaving the user's interactive window 0 free.
+DEFAULT_CMD_WINDOW = "default-cmd"
+
 
 async def _ensure_base_session(
     container_id: str,
@@ -106,9 +110,11 @@ async def _ensure_base_session(
     session exists before any grouped session tries to link to it.
 
     If *default_command* is set and the session is freshly created,
-    the command is sent as keystrokes into window 0.  The command
-    runs as a foreground process in the bash shell — Ctrl-C stops
-    it and returns to the prompt.
+    the command is run in a dedicated detached window named
+    ``DEFAULT_CMD_WINDOW`` so the user's window 0 stays free for
+    interactive use.  The command runs as a foreground process in
+    that window's bash shell — Ctrl-C stops it and returns to the
+    prompt.
 
     Returns ``True`` if the session was freshly created.
     """
@@ -143,8 +149,10 @@ async def _ensure_base_session(
         logger.warning("Failed to create base tmux session %s", session_name)
         return False
 
-    # Run the default command in a new window named "default-cmd"
-    # so the user's window 0 stays free for interactive use.
+    # Run the default command in a detached window named
+    # DEFAULT_CMD_WINDOW so the user's window 0 stays free for
+    # interactive use.  ``-d`` keeps window 0 as the active window,
+    # so no select-window is needed afterwards.
     if default_command:
         try:
             await podman.exec_container(
@@ -152,62 +160,46 @@ async def _ensure_base_session(
                 [
                     "tmux",
                     "new-window",
+                    "-d",
                     "-t",
                     session_name,
                     "-n",
-                    "default-cmd",
+                    DEFAULT_CMD_WINDOW,
                 ],
                 user=CONTAINER_USER,
                 timeout=5,
             )
         except Exception:
             logger.warning(
-                "Failed to create default-cmd window in %s",
+                "Failed to create %s window in %s",
+                DEFAULT_CMD_WINDOW,
                 session_name,
             )
         else:
-            await send_keys(
-                container_id,
-                f"{session_name}:default-cmd",
-                default_command,
-            )
-            # Switch back to window 0 so the user lands there.
+            # The new window's shell needs a moment to source
+            # .profile / .bashrc before it can resolve PATH-dependent
+            # commands (nvm, openclaw, ...).  Same race as #1030.
+            await asyncio.sleep(1)
             try:
                 await podman.exec_container(
                     container_id,
                     [
                         "tmux",
-                        "select-window",
+                        "send-keys",
                         "-t",
-                        f"{session_name}:0",
+                        f"{session_name}:{DEFAULT_CMD_WINDOW}",
+                        default_command,
+                        "Enter",
                     ],
                     user=CONTAINER_USER,
                     timeout=5,
                 )
-            except Exception:  # pragma: no cover
-                pass
+            except Exception:
+                logger.warning(
+                    "Failed to send default command to %s", session_name
+                )
 
     return True
-
-
-async def send_keys(container_id: str, target: str, command: str) -> None:
-    """Send keystrokes to a tmux target (e.g. ``session:0``)."""
-    try:
-        await podman.exec_container(
-            container_id,
-            [
-                "tmux",
-                "send-keys",
-                "-t",
-                target,
-                command,
-                "Enter",
-            ],
-            user=CONTAINER_USER,
-            timeout=5,
-        )
-    except Exception:  # pragma: no cover
-        logger.warning("Failed to send keys to %s", target)
 
 
 def _build_shell_command(

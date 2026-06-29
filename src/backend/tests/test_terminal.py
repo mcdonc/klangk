@@ -1230,35 +1230,41 @@ class TestEnsureBaseSession:
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_cmd
 
     async def test_default_command_sends_keys(self):
-        """Default command runs in a dedicated 'default-cmd' window."""
+        """Default command runs in a detached 'default-cmd' window."""
         from klangk_backend.terminal import _ensure_base_session
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
-            new_callable=AsyncMock,
-            side_effect=[
-                (1, "", ""),  # has-session fails
-                (0, "", ""),  # new-session ok
-                (0, "", ""),  # new-window ok
-                (0, "", ""),  # send-keys ok
-                (0, "", ""),  # select-window ok
-            ],
-        ) as mock_exec:
+        with (
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (1, "", ""),  # has-session fails
+                    (0, "", ""),  # new-session ok
+                    (0, "", ""),  # new-window ok
+                    (0, "", ""),  # send-keys ok
+                ],
+            ) as mock_exec,
+            patch(
+                "klangk_backend.terminal.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
             created = await _ensure_base_session(
                 "cid", "my-session", default_command="openclaw gateway"
             )
         assert created is True
-        assert mock_exec.await_count == 5
+        assert mock_exec.await_count == 4
         new_window_cmd = mock_exec.call_args_list[2].args[1]
         assert "new-window" in new_window_cmd
+        assert "-d" in new_window_cmd  # detached -> window 0 stays active
         assert "default-cmd" in new_window_cmd
         send_cmd = mock_exec.call_args_list[3].args[1]
         assert "send-keys" in send_cmd
         assert "my-session:default-cmd" in send_cmd
         assert "openclaw gateway" in send_cmd
-        select_cmd = mock_exec.call_args_list[4].args[1]
-        assert "select-window" in select_cmd
-        assert "my-session:0" in select_cmd
+        # No select-window: -d kept window 0 active.
+        assert all(
+            "select-window" not in c.args[1] for c in mock_exec.call_args_list
+        )
 
     async def test_default_command_skipped_when_session_exists(self):
         """Default command is not sent if session already exists."""
@@ -1274,8 +1280,8 @@ class TestEnsureBaseSession:
             )
         mock_exec.assert_awaited_once()
 
-    async def test_default_command_failure_logs_warning(self):
-        """Warning logged when send-keys fails, session still created."""
+    async def test_default_command_window_failure_logs_warning(self):
+        """Warning logged when the default-cmd window can't be created."""
         from klangk_backend.terminal import _ensure_base_session
 
         with patch(
@@ -1284,10 +1290,40 @@ class TestEnsureBaseSession:
             side_effect=[
                 (1, "", ""),  # has-session fails
                 (0, "", ""),  # new-session ok
-                OSError("send-keys failed"),
+                OSError("new-window failed"),  # new-window fails
             ],
+        ) as mock_exec:
+            created = await _ensure_base_session(
+                "cid", "my-session", default_command="openclaw gateway"
+            )
+        assert created is True
+        # Window creation failed, so the command was never sent.
+        assert mock_exec.await_count == 3
+        assert all(
+            "send-keys" not in c.args[1] for c in mock_exec.call_args_list
+        )
+
+    async def test_default_command_send_keys_failure_logs_warning(self):
+        """Warning logged when send-keys fails; session still created."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        with (
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (1, "", ""),  # has-session fails
+                    (0, "", ""),  # new-session ok
+                    (0, "", ""),  # new-window ok
+                    OSError("send-keys failed"),  # send-keys fails
+                ],
+            ) as mock_exec,
+            patch(
+                "klangk_backend.terminal.asyncio.sleep", new_callable=AsyncMock
+            ),
         ):
             created = await _ensure_base_session(
                 "cid", "my-session", default_command="openclaw gateway"
             )
         assert created is True
+        assert mock_exec.await_count == 4
