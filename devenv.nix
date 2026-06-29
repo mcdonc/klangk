@@ -405,6 +405,11 @@ in
     fi
 
 
+    # Ensure klangk_plugins stub exists so flutter commands work immediately
+    # in any shell session (not just after devenv up). The script is idempotent
+    # and skips if pubspec_overrides.yaml already exists.
+    bash "$DEVENV_ROOT/scripts/stub_dart_plugins.sh"
+
     # Generate prettierignore (not committed)
     cat > "$DEVENV_ROOT/.prettierignore" <<'PRETTIER'
     node_modules/
