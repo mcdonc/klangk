@@ -39,8 +39,11 @@ sandbox, so it never slows the regular CLI/backend e2e suites. Requires
 network (real ``npm install``).
 """
 
+import asyncio
 import glob
+import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -48,6 +51,7 @@ import time
 
 import httpx
 import pytest
+import websockets
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SANDBOX_DIR = os.path.join(REPO_ROOT, "sandboxes", "openclaw")
@@ -63,6 +67,11 @@ WS = "e2e-openclaw-setup"
 # of #1039 -- a regression that moves an export inside the install-skip
 # guard breaks WS2 permanently (not just a race) while WS may still pass.
 WS2 = "e2e-openclaw-setup-2"
+# Third workspace at the same mount, used by the #1033 visitor test.
+# Like WS2 its setup skips the install (mount already populated) and
+# pauses at the sentinel, so the test can drive a VISITOR terminal_start
+# while setup is genuinely mid-flight -- the exact #1033 race.
+WS3 = "e2e-openclaw-setup-3"
 # Own port + instance id so it never collides with other e2e suites
 # (cli-e2e 18995, autostart 18996/18997).
 PORT = "18998"
@@ -252,6 +261,96 @@ def _owning_bashrc(data_dir, user_id, ws_id):
         user_id,
         ".bashrc",
     )
+
+
+async def _visitor_terminal_env(base_url, token, ws_id, var, timeout=25.0):
+    """Connect as a VISITOR, fire ``terminal_start``, return ``$var``.
+
+    Emulates the #1033 scenario: a second WebSocket connection (not the
+    backend's own setup connection) sends ``terminal_start`` while setup
+    is still running. The backend spawns the per-user tmux base session
+    plus the ``default-cmd`` window; the visitor's own interactive pane
+    (window 0) sources ``~/.bashrc`` at that instant and sits at a clean
+    prompt. We type a probe into window 0 and read back ``$var`` -- this
+    is the live environment of a shell spawned mid-setup via the visitor
+    path, not the frozen ``/proc/environ`` (which predates .bashrc) and
+    not the .bashrc file contents.
+
+    Returns ``(value, windows)`` where *windows* is the terminal_windows
+    list (so callers can assert the default-cmd pane was spawned).
+    """
+    ws_url = base_url.replace("http://", "ws://") + "/ws"
+    async with websockets.connect(f"{ws_url}?token={token}", max_size=2**24) as ws:
+        await ws.send(json.dumps({"cmd": "workspace_connect", "workspaceId": ws_id}))
+        windows = []
+        # Drain until workspace_ready.
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError("visitor: no workspace_ready")
+            msg = json.loads(await asyncio.wait_for(ws.recv(), remaining))
+            if msg.get("type") == "workspace_ready":
+                break
+            if msg.get("type") == "error":
+                raise ConnectionError(f"visitor connect failed: {msg}")
+
+        await ws.send(
+            json.dumps(
+                {
+                    "cmd": "terminal_start",
+                    "cols": 80,
+                    "rows": 24,
+                    "browser_id": "e2e-visitor",
+                }
+            )
+        )
+        # Drain until terminal_started, capturing the window list.
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError("visitor: no terminal_started")
+            msg = json.loads(await asyncio.wait_for(ws.recv(), remaining))
+            if msg.get("type") == "terminal_started":
+                continue
+            if msg.get("type") == "terminal_windows":
+                windows = msg.get("windows", [])
+                break
+            if msg.get("type") == "error":
+                raise ConnectionError(f"visitor terminal_start: {msg}")
+
+        # Probe window 0's live env. Retry the probe until the marker
+        # shows up (the shell may need a moment to present a prompt).
+        left, right = "MKOPEN", "MKCLOSE"
+        cmd = f"printf '{left}%s{right}\\n' \"${var}\"\r"
+        pattern = re.compile(re.escape(left) + r"(.*?)" + re.escape(right))
+        deadline = asyncio.get_event_loop().time() + timeout
+        buf = ""
+        sent = False
+        while asyncio.get_event_loop().time() < deadline:
+            if not sent:
+                await ws.send(json.dumps({"cmd": "terminal_input", "data": cmd}))
+                sent = True
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
+            except asyncio.TimeoutError:
+                # Re-send the probe in case the shell wasn't ready.
+                sent = False
+                continue
+            msg = json.loads(raw)
+            if msg.get("type") == "terminal_output":
+                buf += msg.get("data", "")
+                # The echoed command line contains "%s" between the
+                # markers; the real output contains the expanded value.
+                for m in pattern.finditer(buf):
+                    val = m.group(1)
+                    if val != "%s":
+                        return val, windows
+        raise AssertionError(
+            f"visitor probe for ${var} never returned a marker within "
+            f"{timeout}s. Output:\n{buf!r}"
+        )
 
 
 class TestOpenclawSetupBashrcExports:
@@ -447,6 +546,87 @@ class TestOpenclawSetupBashrcExports:
             )
             assert 'export PATH="/openclaw/bin:$PATH"' in bashrc
         finally:
+            if sandbox_proc.poll() is None:
+                sandbox_proc.kill()
+
+    def test_visitor_terminal_start_mid_setup_has_openclaw_home(self):
+        """A VISITOR terminal_start fired while setup is still running
+        spawns a shell whose live environment has OPENCLAW_HOME set.
+
+        This is the actual #1033 race end-to-end: a second WebSocket
+        connection (not the backend's own setup connection) sends
+        ``terminal_start`` while ``setup.sh`` is parked at the sentinel.
+        The backend spawns the per-user tmux base session and the
+        ``default-cmd`` window; the spawned shell sources ``~/.bashrc``
+        at that instant. Under the #1039 fix the exports are already in
+        ``~/.bashrc`` (written up front), so the spawned shell sees
+        ``OPENCLAW_HOME``. Under the original bug (export appended after
+        the slow install) the mid-setup shell inherits an incomplete
+        ``~/.bashrc`` and ``OPENCLAW_HOME`` is empty -- exactly the
+        "Missing config" window.
+
+        The visitor's own pane (window 0) is probed because it sources
+        the same ``~/.bashrc`` at the same instant as ``default-cmd``
+        and sits at a clean prompt (the gateway owns default-cmd's
+        foreground). We also assert the ``default-cmd`` window was
+        actually spawned -- i.e. the #1033 terminal_start really fired.
+        """
+        # WS3 reuses the populated mount, so its setup SKIPS the install
+        # (fast) and pauses at the sentinel -- setup is genuinely
+        # mid-flight when the visitor connects.
+        if os.path.exists(SENTINEL):
+            os.remove(SENTINEL)
+        with open(SENTINEL, "w") as f:
+            f.write("1\n")
+
+        sandbox_proc = subprocess.Popen(
+            ["klangkc", "sandbox", WS3, SANDBOX_DIR],
+            env=self._env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            ws3_id = self._await_container(name=WS3)
+            # setup.sh is now parked at the sentinel, AFTER writing the
+            # consolidated .bashrc exports. A visitor connecting now
+            # reproduces #1033: its terminal_start spawns a shell
+            # mid-setup. Give setup a beat to reach the sentinel.
+            self._await_setup_exports(ws3_id)
+
+            value, windows = asyncio.run(
+                _visitor_terminal_env(
+                    self._base_url, self._token, ws3_id, "OPENCLAW_HOME"
+                )
+            )
+
+            # The #1033 spawn really happened: the backend created the
+            # default-cmd window for this visitor's terminal_start.
+            win_names = [w.get("name") for w in windows]
+            assert "default-cmd" in win_names, (
+                "visitor terminal_start did not spawn the default-cmd "
+                "window; windows seen: " + repr(win_names)
+            )
+
+            # The shell spawned mid-setup via the visitor path sourced a
+            # ~/.bashrc that already has OPENCLAW_HOME (the #1039 fix).
+            assert value == "/openclaw", (
+                "a shell spawned by a visitor terminal_start mid-setup "
+                "did NOT have OPENCLAW_HOME set -- the #1033 race bit: "
+                "the mid-setup .bashrc lacked the export, so the spawned "
+                f"shell's $OPENCLAW_HOME was {value!r} (expected "
+                "'/openclaw'). This is the 'Missing config' window.\n"
+                f"windows: {win_names!r}"
+            )
+
+            # Release setup.sh and let it finish.
+            os.remove(SENTINEL)
+            assert sandbox_proc.wait(timeout=SETUP_TIMEOUT) == 0, (
+                "klangkc sandbox (WS3) failed:\n" + (sandbox_proc.stdout.read() or "")
+            )
+        finally:
+            if os.path.exists(SENTINEL):
+                os.remove(SENTINEL)
             if sandbox_proc.poll() is None:
                 sandbox_proc.kill()
 
