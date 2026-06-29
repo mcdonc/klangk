@@ -642,9 +642,16 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                       ? Colors.white.withValues(alpha: 0.03)
                       : Colors.transparent,
                   child: ListTile(
-                    leading: _WorkspaceStatusIcon(
-                      running: e.value['running'] as bool? ?? false,
-                      isShared: section.isShared,
+                    leading: Icon(
+                      Icons.terminal,
+                      size: 20,
+                      // The icon itself signals running state: green when
+                      // the container is up, grey when stopped. Owned and
+                      // shared share one color scheme now that they live on
+                      // separate tabs, so no ownership distinction is needed.
+                      color: (e.value['running'] as bool? ?? false)
+                          ? KColors.accentGreen
+                          : KColors.textSecondary,
                     ),
                     title: Text(e.value['name'] as String),
                     subtitle: section.isShared
@@ -803,49 +810,6 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                 )
               : null,
       body: _buildWorkspacesList(),
-    );
-  }
-}
-
-class _WorkspaceStatusIcon extends StatelessWidget {
-  const _WorkspaceStatusIcon({
-    required this.running,
-    required this.isShared,
-  });
-
-  final bool running;
-  final bool isShared;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 24,
-      height: 24,
-      child: Stack(
-        children: [
-          Icon(
-            Icons.terminal,
-            size: 20,
-            color: isShared ? KColors.accentBlue : KColors.accentGreen,
-          ),
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: running ? KColors.accentGreen : KColors.textMuted,
-                border: Border.all(
-                  color: KColors.bgSurface,
-                  width: 1.5,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
