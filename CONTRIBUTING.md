@@ -6,11 +6,10 @@ issue or pull request — it explains how submissions are handled.
 ## Default-closed policy
 
 To keep the project reviewable as the volume of AI-generated ("slop")
-submissions rises, **newly opened issues and pull requests will be closed
-automatically** (once the corresponding automation is live). This is not a
-judgment on your contribution — it's a filter that shifts the cost of sifting
-low-signal submissions off the maintainer, so genuine contributions don't get
-buried.
+submissions rises, **newly opened issues and pull requests are closed
+automatically**. This is not a judgment on your contribution — it's a filter
+that shifts the cost of sifting low-signal submissions off the maintainer, so
+genuine contributions don't get buried.
 
 ### How to get your issue or PR reconsidered
 
@@ -36,7 +35,7 @@ meant to deter humans, and a real sentence or two clears it without trouble.
 
 ### Trusted contributors
 
-Known/trusted contributors (maintained in `.github/CODEOWNERS`) will bypass
+Known/trusted contributors (maintained in `.github/CODEOWNERS`) bypass
 auto-close so routine, reviewed work isn't frictioned. If you've contributed
 before and would like to be added, mention it in your reply or email.
 

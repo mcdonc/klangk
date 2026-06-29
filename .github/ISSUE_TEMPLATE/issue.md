@@ -6,8 +6,8 @@ about: Report a bug or request a feature
 # Bug report
 
 <!--
-  Once the default-closed policy automation is live, this issue will be closed
-  automatically (see CONTRIBUTING.md). To have it reconsidered, fill in the
+  By default, this issue is closed automatically (see CONTRIBUTING.md). To have it
+  reconsidered, fill in the
   sections below with real context:
   what you tried, how to reproduce, and why it matters.
 -->

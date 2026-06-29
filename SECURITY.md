@@ -3,7 +3,7 @@
 ## Reporting a Vulnerability
 
 klangk runs a **default-closed** policy on issues and pull requests: newly
-opened issues and PRs will be closed automatically to manage AI-generated
+opened issues and PRs are closed automatically to manage AI-generated
 submission volume (see [CONTRIBUTING.md](./CONTRIBUTING.md)).
 
 **Security reports are not blocked by this policy.** If you've found a
