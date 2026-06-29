@@ -1024,7 +1024,10 @@ class _ShellSession:
                     "[ssh-agent] relay: got %d bytes from queue", len(data)
                 )
             try:
-                response = _query_local_ssh_agent(self.ssh_agent_sock, data)
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None, _query_local_ssh_agent, self.ssh_agent_sock, data
+                )
                 if response is not None:
                     if self._debug_agent:  # pragma: no cover
                         logger.info(
@@ -1370,7 +1373,7 @@ class _ExecSession(_ShellSession):
         except asyncio.CancelledError:
             pass
 
-        await self.ws.send(json.dumps({"cmd": "exec_stop"}))
+        await _send_ignore_closed(self.ws, json.dumps({"cmd": "exec_stop"}))
         return self.exit_code
 
 

@@ -97,7 +97,7 @@ async def refresh_user_handle(user_id: str, new_handle: str) -> None:
     old_handle: str | None = None
     affected_workspaces: set[str] = set()
     user_email: str = ""
-    for conn in state.connections.values():
+    for conn in list(state.connections.values()):
         if conn.user["id"] == user_id:
             if old_handle is None:
                 old_handle = conn.user.get("handle", "")
