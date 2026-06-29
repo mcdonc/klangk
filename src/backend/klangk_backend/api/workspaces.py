@@ -522,18 +522,12 @@ async def export_workspace(
     )
 
 
-@router.post("/workspaces/import")
-async def import_workspace(
-    file: UploadFile,
-    name: str | None = None,
-    user: dict = Depends(auth.get_current_user),
-):
-    """Import a workspace from a .tar.gz archive.
+async def _stream_upload_to_tempfile(file: UploadFile) -> str:
+    """Stream *file* to a temp file, enforcing the upload size limit.
 
-    Creates a new workspace with metadata from workspace.json and
-    extracts the home directory from the archive.
+    Returns the path to the temp file.  Caller is responsible for
+    deleting it.
     """
-    # Stream upload to a temp file — abort if over the configured limit.
     max_upload = FILE_UPLOAD_SIZE_MAX
     tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
     total = 0
@@ -547,75 +541,130 @@ async def import_workspace(
                 )
             tmp.write(chunk)
         tmp.close()
-    except HTTPException:
+    except BaseException:
         os.unlink(tmp.name)
         raise
-    except Exception:
-        os.unlink(tmp.name)
-        raise
+    return tmp.name
 
-    # Extract workspace.json from the archive using tar (fast, no Python parsing).
+
+def _extract_archive_metadata(archive_path: str, name: str | None) -> dict:
+    """Read workspace.json from the archive and return sanitized metadata."""
+    result = subprocess.run(
+        ["tar", "xzf", archive_path, "-O", "workspace.json"],
+        capture_output=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Archive missing workspace.json or is corrupt",
+        )
+    metadata = json.loads(result.stdout)
+
+    ws_name = name or metadata.get("name")
+    if not ws_name:
+        raise HTTPException(
+            status_code=400,
+            detail="No workspace name in archive or request",
+        )
+
+    image = metadata.get("image")
+    if image and image not in container.ALLOWED_IMAGES:
+        image = None
+
+    mounts = metadata.get("mounts")
+    if mounts and container.validate_mounts(mounts):
+        mounts = None
+
+    raw_env = metadata.get("env")
+    if isinstance(raw_env, dict):
+        blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
+        env = {
+            k: v
+            for k, v in raw_env.items()
+            if not k.startswith("KLANGK_") and k not in blocked
+        }
+    else:
+        env = None
+
+    return {
+        "name": ws_name,
+        "image": image,
+        "default_command": metadata.get("default_command"),
+        "auto_start": metadata.get("auto_start", False),
+        "mounts": mounts,
+        "env": env,
+    }
+
+
+async def _extract_home_directory(
+    archive_path: str, user_id: int, ws_id: int
+) -> None:
+    """Extract the ``home/`` tree from *archive_path* into the workspace home."""
+    home_dir = workspaces.home_path(user_id, ws_id)
+    home_dir.mkdir(parents=True, exist_ok=True)
+    check = subprocess.run(
+        ["tar", "tzf", archive_path, "home/"],
+        capture_output=True,
+        timeout=30,
+    )
+    if check.returncode != 0:
+        return
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [
+            "tar",
+            "xzf",
+            archive_path,
+            "--strip-components=1",
+            "--no-same-owner",
+            "--no-same-permissions",
+            "-C",
+            str(home_dir),
+            "home/",
+        ],
+        capture_output=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to extract home directory from archive",
+        )
+
+
+@router.post("/workspaces/import")
+async def import_workspace(
+    file: UploadFile,
+    name: str | None = None,
+    user: dict = Depends(auth.get_current_user),
+):
+    """Import a workspace from a .tar.gz archive.
+
+    Creates a new workspace with metadata from workspace.json and
+    extracts the home directory from the archive.
+    """
+    archive_path = await _stream_upload_to_tempfile(file)
     ws = None
     try:
-        result = subprocess.run(
-            ["tar", "xzf", tmp.name, "-O", "workspace.json"],
-            capture_output=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Archive missing workspace.json or is corrupt",
-            )
-        metadata = json.loads(result.stdout)
-
-        ws_name = name or metadata.get("name")
-        if not ws_name:
-            raise HTTPException(
-                status_code=400,
-                detail="No workspace name in archive or request",
-            )
-
-        image = metadata.get("image")
-        if image and image not in container.ALLOWED_IMAGES:
-            image = None  # fall back to default
-
-        mounts = metadata.get("mounts")
-        if mounts and container.validate_mounts(mounts):
-            mounts = None  # invalid mounts, drop them
-
-        # Sanitize env: drop keys that could interfere with
-        # container startup (KLANGK_*, LD_*, PATH, etc.)
-        raw_env = metadata.get("env")
-        if isinstance(raw_env, dict):
-            blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
-            env = {
-                k: v
-                for k, v in raw_env.items()
-                if not k.startswith("KLANGK_") and k not in blocked
-            }
-        else:
-            env = None
+        meta = _extract_archive_metadata(archive_path, name)
 
         try:
             ws = await workspaces.create_workspace(
                 user["id"],
-                ws_name,
-                image=image,
-                default_command=metadata.get("default_command"),
-                auto_start=metadata.get("auto_start", False),
-                mounts=mounts,
-                env=env,
+                meta["name"],
+                image=meta["image"],
+                default_command=meta["default_command"],
+                auto_start=meta["auto_start"],
+                mounts=meta["mounts"],
+                env=meta["env"],
             )
         except SAIntegrityError:
             raise HTTPException(
                 status_code=409,
-                detail=f"A workspace named {ws_name!r} already exists",
+                detail=f"A workspace named {meta['name']!r} already exists",
             )
 
-        # Grant owner full access via ACL (mirrors create_workspace). Without
-        # this an imported workspace has no ACL entries, so even its owner is
-        # denied terminal/exec/files access.
         await model.add_acl_entry(
             f"/workspaces/{ws['id']}",
             0,
@@ -625,39 +674,11 @@ async def import_workspace(
             user_id=user["id"],
         )
 
-        # Extract home directory using tar (much faster than Python tarfile
-        # for archives with many members). --strip-components=1 removes
-        # the "home/" prefix. Only extract if home/ exists in the archive.
-        home_dir = workspaces.home_path(user["id"], ws["id"])
-        home_dir.mkdir(parents=True, exist_ok=True)
-        check = subprocess.run(
-            ["tar", "tzf", tmp.name, "home/"],
-            capture_output=True,
-            timeout=30,
-        )
-        if check.returncode == 0:
-            result = await asyncio.to_thread(
-                subprocess.run,
-                [
-                    "tar",
-                    "xzf",
-                    tmp.name,
-                    "--strip-components=1",
-                    "--no-same-owner",
-                    "--no-same-permissions",
-                    "-C",
-                    str(home_dir),
-                    "home/",
-                ],
-                capture_output=True,
-                timeout=300,
-            )
-            if result.returncode != 0:
-                await workspaces.delete_workspace(ws["id"], user["id"])
-                raise HTTPException(
-                    status_code=400,
-                    detail="Failed to extract home directory from archive",
-                )
+        try:
+            await _extract_home_directory(archive_path, user["id"], ws["id"])
+        except HTTPException:
+            await workspaces.delete_workspace(ws["id"], user["id"])
+            raise
 
     except HTTPException:
         raise
@@ -668,7 +689,7 @@ async def import_workspace(
             status_code=400, detail="Invalid or corrupt archive"
         )
     finally:
-        os.unlink(tmp.name)
+        os.unlink(archive_path)
 
     wshandler.state.notify_user_workspaces_changed(user["id"])
     return ws
