@@ -17,6 +17,7 @@ class _MockWsClient extends WsClient {
 
   bool _connected = false;
   bool connectCalled = false;
+  bool connectShouldSucceed = true;
   String? connectedWorkspaceId;
 
   @override
@@ -41,7 +42,7 @@ class _MockWsClient extends WsClient {
   @override
   Future<void> connect() async {
     connectCalled = true;
-    _connected = true;
+    _connected = connectShouldSucceed;
   }
 
   @override
@@ -98,8 +99,7 @@ void main() {
 
     test('connect reports failure when wsClient fails to connect', () async {
       final ws = _MockWsClient();
-      // Override connect to not set _connected
-      ws._connected = false;
+      ws.connectShouldSucceed = false;
 
       String? errorMsg;
       final connector = WorkspaceConnector(
@@ -114,11 +114,41 @@ void main() {
         onPermissionError: (_) {},
       );
 
-      // Prevent the mock from succeeding
       await connector.connect();
 
-      // It connected because the mock's connect() sets _connected = true.
-      // Let's test the error path by making a fresh mock that stays disconnected.
+      expect(errorMsg, 'Failed to connect to server');
+      expect(connector.isActive, isFalse);
+
+      connector.dispose();
+      ws.close();
+    });
+
+    test('skips connect() when already connected', () async {
+      final ws = _MockWsClient();
+      ws._connected = true; // Already connected
+
+      bool calledBack = false;
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-456',
+        pluginRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {
+          calledBack = true;
+          expect(connected, isTrue);
+        },
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPermissionError: (_) {},
+      );
+
+      await connector.connect();
+
+      // connect() was NOT called on the ws since it was already connected
+      expect(ws.connectCalled, isFalse);
+      expect(ws.connectedWorkspaceId, 'ws-456');
+      expect(calledBack, isTrue);
+
+      connector.dispose();
       ws.close();
     });
 
