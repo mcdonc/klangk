@@ -24,6 +24,8 @@ import time as _time
 import httpx
 import websockets
 
+from .auth import refresh_token as _refresh_token
+
 
 _WS_MAX_SIZE = int(os.environ.get("KLANGK_WS_MSG_SIZE_MAX", 2**24))
 
@@ -163,56 +165,88 @@ def _get_terminal_size() -> tuple[int, int]:
     return 80, 24
 
 
+_REFRESH_MARGIN_SECONDS = 300  # refresh 5 minutes before expiry
+
+
+def _token_expires_soon(token: str) -> bool:
+    """Return True if *token* expires within ``_REFRESH_MARGIN_SECONDS``.
+
+    Decodes the JWT payload without verifying the signature (no secret
+    needed) and compares the ``exp`` claim against the current time.
+    Returns ``False`` on any decode failure so callers fall through to
+    the normal request path.
+    """
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        exp = claims.get("exp")
+        if exp is None:
+            return False
+        return _time.time() >= (exp - _REFRESH_MARGIN_SECONDS)
+    except Exception:
+        return False
+
+
 class KlangkClient:
     def __init__(self, server_url: str, token: str | None = None):
         self.server_url = server_url
         self.token = token
+        self._refreshed = False  # guard against infinite retry loops
 
     # --- HTTP helpers ---
 
+    def _try_refresh(self) -> bool:
+        """Attempt to refresh the current token.
+
+        On success, updates ``self.token`` and returns ``True``.
+        """
+        if not self.token:
+            return False
+        new_token = _refresh_token(self.server_url, self.token)
+        if new_token:
+            self.token = new_token
+            return True
+        return False
+
     def _headers(self) -> dict[str, str]:
+        if self.token and _token_expires_soon(self.token):
+            self._try_refresh()
         token = self.token or ""
         return {"Authorization": f"Bearer {token}"}
 
-    def get(self, path: str, **kwargs) -> httpx.Response:
-        return _request_with_retry(
-            "GET",
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        resp = _request_with_retry(
+            method,
             f"{self.server_url}{path}",
             headers=self._headers(),
             **kwargs,
         )
+        if resp.status_code == 401 and not self._refreshed:
+            self._refreshed = True
+            if self._try_refresh():
+                resp = _request_with_retry(
+                    method,
+                    f"{self.server_url}{path}",
+                    headers=self._headers(),
+                    **kwargs,
+                )
+        return resp
+
+    def get(self, path: str, **kwargs) -> httpx.Response:
+        return self._request("GET", path, **kwargs)
 
     def post(self, path: str, **kwargs) -> httpx.Response:
-        return _request_with_retry(
-            "POST",
-            f"{self.server_url}{path}",
-            headers=self._headers(),
-            **kwargs,
-        )
+        return self._request("POST", path, **kwargs)
 
     def put(self, path: str, **kwargs) -> httpx.Response:
-        return _request_with_retry(
-            "PUT",
-            f"{self.server_url}{path}",
-            headers=self._headers(),
-            **kwargs,
-        )
+        return self._request("PUT", path, **kwargs)
 
     def patch(self, path: str, **kwargs) -> httpx.Response:
-        return _request_with_retry(
-            "PATCH",
-            f"{self.server_url}{path}",
-            headers=self._headers(),
-            **kwargs,
-        )
+        return self._request("PATCH", path, **kwargs)
 
     def delete(self, path: str, **kwargs) -> httpx.Response:
-        return _request_with_retry(
-            "DELETE",
-            f"{self.server_url}{path}",
-            headers=self._headers(),
-            **kwargs,
-        )
+        return self._request("DELETE", path, **kwargs)
 
     # --- REST API ---
 
@@ -902,12 +936,20 @@ async def _ws_shell(
         if raw_mode:
             old_settings = _raw_mode_enter()
             tty.setraw(sys.stdin)
+        # Derive the HTTP base URL from the WebSocket URL for token refresh.
+        _http_url = ws_url.replace("wss://", "https://").replace(
+            "ws://", "http://"
+        )
+        if _http_url.endswith("/ws"):
+            _http_url = _http_url[:-3]
         try:
             await _run_shell(
                 ws,
                 cols,
                 rows,
                 ssh_agent_sock=local_agent_sock if ssh_agent_active else None,
+                server_url=_http_url,
+                token=token,
             )
         finally:
             if raw_mode:
@@ -1020,6 +1062,8 @@ class _TerminalSession(_ShellSession):
         stdin: io.RawIOBase | None = None,
         stdout: io.TextIOBase | None = None,
         ssh_agent_sock: str | None = None,
+        server_url: str | None = None,
+        token: str | None = None,
     ):
         super().__init__(ws, ssh_agent_sock)
         self.stdin = stdin if stdin is not None else sys.stdin.buffer
@@ -1027,6 +1071,8 @@ class _TerminalSession(_ShellSession):
         self._cols = cols
         self._rows = rows
         self._loop = asyncio.get_event_loop()
+        self.server_url = server_url
+        self.token = token
 
     async def _send_resize(self) -> None:
         await self.ws.send(
@@ -1128,7 +1174,19 @@ class _TerminalSession(_ShellSession):
         except websockets.ConnectionClosed as exc:
             if not self.stop.is_set():
                 _code = exc.rcvd.code if exc.rcvd else None
-                if _code in (4001, 4002):
+                if _code == 4002 and self.token:
+                    new = _refresh_token(self.server_url, self.token)
+                    if new:
+                        self.stdout.write(
+                            "\r\nSession refreshed."
+                            " Run your command again to reconnect.\r\n"
+                        )
+                    else:
+                        self.stdout.write(
+                            "\r\nSession expired. Run `klangkc login`"
+                            " to re-authenticate.\r\n"
+                        )
+                elif _code in (4001, 4002):
                     self.stdout.write(
                         "\r\nSession expired. Run `klangkc login` to"
                         " re-authenticate.\r\n"
@@ -1317,6 +1375,8 @@ async def _run_shell(
     stdin: io.RawIOBase | None = None,
     stdout: io.TextIOBase | None = None,
     ssh_agent_sock: str | None = None,
+    server_url: str | None = None,
+    token: str | None = None,
 ) -> None:
     """Run stdin/stdout forwarding loop with SIGWINCH support."""
     session = _TerminalSession(
@@ -1326,6 +1386,8 @@ async def _run_shell(
         stdin=stdin,
         stdout=stdout,
         ssh_agent_sock=ssh_agent_sock,
+        server_url=server_url,
+        token=token,
     )
     await session.run()
 

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import websockets
 import io
 from io import BytesIO
 
@@ -27,7 +28,9 @@ from klangkc.client import (
     Workspace,
     WorkspaceNotFoundError,
     _request_with_retry,
+    _token_expires_soon,
 )
+from klangkc.auth import refresh_token
 
 
 # --- CLIConfig tests ---
@@ -1300,6 +1303,250 @@ class TestKlangkClient:
         client = KlangkClient("http://test:8995")
         headers = client._headers()
         assert headers["Authorization"] == "Bearer "
+
+
+# --- Token refresh ---
+
+
+def _make_jwt(exp: float, email: str = "test@example.com") -> str:
+    """Build a fake JWT with the given exp timestamp (no real signature)."""
+    import base64
+
+    header = base64.urlsafe_b64encode(b'{"alg":"HS256"}').rstrip(b"=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"sub": "u1", "email": email, "exp": exp}).encode()
+    ).rstrip(b"=")
+    return f"{header.decode()}.{payload.decode()}.fakesig"
+
+
+class TestTokenExpiresSoon:
+    def test_returns_true_when_expiring_soon(self):
+        import time
+
+        token = _make_jwt(time.time() + 60)  # expires in 60s
+        assert _token_expires_soon(token) is True
+
+    def test_returns_false_when_not_expiring_soon(self):
+        import time
+
+        token = _make_jwt(time.time() + 600)  # expires in 10 min
+        assert _token_expires_soon(token) is False
+
+    def test_returns_false_for_invalid_token(self):
+        assert _token_expires_soon("not-a-jwt") is False
+
+    def test_returns_false_for_empty_token(self):
+        assert _token_expires_soon("") is False
+
+    def test_returns_false_when_no_exp(self):
+        import base64
+
+        header = base64.urlsafe_b64encode(b'{"alg":"HS256"}').rstrip(b"=")
+        payload = base64.urlsafe_b64encode(
+            b'{"sub":"u1","email":"a@b.com"}'
+        ).rstrip(b"=")
+        token = f"{header.decode()}.{payload.decode()}.sig"
+        assert _token_expires_soon(token) is False
+
+
+class TestRefreshToken:
+    def test_returns_new_token_on_success(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
+        new_jwt = _make_jwt(9999999999.0, email="me@test.com")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"access_token": new_jwt}
+        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+            result = refresh_token("http://srv", "old-token")
+        assert result == new_jwt
+        # Verify state was persisted
+        state = CLIState.load()
+        assert state.get_token("http://srv") == new_jwt
+
+    def test_returns_none_on_401(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+            assert refresh_token("http://srv", "old-token") is None
+
+    def test_returns_none_on_network_error(self):
+        with patch(
+            "klangkc.auth.httpx.post", side_effect=httpx.ConnectError("")
+        ):
+            assert refresh_token("http://srv", "old-token") is None
+
+    def test_returns_none_when_no_access_token_in_response(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+            assert refresh_token("http://srv", "old-token") is None
+
+    def test_handles_unparseable_jwt_email(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # A token whose payload is not valid base64/JSON
+        mock_resp.json.return_value = {"access_token": "a.!!!.c"}
+        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+            result = refresh_token("http://srv", "old-token")
+        assert result == "a.!!!.c"
+        state = CLIState.load()
+        assert state.get_token("http://srv") == "a.!!!.c"
+
+
+class TestClientTryRefresh:
+    def test_try_refresh_updates_token(self):
+        client = KlangkClient("http://test:8995", "old-token")
+        with patch("klangkc.client._refresh_token", return_value="new-token"):
+            assert client._try_refresh() is True
+        assert client.token == "new-token"
+
+    def test_try_refresh_returns_false_on_failure(self):
+        client = KlangkClient("http://test:8995", "old-token")
+        with patch("klangkc.client._refresh_token", return_value=None):
+            assert client._try_refresh() is False
+        assert client.token == "old-token"
+
+    def test_try_refresh_returns_false_without_token(self):
+        client = KlangkClient("http://test:8995")
+        assert client._try_refresh() is False
+
+
+class TestClientRetryOn401:
+    def test_retries_once_on_401_then_succeeds(self):
+        client = KlangkClient("http://test:8995", "old-token")
+        resp_401 = MagicMock()
+        resp_401.status_code = 401
+        resp_200 = MagicMock()
+        resp_200.status_code = 200
+        with (
+            patch(
+                "klangkc.client._request_with_retry",
+                side_effect=[resp_401, resp_200],
+            ),
+            patch("klangkc.client._refresh_token", return_value="new-token"),
+        ):
+            result = client.get("/api/v1/workspaces")
+        assert result.status_code == 200
+        assert client.token == "new-token"
+
+    def test_no_retry_when_refresh_fails(self):
+        client = KlangkClient("http://test:8995", "old-token")
+        resp_401 = MagicMock()
+        resp_401.status_code = 401
+        with (
+            patch(
+                "klangkc.client._request_with_retry",
+                return_value=resp_401,
+            ),
+            patch("klangkc.client._refresh_token", return_value=None),
+        ):
+            result = client.get("/api/v1/workspaces")
+        assert result.status_code == 401
+
+    def test_no_infinite_retry_loop(self):
+        client = KlangkClient("http://test:8995", "old-token")
+        resp_401 = MagicMock()
+        resp_401.status_code = 401
+        call_count = 0
+
+        def counting_refresh(server_url, token):
+            nonlocal call_count
+            call_count += 1
+            return "refreshed-token"
+
+        with (
+            patch(
+                "klangkc.client._request_with_retry",
+                return_value=resp_401,
+            ),
+            patch(
+                "klangkc.client._refresh_token",
+                side_effect=counting_refresh,
+            ),
+        ):
+            result = client.get("/api/v1/workspaces")
+        assert result.status_code == 401
+        assert call_count == 1  # refresh called only once
+
+    def test_proactive_refresh_in_headers(self):
+        import time
+
+        token = _make_jwt(time.time() + 60)  # expiring soon
+        client = KlangkClient("http://test:8995", token)
+        with patch("klangkc.client._refresh_token", return_value="refreshed"):
+            headers = client._headers()
+        assert headers["Authorization"] == "Bearer refreshed"
+        assert client.token == "refreshed"
+
+
+class TestWs4002Refresh:
+    @pytest.mark.asyncio
+    async def test_ws_4002_refresh_success(self):
+        from klangkc.client import _TerminalSession
+
+        ws = AsyncMock()
+        close_frame = MagicMock()
+        close_frame.code = 4002
+        ws.recv = AsyncMock(
+            side_effect=websockets.ConnectionClosed(close_frame, None)
+        )
+
+        captured = []
+
+        class CaptureWriter:
+            def write(self, data):
+                captured.append(data)
+
+            def flush(self):
+                pass
+
+        session = _TerminalSession(
+            ws,
+            80,
+            24,
+            stdout=CaptureWriter(),
+            server_url="http://test:8995",
+            token="old-token",
+        )
+        with patch("klangkc.client._refresh_token", return_value="new-token"):
+            await session.stdout_loop()
+        output = "".join(captured)
+        assert "Session refreshed" in output
+
+    @pytest.mark.asyncio
+    async def test_ws_4002_refresh_failure(self):
+        from klangkc.client import _TerminalSession
+
+        ws = AsyncMock()
+        close_frame = MagicMock()
+        close_frame.code = 4002
+        ws.recv = AsyncMock(
+            side_effect=websockets.ConnectionClosed(close_frame, None)
+        )
+
+        captured = []
+
+        class CaptureWriter:
+            def write(self, data):
+                captured.append(data)
+
+            def flush(self):
+                pass
+
+        session = _TerminalSession(
+            ws,
+            80,
+            24,
+            stdout=CaptureWriter(),
+            server_url="http://test:8995",
+            token="old-token",
+        )
+        with patch("klangkc.client._refresh_token", return_value=None):
+            await session.stdout_loop()
+        output = "".join(captured)
+        assert "Session expired" in output
 
 
 # --- Shell protocol ---
