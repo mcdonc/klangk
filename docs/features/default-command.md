@@ -63,6 +63,16 @@ disconnect and reconnect, you pick up the tmux session exactly
 where you left off (the process may still be running, or you may
 be at a bash prompt if it exited).
 
+## Shell features
+
+The command is sent as keystrokes into a bash shell, so any shell
+syntax works — pipes, redirects, `&&` chains, subshells, etc.:
+
+```yaml
+workspace:
+  default-command: openclaw gateway 2>&1 | tee /tmp/gateway.log
+```
+
 ## Use cases
 
 - **Dev servers** — `npm run dev`, `python manage.py runserver`
