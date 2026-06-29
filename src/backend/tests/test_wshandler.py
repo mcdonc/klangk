@@ -3948,16 +3948,17 @@ class TestNotifyUserWorkspacesChanged:
         # Should not raise when the user has no active connections.
         wshandler.state.notify_user_workspaces_changed("nobody")
 
-    def test_dead_socket_is_pruned(self):
+    async def test_dead_socket_is_pruned(self):
         from klangk_backend.wshandler import _WS_ERRORS
 
         sock = _mock_sock()
-        # A send that raises a websocket error simulates a dead client.
         sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
         try:
-            self._register(sock, {"id": "uid-1", "email": "a@x"})
-            wshandler.state.notify_user_workspaces_changed("uid-1")
-            # The dead connection was removed from the registry.
+            conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
+            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
+                wshandler.state.notify_user_workspaces_changed("uid-1")
+                await asyncio.sleep(0)
+                mock.assert_awaited_once()
             assert sock not in wshandler.state.connections
         finally:
             wshandler.state.connections.pop(sock, None)
@@ -4009,14 +4010,17 @@ class TestNotifyContainerStatus:
             wshandler.state.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
-    def test_dead_socket_is_pruned(self):
+    async def test_dead_socket_is_pruned(self):
         from klangk_backend.wshandler import _WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
         try:
-            self._register(sock, {"id": "uid-1", "email": "a@x"})
-            wshandler.state.notify_container_status("ws-1", True)
+            conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
+            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
+                wshandler.state.notify_container_status("ws-1", True)
+                await asyncio.sleep(0)
+                mock.assert_awaited_once()
             assert sock not in wshandler.state.connections
         finally:
             wshandler.state.connections.pop(sock, None)

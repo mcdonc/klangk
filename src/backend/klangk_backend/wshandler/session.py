@@ -474,9 +474,10 @@ class WebSocketState:
             try:
                 sock.send_json(message)
             except _WS_ERRORS:
-                dead.append(sock)
-        for sock in dead:
+                dead.append((sock, conn))
+        for sock, conn in dead:
             self.connections.pop(sock, None)
+            asyncio.create_task(conn.cleanup())
 
     def notify_user_workspaces_changed(self, user_id: str) -> None:
         """Send ``workspaces_changed`` to all of a user's connections.
@@ -494,9 +495,10 @@ class WebSocketState:
             try:
                 sock.send_json(message)
             except _WS_ERRORS:
-                dead.append(sock)
-        for sock in dead:
+                dead.append((sock, conn))
+        for sock, conn in dead:
             self.connections.pop(sock, None)
+            asyncio.create_task(conn.cleanup())
 
     def handle_browser_response(
         self, msg: dict, sender: SafeWebSocket | None = None
