@@ -1,0 +1,78 @@
+name: "Slop policy: auto-close on open"
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+# Inert unless the repo variable ENABLE_SLOP_POLICY == "true".
+# This workflow is merged INERT and enabled as the final, separate step — after
+# the policy docs (#1044) and after the workflow was validated in scratch.
+# Enable with: gh variable set ENABLE_SLOP_POLICY --body true
+jobs:
+  auto-close:
+    if: ${{ vars.ENABLE_SLOP_POLICY == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auto-close unless author is allowlisted
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "issues" ]; then
+            NUMBER=$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")
+            AUTHOR=$(jq -r '.issue.user.login' "$GITHUB_EVENT_PATH")
+            KIND="issue"
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            NUMBER=$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")
+            AUTHOR=$(jq -r '.pull_request.user.login' "$GITHUB_EVENT_PATH")
+            KIND="pr"
+          else
+            echo "Not an issue/PR open event; skipping."
+            exit 0
+          fi
+
+          echo "::notice::event=$GITHUB_EVENT_NAME item=#$NUMBER author=@$AUTHOR kind=$KIND"
+
+          # --- Allowlist bypass ---
+          ALLOWLIST="$(pwd)/.github/slop-allowlist"
+          if [ -f "$ALLOWLIST" ] && grep -Fxq -- "$AUTHOR" "$ALLOWLIST"; then
+            echo "::notice::@$AUTHOR is allowlisted; skipping auto-close."
+            exit 0
+          fi
+
+          # --- Policy comment (from a file, to avoid heredoc-in-YAML issues) ---
+          COMMENT_FILE="$(pwd)/.github/slop-close-comment.md"
+          if [ ! -f "$COMMENT_FILE" ]; then
+            echo "::error::policy comment file not found: $COMMENT_FILE"
+            exit 1
+          fi
+          COMMENT="$(cat "$COMMENT_FILE")"
+
+          # --- Tag (idempotent) so the reopen path + maintainers can see it was auto-closed ---
+          gh label create "auto-closed" --repo "$REPO" \
+            --description "Auto-closed by the slop policy; auto-reopens on a substantive human comment." \
+            --color BFD4F2 2>/dev/null || true
+
+          # --- Comment + close + label ---
+          if [ "$KIND" = issue ]; then
+            gh issue comment "$NUMBER" --repo "$REPO" --body "$COMMENT"
+            gh issue close  "$NUMBER" --repo "$REPO"
+            gh issue edit   "$NUMBER" --repo "$REPO" --add-label "auto-closed"
+          else
+            gh pr comment "$NUMBER" --repo "$REPO" --body "$COMMENT"
+            gh pr close  "$NUMBER" --repo "$REPO"
+            gh pr edit   "$NUMBER" --repo "$REPO" --add-label "auto-closed"
+          fi
+
+          echo "::notice::closed #$NUMBER (kind=$KIND, labeled auto-closed)."

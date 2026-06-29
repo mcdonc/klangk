@@ -1,0 +1,89 @@
+name: "Slop policy: auto-reopen on human comment"
+
+on:
+  # Fires for comments on BOTH issues and PRs (GitHub unifies them here).
+  # Inline PR review comments are a separate event (pull_request_review_comment)
+  # and are NOT covered by this v1 — see the "Reopen path" notes in #1042.
+  issue_comment:
+    types: [created]
+
+# Inert unless the repo variable ENABLE_SLOP_POLICY == "true".
+jobs:
+  auto-reopen:
+    if: ${{ vars.ENABLE_SLOP_POLICY == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Reopen auto-closed items on a substantive human comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          COMMENTER=$(jq -r '.comment.user.login' "$GITHUB_EVENT_PATH")
+          BODY=$(jq -r '.comment.body' "$GITHUB_EVENT_PATH")
+          NUMBER=$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")
+          STATE=$(jq -r '.issue.state' "$GITHUB_EVENT_PATH")
+          IS_PR=$(jq -r 'if .issue.pull_request then "1" else "0" end' "$GITHUB_EVENT_PATH")
+
+          echo "::notice::comment on #$NUMBER by @$COMMENTER (state=$STATE is_pr=$IS_PR)"
+
+          # --- Bot filter: bots don't earn reopens (also prevents self-loops,
+          # since our own ack comment fires issue_comment.created). ---
+          case "$COMMENTER" in
+            *\[bot\]) echo "::notice::@$COMMENTER is a bot; ignoring."; exit 0 ;;
+          esac
+          for b in github-actions dependabot renovate imgbot allcontributors stale; do
+            if [ "$COMMENTER" = "$b" ]; then
+              echo "::notice::@$COMMENTER is a known bot; ignoring."; exit 0
+            fi
+          done
+
+          # --- Substantive filter: needs a real sentence, not reopen-begging.
+          # Deliberately simple (length + a small phrase blocklist); the deeper
+          # slop assessment is the section-5 LLM skill's job, post-reopen. ---
+          NORMALIZED=$(printf '%s' "$BODY" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
+          if [ "${#NORMALIZED}" -lt 15 ]; then
+            echo "::notice::comment too short; ignoring."; exit 0
+          fi
+          case "$NORMALIZED" in
+            "please reopen this"|"any updates here"|"any update on this"|"reopen this please"|"still an issue"|"any news on this"|"bump please")
+              echo "::notice::low-effort reopen phrase; ignoring."; exit 0 ;;
+          esac
+
+          # --- Only reopen CLOSED items ---
+          if [ "$STATE" != "closed" ]; then
+            echo "::notice::#$NUMBER is not closed; nothing to reopen."; exit 0
+          fi
+
+          # --- Only reopen items WE auto-closed (label gate).
+          # Without this, any substantive comment would override a human
+          # maintainer's deliberate close. The label is removed on reopen. ---
+          if [ "$IS_PR" = "1" ]; then
+            HAS_LABEL=$(gh pr view "$NUMBER" --repo "$REPO" --json labels \
+              --jq '[.labels[].name] | index("auto-closed") != null' 2>/dev/null || echo false)
+          else
+            HAS_LABEL=$(gh issue view "$NUMBER" --repo "$REPO" --json labels \
+              --jq '[.labels[].name] | index("auto-closed") != null' 2>/dev/null || echo false)
+          fi
+          if [ "$HAS_LABEL" != "true" ]; then
+            echo "::notice::#$NUMBER was not auto-closed (no 'auto-closed' label); not overriding a human close."; exit 0
+          fi
+
+          # --- Reopen, drop the label, acknowledge ---
+          ACK="Reopened for maintainer review — thanks for the additional context. A maintainer will take a look."
+          if [ "$IS_PR" = "1" ]; then
+            gh pr reopen "$NUMBER" --repo "$REPO"
+            gh pr edit "$NUMBER" --repo "$REPO" --remove-label "auto-closed"
+            gh pr comment "$NUMBER" --repo "$REPO" --body "$ACK"
+          else
+            gh issue reopen "$NUMBER" --repo "$REPO"
+            gh issue edit "$NUMBER" --repo "$REPO" --remove-label "auto-closed"
+            gh issue comment "$NUMBER" --repo "$REPO" --body "$ACK"
+          fi
+
+          echo "::notice::reopened #$NUMBER."
