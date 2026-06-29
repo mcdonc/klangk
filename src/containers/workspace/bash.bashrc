@@ -51,20 +51,3 @@ for f in /opt/klangk/plugins/*/on-shell-init.sh; do
   "$f" || true
   printf '\033[33m%s\033[0m\n' "$(printf '%*s' 60 '' | tr ' ' '-')"
 done
-
-# Determine which command to exec into (if any).
-# KLANGK_CMD_OVERRIDE (set per-session via podman exec -e) takes priority.
-# Otherwise fall back to the workspace default from the config mount.
-# KLANGK_CMD_STARTED guard prevents infinite recursion if the command is bash.
-if [ -z "$KLANGK_CMD_STARTED" ]; then
-  KLANGK_CMD="${KLANGK_CMD_OVERRIDE:-}"
-  if [ -z "$KLANGK_CMD" ] && [ -f /opt/klangk/config/default-command ]; then
-    KLANGK_CMD=$(cat /opt/klangk/config/default-command)
-  fi
-  if [ -n "$KLANGK_CMD" ]; then
-    export KLANGK_CMD_STARTED=1
-    stty sane 2>/dev/null
-    # shellcheck disable=SC2086
-    exec $KLANGK_CMD
-  fi
-fi

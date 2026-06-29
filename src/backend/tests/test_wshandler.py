@@ -726,6 +726,7 @@ class TestHandleTerminalStart:
             user_id="uid",
             user_handle="testuser",
             ssh_agent_socket=None,
+            default_command=None,
         )
         # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -739,8 +740,6 @@ class TestHandleTerminalStart:
         )
 
         # browser_id should be registered and stored on the connection
-        start_kwargs = mock_session.start.call_args
-        assert start_kwargs[1]["command_override"] is None
         assert conn._browser_id == "test-browser-id"
         assert conn.terminal_session is mock_session
         assert conn.terminal_task is not None
@@ -1169,12 +1168,13 @@ class TestHandleTerminalStart:
         assert conn._browser_id is None
         mock_attach.assert_not_awaited()
 
-    async def test_passes_command_override(self):
+    async def test_passes_default_command(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
         conn._user_home = "/home/testuser"
+        conn._default_command = "pi"
 
         async def _perm(*a):
             return True
@@ -1195,15 +1195,19 @@ class TestHandleTerminalStart:
                 {
                     "cols": 80,
                     "rows": 24,
-                    "commandOverride": "bash",
                     "browser_id": "bid-cmd",
                 }
             )
-            # Let the background task run
             await asyncio.sleep(0)
 
-        mock_session.start.assert_awaited_once_with(
-            80, 24, command_override="bash"
+        MockTS.assert_called_once_with(
+            "cid",
+            session_name="uid",
+            user_home="/home/testuser",
+            user_id="uid",
+            user_handle="testuser",
+            ssh_agent_socket=None,
+            default_command="pi",
         )
 
         conn.terminal_task.cancel()
@@ -2960,6 +2964,7 @@ class TestSSHAgentHandlers:
             user_id="uid",
             user_handle="testuser",
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
+            default_command=None,
         )
 
 
@@ -5003,6 +5008,7 @@ class TestTerminalController:
             _ssh_agent_socket=None,
             _browser_id=None,
             _viewing_shared=None,
+            _default_command=None,
             user=user,
             _has_perm=AsyncMock(return_value=has_perm),
             _broadcast_shared_terminals=MagicMock(),

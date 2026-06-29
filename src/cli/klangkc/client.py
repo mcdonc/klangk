@@ -325,12 +325,15 @@ class KlangkClient:
         self,
         name: str,
         image: str | None = None,
+        default_command: str | None = None,
         mounts: list[str] | None = None,
         env: dict[str, str] | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
         if image:
             body["image"] = image
+        if default_command:
+            body["default_command"] = default_command
         if mounts:
             body["mounts"] = mounts
         if env:
@@ -623,7 +626,6 @@ async def _ws_shell(
     token: str,
     workspace_id: str,
     raw_mode: bool = True,
-    command_override: str | None = None,
     window: str | None = None,
     forward_agent: bool = False,
     sandbox_setup=None,
@@ -633,7 +635,6 @@ async def _ws_shell(
 
     raw_mode controls whether stdin is placed in raw (cbreak) mode.
     Pass False in tests or when stdin is not a real terminal.
-    command_override, if set, overrides the workspace default command.
     window, if set, selects a specific window by name. Use
     ``handle:window_name`` to join another user's shared window.
     sandbox_setup, if set, is an async callable(ws) invoked after the
@@ -709,15 +710,16 @@ async def _ws_shell(
 
         # 2c. Start terminal
         cols, rows = _get_terminal_size()
-        start_msg: dict = {
-            "cmd": "terminal_start",
-            "cols": cols,
-            "rows": rows,
-            "browser_id": "klangkshell",
-        }
-        if command_override is not None:
-            start_msg["commandOverride"] = command_override
-        await ws.send(json.dumps(start_msg))
+        await ws.send(
+            json.dumps(
+                {
+                    "cmd": "terminal_start",
+                    "cols": cols,
+                    "rows": rows,
+                    "browser_id": "klangkshell",
+                }
+            )
+        )
 
         # 3. Drain messages until we have terminal_windows (needed for
         # window selection).  terminal_output may arrive before

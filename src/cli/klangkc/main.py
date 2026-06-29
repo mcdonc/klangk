@@ -767,12 +767,6 @@ def shell(
         None,
         help="Terminal name to select (or handle:name for shared)",
     ),
-    command: str | None = typer.Option(
-        None,
-        "--command",
-        "-c",
-        help="Override the default shell command",
-    ),
     forward_agent: bool | None = typer.Option(
         None,
         "--forward-agent/--no-forward-agent",
@@ -780,7 +774,7 @@ def shell(
         help="Forward local SSH agent into the container",
     ),
 ) -> None:
-    """Connect to a workspace and execute the default shell command."""
+    """Connect to a workspace shell."""
     # When called directly (not via typer CLI), forward_agent may be a
     # typer.models.OptionInfo instead of bool/None.  Normalize to None.
     if not isinstance(forward_agent, bool):
@@ -837,7 +831,6 @@ def shell(
                 ws_url,
                 token,
                 ws.id,
-                command_override=command,
                 window=terminal,
                 forward_agent=forward_agent,
                 max_size=_ws_max_size(),
@@ -1006,7 +999,10 @@ def sandbox(
         all_mounts = build_all_mounts(config, sandbox_root, handle)
         _err.print(f"Creating workspace [bold]{workspace}[/bold]...")
         ws = client.create_workspace(
-            workspace, image=config.image, mounts=all_mounts
+            workspace,
+            image=config.image,
+            default_command=config.default_command,
+            mounts=all_mounts,
         )
         _err.print(f"Workspace [bold]{workspace}[/bold] created.")
         created = True

@@ -661,34 +661,19 @@ class TestDefaultCommand:
             env=env,
         )
 
-    def test_default_command_written_to_container(self, cli_config):
-        """set-command → container gets KLANGK_DEFAULT_COMMAND → .klangk-command."""
+    def test_default_command_stored_in_workspace(self, cli_config):
+        """default_command is stored in the workspace via the API."""
         env = cli_config["env"]
         TestDefaultCommand._login(cli_config)
         _run(["klangkc", "create", "e2e-defcmd"], env=env)
         try:
-            # Set command before container starts
+            # Set command
             result = _run(
                 ["klangkc", "edit", "e2e-defcmd", "--command", "echo hello"],
                 env=env,
             )
             assert result.returncode == 0
             assert "Updated" in result.stdout
-
-            # exec triggers container start; config mount has the command
-            result = _run(
-                [
-                    "klangkc",
-                    "exec",
-                    "e2e-defcmd",
-                    "cat",
-                    "/opt/klangk/config/default-command",
-                ],
-                env=env,
-                timeout=120,
-            )
-            assert result.returncode == 0
-            assert result.stdout.strip() == "echo hello"
 
             # Clear
             result = _run(
@@ -698,42 +683,6 @@ class TestDefaultCommand:
             assert "Updated" in result.stdout
         finally:
             _run(["klangkc", "rm", "e2e-defcmd"], env=env)
-
-    def test_default_command_bash_no_infinite_loop(self, cli_config):
-        """Setting default command to bash should not cause infinite recursion."""
-        env = cli_config["env"]
-        TestDefaultCommand._login(cli_config)
-        _run(["klangkc", "create", "e2e-defbash"], env=env)
-        try:
-            _run(
-                ["klangkc", "edit", "e2e-defbash", "--command", "bash"],
-                env=env,
-            )
-            # Start the container first
-            _run(
-                ["klangkc", "exec", "e2e-defbash", "true"],
-                env=env,
-                timeout=30,
-            )
-            # Run an interactive bash inside the container that sources
-            # .bashrc, which would exec bash again without the
-            # KLANGK_CMD_STARTED guard. If recursion happens, this hangs
-            # and times out. We pipe "exit" to terminate the shell.
-            result = _run(
-                [
-                    "klangkc",
-                    "exec",
-                    "e2e-defbash",
-                    "bash",
-                    "-ic",
-                    "exit 0",
-                ],
-                env=env,
-                timeout=15,
-            )
-            assert result.returncode == 0
-        finally:
-            _run(["klangkc", "rm", "e2e-defbash"], env=env)
 
 
 class TestMounts:
