@@ -958,105 +958,101 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     return types;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // Re-resolve on each build: AuthService loads permissions asynchronously,
-    // so the first build (before they arrive) would otherwise show no tabs.
-    _resolvePermissions();
+  (List<SkeuoTab>, List<Widget>) _buildTabsAndViews() {
     final pendingCount = _invitationsPending;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
     final tabTypes = _tabTypes;
 
-    if (_canUsers) {
+    void addTab({
+      required String label,
+      required IconData icon,
+      required Widget view,
+      int? badge,
+    }) {
       final idx = tabs.length;
       tabs.add(
         SkeuoTab(
-          label: 'Users',
-          icon: Icons.people,
+          label: label,
+          icon: icon,
           isSelected: _selectedIndex == idx,
+          badge: badge,
           onTap: () => setState(() => _selectedIndex = idx),
         ),
       );
-      views.add(_buildUsersTab());
-    }
-    if (_canGroups) {
-      final idx = tabs.length;
-      tabs.add(
-        SkeuoTab(
-          label: 'Groups',
-          icon: Icons.group,
-          isSelected: _selectedIndex == idx,
-          onTap: () => setState(() => _selectedIndex = idx),
-        ),
-      );
-      views.add(_buildGroupsTab());
-    }
-    if (_canInvitations) {
-      final idx = tabs.length;
-      tabs.add(
-        SkeuoTab(
-          label: 'Invitations',
-          icon: Icons.mail_outline,
-          isSelected: _selectedIndex == idx,
-          badge: pendingCount > 0 ? pendingCount : null,
-          onTap: () => setState(() => _selectedIndex = idx),
-        ),
-      );
-      views.add(_buildInvitationsTab());
+      views.add(view);
     }
 
-    // ACL tab — always visible for admins
-    if (tabTypes.isNotEmpty) {
-      final idx = tabs.length;
-      tabs.add(
-        SkeuoTab(
-          label: 'Access Control',
-          icon: Icons.security,
-          isSelected: _selectedIndex == idx,
-          onTap: () => setState(() => _selectedIndex = idx),
-        ),
+    if (_canUsers) {
+      addTab(label: 'Users', icon: Icons.people, view: _buildUsersTab());
+    }
+    if (_canGroups) {
+      addTab(label: 'Groups', icon: Icons.group, view: _buildGroupsTab());
+    }
+    if (_canInvitations) {
+      addTab(
+        label: 'Invitations',
+        icon: Icons.mail_outline,
+        badge: pendingCount > 0 ? pendingCount : null,
+        view: _buildInvitationsTab(),
       );
-      views.add(const _AclBrowserTab());
+    }
+    if (tabTypes.isNotEmpty) {
+      addTab(
+        label: 'Access Control',
+        icon: Icons.security,
+        view: const _AclBrowserTab(),
+      );
     }
 
     if (tabs.isEmpty) {
       views.add(const Center(child: Text('No admin sections available')));
     }
 
-    Widget? fab;
+    return (tabs, views);
+  }
+
+  Widget? _buildFab() {
+    final tabTypes = _tabTypes;
     final currentType = tabTypes.isNotEmpty && _selectedIndex < tabTypes.length
         ? tabTypes[_selectedIndex]
         : '';
-    if (currentType == 'users') {
-      fab = FloatingActionButton(
-        heroTag: 'add',
-        onPressed: _addUser,
-        tooltip: 'Add user',
-        child: const Icon(Icons.person_add),
-      );
-    } else if (currentType == 'invitations') {
-      fab = FloatingActionButton(
-        heroTag: 'invite',
-        onPressed: _inviteUser,
-        tooltip: 'Invite user',
-        child: const Icon(Icons.mail_outline),
-      );
-    } else if (currentType == 'groups') {
-      fab = FloatingActionButton(
-        heroTag: 'add-group',
-        onPressed: _createGroup,
-        tooltip: 'Create group',
-        child: const Icon(Icons.group_add),
-      );
-    }
+    return switch (currentType) {
+      'users' => FloatingActionButton(
+          heroTag: 'add',
+          onPressed: _addUser,
+          tooltip: 'Add user',
+          child: const Icon(Icons.person_add),
+        ),
+      'invitations' => FloatingActionButton(
+          heroTag: 'invite',
+          onPressed: _inviteUser,
+          tooltip: 'Invite user',
+          child: const Icon(Icons.mail_outline),
+        ),
+      'groups' => FloatingActionButton(
+          heroTag: 'add-group',
+          onPressed: _createGroup,
+          tooltip: 'Create group',
+          child: const Icon(Icons.group_add),
+        ),
+      _ => null,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Re-resolve on each build: AuthService loads permissions asynchronously,
+    // so the first build (before they arrive) would otherwise show no tabs.
+    _resolvePermissions();
+    final (tabs, views) = _buildTabsAndViews();
 
     return Scaffold(
       appBar: AppBar(
         title: const AppBarTitle(title: 'Admin'),
         actions: const [AppBarActions()],
       ),
-      floatingActionButton: fab,
+      floatingActionButton: _buildFab(),
       body: Column(
         children: [
           if (tabs.isNotEmpty)
