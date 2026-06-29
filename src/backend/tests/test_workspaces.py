@@ -323,3 +323,74 @@ class TestEagerStartWorkspace:
             assert container.registry.states[ws["id"]].idle_timeout == 0
         finally:
             container.registry.states.pop(ws["id"], None)
+
+    async def test_runs_default_command_on_create(self, user):
+        ws = await ws_mod.create_workspace(
+            user["id"],
+            "eager-cmd-ws",
+            auto_start=True,
+            default_command="openclaw gateway",
+        )
+        from klangk_backend.container import ContainerState
+
+        container.registry.states[ws["id"]] = ContainerState(
+            ws["id"], "cid-cmd"
+        )
+        try:
+            with (
+                patch.object(
+                    container.registry,
+                    "start_container",
+                    new_callable=AsyncMock,
+                    return_value=("cid-cmd", "created"),
+                ),
+                patch(
+                    "klangk_backend.terminal._ensure_base_session",
+                    new_callable=AsyncMock,
+                ) as mock_session,
+                patch(
+                    "klangk_backend.workspaces.populate_home_skel",
+                    new_callable=AsyncMock,
+                ),
+            ):
+                await ws_mod.eager_start_workspace(ws)
+            mock_session.assert_awaited_once_with(
+                "cid-cmd",
+                user["id"],
+                user_home=mock_session.call_args[1]["user_home"],
+                default_command="openclaw gateway",
+            )
+        finally:
+            container.registry.states.pop(ws["id"], None)
+
+    async def test_skips_default_command_on_reconnect(self, user):
+        ws = await ws_mod.create_workspace(
+            user["id"],
+            "eager-recon-ws",
+            auto_start=True,
+            default_command="openclaw gateway",
+        )
+        from klangk_backend.container import ContainerState
+
+        container.registry.states[ws["id"]] = ContainerState(
+            ws["id"], "cid-recon"
+        )
+        try:
+            with (
+                patch.object(
+                    container.registry,
+                    "start_container",
+                    new_callable=AsyncMock,
+                    return_value=("cid-recon", "connected"),
+                ),
+                patch(
+                    "klangk_backend.terminal._ensure_base_session",
+                    new_callable=AsyncMock,
+                ) as mock_session,
+            ):
+                await ws_mod.eager_start_workspace(ws)
+            # "connected" means container was already running —
+            # don't re-run the default command.
+            mock_session.assert_not_awaited()
+        finally:
+            container.registry.states.pop(ws["id"], None)

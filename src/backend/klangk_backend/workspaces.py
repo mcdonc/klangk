@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from . import container, model, podman
+from . import container, model, podman, terminal
 from .util import resolve_env_bool, resolve_env_value
 
 logger = logging.getLogger(__name__)
@@ -418,6 +418,24 @@ async def eager_start_workspace(ws: dict) -> tuple[str, str]:
     state = container.registry.states.get(workspace_id)
     if state:
         state.idle_timeout = 0
+
+    # If the workspace has a default command, create a tmux session
+    # and run it now so it's already running when a user connects.
+    default_command = ws.get("default_command")
+    if default_command and status == "created":
+        handle = await model.get_user_handle(owner_id)
+        if handle:
+            ws_home = home_path(owner_id, workspace_id)
+            user_home, created = ensure_home_symlink(ws_home, handle, owner_id)
+            if created:
+                await populate_home_skel(cid, owner_id)
+            await terminal._ensure_base_session(
+                cid,
+                owner_id,
+                user_home=user_home,
+                default_command=default_command,
+            )
+
     return cid, status
 
 
