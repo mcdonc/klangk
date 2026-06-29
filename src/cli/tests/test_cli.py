@@ -2375,3 +2375,31 @@ class TestSendIgnoreClosed:
         ws.send = AsyncMock(side_effect=OSError("broken"))
         # Should not raise
         await _send_ignore_closed(ws, "hello")
+
+
+class TestExecSessionRunClosedWs:
+    async def test_run_tolerates_closed_ws_on_exec_stop(self):
+        """_ExecSession.run() must not crash when the WS is closed at cleanup."""
+        import websockets
+        from klangkc.client import _ExecSession
+
+        ws = AsyncMock()
+        call_count = 0
+
+        async def _send_side_effect(msg):
+            nonlocal call_count
+            call_count += 1
+            parsed = json.loads(msg)
+            # Let exec_start through, but blow up on exec_stop
+            if parsed.get("cmd") == "exec_stop":
+                raise websockets.ConnectionClosed(None, None)
+
+        ws.send = AsyncMock(side_effect=_send_side_effect)
+        # recv returns an exec_exit so stdout_forward terminates
+        ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "exec_exit", "code": 0})
+        )
+
+        session = _ExecSession(ws, command=["echo", "hi"], stdin=None)
+        exit_code = await session.run()
+        assert exit_code == 0

@@ -1364,7 +1364,7 @@ class _ExecSession(_ShellSession):
         except asyncio.CancelledError:
             pass
 
-        await self.ws.send(json.dumps({"cmd": "exec_stop"}))
+        await _send_ignore_closed(self.ws, json.dumps({"cmd": "exec_stop"}))
         return self.exit_code
 
 
