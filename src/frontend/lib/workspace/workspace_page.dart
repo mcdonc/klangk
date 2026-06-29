@@ -13,7 +13,6 @@ import '../utils/page_title.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 import '../file_viewer/file_viewer_panel.dart';
-import '../utils/suppress_browser_menu.dart';
 import '../file_viewer/file_renderer_wiring.dart';
 import '../layout/ide_layout.dart';
 import '../terminal/ghostty_terminal.dart';
@@ -23,11 +22,12 @@ import 'workspace_overlays.dart';
 import 'package:http/http.dart' as http;
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
-import '../browser/browser_delegate.dart';
 import '../chat/workspace_chat.dart';
 import '../debug/debug_panel.dart';
 import 'workspace_settings_panel.dart';
 import 'workspace_sharing_panel.dart';
+import 'terminal_tabs_view.dart';
+import 'workspace_connector.dart';
 
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
@@ -75,13 +75,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String? _selectedOwnWindowId;
   String _stopReason = '';
   List<String> _workspacePermissions = [];
-  BrowserDelegate? _browserDelegate;
-  StreamSubscription<Map<String, dynamic>>? _customEventSub;
-  StreamSubscription<String>? _errorSub;
-  StreamSubscription<Map<String, dynamic>>? _sharedDeletedSub;
   late final ToolPluginRegistry _pluginRegistry;
   late final List<ToolPlugin> _plugins;
   late final FileRendererRegistry _fileRenderers;
+  WorkspaceConnector? _connector;
 
   /// Resolves a ⌘/Ctrl-clicked terminal token and opens it: external `http(s)`
   /// URLs in a new tab; workspace files (after existence-verify) in the file
@@ -173,109 +170,82 @@ class _WorkspacePageState extends State<WorkspacePage> {
       _workspacePermissions.contains('*');
 
   Future<void> _connectToWorkspace() async {
-    debugPrint('[WorkspacePage] _connectToWorkspace called: ${DateTime.now()}');
     final wsClient = context.read<WsClient>();
 
-    if (!wsClient.connected) {
-      debugPrint(
-          '[WorkspacePage] calling wsClient.connect(): ${DateTime.now()}');
-      await wsClient.connect();
-      debugPrint(
-          '[WorkspacePage] wsClient.connect() returned: ${DateTime.now()}');
-    } else {
-      debugPrint('[WorkspacePage] already connected, skipping connect()');
-    }
-
-    if (!wsClient.connected) {
-      setState(() {
-        _connecting = false;
-        _error = 'Failed to connect to server';
-      });
-      return;
-    }
-
-    wsClient.connectWorkspace(widget.workspaceId);
-    wsClient.addListener(_onClientUpdate);
-
-    // Start browser delegate for bridge requests
-    _browserDelegate = BrowserDelegate(wsClient, registry: _pluginRegistry);
-    _browserDelegate!.start();
-
-    // Listen for container lifecycle events
-    _customEventSub = wsClient.customEvents.listen((msg) {
-      final event = msg['event'] as Map<String, dynamic>?;
-      if (event == null) return;
-      final name = event['name'] as String?;
-      if (name == 'container_stopped' && !_containerStopped) {
-        final value = event['value'] as Map<String, dynamic>?;
-        final reason = value?['reason'] ?? '';
-        if (mounted) {
+    _connector = WorkspaceConnector(
+      wsClient: wsClient,
+      workspaceId: widget.workspaceId,
+      pluginRegistry: _pluginRegistry,
+      onConnected: ({required bool connected, String? error}) {
+        if (!mounted) return;
+        if (!connected) {
+          setState(() {
+            _connecting = false;
+            _error = error;
+          });
+          return;
+        }
+        wsClient.addListener(_onClientUpdate);
+      },
+      onContainerEvent: (name, value) {
+        if (!mounted) return;
+        if (name == 'container_stopped' && !_containerStopped) {
+          final reason = value?['reason'] ?? '';
           setState(() {
             _containerStopped = true;
             _stopReason = reason.toString().isNotEmpty
                 ? 'Container stopped ($reason)'
                 : 'Container stopped';
           });
-        }
-      } else if (name == 'container_ready' && _restarting) {
-        if (mounted) {
+        } else if (name == 'container_ready' && _restarting) {
           setState(() {
             _restarting = false;
             _containerStopped = false;
           });
         }
-      }
-    });
-
-    // Listen for shared terminal deletions
-    _sharedDeletedSub = wsClient.sharedTerminalDeleted.listen((msg) {
-      if (!mounted) return;
-      final deletedUserId = msg['user_id'] as String? ?? '';
-      final deletedWindow = msg['window_name'] as String? ?? '';
-      final deletedWid = msg['window_id'] as String? ?? '';
-      final wasViewing = _activeSharedTerminal != null &&
-          _activeSharedTerminal!['user_id'] == deletedUserId &&
-          _activeSharedTerminal!['window_id'] == deletedWid;
-      if (wasViewing) {
-        setState(() => _activeSharedTerminal = null);
-      }
-      final last = wsClient.lastDeletedSharedTerminal;
-      if (last != null &&
-          last['user_id'] == deletedUserId &&
-          last['window_id'] == deletedWid) {
-        wsClient.lastDeletedSharedTerminal = null;
-      } else if (wasViewing) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('Shared terminal "$deletedWindow" was removed'),
-              duration: const Duration(days: 1),
-              showCloseIcon: true,
-            ),
-          );
-      } else {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('Shared terminal "$deletedWindow" was removed'),
-            ),
-          );
-      }
-    });
-
-    // Listen for errors — only show the full-page error screen for
-    // permission/auth errors.  Connection errors are handled by the
-    // reconnecting overlay (_disconnected path).
-    _errorSub = wsClient.errors.listen((error) {
-      if (mounted) {
-        final lower = error.toLowerCase();
-        if (lower.contains('permission') || lower.contains('denied')) {
-          setState(() => _error = error);
+      },
+      onSharedTerminalDeleted: (msg) {
+        if (!mounted) return;
+        final deletedUserId = msg['user_id'] as String? ?? '';
+        final deletedWindow = msg['window_name'] as String? ?? '';
+        final deletedWid = msg['window_id'] as String? ?? '';
+        final wasViewing = _activeSharedTerminal != null &&
+            _activeSharedTerminal!['user_id'] == deletedUserId &&
+            _activeSharedTerminal!['window_id'] == deletedWid;
+        if (wasViewing) {
+          setState(() => _activeSharedTerminal = null);
         }
-      }
-    });
+        final last = wsClient.lastDeletedSharedTerminal;
+        if (last != null &&
+            last['user_id'] == deletedUserId &&
+            last['window_id'] == deletedWid) {
+          wsClient.lastDeletedSharedTerminal = null;
+        } else if (wasViewing) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text('Shared terminal "$deletedWindow" was removed'),
+                duration: const Duration(days: 1),
+                showCloseIcon: true,
+              ),
+            );
+        } else {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text('Shared terminal "$deletedWindow" was removed'),
+              ),
+            );
+        }
+      },
+      onPermissionError: (error) {
+        if (mounted) setState(() => _error = error);
+      },
+    );
+
+    await _connector!.connect();
   }
 
   // Cache previous values to avoid unnecessary rebuilds.
@@ -392,159 +362,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
     wsClient.sendJoinSharedTerminal(userId, windowId);
   }
 
-  /// Check if a window is shared by looking it up in the shared terminals list.
-  bool _isWindowShared(WsClient wsClient, String windowId) {
-    final myUserId = wsClient.currentUserId;
-    if (myUserId == null) return false;
-    return wsClient.sharedTerminals.any(
-      (s) => s['user_id'] == myUserId && s['window_id'] == windowId,
-    );
-  }
-
-  List<Map<String, dynamic>> _getViewers(
-    WsClient wsClient,
-    String ownerUserId,
-    String windowId,
-  ) {
-    for (final s in wsClient.sharedTerminals) {
-      if (s['user_id'] == ownerUserId && s['window_id'] == windowId) {
-        final viewers = s['viewers'];
-        if (viewers is List) {
-          return viewers.cast<Map<String, dynamic>>();
-        }
-      }
-    }
-    return [];
-  }
-
-  Widget _buildTerminalWithTabs(WsClient wsClient) {
-    debugPrint(
-      '[WorkspacePage] _buildTerminalWithTabs: ${DateTime.now()} windows=${wsClient.terminalWindows.length}',
-    );
-    final windows = wsClient.terminalWindows;
-    final shared = wsClient.sharedTerminals;
-    // Shared terminals from OTHER users (not ours)
-    final myUserId = wsClient.currentUserId;
-    final othersShared = shared.where((s) => s['user_id'] != myUserId).toList();
-    final hasContent = windows.isNotEmpty || othersShared.isNotEmpty;
-    return Column(
-      children: [
-        if (hasContent)
-          Container(
-            height: 32,
-            decoration: const BoxDecoration(
-              color: KColors.bgAppBar,
-              border: Border(bottom: BorderSide(color: KColors.borderMuted)),
-            ),
-            child: Row(
-              children: [
-                const SizedBox(width: 4),
-                Expanded(
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      // Own terminal tabs with share/unshare toggle
-                      if (_hasPerm('code-in-isolation'))
-                        for (final w in windows)
-                          _TerminalTab(
-                            name: w['name'] as String? ?? '?',
-                            tooltip: w['name'] as String? ?? '?',
-                            active: _activeSharedTerminal == null &&
-                                (_selectedOwnWindowId != null
-                                    ? (w['id'] as String?) ==
-                                        _selectedOwnWindowId
-                                    : (w['active'] as bool? ?? false)),
-                            isShared: _isWindowShared(
-                              wsClient,
-                              w['id'] as String? ?? '',
-                            ),
-                            viewers: _getViewers(
-                              wsClient,
-                              myUserId ?? '',
-                              w['id'] as String? ?? '',
-                            ),
-                            onTap: () => _switchToIsolated(
-                              wsClient,
-                              w['id'] as String? ?? '',
-                            ),
-                            onClose: windows.length > 1
-                                ? () => wsClient.sendTerminalCloseWindow(
-                                      w['index'] as int,
-                                    )
-                                : null,
-                            onRename: (newName) =>
-                                wsClient.sendTerminalRenameWindow(
-                              w['index'] as int,
-                              newName,
-                            ),
-                            onToggleShare: _hasPerm('share-terminals')
-                                ? () {
-                                    final wid = w['id'] as String? ?? '';
-                                    if (_isWindowShared(wsClient, wid)) {
-                                      wsClient.sendUnshareWindow(wid);
-                                    } else {
-                                      wsClient.sendShareWindow(wid);
-                                    }
-                                  }
-                                : null,
-                          ),
-                      // "+" for new terminal
-                      if (_hasPerm('code-in-isolation'))
-                        _TabIconButton(
-                          icon: Icons.add,
-                          tooltip: 'New terminal',
-                          onTap: () => wsClient.sendTerminalNewWindow(),
-                        ),
-                      // Shared terminals from OTHER users
-                      for (final s in othersShared)
-                        _TerminalTab(
-                          name: () {
-                            final h = s['handle'] as String? ?? '?';
-                            final w = s['window_name'] as String? ?? '?';
-                            final he =
-                                h.length > 5 ? '${h.substring(0, 5)}…' : h;
-                            final we =
-                                w.length > 3 ? '${w.substring(0, 3)}…' : w;
-                            return '$he:$we';
-                          }(),
-                          tooltip:
-                              '${s['handle'] ?? '?'}:${s['window_name'] ?? '?'}',
-                          active: _activeSharedTerminal != null &&
-                              _activeSharedTerminal!['user_id'] ==
-                                  s['user_id'] &&
-                              _activeSharedTerminal!['window_id'] ==
-                                  s['window_id'],
-                          shared: true,
-                          readOnly: !_hasPerm('code-in-shared-terminals') &&
-                              !_hasPerm('share-terminals'),
-                          viewers: _getViewers(
-                            wsClient,
-                            s['user_id'] as String? ?? '',
-                            s['window_id'] as String? ?? '',
-                          ),
-                          onTap: () => _joinShared(
-                            wsClient,
-                            s['user_id'] as String,
-                            s['window_id'] as String,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        Expanded(
-          child: GhosttyTerminal(
-            key: _terminalKey,
-            wsClient: wsClient,
-            onPathTap: _handleTerminalPathTap,
-          ),
-        ),
-      ],
-    );
-  }
-
   Future<void> _reconnect() async {
     setState(() => _connecting = true);
     final wsClient = context.read<WsClient>();
@@ -558,20 +375,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   void deactivate() {
-    _customEventSub?.cancel();
-    _customEventSub = null;
-    _errorSub?.cancel();
-    _errorSub = null;
     final wsClient = context.read<WsClient>();
     wsClient.removeListener(_onClientUpdate);
     wsClient.disconnectWorkspace();
+    _connector?.dispose();
     super.deactivate();
   }
 
   @override
   void dispose() {
-    _sharedDeletedSub?.cancel();
-    _browserDelegate?.stop();
     for (final plugin in _plugins) {
       plugin.dispose();
     }
@@ -666,7 +478,16 @@ class _WorkspacePageState extends State<WorkspacePage> {
         userHome: wsClient.userHome,
         registry: _fileRenderers,
       ),
-      terminal: _buildTerminalWithTabs(wsClient),
+      terminal: TerminalTabsView(
+        wsClient: wsClient,
+        terminalKey: _terminalKey,
+        onPathTap: _handleTerminalPathTap,
+        selectedOwnWindowId: _selectedOwnWindowId,
+        activeSharedTerminal: _activeSharedTerminal,
+        hasPerm: _hasPerm,
+        onSwitchToIsolated: _switchToIsolated,
+        onJoinShared: _joinShared,
+      ),
       chat: _hasPerm('chat')
           ? WorkspaceChat(
               key: _chatKey,
@@ -693,302 +514,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
       initialFile: widget.initialFile,
       initialDir: widget.initialDir,
       debug: DebugPanel(wsClient: wsClient),
-    );
-  }
-}
-
-class _TerminalTab extends StatefulWidget {
-  final String name;
-  final String? tooltip;
-  final bool active;
-  final bool shared;
-  final bool readOnly;
-  final bool isShared;
-  final List<Map<String, dynamic>> viewers;
-  final VoidCallback onTap;
-  final VoidCallback? onClose;
-  final VoidCallback? onToggleShare;
-  final void Function(String newName)? onRename;
-
-  const _TerminalTab({
-    required this.name,
-    required this.active,
-    required this.onTap,
-    this.tooltip,
-    this.shared = false,
-    this.readOnly = false,
-    this.isShared = false,
-    this.viewers = const [],
-    this.onClose,
-    this.onToggleShare,
-    this.onRename,
-  });
-
-  @override
-  State<_TerminalTab> createState() => _TerminalTabState();
-}
-
-class _TerminalTabState extends State<_TerminalTab> {
-  bool _hovered = false;
-  Offset? _tapPosition;
-
-  void _showContextMenu() {
-    final pos = _tapPosition;
-    if (pos == null) return;
-    final items = <PopupMenuEntry<String>>[
-      if (widget.onRename != null)
-        const PopupMenuItem(
-          value: 'rename',
-          child: ListTile(
-            dense: true,
-            leading: Icon(Icons.edit, size: 18),
-            title: Text('Rename'),
-          ),
-        ),
-      if (widget.onToggleShare != null)
-        PopupMenuItem(
-          value: 'share',
-          child: ListTile(
-            dense: true,
-            leading: Icon(
-              widget.isShared ? Icons.cell_tower : Icons.share_outlined,
-              size: 18,
-            ),
-            title: Text(widget.isShared ? 'Unshare' : 'Share'),
-          ),
-        ),
-    ];
-    if (items.isEmpty) return;
-    showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-      items: items,
-    ).then((action) {
-      if (action == 'rename') {
-        _showRenameDialog();
-      } else if (action == 'share') {
-        widget.onToggleShare?.call();
-      }
-    });
-  }
-
-  void _showRenameDialog() {
-    final controller = TextEditingController(text: widget.name);
-    showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Rename terminal'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'Terminal name'),
-          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    ).then((newName) {
-      if (newName != null && newName.isNotEmpty && newName != widget.name) {
-        widget.onRename?.call(newName);
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _maybeTooltip(Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        cursor: SystemMouseCursors.click,
-        child: SuppressBrowserContextMenu(
-          child: GestureDetector(
-            onTap: widget.onTap,
-            onSecondaryTapDown: (details) {
-              _tapPosition = details.globalPosition;
-            },
-            onSecondaryTap: _showContextMenu,
-            child: SizedBox(
-              width: 120,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: widget.active
-                      ? KColors.bgSurface
-                      : _hovered
-                          ? KColors.bgOverlay
-                          : Colors.transparent,
-                  borderRadius: BorderRadius.circular(4),
-                  border: widget.active
-                      ? Border.all(color: KColors.borderMuted, width: 0.5)
-                      : null,
-                ),
-                child: Row(
-                  children: [
-                    // Icon for other users' shared tabs (left of name)
-                    if (widget.shared) ...[
-                      Icon(
-                        widget.readOnly
-                            ? Icons.lock_outlined
-                            : Icons.edit_outlined,
-                        size: 12,
-                        color: widget.active
-                            ? KColors.accentAmber
-                            : Colors.white38,
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                    // Broadcast icon for own tabs that are actively shared
-                    // — click to unshare
-                    if (!widget.shared && widget.isShared) ...[
-                      GestureDetector(
-                        onTap: widget.onToggleShare,
-                        child: const MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: Tooltip(
-                            message: 'Unshare',
-                            child: Icon(
-                              Icons.cell_tower,
-                              size: 12,
-                              color: KColors.accentCyan,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                    Expanded(
-                      child: Text(
-                        widget.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: widget.active
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                          color: widget.active
-                              ? KColors.textPrimary
-                              : _hovered
-                                  ? Colors.white70
-                                  : KColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                    // Viewer count
-                    if (widget.viewers.isNotEmpty) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.visibility,
-                        size: 10,
-                        color: Colors.white38,
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        '${widget.viewers.length}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white38,
-                        ),
-                      ),
-                    ],
-                    if (widget.onClose != null) ...[
-                      const SizedBox(width: 4),
-                      MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap: widget.onClose,
-                          child: Icon(
-                            Icons.close,
-                            size: 12,
-                            color: _hovered
-                                ? Colors.white70
-                                : widget.active
-                                    ? Colors.white38
-                                    : Colors.transparent,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    ));
-  }
-
-  Widget _maybeTooltip(Widget child) {
-    final parts = <String>[];
-    if (widget.tooltip != null) {
-      parts.add(widget.tooltip!);
-    }
-    if (widget.viewers.isNotEmpty) {
-      final names = widget.viewers
-          .map((v) => (v['email'] as String?)?.split('@').first ?? '?')
-          .join(', ');
-      parts.add('👁 $names');
-    }
-    if (parts.isNotEmpty) {
-      return Tooltip(message: parts.join('\n'), child: child);
-    }
-    return child;
-  }
-}
-
-class _TabIconButton extends StatefulWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-
-  const _TabIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-  });
-
-  @override
-  State<_TabIconButton> createState() => _TabIconButtonState();
-}
-
-class _TabIconButtonState extends State<_TabIconButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: widget.tooltip,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            decoration: BoxDecoration(
-              color: _hovered ? KColors.bgOverlay : Colors.transparent,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Icon(
-              widget.icon,
-              size: 14,
-              color: _hovered ? Colors.white : Colors.white54,
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
