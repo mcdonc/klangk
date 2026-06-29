@@ -2,6 +2,8 @@
 
 # Auto-Start
 
+[![A service workspace with `openclaw gateway` already running via default command](../assets/auto-start.png)](../assets/auto-start.png)
+
 Workspaces can be configured to start their containers automatically
 when the Klangk server starts. This is primarily useful for service
 workspaces — workspaces that run a long-lived process via
