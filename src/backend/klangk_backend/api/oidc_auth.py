@@ -99,26 +99,10 @@ async def oidc_login(
     return response
 
 
-@router.get("/auth/oidc/{provider_id}/callback")
-async def oidc_callback(
-    provider_id: str,
-    request: Request,
-    code: str = "",
-    state: str = "",
-    error: str | None = None,
-):
-    """Handle the OIDC callback from the IdP."""
-    if error:
-        logger.warning(
-            "OIDC IdP error for provider %s: %s", provider_id, error
-        )
-        raise HTTPException(status_code=400, detail="Login failed")
-
-    provider = oidc.get_provider(provider_id)
-    if provider is None:
-        raise HTTPException(status_code=404, detail="Unknown OIDC provider")
-
-    # Retrieve and validate state from cookie
+def _validate_state_cookie(
+    request: Request, provider_id: str, state: str
+) -> dict:
+    """Parse and validate the OIDC state cookie, returning its data."""
     cookie_name = f"oidc_{provider_id}"
     cookie_raw = request.cookies.get(cookie_name)
     if not cookie_raw:
@@ -136,7 +120,15 @@ async def oidc_callback(
     if cookie_data.get("state") != state:
         raise HTTPException(status_code=400, detail="State mismatch")
 
-    # Exchange code for tokens
+    return cookie_data
+
+
+async def _exchange_and_validate_token(provider, code, cookie_data):
+    """Exchange the authorization code for tokens and validate the ID token.
+
+    Returns ``(claims, tokens)`` where *claims* contains at least ``sub``
+    and ``email``.
+    """
     try:
         tokens = await oidc.exchange_code(
             provider,
@@ -150,7 +142,6 @@ async def oidc_callback(
             status_code=502, detail="Token exchange failed"
         ) from None
 
-    # Validate ID token
     id_token = tokens.get("id_token")
     if not id_token:
         raise HTTPException(status_code=502, detail="No ID token in response")
@@ -172,12 +163,84 @@ async def oidc_callback(
             status_code=502,
             detail="ID token missing sub or email claim",
         )
+
+    return claims, tokens
+
+
+async def _find_or_create_user(provider_id, sub, email):
+    """Locate an existing user by OIDC identity or create one via JIT provisioning."""
+    user = await model.get_user_by_external_id(provider_id, sub)
+    if user is not None:
+        return user
+
+    existing = await model.get_user_by_email(email)
+    if existing is not None:
+        await model.link_oidc_identity(existing["id"], provider_id, sub)
+        return existing
+
+    return await model.create_user(
+        email=email,
+        password_hash=None,
+        verified=True,
+        provider=provider_id,
+        external_id=sub,
+    )
+
+
+def _build_redirect_response(
+    request: Request,
+    provider_id: str,
+    access_token: str,
+    cookie_data: dict,
+) -> RedirectResponse:
+    """Build the final redirect response (CLI or web flow)."""
+    cli_redirect = cookie_data.get("cli_redirect")
+
+    if _valid_cli_redirect(cli_redirect):
+        redirect_url = f"{cli_redirect}?token={access_token}"
+    else:
+        hostname, proto, base_path = derive_hosting_info(
+            request.headers, request.client.host if request.client else None
+        )
+        redirect_url = (
+            f"{proto}://{hostname}{base_path}"
+            f"/#/oidc-complete?token={access_token}"
+        )
+
+    cookie_name = f"oidc_{provider_id}"
+    response = RedirectResponse(url=redirect_url, status_code=302)
+    response.delete_cookie(cookie_name, path="/")
+    return response
+
+
+@router.get("/auth/oidc/{provider_id}/callback")
+async def oidc_callback(
+    provider_id: str,
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str | None = None,
+):
+    """Handle the OIDC callback from the IdP."""
+    if error:
+        logger.warning(
+            "OIDC IdP error for provider %s: %s", provider_id, error
+        )
+        raise HTTPException(status_code=400, detail="Login failed")
+
+    provider = oidc.get_provider(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Unknown OIDC provider")
+
+    cookie_data = _validate_state_cookie(request, provider_id, state)
+    claims, tokens = await _exchange_and_validate_token(
+        provider, code, cookie_data
+    )
+
+    email = claims["email"]
     auth.validate_email(email)
 
-    # Call the OIDC login hook (if configured). The hook can:
-    # - raise an exception to reject the login (HTTP 403)
-    # - return None to allow the login without group sync
-    # - return a set of group names to allow login and sync groups
+    # Call the OIDC login hook (if configured).
     try:
         hook_groups = await oidc.call_login_hook(
             provider, claims, email, tokens
@@ -189,55 +252,15 @@ async def oidc_callback(
             detail="Login denied by server policy",
         ) from None
 
-    # Find or create user
-    user = await model.get_user_by_external_id(provider_id, sub)
-    if user is None:
-        # Check for existing local user with same email
-        existing = await model.get_user_by_email(email)
-        if existing is not None:
-            # Link OIDC identity to existing user
-            await model.link_oidc_identity(existing["id"], provider_id, sub)
-            user = existing
-        else:
-            # JIT provisioning
-            user = await model.create_user(
-                email=email,
-                password_hash=None,
-                verified=True,
-                provider=provider_id,
-                external_id=sub,
-            )
+    user = await _find_or_create_user(provider_id, claims["sub"], email)
 
-    # Sync group memberships if the hook returned group names
     if hook_groups is not None:
         await oidc.sync_oidc_groups(user["id"], hook_groups)
 
-    # Issue Klangk JWT
     access_token = auth.create_token(user["id"], email)
-
-    # Clear the state cookie
-    cli_redirect = cookie_data.get("cli_redirect")
-
-    if _valid_cli_redirect(cli_redirect):
-        # CLI flow: redirect to the CLI's localhost server with the token.
-        # Re-validate here because the state cookie is unsigned and
-        # client-controlled — a tampered cli_redirect must not leak the
-        # access token to an arbitrary host (#936).
-        redirect_url = f"{cli_redirect}?token={access_token}"
-    else:
-        # Web flow (also the safe fallback when the cookie's
-        # cli_redirect was missing or tampered to a non-localhost host).
-        hostname, proto, base_path = derive_hosting_info(
-            request.headers, request.client.host if request.client else None
-        )
-        redirect_url = (
-            f"{proto}://{hostname}{base_path}"
-            f"/#/oidc-complete?token={access_token}"
-        )
-
-    response = RedirectResponse(url=redirect_url, status_code=302)
-    response.delete_cookie(cookie_name, path="/")
-    return response
+    return _build_redirect_response(
+        request, provider_id, access_token, cookie_data
+    )
 
 
 # --- Workspace endpoints ---

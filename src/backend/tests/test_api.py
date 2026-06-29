@@ -7236,6 +7236,32 @@ class TestOIDCCallback:
             await model.get_user_by_email("oidcuser@example.com") is not None
         )
 
+    async def test_callback_returning_user(self, client, monkeypatch, db):
+        """A user who already has the OIDC identity linked logs in without
+        JIT provisioning or email lookup."""
+        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        # First callback — creates the user via JIT provisioning.
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            cookies={"oidc_test": cookie_data},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        user = await model.get_user_by_external_id("test", "oidc-sub-123")
+        assert user is not None
+
+        # Second callback — returning user, found by external ID.
+        _, cookie_data2 = await self._setup_callback(client, monkeypatch, db)
+        resp2 = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            cookies={"oidc_test": cookie_data2},
+            follow_redirects=False,
+        )
+        assert resp2.status_code == 302
+        assert "token=" in resp2.headers["location"]
+
     async def test_callback_unknown_provider(self, client, monkeypatch, db):
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)
         resp = await client.get(
