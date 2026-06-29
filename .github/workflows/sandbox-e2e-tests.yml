@@ -1,0 +1,40 @@
+name: "E2E: Sandbox Tests"
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "sandboxes/**"
+      - ".github/workflows/sandbox-e2e-tests.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test-sandbox-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KLANGK_LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      KLANGK_LLM_BASE_URL: https://ollama.com/v1
+      KLANGK_LLM_MODEL: gemma4:31b
+      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
+      KLANGK_PODMAN_BIN: /usr/bin/podman
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-workspace-image
+
+      # Runs every sandbox test suite under sandboxes/tests/. There is
+      # currently only openclaw; more will be added over time. Each suite
+      # is responsible for its own server/container teardown (SIGKILL on
+      # shutdown) so they don't leak across runs. Requires network (real
+      # installs).
+      - name: Run sandbox e2e tests
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- pytest sandboxes/tests -v -p no:xdist --no-cov
