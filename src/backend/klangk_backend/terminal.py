@@ -92,6 +92,10 @@ def _build_environment(
 
 _WORKSPACE_STATE_FILE = ".workspace-state.json"
 
+# Name of the dedicated tmux window that runs a workspace's
+# default_command, leaving the user's interactive window 0 free.
+DEFAULT_CMD_WINDOW = "default-cmd"
+
 
 async def _ensure_base_session(
     container_id: str,
@@ -106,9 +110,11 @@ async def _ensure_base_session(
     session exists before any grouped session tries to link to it.
 
     If *default_command* is set and the session is freshly created,
-    the command is sent as keystrokes into window 0.  The command
-    runs as a foreground process in the bash shell — Ctrl-C stops
-    it and returns to the prompt.
+    the command is run in a dedicated detached window named
+    ``DEFAULT_CMD_WINDOW`` so the user's window 0 stays free for
+    interactive use.  The command runs as a foreground process in
+    that window's bash shell — Ctrl-C stops it and returns to the
+    prompt.
 
     Returns ``True`` if the session was freshly created.
     """
@@ -143,29 +149,55 @@ async def _ensure_base_session(
         logger.warning("Failed to create base tmux session %s", session_name)
         return False
 
-    # Send default command as keystrokes into window 0.
-    # Wait briefly for bash to finish sourcing .profile / .bashrc
-    # so PATH (nvm, etc.) is set before the command runs.
+    # Run the default command in a detached window named
+    # DEFAULT_CMD_WINDOW so the user's window 0 stays free for
+    # interactive use.  ``-d`` keeps window 0 as the active window,
+    # so no select-window is needed afterwards.
     if default_command:
-        await asyncio.sleep(1)
         try:
             await podman.exec_container(
                 container_id,
                 [
                     "tmux",
-                    "send-keys",
+                    "new-window",
+                    "-d",
                     "-t",
-                    f"{session_name}:0",
-                    default_command,
-                    "Enter",
+                    session_name,
+                    "-n",
+                    DEFAULT_CMD_WINDOW,
                 ],
                 user=CONTAINER_USER,
                 timeout=5,
             )
         except Exception:
             logger.warning(
-                "Failed to send default command to session %s", session_name
+                "Failed to create %s window in %s",
+                DEFAULT_CMD_WINDOW,
+                session_name,
             )
+        else:
+            # The new window's shell needs a moment to source
+            # .profile / .bashrc before it can resolve PATH-dependent
+            # commands (nvm, openclaw, ...).  Same race as #1030.
+            await asyncio.sleep(1)
+            try:
+                await podman.exec_container(
+                    container_id,
+                    [
+                        "tmux",
+                        "send-keys",
+                        "-t",
+                        f"{session_name}:{DEFAULT_CMD_WINDOW}",
+                        default_command,
+                        "Enter",
+                    ],
+                    user=CONTAINER_USER,
+                    timeout=5,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to send default command to %s", session_name
+                )
 
     return True
 

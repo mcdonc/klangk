@@ -392,10 +392,24 @@ async def populate_home_skel(
         )
 
 
-async def eager_start_workspace(ws: dict) -> tuple[str, str]:
+async def eager_start_workspace(
+    ws: dict, *, run_default_command: bool = True
+) -> tuple[str, str]:
     """Start a container for a workspace immediately.
 
     Sets ``idle_timeout = 0`` so the container does not idle out.
+
+    There are two callers with different needs:
+
+    * **Server boot** (``auto_start_workspaces``) leaves
+      *run_default_command* at its default ``True`` — the workspace's
+      software is already installed in the persisted volume, so the
+      default command is safe to run now.
+    * **Workspace creation** (``api/workspaces.create_workspace``)
+      passes ``run_default_command=False`` — ``setup.sh`` has not run
+      yet, so the default command would fail.  The CLI sandbox driver
+      sends ``terminal_start`` after setup completes to trigger it.
+
     Returns ``(container_id, status)``.
     """
     owner_id = ws["user_id"]
@@ -422,7 +436,7 @@ async def eager_start_workspace(ws: dict) -> tuple[str, str]:
     # If the workspace has a default command, create a tmux session
     # and run it now so it's already running when a user connects.
     default_command = ws.get("default_command")
-    if default_command and status == "created":
+    if default_command and status == "created" and run_default_command:
         handle = await model.get_user_handle(owner_id)
         if handle:
             ws_home = home_path(owner_id, workspace_id)
