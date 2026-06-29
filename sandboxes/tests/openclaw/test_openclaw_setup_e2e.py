@@ -56,6 +56,13 @@ SANDBOX_DIR = os.path.join(REPO_ROOT, "sandboxes", "openclaw")
 SENTINEL = os.path.join(SANDBOX_DIR, ".klangk-test-pause")
 
 WS = "e2e-openclaw-setup"
+# Second workspace pointed at the SAME /openclaw mount. openclaw is
+# already installed there after WS's setup ran, so WS2's setup SKIPS the
+# install but must still write a complete per-workspace ~/.bashrc. This
+# is the shared-mount + per-workspace-.bashrc interaction at the heart
+# of #1039 -- a regression that moves an export inside the install-skip
+# guard breaks WS2 permanently (not just a race) while WS may still pass.
+WS2 = "e2e-openclaw-setup-2"
 # Own port + instance id so it never collides with other e2e suites
 # (cli-e2e 18995, autostart 18996/18997).
 PORT = "18998"
@@ -228,25 +235,23 @@ def _container_up(base_url, token, ws_id):
     return bool(r.json().get("container_id"))
 
 
-def _owning_bashrc(data_dir, user_id):
-    """Path to the owning user's ~/.bashrc on the host filesystem.
+def _owning_bashrc(data_dir, user_id, ws_id):
+    """Path to the owning user's ~/.bashrc on the host for *ws_id*.
 
     The per-workspace home is bind-mounted at /home; the owning user's
-    real home is ``<data>/workspaces/<uid>/home/<ws>/.users/<uid>/``.
-    Globbed so it's robust to the exact ws nesting.
+    real home is ``<data>/workspaces/<uid>/home/<ws_id>/.users/<uid>/``
+    (home_path is keyed by workspace id, so this resolves directly).
     """
-    pattern = os.path.join(
+    return os.path.join(
         data_dir,
         "workspaces",
         user_id,
         "home",
-        "*",
+        ws_id,
         ".users",
         user_id,
         ".bashrc",
     )
-    matches = glob.glob(pattern)
-    return matches[0] if matches else None
 
 
 class TestOpenclawSetupBashrcExports:
@@ -271,6 +276,12 @@ class TestOpenclawSetupBashrcExports:
         request.cls._token = token
         request.cls._user_id = user_id
         request.cls._data_dir = data_dir
+        # Clean the shared /openclaw mount so every pytest run is
+        # deterministic: WS gets a full install, WS2 reuses it. These
+        # are gitignored install artifacts, never committed.
+        shutil.rmtree(os.path.join(SANDBOX_DIR, ".nvm"), ignore_errors=True)
+        shutil.rmtree(os.path.join(SANDBOX_DIR, ".openclaw"), ignore_errors=True)
+        shutil.rmtree(os.path.join(SANDBOX_DIR, "bin"), ignore_errors=True)
         # Drop the sentinel BEFORE starting sandbox so setup.sh blocks.
         if os.path.exists(SENTINEL):
             os.remove(SENTINEL)
@@ -364,19 +375,94 @@ class TestOpenclawSetupBashrcExports:
                 if out:
                     print(f"--- klangkc sandbox output ---\n{out}")
 
-    def _await_container(self, timeout=180):
+    def test_second_workspace_reuses_install_but_writes_own_bashrc(self):
+        """A second workspace at the same /openclaw mount SKIPS the install
+        (openclaw is already there) yet must still write a complete
+        per-workspace ~/.bashrc.
+
+        This is the shared-mount + per-workspace-.bashrc interaction at
+        the heart of #1039. ``~/.bashrc`` is fresh per workspace (the
+        owning user's home is per-workspace), while the ``/openclaw``
+        mount (nvm/node/openclaw) is shared. A regression that moves an
+        export INSIDE the install-skip guard breaks this workspace
+        PERMANENTLY (not just a race), because the guard's body never
+        runs when the install is skipped. The full-install test above
+        (WS) can't see this -- it always runs the guard body.
+
+        Depends on the full-install test having populated the mount
+        first (pytest runs them in definition order; the whole suite
+        runs together in CI / locally).
+        """
+        # Precondition: openclaw must already be on the shared mount
+        # (put there by the full-install test). If this is run in
+        # isolation, fail fast with a clear message rather than doing a
+        # misleading full install that would hide the skip-path bug.
+        assert glob.glob(
+            os.path.join(
+                SANDBOX_DIR, ".nvm", "versions", "node", "v*", "bin", "openclaw"
+            )
+        ), (
+            "openclaw not on the shared mount -- run the full-install test "
+            "first so this test can exercise the install-skip path"
+        )
+
+        # No sentinel: WS2's setup runs to completion. The install is
+        # skipped (openclaw already on the mount), so this is fast.
+        sandbox_proc = subprocess.Popen(
+            ["klangkc", "sandbox", WS2, SANDBOX_DIR],
+            env=self._env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            rc = sandbox_proc.wait(timeout=SETUP_TIMEOUT)
+            out = sandbox_proc.stdout.read() or ""
+            assert rc == 0, f"klangkc sandbox (WS2) failed:\n{out}"
+
+            # The install was genuinely skipped -- proving we're on the
+            # skip path, not a vacuous pass where a regression re-ran
+            # the full install and wrote .bashrc that way.
+            assert "openclaw already installed, skipping." in out, (
+                "expected setup to SKIP the install (mount already "
+                "populated); it didn't print the skip message -- either "
+                "the mount wasn't populated or setup.sh's skip guard "
+                "regressed.\n" + out
+            )
+
+            # WS2's container is up; read ITS own per-workspace .bashrc
+            # (a different ws_id from WS).
+            ws2_id = self._await_container(name=WS2)
+            bashrc_path = _owning_bashrc(self._data_dir, self._user_id, ws2_id)
+            with open(bashrc_path) as f:
+                bashrc = f.read()
+
+            assert 'export OPENCLAW_HOME="/openclaw"' in bashrc, (
+                "OPENCLAW_HOME missing from the second workspace's "
+                "~/.bashrc even though setup completed -- a regression "
+                "that moved the export inside the install-skip guard "
+                "leaves it out permanently here (the install is skipped, "
+                "so the guard body never runs). This is the #1039 "
+                "shared-mount failure mode.\n.bashrc:\n" + bashrc
+            )
+            assert 'export PATH="/openclaw/bin:$PATH"' in bashrc
+        finally:
+            if sandbox_proc.poll() is None:
+                sandbox_proc.kill()
+
+    def _await_container(self, name=WS, timeout=180):
         deadline = time.monotonic() + timeout
         last_err = None
         while time.monotonic() < deadline:
             try:
-                ws_id = _workspace_id(self._base_url, self._token, WS)
+                ws_id = _workspace_id(self._base_url, self._token, name)
                 if _container_up(self._base_url, self._token, ws_id):
                     return ws_id
             except (LookupError, httpx.HTTPError) as e:
                 last_err = e
             time.sleep(1)
         raise AssertionError(
-            f"workspace {WS} container never came up within {timeout}s\n"
+            f"workspace {name} container never came up within {timeout}s\n"
             f"last error: {last_err!r}\n"
             f"--- server.log tail ---\n{self._server_log_tail()}"
         )
@@ -390,7 +476,7 @@ class TestOpenclawSetupBashrcExports:
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            path = _owning_bashrc(self._data_dir, self._user_id)
+            path = _owning_bashrc(self._data_dir, self._user_id, ws_id)
             if path and os.path.exists(path):
                 with open(path) as f:
                     if "export NVM_DIR" in f.read():
