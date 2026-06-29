@@ -4,6 +4,35 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="/openclaw"
 
+# Persist every env export the default_command depends on to ~/.bashrc UP
+# FRONT, before any long-running install step. A shell that sources
+# ~/.bashrc while setup is still running (e.g. the default-cmd pane
+# created by an early terminal_start during setup -- see #1033) must see
+# the complete pointer set from its very first spawn:
+#   - NVM_DIR (so nvm/node load in new shells)
+#   - /openclaw/bin on PATH (so the `openclaw` binary is found)
+#   - OPENCLAW_HOME (so openclaw locates its config; the owning user's
+#     $HOME is /home/<handle>, not /openclaw, so without this openclaw
+#     looks in the wrong place and reports "Missing config" -- #1039)
+# These used to be appended at three separate points in setup, so a
+# mid-setup pane inherited PATH but not OPENCLAW_HOME. Each line is
+# guarded so re-running setup never duplicates it.
+# shellcheck disable=SC2016
+if ! grep -q NVM_DIR ~/.bashrc 2>/dev/null; then
+  cat >>~/.bashrc <<BASH
+export NVM_DIR="$INSTALL_DIR/.nvm"
+[ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+BASH
+fi
+# shellcheck disable=SC2016
+if ! grep -q "$INSTALL_DIR/bin" ~/.bashrc 2>/dev/null; then
+  echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >>~/.bashrc
+fi
+# shellcheck disable=SC2016
+if ! grep -q OPENCLAW_HOME ~/.bashrc 2>/dev/null; then
+  echo "export OPENCLAW_HOME=\"$INSTALL_DIR\"" >>~/.bashrc
+fi
+
 # Install Node.js 24 via nvm into /openclaw/.nvm.
 export NVM_DIR="$INSTALL_DIR/.nvm"
 
@@ -23,15 +52,6 @@ fi
 nvm use 24
 nvm alias default 24
 
-# Ensure non-login shells get nvm too.
-# shellcheck disable=SC2016
-if ! grep -q NVM_DIR ~/.bashrc 2>/dev/null; then
-  cat >>~/.bashrc <<BASH
-export NVM_DIR="$INSTALL_DIR/.nvm"
-[ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
-BASH
-fi
-
 # Install openclaw globally (into nvm's prefix, no sudo needed).
 if ! command -v openclaw &>/dev/null; then
   echo "Installing openclaw..."
@@ -45,11 +65,6 @@ mkdir -p "$INSTALL_DIR/bin"
 cp "$SCRIPT_DIR/klangk-secret-provider.sh" "$INSTALL_DIR/bin/klangk-secret-provider"
 chmod +x "$INSTALL_DIR/bin/klangk-secret-provider"
 
-# Ensure /openclaw/bin is on PATH for non-login shells.
-# shellcheck disable=SC2016
-if ! grep -q "$INSTALL_DIR/bin" ~/.bashrc 2>/dev/null; then
-  echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >>~/.bashrc
-fi
 export PATH="$INSTALL_DIR/bin:$PATH"
 
 # Ensure Pi's models.json and clanker config are up to date.
@@ -127,12 +142,6 @@ cfg['secrets'] = {
 with open(cfg_path, 'w') as f:
     json.dump(cfg, f, indent=2)
 "
-
-# Ensure OPENCLAW_HOME is set for non-login shells.
-# shellcheck disable=SC2016
-if ! grep -q OPENCLAW_HOME ~/.bashrc 2>/dev/null; then
-  echo "export OPENCLAW_HOME=\"$INSTALL_DIR\"" >>~/.bashrc
-fi
 
 # Derive the hosted app URL from Klangk env vars.
 # Container port 8000 maps to the first host port in KLANGK_PORT_MAPPINGS.
