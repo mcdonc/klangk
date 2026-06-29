@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/workspace/workspace_list_page.dart';
+import 'package:klangk_frontend/theme/colors.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_frontend/widgets/klangk_logo.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
@@ -2171,7 +2172,7 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('workspace card shows running status dot', (tester) async {
+    testWidgets('workspace card colors icon by running state', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
@@ -2200,8 +2201,16 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      // Both workspaces should have status dots (small 8x8 containers)
-      expect(find.byType(ListTile), findsNWidgets(2));
+      // The terminal Icon itself signals running state: green when
+      // running, grey when stopped. The Icon is the ListTile's leading.
+      final tiles = tester.widgetList<ListTile>(find.byType(ListTile)).toList();
+      expect(tiles.length, 2);
+      final runningIcon = tiles[0].leading as Icon;
+      final stoppedIcon = tiles[1].leading as Icon;
+      expect(runningIcon.icon, Icons.terminal);
+      expect(runningIcon.color, KColors.accentGreen);
+      expect(stoppedIcon.icon, Icons.terminal);
+      expect(stoppedIcon.color, KColors.textSecondary);
     });
 
     testWidgets('container_status event updates running state', (tester) async {
