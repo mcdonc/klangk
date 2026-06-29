@@ -14,8 +14,28 @@ void navigateTo(String url) {
   web.window.location.href = url;
 }
 
-/// Force a full page reload.
-void hardReload() {
+/// Force a reload that bypasses any installed service worker.
+///
+/// `location.reload()` always goes through the active service worker. A
+/// leftover SW (from an older build that registered one) will serve a cached
+/// `index.html` whose `?v=` script tags still reference the old bundle, so
+/// the new build never loads — exactly the "soft reload fails, shift-reload
+/// works" symptom, since shift-reload bypasses the SW.
+///
+/// The shipped `index.html` already tries to unregister stale SWs, but that
+/// code only runs *after* a fresh load — useless when the SW is itself serving
+/// the stale page. So the Reload button unregisters all SWs first (awaiting
+/// completion), then reloads. The next navigation then hits the network for a
+/// fresh `index.html` (which the server marks `no-store`).
+Future<void> hardReload() async {
+  try {
+    final regs =
+        await web.window.navigator.serviceWorker.getRegistrations().toDart;
+    await Future.wait(regs.toDart.map((r) => r.unregister().toDart));
+  } catch (_) {
+    // Best-effort: service-worker access may be unavailable (e.g. HTTP,
+    // insecure context, older browser); fall through to a plain reload.
+  }
   web.window.location.reload();
 }
 
