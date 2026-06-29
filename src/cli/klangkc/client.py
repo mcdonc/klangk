@@ -1213,15 +1213,21 @@ class _TerminalSession(_ShellSession):
                 await self._send_resize()
 
     async def run(self) -> None:
-        tasks = [
+        coros = [
             self.stdin_loop(),
             self.stdout_loop(),
             self.resize_loop(),
             self.heartbeat_loop(),
         ]
         if self.ssh_agent_sock:
-            tasks.append(self.ssh_agent_relay_loop())
-        await asyncio.gather(*tasks)
+            coros.append(self.ssh_agent_relay_loop())
+        tasks = [asyncio.create_task(c) for c in coros]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class _ExecSession(_ShellSession):
