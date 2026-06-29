@@ -550,7 +550,7 @@ class Connection:
         # Update container_id on ALL connections to this workspace
         # so they don't try to exec into the old (removed) container.
         new_cid = self.container_id
-        for sock, conn in state.connections.items():
+        for sock, conn in list(state.connections.items()):
             if conn.workspace_id == workspace_id and conn is not self:
                 conn.container_id = new_cid
 
@@ -602,7 +602,7 @@ class Connection:
                     logger.warning("State save before shutdown failed: %s", e)
 
         # Clear container_id on ALL connections to prevent stale exec attempts.
-        for sock, conn_obj in state.connections.items():
+        for sock, conn_obj in list(state.connections.items()):
             if conn_obj.workspace_id == workspace_id:
                 conn_obj.container_id = None
 
