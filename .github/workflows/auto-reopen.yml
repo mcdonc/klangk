@@ -74,15 +74,29 @@ jobs:
             echo "::notice::#$NUMBER was not auto-closed (no 'auto-closed' label); not overriding a human close."; exit 0
           fi
 
-          # --- Reopen, drop the label, acknowledge ---
+          # --- Reopen, swap the label, acknowledge.
+          #
+          # Two labels with disjoint lifecycles (see #1042 §5):
+          #   'auto-closed'    — eligible-for-auto-reopen; ephemeral; removed here.
+          #   'valid-reopened' — now in the human triage queue; consumed by the
+          #                      /triage-reopened skill; removed when a maintainer
+          #                      decides (/reopen or /keep-closed).
+          # Adding 'valid-reopened' is what lets the queue be queried cheaply
+          # (gh issue list --label valid-reopened --state open) instead of
+          # walking timelines. Created lazily, idempotent (matches auto-close.yml). ---
           ACK="Reopened for maintainer review — thanks for the additional context. A maintainer will take a look."
+          gh label create "valid-reopened" --repo "$REPO" \
+            --description "Reopened by a human; awaiting maintainer triage (default-closed policy)." \
+            --color 0E8A16 2>/dev/null || true
           if [ "$IS_PR" = "1" ]; then
             gh pr reopen "$NUMBER" --repo "$REPO"
             gh pr edit "$NUMBER" --repo "$REPO" --remove-label "auto-closed"
+            gh pr edit "$NUMBER" --repo "$REPO" --add-label "valid-reopened"
             gh pr comment "$NUMBER" --repo "$REPO" --body "$ACK"
           else
             gh issue reopen "$NUMBER" --repo "$REPO"
             gh issue edit "$NUMBER" --repo "$REPO" --remove-label "auto-closed"
+            gh issue edit "$NUMBER" --repo "$REPO" --add-label "valid-reopened"
             gh issue comment "$NUMBER" --repo "$REPO" --body "$ACK"
           fi
 
