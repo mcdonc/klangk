@@ -101,24 +101,40 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   Map<String, List<Map<String, dynamic>>> _workspaceMembers = {};
   bool _loading = true;
   StreamSubscription<void>? _workspacesChangedSub;
+  StreamSubscription<Map<String, dynamic>>? _containerStatusSub;
 
   @override
   void initState() {
     super.initState();
     setPageTitle('Workspaces');
     _loadWorkspaces();
-    // Refresh the list whenever the backend signals the user's workspace
-    // set changed (created/deleted/shared/unshared via CLI, API, or
-    // another tab).  The WS connection is hoisted to login in WsClient.
     final wsClient = context.read<WsClient>();
     _workspacesChangedSub = wsClient.workspacesChanged.listen((_) {
       _refreshWorkspaces();
+    });
+    _containerStatusSub = wsClient.containerStatus.listen(_onContainerStatus);
+  }
+
+  void _onContainerStatus(Map<String, dynamic> msg) {
+    if (!mounted) return;
+    final wsId = msg['workspace_id'] as String?;
+    final running = msg['running'] as bool? ?? false;
+    if (wsId == null) return;
+    setState(() {
+      for (final section in [_owned, _shared]) {
+        for (final ws in section.workspaces) {
+          if (ws['id'] == wsId) {
+            ws['running'] = running;
+          }
+        }
+      }
     });
   }
 
   @override
   void dispose() {
     _workspacesChangedSub?.cancel();
+    _containerStatusSub?.cancel();
     _owned.dispose();
     _shared.dispose();
     super.dispose();
@@ -626,12 +642,9 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                       ? Colors.white.withValues(alpha: 0.03)
                       : Colors.transparent,
                   child: ListTile(
-                    leading: Icon(
-                      Icons.terminal,
-                      size: 20,
-                      color: section.isShared
-                          ? KColors.accentBlue
-                          : KColors.accentGreen,
+                    leading: _WorkspaceStatusIcon(
+                      running: e.value['running'] as bool? ?? false,
+                      isShared: section.isShared,
                     ),
                     title: Text(e.value['name'] as String),
                     subtitle: section.isShared
@@ -790,6 +803,49 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                 )
               : null,
       body: _buildWorkspacesList(),
+    );
+  }
+}
+
+class _WorkspaceStatusIcon extends StatelessWidget {
+  const _WorkspaceStatusIcon({
+    required this.running,
+    required this.isShared,
+  });
+
+  final bool running;
+  final bool isShared;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 24,
+      height: 24,
+      child: Stack(
+        children: [
+          Icon(
+            Icons.terminal,
+            size: 20,
+            color: isShared ? KColors.accentBlue : KColors.accentGreen,
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: running ? KColors.accentGreen : KColors.textMuted,
+                border: Border.all(
+                  color: KColors.bgSurface,
+                  width: 1.5,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

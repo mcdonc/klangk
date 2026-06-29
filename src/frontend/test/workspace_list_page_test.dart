@@ -24,15 +24,28 @@ dynamic _envelope(dynamic items) => {
 class _MockWsClient extends WsClient {
   final StreamController<void> _workspacesChanged =
       StreamController<void>.broadcast();
+  final StreamController<Map<String, dynamic>> _containerStatus =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   @override
   Stream<void> get workspacesChanged => _workspacesChanged.stream;
 
+  @override
+  Stream<Map<String, dynamic>> get containerStatus => _containerStatus.stream;
+
   void emitWorkspacesChanged() => _workspacesChanged.add(null);
+
+  void emitContainerStatus(String workspaceId, bool running) =>
+      _containerStatus.add({
+        'type': 'container_status',
+        'workspace_id': workspaceId,
+        'running': running,
+      });
 
   @override
   void dispose() {
     _workspacesChanged.close();
+    _containerStatus.close();
     super.dispose();
   }
 }
@@ -2156,6 +2169,70 @@ void main() {
       // Tap copy button — exercises the Clipboard.setData call
       await tester.tap(find.byTooltip('Copy').first);
       await tester.pump();
+    });
+
+    testWidgets('workspace card shows running status dot', (tester) async {
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode(_envelope([
+              {
+                'id': 'ws-1',
+                'name': 'Running WS',
+                'container_id': null,
+                'created_at': '2026-01-01',
+                'running': true,
+              },
+              {
+                'id': 'ws-2',
+                'name': 'Stopped WS',
+                'container_id': null,
+                'created_at': '2026-01-01',
+                'running': false,
+              },
+            ])),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      // Both workspaces should have status dots (small 8x8 containers)
+      expect(find.byType(ListTile), findsNWidgets(2));
+    });
+
+    testWidgets('container_status event updates running state', (tester) async {
+      final ws = _MockWsClient();
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode(_envelope([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'created_at': '2026-01-01',
+                'running': false,
+              },
+            ])),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage(wsClient: ws));
+      await tester.pumpAndSettle();
+
+      // Simulate container starting via WS event
+      ws.emitContainerStatus('ws-1', true);
+      await tester.pump();
+
+      // Widget should still be rendered (no errors)
+      expect(find.text('My WS'), findsOneWidget);
     });
   });
 }

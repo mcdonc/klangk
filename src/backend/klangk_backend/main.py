@@ -262,6 +262,9 @@ async def lifespan(app: FastAPI):
     await seed_default_user()
     await seed_agent_user()
     container.registry.set_on_workspace_killed(wshandler.reset_workspace_state)
+    container.registry.set_on_container_status_changed(
+        wshandler.state.notify_container_status
+    )
     await container.registry.prewarm_podman()
     await container.registry.adopt_orphaned_containers()
     container.registry.start_cleanup_loop()

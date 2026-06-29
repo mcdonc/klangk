@@ -106,6 +106,8 @@ class WsClient extends ChangeNotifier {
   final _sharedTerminalDeletedController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _workspacesChangedController = StreamController<void>.broadcast();
+  final _containerStatusController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _debugLogController = StreamController<WsDebugEntry>.broadcast();
 
   Stream<String> get errors => _errorController.stream;
@@ -148,6 +150,10 @@ class WsClient extends ChangeNotifier {
   /// Fires when the backend signals the user's workspace set changed
   /// (created/deleted/shared/unshared), so the list page can re-fetch.
   Stream<void> get workspacesChanged => _workspacesChangedController.stream;
+
+  /// Fires when a container starts or stops.
+  Stream<Map<String, dynamic>> get containerStatus =>
+      _containerStatusController.stream;
 
   /// Debug log of all WebSocket messages (sent and received).
   Stream<WsDebugEntry> get debugLog => _debugLogController.stream;
@@ -319,6 +325,7 @@ class WsClient extends ChangeNotifier {
     'shared_terminals': _onSharedTerminals,
     'shared_terminal_deleted': _onSharedTerminalDeleted,
     'workspaces_changed': (json) => _workspacesChangedController.add(null),
+    'container_status': _containerStatusController.add,
     'event': _customEventController.add,
   };
 
@@ -713,6 +720,7 @@ class WsClient extends ChangeNotifier {
     _customEventController.close();
     _sharedTerminalDeletedController.close();
     _workspacesChangedController.close();
+    _containerStatusController.close();
     _debugLogController.close();
     super.dispose();
   }

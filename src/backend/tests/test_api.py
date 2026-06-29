@@ -942,6 +942,37 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    async def test_list_includes_running_status(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "run-test"}
+        )
+        ws_id = resp.json()["id"]
+        # Not running (no container state)
+        resp = await client.get("/api/v1/workspaces?limit=10", headers=headers)
+        items = resp.json()["items"]
+        ws = next(w for w in items if w["id"] == ws_id)
+        assert ws["running"] is False
+
+        # Simulate running container
+        from klangk_backend import container
+
+        container.registry.track_activity("fake-cid", ws_id)
+        try:
+            resp = await client.get(
+                "/api/v1/workspaces?limit=10", headers=headers
+            )
+            items = resp.json()["items"]
+            ws = next(w for w in items if w["id"] == ws_id)
+            assert ws["running"] is True
+        finally:
+            container.registry.remove_state(ws_id)
+
+        # Also works for bare list (no pagination params)
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        ws = next(w for w in resp.json() if w["id"] == ws_id)
+        assert ws["running"] is False
+
     async def test_list_pagination(self, client, user):
         headers = await _auth_headers(client)
         for name in ["ws-a", "ws-b", "ws-c"]:
