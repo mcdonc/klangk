@@ -49,6 +49,65 @@ class TestMigration:
         )
         assert oidc_user["id"]
 
+    async def test_migrate_workspaces_adds_auto_start(self, temp_data_dir):
+        """Migrates a workspaces table missing the auto_start column."""
+        db = await aiosqlite.connect(str(model._core.DB_PATH))
+        model._core.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            await db.execute("""
+                CREATE TABLE users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT 'local',
+                    external_id TEXT,
+                    handle TEXT UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT INTO users (id, email, password_hash, verified)"
+                " VALUES ('u1', 'owner@example.com', 'hash', 1)"
+            )
+            # Workspaces table WITHOUT auto_start column
+            await db.execute("""
+                CREATE TABLE workspaces (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(id),
+                    name TEXT NOT NULL,
+                    container_id TEXT,
+                    num_ports INTEGER NOT NULL DEFAULT 5,
+                    image TEXT,
+                    default_command TEXT,
+                    mounts TEXT,
+                    env TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(user_id, name)
+                )
+            """)
+            await db.execute(
+                "INSERT INTO workspaces (id, user_id, name)"
+                " VALUES ('ws1', 'u1', 'old-ws')"
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        await model.init_db()
+
+        # Verify column was added and old data survived
+        db = await model.get_db()
+        cursor = await db.execute("PRAGMA table_info(workspaces)")
+        cols = {row[1] for row in await cursor.fetchall()}
+        assert "auto_start" in cols
+
+        cursor = await db.execute(
+            "SELECT auto_start FROM workspaces WHERE id = 'ws1'"
+        )
+        row = await cursor.fetchone()
+        assert row[0] == 0  # default value
+
 
 class TestUsers:
     async def test_create_user(self, db):
