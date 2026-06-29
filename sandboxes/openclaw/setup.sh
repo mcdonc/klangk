@@ -97,18 +97,12 @@ cfg['agents'] = cfg.get('agents', {})
 cfg['agents']['defaults'] = cfg['agents'].get('defaults', {})
 cfg['agents']['defaults']['model'] = {'primary': 'llm-proxy/\$KLANGK_LLM_MODEL'}
 cfg['gateway']['port'] = 8000
-# --- Insecure overrides (disabled by default) ---
-# Uncomment all three to make the gateway reachable from outside the
-# container and able to call the LLM proxy.  These weaken openclaw's
-# default security posture:
-#   - allowPrivateNetwork: bypasses SSRF guard so the gateway can
-#     reach host.containers.internal (private IP)
-#   - bind=lan: listens on all interfaces instead of loopback only,
-#     needed for Klangk's hosted app proxy to reach the gateway
-#   - chatCompletions: exposes an OpenAI-compatible HTTP endpoint
-# cfg['models']['providers']['llm-proxy']['request'] = {'allowPrivateNetwork': True}
-# cfg['gateway']['bind'] = 'lan'
-# cfg['gateway']['http'] = {'endpoints': {'chatCompletions': {'enabled': True}}}
+# Allow the gateway to reach the LLM proxy on the host's private
+# network and listen on all interfaces so Klangk's hosted app
+# proxy can reach it.
+cfg['models']['providers']['llm-proxy']['request'] = {'allowPrivateNetwork': True}
+cfg['gateway']['bind'] = 'lan'
+cfg['gateway']['http'] = {'endpoints': {'chatCompletions': {'enabled': True}}}
 cfg['secrets'] = {
     'providers': {
         'klangk': {
