@@ -58,7 +58,7 @@ export PATH="$INSTALL_DIR/bin:$PATH"
 # Run onboard non-interactively first — it creates initial config
 # and sets up auth tokens. We overwrite the config afterward so
 # onboard doesn't clobber our settings (bind, http endpoints, etc.).
-export OPENCLAW_HOME="$INSTALL_DIR/.openclaw"
+export OPENCLAW_HOME="$INSTALL_DIR"
 openclaw onboard --non-interactive \
   --accept-risk \
   --mode local \
@@ -125,7 +125,7 @@ with open(cfg_path, 'w') as f:
 # Ensure OPENCLAW_HOME is set for non-login shells.
 # shellcheck disable=SC2016
 if ! grep -q OPENCLAW_HOME ~/.bashrc 2>/dev/null; then
-  echo "export OPENCLAW_HOME=\"$INSTALL_DIR/.openclaw\"" >>~/.bashrc
+  echo "export OPENCLAW_HOME=\"$INSTALL_DIR\"" >>~/.bashrc
 fi
 
 # Derive the hosted app URL from Klangk env vars.
