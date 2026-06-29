@@ -6,7 +6,7 @@
 # Request:  {"protocolVersion":1,"provider":"klangk","ids":["workspace-token"]}
 # Response: {"protocolVersion":1,"values":{"workspace-token":"<jwt>"}}
 #
-# Install to ~/.local/bin/klangk-secret-provider (copied by setup.sh).
+# Install to /openclaw/bin/klangk-secret-provider (copied by setup.sh).
 
 set -euo pipefail
 

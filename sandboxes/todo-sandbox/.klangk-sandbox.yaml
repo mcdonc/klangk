@@ -1,9 +1,0 @@
-sandbox:
-  mount-at: ~/sandbox-test
-  setup: setup.sh
-
-copy:
-  - .some-conf:~/sandbox-test/.some-conf
-
-mounts:
-  - .env:~/.env:ro
