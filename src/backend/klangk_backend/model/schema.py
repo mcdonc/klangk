@@ -84,6 +84,14 @@ async def init_db() -> None:
                 UNIQUE(user_id, name)
             )
         """)
+        # Migration: add auto_start column to existing workspaces tables
+        cursor = await db.execute("PRAGMA table_info(workspaces)")
+        ws_cols = {row[1] for row in await cursor.fetchall()}
+        if "auto_start" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces"
+                " ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0"
+            )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,
