@@ -1096,12 +1096,41 @@ class TestWorkspaceRoutes:
 
     async def test_create_auto_start_allowed_with_env(self, client, user):
         headers = await _auth_headers(client)
-        with patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}):
+        with (
+            patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
+            patch(
+                "klangk_backend.workspaces.eager_start_workspace",
+                new_callable=AsyncMock,
+            ) as mock_start,
+        ):
             resp = await client.post(
                 "/api/v1/workspaces",
                 headers=headers,
                 json={"name": "auto-ws", "auto_start": True},
             )
+        assert resp.status_code == 200
+        assert resp.json()["auto_start"] is True
+        mock_start.assert_awaited_once()
+
+    async def test_create_auto_start_eager_failure_logged(self, client, user):
+        headers = await _auth_headers(client)
+        with (
+            patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
+            patch(
+                "klangk_backend.workspaces.eager_start_workspace",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("podman broke"),
+            ),
+        ):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={
+                    "name": "auto-fail-ws",
+                    "auto_start": True,
+                },
+            )
+        # Create succeeds even if eager start fails.
         assert resp.status_code == 200
         assert resp.json()["auto_start"] is True
 
