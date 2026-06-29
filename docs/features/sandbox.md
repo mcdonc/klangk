@@ -215,6 +215,19 @@ To forward your SSH agent into the container:
 klangkc shell myworkspace -A
 ```
 
+If the workspace has a `default-command` configured (e.g.
+`openclaw gateway`), that command runs in the first terminal
+window. To get an interactive shell alongside it, connect to a
+named terminal window:
+
+```bash
+klangkc shell myworkspace dev
+```
+
+This creates a new terminal window called `dev` where you can
+work interactively while the default command continues running in
+the first window.
+
 The copy and setup steps only run during `klangkc sandbox`. On
 `klangkc shell`, the command connects directly to the existing
 workspace. This means:
