@@ -844,6 +844,53 @@ void main() {
       client.dispose();
     });
 
+    test('drop during reconnect connectWorkspace allows re-reconnect',
+        () async {
+      // Regression: if the WebSocket dropped during the connectWorkspace phase
+      // of _attemptReconnect, _reconnecting stayed true and _scheduleReconnect
+      // short-circuited permanently.
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+
+      // Join a workspace so _pendingWorkspaceId is set on drop.
+      client.connectWorkspace('ws-1');
+      channels[0]
+          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+      await Future.delayed(Duration.zero);
+
+      // First drop — triggers reconnect.
+      channels[0].serverClose();
+      for (var i = 0; i < 10 && channels.length < 2; i++) {
+        await Future.delayed(Duration.zero);
+      }
+      expect(channels.length, 2, reason: 'reconnect should open channel 2');
+      expect(client.connected, isTrue);
+
+      // Drop channel 2 *before* workspace_ready arrives (simulates drop
+      // during connectWorkspace).
+      channels[1].serverClose();
+      await Future.delayed(Duration.zero);
+
+      // The bug: _reconnecting was still true, so _scheduleReconnect
+      // returned immediately and no further reconnect happened.
+      expect(client.reconnecting, isTrue,
+          reason: 'must schedule reconnect after drop during connectWorkspace');
+
+      for (var i = 0; i < 10 && channels.length < 3; i++) {
+        await Future.delayed(Duration.zero);
+      }
+      expect(channels.length, 3,
+          reason: 'a third connection attempt must be made');
+      expect(client.connected, isTrue);
+
+      client.disconnect();
+      client.dispose();
+    });
+
     test('manual connect cancels pending reconnect timer', () async {
       final auth = AuthService();
       await Future.delayed(Duration.zero);
