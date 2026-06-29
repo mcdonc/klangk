@@ -144,7 +144,10 @@ async def _ensure_base_session(
         return False
 
     # Send default command as keystrokes into window 0.
+    # Wait briefly for bash to finish sourcing .profile / .bashrc
+    # so PATH (nvm, etc.) is set before the command runs.
     if default_command:
+        await asyncio.sleep(1)
         try:
             await podman.exec_container(
                 container_id,
