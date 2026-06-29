@@ -1230,7 +1230,7 @@ class TestEnsureBaseSession:
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_cmd
 
     async def test_default_command_sends_keys(self):
-        """Default command is sent as keystrokes after session creation."""
+        """Default command runs in a dedicated 'default-cmd' window."""
         from klangk_backend.terminal import _ensure_base_session
 
         with patch(
@@ -1239,19 +1239,26 @@ class TestEnsureBaseSession:
             side_effect=[
                 (1, "", ""),  # has-session fails
                 (0, "", ""),  # new-session ok
+                (0, "", ""),  # new-window ok
                 (0, "", ""),  # send-keys ok
+                (0, "", ""),  # select-window ok
             ],
         ) as mock_exec:
             created = await _ensure_base_session(
                 "cid", "my-session", default_command="openclaw gateway"
             )
         assert created is True
-        assert mock_exec.await_count == 3
-        send_cmd = mock_exec.call_args_list[2].args[1]
+        assert mock_exec.await_count == 5
+        new_window_cmd = mock_exec.call_args_list[2].args[1]
+        assert "new-window" in new_window_cmd
+        assert "default-cmd" in new_window_cmd
+        send_cmd = mock_exec.call_args_list[3].args[1]
         assert "send-keys" in send_cmd
-        assert "my-session:0" in send_cmd
+        assert "my-session:default-cmd" in send_cmd
         assert "openclaw gateway" in send_cmd
-        assert "Enter" in send_cmd
+        select_cmd = mock_exec.call_args_list[4].args[1]
+        assert "select-window" in select_cmd
+        assert "my-session:0" in select_cmd
 
     async def test_default_command_skipped_when_session_exists(self):
         """Default command is not sent if session already exists."""

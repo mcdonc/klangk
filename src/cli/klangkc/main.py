@@ -1062,6 +1062,20 @@ async def _sandbox_setup_only(
     async with websockets.connect(f"{ws_url}?token={token}", **kwargs) as ws:
         await _wait_workspace_ready(ws, workspace_id)
         await _sandbox_setup(ws, config, sandbox_root, handle)
+        # After setup, start a terminal so the default command runs
+        # in a dedicated "default-cmd" tmux window (visible as a tab
+        # but not occupying the user's interactive window 0).
+        if config.default_command:
+            await ws.send(
+                json.dumps({"cmd": "terminal_start", "cols": 80, "rows": 24})
+            )
+            try:
+                async for raw in ws:
+                    msg = json.loads(raw)
+                    if msg.get("type") == "terminal_started":
+                        break
+            except websockets.ConnectionClosed:
+                pass
 
 
 terminal_app = typer.Typer(

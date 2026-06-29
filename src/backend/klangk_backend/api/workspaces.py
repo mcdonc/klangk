@@ -210,7 +210,9 @@ async def create_workspace(
     # user connects.  Errors are logged but don't fail the create.
     if body.auto_start:
         try:
-            await workspaces.eager_start_workspace(ws)
+            await workspaces.eager_start_workspace(
+                ws, run_default_command=False
+            )
         except Exception:
             logger.warning(
                 "Eager start failed for workspace %s",

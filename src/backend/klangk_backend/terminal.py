@@ -143,31 +143,71 @@ async def _ensure_base_session(
         logger.warning("Failed to create base tmux session %s", session_name)
         return False
 
-    # Send default command as keystrokes into window 0.
-    # Wait briefly for bash to finish sourcing .profile / .bashrc
-    # so PATH (nvm, etc.) is set before the command runs.
+    # Run the default command in a new window named "default-cmd"
+    # so the user's window 0 stays free for interactive use.
     if default_command:
-        await asyncio.sleep(1)
         try:
             await podman.exec_container(
                 container_id,
                 [
                     "tmux",
-                    "send-keys",
+                    "new-window",
                     "-t",
-                    f"{session_name}:0",
-                    default_command,
-                    "Enter",
+                    session_name,
+                    "-n",
+                    "default-cmd",
                 ],
                 user=CONTAINER_USER,
                 timeout=5,
             )
         except Exception:
             logger.warning(
-                "Failed to send default command to session %s", session_name
+                "Failed to create default-cmd window in %s",
+                session_name,
             )
+        else:
+            await send_keys(
+                container_id,
+                f"{session_name}:default-cmd",
+                default_command,
+            )
+            # Switch back to window 0 so the user lands there.
+            try:
+                await podman.exec_container(
+                    container_id,
+                    [
+                        "tmux",
+                        "select-window",
+                        "-t",
+                        f"{session_name}:0",
+                    ],
+                    user=CONTAINER_USER,
+                    timeout=5,
+                )
+            except Exception:  # pragma: no cover
+                pass
 
     return True
+
+
+async def send_keys(container_id: str, target: str, command: str) -> None:
+    """Send keystrokes to a tmux target (e.g. ``session:0``)."""
+    try:
+        await podman.exec_container(
+            container_id,
+            [
+                "tmux",
+                "send-keys",
+                "-t",
+                target,
+                command,
+                "Enter",
+            ],
+            user=CONTAINER_USER,
+            timeout=5,
+        )
+    except Exception:  # pragma: no cover
+        logger.warning("Failed to send keys to %s", target)
 
 
 def _build_shell_command(
