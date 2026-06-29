@@ -256,6 +256,39 @@ def login(
     _out.print(f"Logged in as [bold]{email}[/bold]")
 
 
+def refresh_token(server_url: str, token: str) -> str | None:
+    """Exchange *token* for a fresh one via the server's refresh endpoint.
+
+    On success the new token is persisted to state.yaml and returned.
+    Returns ``None`` on any failure (expired, revoked, network error).
+    """
+    try:
+        resp = httpx.post(
+            f"{server_url}/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            return None
+        new_token = resp.json().get("access_token")
+        if not new_token:
+            return None
+        # Decode email from the new token so we can update state
+        try:
+            payload = new_token.split(".")[1]
+            payload += "=" * (4 - len(payload) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+            email = claims.get("email", "unknown")
+        except Exception:
+            email = "unknown"
+        state = CLIState.load()
+        state.set_credentials(server_url, email, new_token)
+        state.save()
+        return new_token
+    except httpx.HTTPError:
+        return None
+
+
 def logout(server_url: str) -> None:
     """Clear stored credentials for a server."""
     state = CLIState.load()

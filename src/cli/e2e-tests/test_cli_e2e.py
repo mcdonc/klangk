@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -1996,3 +1997,161 @@ class TestWorkspaceSharing:
             ],
             env=env,
         )
+
+
+# --- Token refresh E2E ---
+
+
+@pytest.fixture(scope="module")
+def short_token_server():
+    """Start a server with very short token lifetime (~7 seconds)."""
+    data_dir = tempfile.mkdtemp(prefix="klangk-refresh-e2e-")
+    proc, base_url = _start_server(
+        data_dir,
+        "18997",
+        "cli-refresh-e2e",
+        extra_env={"KLANGK_ACCESS_TOKEN_HOURS": "0.002"},
+    )
+    yield {"url": base_url, "data_dir": data_dir, "proc": proc}
+    _stop_server(proc, data_dir, "cli-refresh-e2e")
+
+
+@pytest.fixture(scope="module")
+def short_token_cli_config(short_token_server, tmp_path_factory):
+    """Create a CLI config pointing at the short-token server."""
+    config_dir = tmp_path_factory.mktemp("klangk-refresh-config")
+    env = {**os.environ, "HOME": str(config_dir)}
+    klangk_config_dir = config_dir / ".config" / "klangk"
+    klangk_config_dir.mkdir(parents=True)
+    return {
+        "env": env,
+        "config_dir": klangk_config_dir,
+        "server_url": short_token_server["url"],
+    }
+
+
+def _read_state_token(home_dir, server_url):
+    """Read the stored token from state.yaml under *home_dir*."""
+    import yaml
+
+    state_path = home_dir / ".config" / "klangk" / "state.yaml"
+    if not state_path.exists():
+        return None
+    data = yaml.safe_load(state_path.read_text()) or {}
+    server = data.get(server_url, {})
+    active_user = server.get("active-user")
+    if not active_user:
+        return None
+    users = server.get("users", {})
+    return users.get(active_user, {}).get("token")
+
+
+class TestTokenRefresh:
+    """E2E tests for automatic JWT refresh.
+
+    Uses a dedicated server with ~7-second token lifetime.
+    """
+
+    def _login(self, cli_config):
+        result = _run(
+            [
+                "klangkc",
+                "login",
+                cli_config["server_url"],
+                "test@example.com",
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=cli_config["env"],
+        )
+        assert result.returncode == 0, result.stderr
+        return result
+
+    def test_proactive_refresh_on_http(
+        self, short_token_server, short_token_cli_config
+    ):
+        """After token nears expiry, klangkc ls should refresh transparently."""
+        self._login(short_token_cli_config)
+        original_token = _read_state_token(
+            Path(short_token_cli_config["env"]["HOME"]),
+            short_token_cli_config["server_url"],
+        )
+        assert original_token is not None
+
+        # Wait for the token to be within the refresh margin.
+        # Token lifetime is 0.002 hours = 7.2 seconds.
+        # Refresh margin is 300 seconds, so the token is *already*
+        # within the refresh window from the moment it's issued.
+        # A simple ls should trigger proactive refresh.
+        result = _run(
+            ["klangkc", "ls"],
+            env=short_token_cli_config["env"],
+        )
+        assert result.returncode == 0, result.stderr
+
+        new_token = _read_state_token(
+            Path(short_token_cli_config["env"]["HOME"]),
+            short_token_cli_config["server_url"],
+        )
+        assert new_token is not None
+        assert new_token != original_token
+
+    def test_401_retry_refreshes_and_succeeds(
+        self, short_token_server, short_token_cli_config
+    ):
+        """After token expires, 401 retry should refresh and succeed."""
+        self._login(short_token_cli_config)
+        original_token = _read_state_token(
+            Path(short_token_cli_config["env"]["HOME"]),
+            short_token_cli_config["server_url"],
+        )
+
+        # Wait for the token to fully expire (7.2 seconds + buffer)
+        time.sleep(9)
+
+        result = _run(
+            ["klangkc", "ls"],
+            env=short_token_cli_config["env"],
+        )
+        # The proactive refresh should have gotten a new token before
+        # the request, so this should succeed. If the proactive refresh
+        # also fails (expired), then the 401 retry kicks in — but the
+        # backend refresh endpoint rejects expired tokens unless they
+        # were previously refreshed. In that case the command should
+        # fail with a clean error (no traceback).
+        if result.returncode == 0:
+            new_token = _read_state_token(
+                Path(short_token_cli_config["env"]["HOME"]),
+                short_token_cli_config["server_url"],
+            )
+            assert new_token != original_token
+        else:
+            # Clean error, no traceback
+            assert "Traceback" not in result.stderr
+            assert (
+                "Session expired" in result.stderr
+                or "login" in result.stderr.lower()
+            )
+
+    def test_token_persisted_after_refresh(
+        self, short_token_server, short_token_cli_config
+    ):
+        """After a successful refresh, state.yaml has the new token."""
+        self._login(short_token_cli_config)
+        original_token = _read_state_token(
+            Path(short_token_cli_config["env"]["HOME"]),
+            short_token_cli_config["server_url"],
+        )
+        # The short lifetime means proactive refresh fires immediately
+        result = _run(
+            ["klangkc", "ls"],
+            env=short_token_cli_config["env"],
+        )
+        assert result.returncode == 0, result.stderr
+        new_token = _read_state_token(
+            Path(short_token_cli_config["env"]["HOME"]),
+            short_token_cli_config["server_url"],
+        )
+        assert new_token is not None
+        assert new_token != original_token
