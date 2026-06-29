@@ -2375,3 +2375,57 @@ class TestSendIgnoreClosed:
         ws.send = AsyncMock(side_effect=OSError("broken"))
         # Should not raise
         await _send_ignore_closed(ws, "hello")
+
+
+class TestTerminalSessionRunCancellation:
+    async def test_run_cancels_all_tasks_on_failure(self):
+        """Tasks must be cancelled when one raises, not left orphaned."""
+        from klangkc.client import _TerminalSession
+
+        ws = AsyncMock()
+
+        class DummyWriter:
+            def write(self, data):
+                pass
+
+            def flush(self):
+                pass
+
+        session = _TerminalSession(ws, 80, 24, stdout=DummyWriter())
+
+        boom = RuntimeError("stdin exploded")
+        cancelled = []
+
+        async def fake_stdin():
+            raise boom
+
+        async def fake_stdout():
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancelled.append("stdout")
+                raise
+
+        async def fake_resize():
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancelled.append("resize")
+                raise
+
+        async def fake_heartbeat():
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancelled.append("heartbeat")
+                raise
+
+        session.stdin_loop = fake_stdin
+        session.stdout_loop = fake_stdout
+        session.resize_loop = fake_resize
+        session.heartbeat_loop = fake_heartbeat
+
+        with pytest.raises(RuntimeError, match="stdin exploded"):
+            await session.run()
+
+        assert sorted(cancelled) == ["heartbeat", "resize", "stdout"]
