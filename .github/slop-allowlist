@@ -1,0 +1,4 @@
+# Trusted contributors who bypass the default-closed auto-close.
+# One GitHub login per line (case-sensitive, exactly as on GitHub).
+# Lines starting with '#' are comments; blank lines are ignored.
+mcdonc
