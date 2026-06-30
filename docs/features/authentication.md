@@ -69,12 +69,13 @@ returned to your original URL after logging in.
 
 ## Brute-force protection
 
-Optionally, Klangk can lock accounts after repeated failed login
-attempts. This is disabled by default. To enable it, set:
+By default, Klangk locks accounts after repeated failed login
+attempts (5 failures within the counting window). To tune or
+disable it, set:
 
 | Variable                        | Default | Description                              |
 | ------------------------------- | ------- | ---------------------------------------- |
-| `KLANGK_LOGIN_LOCKOUT_FAILURES` | `0`     | Failed attempts before lockout (0 = off) |
+| `KLANGK_LOGIN_LOCKOUT_FAILURES` | `5`     | Failed attempts before lockout (0 = off) |
 | `KLANGK_LOGIN_LOCKOUT_WINDOW`   | `300`   | Time window in seconds for counting      |
 | `KLANGK_LOGIN_LOCKOUT_DURATION` | `900`   | How long the lockout lasts (seconds)     |
 

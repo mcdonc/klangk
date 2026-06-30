@@ -42,6 +42,46 @@ class TestPasswordHashing:
         assert auth.verify_password(pw, hashed)
 
 
+class TestSecurityDefaults:
+    """Lock in the hardened auth defaults introduced in #938.
+
+    These module-level constants are evaluated at import time from env
+    vars, so to assert the *production* defaults we spawn a subprocess
+    with the policy env vars stripped — independent of whatever the
+    test process (or a developer's shell) has set. A regression that
+    weakens either default fails here.
+    """
+
+    def test_hardened_defaults_when_env_unset(self):
+        import subprocess
+        import sys
+
+        code = (
+            "import os\n"
+            "for k in ('KLANGK_MIN_PASSWORD_LENGTH',"
+            " 'KLANGK_LOGIN_LOCKOUT_FAILURES'):\n"
+            "    os.environ.pop(k, None)\n"
+            "from klangk_backend import auth\n"
+            "print(auth.MIN_PASSWORD_LENGTH,"
+            " auth.LOGIN_LOCKOUT_FAILURES)\n"
+        )
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k
+            not in (
+                "KLANGK_MIN_PASSWORD_LENGTH",
+                "KLANGK_LOGIN_LOCKOUT_FAILURES",
+            )
+        }
+        out = subprocess.check_output(
+            [sys.executable, "-c", code], env=env, text=True
+        ).strip()
+        # MIN_PASSWORD_LENGTH=8, LOGIN_LOCKOUT_FAILURES=5 (both on by
+        # default — brute-force protection and a sane password floor).
+        assert out == "8 5"
+
+
 class TestValidatePasswordLength:
     def test_rejects_short_password(self):
         with pytest.raises(HTTPException) as exc_info:
@@ -239,11 +279,11 @@ class TestLogin:
 
 
 class TestLoginRateLimit:
-    """ "Tests for login brute-force protection.
+    """Tests for login brute-force protection.
 
-    These require KLANGK_LOGIN_LOCKOUT_FAILURES > 0 (default is 0 = disabled),
-    so the class setup/teardown temporarily sets it to 5 and reloads
-    the auth module.
+    The default LOGIN_LOCKOUT_FAILURES is 5 (enabled); these tests pin
+    it explicitly to 5 and reload the auth module so they exercise the
+    lockout machinery deterministically regardless of the default.
     """
 
     def setup_method(self):

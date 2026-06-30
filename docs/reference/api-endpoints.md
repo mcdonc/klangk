@@ -1674,9 +1674,9 @@ Generate a workspace JWT for testing container-to-host endpoints.
 
 ### Login Brute-Force Protection
 
-Disabled by default. Configure via environment variables:
+Enabled by default (5 failed attempts → lockout). Configure via environment variables:
 
-- `KLANGK_LOGIN_LOCKOUT_FAILURES` (default `0`) —
+- `KLANGK_LOGIN_LOCKOUT_FAILURES` (default `5`) —
   attempts before lockout (0 = disabled)
 - `KLANGK_LOGIN_LOCKOUT_DURATION` (default `900`) —
   lockout period in seconds

@@ -214,7 +214,7 @@ class _LoginPageState extends State<LoginPage> {
         obscureText: _obscurePassword,
         validator: (v) {
           if (v == null || v.isEmpty) return 'Required';
-          if (_isRegister && v.length < 4) return 'Min 4 characters';
+          if (_isRegister && v.length < 8) return 'Min 8 characters';
           return null;
         },
         onFieldSubmitted: (_) => _submit(),
