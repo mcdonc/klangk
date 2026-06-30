@@ -70,6 +70,11 @@ RUN chmod +x /opt/klangk/entrypoint.sh \
       /opt/klangk/bin/klangk-save-workspace-state \
       /opt/klangk/bin/klangk-set-workspace-token \
       /opt/klangk/bin/klangk-workspace-token
+# System-wide environment exports for ALL login shells (interactive AND
+# non-interactive, e.g. the health check's `bash -lc`). /etc/profile sources
+# these unconditionally via run-parts. See issue #1093 for why env must live
+# here rather than in /etc/bash.bashrc (which non-interactive shells skip).
+COPY profile.d/ /etc/profile.d/
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 

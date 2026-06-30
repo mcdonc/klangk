@@ -1,9 +1,15 @@
 # The Shell
 
-Bash is the default shell for all workspace terminals. The system-wide
-`/etc/bash.bashrc` handles terminal setup (waiting for container readiness,
-running plugin hooks, and launching default commands), then sources your
-personal `~/.bashrc`.
+Bash is the default shell for all workspace terminals. Two system files
+set up the environment before your personal `~/.bashrc` runs:
+
+- `/etc/profile.d/klangk-*.sh` — environment exports (`PATH=/opt/klangk/bin`,
+  `EDITOR`) sourced by **every login shell**, interactive or not. This is
+  why one-shot commands like the workspace health check (`bash -lc`) and
+  `klangkc exec` still find `pi`, `herdr`, and the `klangk-*` helpers.
+- `/etc/bash.bashrc` — interactive-shell setup: waits for container
+  readiness, runs `on-shell-init` plugin hooks, and (via the default
+  command) launches the workspace's configured service.
 
 Your `~/.bashrc` persists across container restarts (it lives on the
 bind-mounted home directory), so any customizations you make are permanent.
