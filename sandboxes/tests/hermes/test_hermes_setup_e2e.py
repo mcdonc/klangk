@@ -6,10 +6,14 @@ Covers two invariants (#1109):
   upstream Hermes installer at runtime (per-workspace, as the non-root
   ``klangk`` user), writes ``~/.profile`` exports + the llm-proxy config, and
   lands the ``hermes`` binary.
-- **Health-check works.** The ``health-check: hermes gateway status ... grep``
-  config reaches the workspace, the health monitor runs it as a bash login
-  shell (``bash -lc``, #1087), and the status endpoint reports ``healthy``
-  once the gateway (launched by ``default-command``) is up.
+- **Health-check works.** The
+  ``health-check: /hermes/bin/healthcheck.sh`` config reaches the
+  workspace, the health monitor runs it as a non-login bash shell
+  (``bash -c``) so it sources nothing, and the status endpoint reports
+  ``healthy`` once the gateway (launched by ``default-command``) is up.
+  ``setup.sh`` writes the wrapper to ``/hermes/bin/healthcheck.sh``; it
+  sets ``HERMES_HOME`` and calls the venv binary by absolute path,
+  grepping its output for the running marker.
 
   ``hermes gateway status`` always exits 0 (it only prints state), so the
   liveness signal is derived from its printed output -- hermes's own process
@@ -357,10 +361,12 @@ class TestHermesSetup:
         3. setup completes -> ``default-command`` (``klangk-hermes-gateway``)
            fires; the wrapper refreshes the token then runs
            ``hermes gateway run``.
-        4. the monitor runs ``bash -lc "hermes gateway status ... | grep"``;
-           the login shell sources ``~/.profile`` (#1087) so ``hermes``
-           resolves, and hermes's process detection finds the running
-           gateway -> status endpoint reports ``healthy``.
+        4. the monitor runs ``bash -c /hermes/bin/healthcheck.sh``; the
+           non-login shell sources nothing, but the wrapper sets
+           ``HERMES_HOME`` and calls the venv ``hermes gateway status``
+           by absolute path, grepping for the running marker.
+           hermes's process detection finds the running gateway ->
+           status endpoint reports ``healthy``.
         """
         sandbox_proc = subprocess.Popen(
             ["klangkc", "sandbox", WS, SANDBOX_DIR],

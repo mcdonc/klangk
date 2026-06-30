@@ -5,21 +5,25 @@ Covers three invariants:
 - #1039 (ordering) + #1087 (location): ``setup.sh`` writes every env
   export the default_command depends on to ``~/.profile`` up front,
   before the slow ``npm install``.
-- #1089: the ``health-check: openclaw health`` config reaches the
-  workspace, the health monitor runs it as a bash login shell
-  (``bash -lc``, #1087), and the status endpoint reports ``healthy``
-  once the gateway (launched by ``default-command``) is up.
+- #1089: the ``health-check: /openclaw/bin/healthcheck.sh`` config
+  reaches the workspace, the health monitor runs it as a non-login
+  bash shell (``bash -c``) so it sources nothing, and the status
+  endpoint reports ``healthy`` once the gateway (launched by
+  ``default-command``) is up.
 
 ``sandboxes/openclaw/setup.sh`` persists every env export the
 default_command depends on (``NVM_DIR`` + nvm source, ``/openclaw/bin``
 on ``PATH``, ``OPENCLAW_HOME``) to ``~/.profile`` in one block at the
-very top of setup, before the long ``npm install -g openclaw``.
+very top of setup, before the long ``npm install -g openclaw``. It also
+writes ``/openclaw/bin/healthcheck.sh`` (and symlinks
+``/openclaw/bin/openclaw`` at the nvm-installed binary) so the health
+check can invoke openclaw by absolute path -- the non-login ``bash -c``
+probe does not source ``~/.profile``, so it cannot rely on nvm PATH.
 
 Why ``~/.profile`` and not ``~/.bashrc`` (#1087): ``~/.profile`` is the
-POSIX file sourced by ALL login shells -- interactive terminals (the
-default-cmd tmux pane is an interactive login shell) AND non-interactive
-``bash -lc`` (which the health check uses, ``container.py``
-``HealthMonitor._run_one``). ``~/.bashrc`` has an interactivity guard
+POSIX file sourced by login shells -- interactive terminals (the
+default-cmd tmux pane is an interactive login shell) and
+``klangkc exec`` (``bash -lc``). ``~/.bashrc`` has an interactivity guard
 that hides its body from non-interactive shells, so exports the health
 check needs cannot live there. ``~/.profile`` is the one file BOTH the
 default_command and the health check reliably source.
@@ -724,11 +728,11 @@ class TestOpenclawSetupProfileExports:
                 sandbox_proc.kill()
 
     def test_health_check_reports_healthy_when_gateway_up(self):
-        """The ``health-check: openclaw health`` config reaches the
-        workspace, the health monitor runs it as a bash login shell
-        (``bash -lc``, #1087), and the status endpoint reports
-        ``healthy`` once the gateway (launched by ``default-command``)
-        is up.
+        """The ``health-check: /openclaw/bin/healthcheck.sh`` config reaches
+        the workspace, the health monitor runs it as a non-login bash
+        shell (``bash -c``) so it sources nothing, and the status
+        endpoint reports ``healthy`` once the gateway (launched by
+        ``default-command``) is up.
 
         This is the #1089 end-to-end validation. The whole chain must
         work for the status to flip to healthy:
@@ -739,10 +743,11 @@ class TestOpenclawSetupProfileExports:
            skips checks until then).
         3. ``default-command: openclaw gateway`` fires and the gateway
            binds its port.
-        4. the monitor runs ``bash -lc "openclaw health"``; the login
-           shell sources ``~/.profile`` (#1087) so the nvm-installed
-           ``openclaw`` binary resolves and the command connects to
-           the gateway over WebSocket, exiting 0.
+        4. the monitor runs ``bash -c /openclaw/bin/healthcheck.sh``;
+           the non-login shell sources nothing, but the wrapper script
+           sets ``OPENCLAW_HOME`` and execs the symlinked
+           ``/openclaw/bin/openclaw health`` by absolute path, which
+           connects to the gateway over WebSocket and exits 0.
 
         The gateway takes a few seconds to bind after setup, so an
         initial ``unhealthy`` window is expected and tolerated -- the

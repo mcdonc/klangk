@@ -4,9 +4,11 @@
 #
 # NOTE: environment exports (PATH=/opt/klangk/bin, EDITOR) live in
 # /etc/profile.d/klangk-*.sh so that non-interactive login shells (bash -lc
-# — the health check, klangkc exec) see them too. This file is only sourced
+# — e.g. `klangkc exec`) see them too. This file is only sourced
 # for interactive shells, so anything placed here is invisible to one-shot
-# non-interactive commands. See issue #1093.
+# non-interactive commands. See issue #1093. (The workspace health check is
+# the exception: it runs a non-login `bash -c` and sources nothing — see
+# docs/features/health-check.md.)
 
 # Change to the user's home directory (podman exec -w can't use symlinks
 # without resolving them, so we start in /home and cd here instead).

@@ -4,10 +4,11 @@ sandbox:
 
 workspace:
   default-command: openclaw gateway
-  # `openclaw health` connects to the running gateway over WebSocket
-  # and exits non-zero if it is unreachable -- a liveness check for the
-  # service the default-command launches. It runs as a bash login shell
-  # (bash -lc, #1087) so it sources ~/.profile and resolves the
-  # nvm-installed `openclaw` binary. See docs/features/health-check.md.
-  health-check: openclaw health
+  # Liveness probe for the gateway launched by default-command. Points
+  # at an absolute-path wrapper script (NOT bare `openclaw health`)
+  # because the host monitor runs it via `bash -c` -- a NON-login shell
+  # that sources no startup file, so the user's nvm PATH / OPENCLAW_HOME
+  # from ~/.profile are not in effect. The script bakes those in.
+  # See docs/features/health-check.md.
+  health-check: /openclaw/bin/healthcheck.sh
   auto-start: true

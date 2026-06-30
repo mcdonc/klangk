@@ -7,15 +7,17 @@ INSTALL_DIR="/openclaw"
 # Persist every env export the default_command depends on to ~/.profile
 # UP FRONT, before any long-running install step.
 #
-# Why ~/.profile and not ~/.bashrc (#1087): ~/.profile is the POSIX file
-# sourced by ALL login shells -- interactive terminals (the default-cmd
-# tmux pane is an interactive login shell) AND non-interactive
-# `bash -lc` (which the health check uses). ~/.bashrc has an
+# Why ~/.profile: it's the POSIX file sourced by login shells --
+# interactive terminals (the default-cmd tmux pane is an interactive
+# login shell) and `klangkc exec` (bash -lc). ~/.bashrc has an
 # interactivity guard near its top (`case $- in *i*) ;; *) return`)
 # that hides anything appended below it from non-interactive shells, so
-# exports the health check needs cannot live there. ~/.profile is the
-# one file BOTH the default_command and the health check reliably
-# source.
+# exports those commands need cannot live there.
+#
+# NOTE: the workspace health check is NOT a reason to put these in
+# ~/.profile. The check runs as a NON-login shell (`bash -c`) and
+# sources nothing -- it uses the absolute-path /openclaw/bin/healthcheck.sh
+# wrapper instead. Don't add exports here "for the health check".
 #
 # Why UP FRONT (#1039): a shell that sources ~/.profile while setup is
 # still running (e.g. the default-cmd pane created by an early
@@ -87,6 +89,19 @@ fi
 mkdir -p "$INSTALL_DIR/bin"
 cp "$SCRIPT_DIR/klangk-secret-provider.sh" "$INSTALL_DIR/bin/klangk-secret-provider"
 chmod +x "$INSTALL_DIR/bin/klangk-secret-provider"
+
+# Stable symlink so the health check can invoke openclaw by absolute
+# path. The host monitor runs the check via `bash -c` (NON-login), so
+# it does not source ~/.profile / nvm -- bare `openclaw` would not
+# resolve. npm rewrote openclaw's shebang to an absolute node path, so
+# this symlink runs standalone without node on PATH.
+ln -sf "$(command -v openclaw)" "$INSTALL_DIR/bin/openclaw"
+
+# Copy the health-check wrapper to a stable absolute path (same reason:
+# the NON-login check cannot rely on PATH). It sets OPENCLAW_HOME and
+# execs /openclaw/bin/openclaw health.
+cp "$SCRIPT_DIR/healthcheck.sh" "$INSTALL_DIR/bin/healthcheck.sh"
+chmod +x "$INSTALL_DIR/bin/healthcheck.sh"
 
 export PATH="$INSTALL_DIR/bin:$PATH"
 

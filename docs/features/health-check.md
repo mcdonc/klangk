@@ -55,14 +55,35 @@ the workspace as `health_message`, and carried on the `service_health`
 event -- so you can see _why_ it's unhealthy without `podman exec`'ing
 in by hand.
 
-The check runs through `bash -lc "<your command>"` — a bash **login
-shell** — so any shell syntax works (pipes, `&&`, redirects, etc.)
-**and** the command sees the workspace user's environment: it sources
-`~/.profile`, where `setup.sh` persists PATH additions and tool homes.
-This means a check like `openclaw health` resolves the `openclaw`
-binary even though it was installed under nvm/asdf. See
-[The Shell — Startup files](the-shell.md#startup-files) for the
-convention on where setup scripts should put environment exports.
+The check runs through `bash -c "<your command>"` — a bash
+**non-login** shell. It sources **no** startup file: not `~/.profile`,
+not `~/.bashrc`, not `/etc/profile.d/*`. This is deliberate — the
+health check is an **operational probe**, not a user session (think
+Kubernetes liveness probe), so it must stay deterministic and
+decoupled from the owning user's interactive shell setup. A slow
+`nvm` load, a broken `~/.profile` edit, or a stray `read` prompt must
+never make an unattended 30-second poll flap "unhealthy".
+
+The trade-off: the check command **cannot rely on the user's PATH or
+environment**. It sees only the container's image `PATH` (so
+`/opt/klangk/bin` and system tools like `grep`, `pgrep`, `curl`
+resolve) plus `HOME`. So:
+
+- **Use absolute paths** for the binary you're checking — a tool
+  installed by `setup.sh` (under nvm, a venv, a sandbox mount) is on
+  the _user's_ PATH, not the probe's.
+- For anything non-trivial, **point `health-check` at an executable
+  script with a shebang** (e.g. `/openclaw/bin/healthcheck.sh`). The
+  script's shebang dictates its interpreter (a script with
+  `#!/usr/bin/env bash` runs under bash regardless of the probe's
+  shell), you can `export` whatever `PATH`/env vars it needs, and you
+  can run it locally by hand to test. Both bundled sandboxes ship their
+  check this way (see below). Inline one-liners (`pgrep -x …`,
+  `curl -sf …`, `test -S …`) are fine for trivial checks and run
+  under the probe's `bash`.
+
+See [The Shell — Startup files](the-shell.md#startup-files) for why
+login-shell exports don't reach the probe.
 
 ### When checks are skipped
 
@@ -159,42 +180,67 @@ In `.klangk-sandbox.yaml` (see [Sandbox](sandbox.md)):
 
 ```yaml
 workspace:
-  health-check: openclaw health
+  health-check: /openclaw/bin/healthcheck.sh
 ```
 
 This is exactly what the [openclaw sandbox](https://github.com/mcdonc/klangk/tree/main/sandboxes/openclaw)
-ships: `openclaw health` connects to the running gateway over
-WebSocket and exits non-zero if it's unreachable — a liveness check
-for the service the `default-command` (`openclaw gateway`) launches.
-Because the check runs as a bash login shell (`bash -lc`), it sources
-`~/.profile` and resolves the nvm-installed `openclaw` binary — see
-[The Shell](the-shell.md#startup-files).
+ships. Rather than a bare `openclaw health` (which would need the
+user's nvm `PATH` + `OPENCLAW_HOME` from `~/.profile` — invisible to
+the non-login probe), `setup.sh` writes `/openclaw/bin/healthcheck.sh`:
+a tiny script with `#!/usr/bin/env bash` that `export`s `OPENCLAW_HOME`
+and `exec`s `/openclaw/bin/openclaw health` by absolute path. The
+config points `health-check` at that absolute path. The [hermes
+sandbox](https://github.com/mcdonc/klangk/tree/main/sandboxes/hermes)
+does the same. This is the recommended pattern for any non-trivial
+check. See [The Shell](the-shell.md#startup-files) for why the probe
+can't see the user's `~/.profile`.
 
 ## Example commands
 
-A health check is any command that exits 0 when things are good. The
-canonical real-world example is the openclaw sandbox's own check:
+A health check is any command that exits 0 when things are good.
+Because the check runs as a **non-login** `bash -c` (it sources
+nothing — see above), the reliable patterns are either a **trivial
+inline one-liner** using only system tools, or a **wrapper script at
+an absolute path** for anything that needs a sandbox-installed binary
+or custom env.
 
-```yaml
-# A real service's own health command (openclaw ships this)
-openclaw health
-```
-
-Other common patterns:
+A trivial one-liner (system tools resolve on the image `PATH`):
 
 ```yaml
 # HTTP health endpoint
-curl -sf http://localhost:8080/health
+health-check: curl -sf http://localhost:8080/health
 
 # Process is running
-pgrep -f 'openclaw gateway'
+health-check: pgrep -f 'openclaw gateway'
 
 # A unix socket exists
-test -S /tmp/my.sock
+health-check: test -S /tmp/my.sock
 
 # A port is accepting connections
-nc -z localhost 5432
+health-check: nc -z localhost 5432
 ```
+
+A non-trivial check — point at a script your `setup.sh` writes, so the
+binary path and any env (`OPENCLAW_HOME`, `HERMES_HOME`, …) are baked
+in and never depend on the user's `~/.profile`:
+
+```yaml
+health-check: /openclaw/bin/healthcheck.sh
+```
+
+```bash
+# /openclaw/bin/healthcheck.sh — what the openclaw sandbox ships
+#!/usr/bin/env bash
+export OPENCLAW_HOME=/openclaw
+exec /openclaw/bin/openclaw health
+```
+
+The script's shebang dictates its interpreter, so you can test it
+locally (`/openclaw/bin/healthcheck.sh`) and it behaves identically
+when the probe runs it. Avoid inline commands that depend on the
+user's `PATH` (e.g. a bare `openclaw health`) — they'll work in a
+login shell but report perpetually unhealthy under the non-login
+probe.
 
 ## Server tuning
 

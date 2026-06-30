@@ -454,12 +454,25 @@ class HealthMonitor:
         Resolves the owner's container home (same logic as
         ``eager_start_workspace``) and invokes the check via
         ``podman exec`` as the creating user with HOME set.  The check
-        runs as a bash *login* shell (``bash -lc``) so it sources
-        ``~/.profile`` -- the POSIX file where workspace setup persists
-        env exports (PATH, tool homes) that the check may depend on
-        (#1087).  A non-login ``sh -c`` would source nothing and fail
-        to resolve e.g. an asdf/nvm-installed binary.  Errors and
-        timeouts count as ``"unhealthy"``.
+        runs as a **non-login** bash shell (``bash -c``) on purpose: it
+        is an operational probe, not a user session, so it deliberately
+        sources *no* startup file -- not ``~/.profile``, ``~/.bashrc``,
+        nor ``/etc/profile.d/*``.  This keeps the probe deterministic
+        and decoupled from the owning user's interactive setup: a slow
+        ``nvm`` load, a broken ``~/.profile`` edit, or a stray ``read``
+        prompt must never make an unattended 30s poll flap "unhealthy".
+
+        The flip side is that the check command must not rely on the
+        user's PATH or env.  It inherits only the container's image
+        ``PATH`` (so ``/opt/klangk/bin`` and system tools like
+        ``grep``/``curl`` resolve) plus ``HOME``.  Anything the checked
+        service needs -- a sandbox-installed binary, ``OPENCLAW_HOME`` /
+        ``HERMES_HOME``, a custom ``PATH`` -- must be referenced by
+        **absolute path** in the check command, or wrapped in an
+        executable script whose shebang and ``export`` lines bake those
+        in (the recommended pattern for non-trivial checks; see
+        ``docs/features/health-check.md``).  Errors and timeouts count
+        as ``"unhealthy"``.
         """
         owner_id = state.owner_id
         if owner_id is None:
@@ -486,11 +499,13 @@ class HealthMonitor:
         try:
             rc, out, err = await podman.exec_container(
                 state.container_id,
-                # bash -lc: login shell sources ~/.profile so the
-                # check sees the user's env (PATH, tool homes). See
-                # #1087. Skipped until setup_state == complete, so the
-                # exports are guaranteed present by the time this runs.
-                ["bash", "-lc", state.health_check],
+                # bash -c (NON-login): sources nothing, so the probe is
+                # deterministic and insulated from the user's interactive
+                # shell setup. Only the image PATH + HOME are visible,
+                # so health_check commands must use absolute paths (or a
+                # wrapper script). See docs/features/health-check.md.
+                # Skipped until setup_state == complete.
+                ["bash", "-c", state.health_check],
                 user="klangk",
                 extra_env={"HOME": user_home},
                 timeout=HEALTH_CHECK_TIMEOUT_SECONDS,

@@ -4,14 +4,11 @@ sandbox:
 
 workspace:
   default-command: klangk-hermes-gateway
-  # `hermes gateway status` reports whether the gateway process (launched by
-  # default-command) is alive, but always exits 0 regardless of state, so the
-  # liveness signal is derived from its output. "Gateway is running" is NOT a
-  # substring of "Gateway is not running" (the word after "is " differs), so
-  # the grep is unambiguous. hermes's own status detection (PID file + /proc
-  # cmdline scan + PID-reuse fingerprinting) does the heavy lifting.
-  #
-  # Runs as a bash login shell (bash -lc, #1087) so it sources ~/.profile and
-  # resolves the hermes binary + HERMES_HOME. See docs/features/health-check.md.
-  health-check: hermes gateway status 2>&1 | grep -q 'Gateway is running'
+  # Liveness probe for the gateway launched by default-command. Points
+  # at an absolute-path wrapper script (NOT bare `hermes gateway ...`)
+  # because the host monitor runs it via `bash -c` -- a NON-login shell
+  # that sources no startup file, so the user's PATH / HERMES_HOME from
+  # ~/.profile are not in effect. The script bakes those in. See
+  # docs/features/health-check.md.
+  health-check: /hermes/bin/healthcheck.sh
   auto-start: true

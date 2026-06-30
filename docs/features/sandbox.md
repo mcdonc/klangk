@@ -70,7 +70,7 @@ workspace:
   image: klangk-workspace
   default-command: openclaw gateway
   auto-start: true
-  health-check: openclaw health
+  health-check: /openclaw/bin/healthcheck.sh
 ```
 
 | Field             | Required | Default              | Description                                                                                                                |
@@ -177,7 +177,7 @@ mounts:
   - .env:~/.env:ro
 ```
 
-Then in your `~/.profile` (so the health check and default command see
+Then in your `~/.profile` (so the default command and `klangkc exec` see
 the variables too — see [The Shell](the-shell.md#startup-files)) or
 setup script:
 
@@ -342,7 +342,7 @@ sandbox:
 
 workspace:
   default-command: openclaw gateway
-  health-check: openclaw health
+  health-check: /openclaw/bin/healthcheck.sh
 
 copy:
   - ~/.gitconfig:~/.gitconfig
@@ -379,11 +379,12 @@ mkdir -p ~/.config/nix
 grep -q experimental-features ~/.config/nix/nix.conf 2>/dev/null \
   || echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
-# Source nix in every login shell -- interactive terminals, the
-# default command, and the health check (bash -lc) all source
-# ~/.profile. Writing this to ~/.bashrc instead would hide it from
-# the health check (its interactivity guard returns early for
-# non-interactive shells). See the-shell.md#startup-files.
+# Source nix in every login shell -- interactive terminals and the
+# default command all source ~/.profile. Writing this to ~/.bashrc
+# instead would hide it from those non-interactive login shells (its
+# interactivity guard returns early). (The health check is NOT a
+# ~/.profile consumer -- it runs as a non-login bash -c; see
+# health-check.md.) See the-shell.md#startup-files.
 # shellcheck disable=SC2016
 grep -q nix-profile ~/.profile 2>/dev/null \
   || echo '. "$HOME/.nix-profile/etc/profile.d/nix.sh"' >> ~/.profile

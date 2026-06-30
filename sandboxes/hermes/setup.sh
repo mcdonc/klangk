@@ -19,12 +19,18 @@ INSTALL_DIR="/hermes"
 HERMES_VERSION=v2026.6.19
 
 # --- Persist env exports to ~/.profile UP FRONT, before the slow install. ---
-# Why ~/.profile (#1087): it's the POSIX file sourced by ALL login shells --
-# the default-command pane (interactive login shell), the health check
-# (bash -lc), and `klangkc exec`. ~/.bashrc has an interactivity guard that
-# hides its body from non-interactive shells, so these exports cannot live
-# there. Written before the install so a shell spawned mid-setup already sees
-# a complete PATH/HERMES_HOME.
+# Why ~/.profile: it's the POSIX file sourced by login shells -- the
+# default-command pane (an interactive login shell) and `klangkc exec`
+# (bash -lc). Those need HERMES_HOME + the hermes bin on PATH to launch
+# / inspect the gateway. ~/.bashrc has an interactivity guard that hides
+# its body from non-interactive shells, so these exports cannot live
+# there. Written before the install so a shell spawned mid-setup already
+# sees a complete PATH/HERMES_HOME.
+#
+# NOTE: the workspace health check is NOT a reason to put these in
+# ~/.profile. The check runs as a NON-login shell (`bash -c`) and
+# sources nothing -- it uses the absolute-path /hermes/bin/healthcheck.sh
+# wrapper instead. Don't add exports here "for the health check".
 # shellcheck disable=SC2016
 if ! grep -q 'HERMES_HOME' ~/.profile 2>/dev/null; then
   echo "export HERMES_HOME=\"$INSTALL_DIR\"" >>~/.profile
@@ -101,11 +107,16 @@ OPENAI_API_KEY=${token}
 EOF
 fi
 
-# --- Install the gateway wrapper (default-command). ---
-# Refreshes the workspace token into .env, then execs the foreground gateway.
-# Copied (not bind-used directly) so it lands on PATH at $INSTALL_DIR/bin/.
+# --- Install the gateway wrapper (default-command) + the health-check
+# script. Both are copied (not bind-used) so they land on the /hermes
+# mount at stable absolute paths. The health-check wrapper is invoked
+# by the host monitor via `bash -c` (NON-login), so it must not depend
+# on ~/.profile -- it sets HERMES_HOME and calls the venv binary by
+# absolute path itself. ---
 cp "$SCRIPT_DIR/klangk-hermes-gateway.sh" "$INSTALL_DIR/bin/klangk-hermes-gateway"
 chmod +x "$INSTALL_DIR/bin/klangk-hermes-gateway"
+cp "$SCRIPT_DIR/healthcheck.sh" "$INSTALL_DIR/bin/healthcheck.sh"
+chmod +x "$INSTALL_DIR/bin/healthcheck.sh"
 
 # Refresh Pi agent config (extensions, settings, models, skills).
 /opt/klangk/bin/klangk-setup-clankers
