@@ -4,7 +4,7 @@
 # Why this lives in /etc/profile.d and not /etc/bash.bashrc (issue #1093):
 # /etc/profile resets PATH to a fixed system default for login shells,
 # clobbering the /opt/klangk/bin prefix that the Dockerfile ENV sets. This
-# snippet re-prepends it so EVERY login shell finds pi, herdr, and the
+# snippet re-prepends it so EVERY login shell finds pi and the
 # klangk-* helpers — including non-interactive login shells (`bash -lc`),
 # which is what the workspace health check and `klangkc exec` use.
 # /etc/bash.bashrc was the wrong home because it is only sourced for

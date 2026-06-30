@@ -39,14 +39,6 @@ RUN curl -LsSf https://astral.sh/uv/0.11.23/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
-# Herdr: terminal-based agent runtime (persistent sessions, pane API)
-ARG HERDR_VERSION=0.6.6
-ARG TARGETARCH
-RUN HERDR_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
-    && curl -fsSL -o /usr/local/bin/herdr \
-    "https://github.com/ogulcancelik/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-${HERDR_ARCH}" \
-    && chmod +x /usr/local/bin/herdr
-
 # Entrypoint, system prompt, bash defaults (change frequently during dev)
 COPY system-prompt.md /opt/klangk/system-prompt.md
 COPY entrypoint.sh /opt/klangk/entrypoint.sh

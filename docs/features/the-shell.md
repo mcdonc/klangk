@@ -6,8 +6,8 @@ set up the environment before your personal `~/.bashrc` runs:
 - `/etc/profile.d/klangk-*.sh` — environment exports (`PATH=/opt/klangk/bin`,
   `EDITOR`) sourced by **every login shell**, interactive or not. This is
   why one-shot commands like the workspace health check (`bash -lc`) and
-  `klangkc exec` (also `bash -lc`, #1041) still find `pi`, `herdr`, and
-  the `klangk-*` helpers.
+  `klangkc exec` (also `bash -lc`, #1041) still find `pi` and the
+  `klangk-*` helpers.
 - `/etc/bash.bashrc` — interactive-shell setup: waits for container
   readiness, runs `on-shell-init` plugin hooks, and (via the default
   command) launches the workspace's configured service.
