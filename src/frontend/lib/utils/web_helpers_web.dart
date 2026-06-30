@@ -269,7 +269,10 @@ extension type _FetchResponse._(JSObject _) implements JSObject {
 
 @JS()
 extension type _ReadableStream._(JSObject _) implements JSObject {
-  external JSPromise getReader();
+  // getReader() is SYNCHRONOUS in the standard (returns the reader directly,
+  // not a Promise) — declaring it as a promise and awaiting it would call
+  // .then on a non-thenable and reject (#700 e2e caught this).
+  external _StreamReader getReader();
 }
 
 @JS()
@@ -338,7 +341,7 @@ Future<bool> downloadStreamedUrl(
       .toDart) as _FileSystemFileHandle;
   final writable =
       (await handle.createWritable().toDart) as _FileSystemWritableFileStream;
-  final reader = (await body.getReader().toDart) as _StreamReader;
+  final reader = body.getReader();
   try {
     while (true) {
       final result = (await reader.read().toDart) as _ReadResult;

@@ -78,6 +78,7 @@ export default defineConfig({
         "tab-speed.spec.ts",
         "sudo.spec.ts",
         "ws-connect-speed.spec.ts",
+        "workspace-export.spec.ts",
       ],
       use: chromiumUse,
     },
