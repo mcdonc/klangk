@@ -1,0 +1,77 @@
+name: Trivy Workspace Scan
+
+# Periodic vulnerability scan of the workspace image.
+#
+# Issue #570 tracks HIGH/CRITICAL CVEs in Debian/Node packages that have no
+# upstream fix available yet. Rather than gating CI (these can't be fixed
+# until Debian/NPM ship a patched package), this workflow runs on a schedule,
+# scans a freshly built workspace image, and posts a focused report to the
+# run summary + uploads the raw artifacts. Maintainers review the Actions tab.
+#
+# It never fails the run on findings.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build workspace image
+        uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-workspace-image
+
+      - name: Export image to tarball
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- podman save \
+            -o /tmp/workspace.tar "${KLANGK_IMAGE_NAME:-klangk-workspace}:latest"
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.0
+        with:
+          version: v0.69.3
+          cache: true
+
+      - name: Scan image (HIGH/CRITICAL -> JSON)
+        run: |
+          mkdir -p /tmp/trivy-out
+          trivy image \
+            --scanners vuln \
+            --severity CRITICAL,HIGH \
+            --input /tmp/workspace.tar \
+            --format json \
+            --output /tmp/trivy-out/scan.json
+
+      - name: Build no-fix report
+        run: |
+          {
+            echo "### 🛡️ Trivy workspace scan (HIGH/CRITICAL)"
+            python3 scripts/trivy-report-nofix.py /tmp/trivy-out/scan.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Also keep a standalone copy for the artifact.
+          python3 scripts/trivy-report-nofix.py /tmp/trivy-out/scan.json \
+            > /tmp/trivy-out/report.md
+
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-workspace-scan
+          path: /tmp/trivy-out/
+          if-no-files-found: warn
+          retention-days: 30

@@ -26,6 +26,30 @@ trivy-workspace                   # scan workspace image
 trivy-host --severity CRITICAL    # critical only
 ```
 
+### No-fix CVEs (tracking)
+
+Most HIGH/CRITICAL findings in the workspace image have no fixed Debian/Node
+package available yet (Trivy status `affected` / `fix_deferred`). These can't
+be resolved by an upgrade until upstream ships a patched package, so they are
+tracked for awareness in [issue #570](https://github.com/mcdonc/klangk/issues/570)
+and re-scanned periodically.
+
+To render a focused report that separates **upgradeable** findings from the
+**no upstream fix yet** set:
+
+```bash
+trivy-workspace-report                          # scan + report in one shot
+trivy-workspace-report scan.json                # render an existing JSON scan
+trivy-workspace --severity CRITICAL,HIGH --format json \
+  | trivy-workspace-report -                    # pipe a scan into the report
+```
+
+The [`trivy-workspace-scan`](https://github.com/mcdonc/klangk/actions/workflows/trivy-workspace-scan.yml)
+workflow automates this: it builds a fresh workspace image weekly (Mondays
+06:00 UTC, or on demand via _Run workflow_), scans it, and posts the report
+plus raw artifacts to the workflow run. It is **informational** — it never
+fails a run — so reviewers check the Actions tab rather than gating CI.
+
 ## Image Versioning
 
 **No `:latest` tags are pushed to the registry.** Every image (host,
