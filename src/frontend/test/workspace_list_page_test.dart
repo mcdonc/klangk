@@ -2338,6 +2338,60 @@ void main() {
       expect(find.text('My WS'), findsOneWidget);
     });
 
+    testWidgets('container stopping clears stale health status',
+        (tester) async {
+      final ws = _MockWsClient();
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode(_envelope([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'created_at': '2026-01-01',
+                'running': false,
+              },
+            ])),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage(wsClient: ws));
+      await tester.pumpAndSettle();
+
+      // Start the container, report it unhealthy (amber), then stop it —
+      // a stopped container has no health status, so the icon must drop
+      // back to grey rather than lingering on the stale unhealthy colour.
+      ws.emitContainerStatus('ws-1', true);
+      await tester.pump();
+      await tester.pump();
+
+      ws.emitServiceHealth('ws-1', false);
+      await tester.pump();
+      await tester.pump();
+      final unhealthyTile = tester.widget<ListTile>(
+        find.ancestor(
+          of: find.text('My WS'),
+          matching: find.byType(ListTile),
+        ),
+      );
+      expect((unhealthyTile.leading as Icon).color, Colors.orange);
+
+      ws.emitContainerStatus('ws-1', false);
+      await tester.pump();
+      await tester.pump();
+      final stoppedTile = tester.widget<ListTile>(
+        find.ancestor(
+          of: find.text('My WS'),
+          matching: find.byType(ListTile),
+        ),
+      );
+      expect((stoppedTile.leading as Icon).color, KColors.textSecondary);
+    });
+
     testWidgets('service_health event recolours the list icon', (tester) async {
       final ws = _MockWsClient();
       testAuthHttpClientOverride = withPermissions((request) async {

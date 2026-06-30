@@ -157,7 +157,10 @@ void main() {
         healthCheckField,
         'curl -sf http://localhost:8080/health',
       );
-      await tester.tap(find.text('Create'));
+      // Submit via Enter key in the health-check field — exercises its
+      // onSubmitted -> _submit() path (the 'Create' tap is covered by
+      // the basic submit test above).
+      await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
       await tester.pump();
 
