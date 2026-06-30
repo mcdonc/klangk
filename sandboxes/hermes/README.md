@@ -56,6 +56,27 @@ signal is derived from the printed line rather than the exit code — hermes's
 own process detection (PID file + `/proc` scan) does the work.
 See [docs/features/health-check.md](../../docs/features/health-check.md).
 
+## Network exposure
+
+Unlike the openclaw sandbox (see its README warning), the hermes gateway is
+**not** exposed through Klangk's hosted-app mechanism — there is no port
+mapping and no hosted app URL is printed. The gateway (`hermes gateway run`,
+launched by `default-command`) makes only **outbound** connections: to the
+configured messaging platforms (Telegram/Discord/etc. via polling) and to the
+Klangk LLM proxy. Nothing inside the container accepts inbound HTTP, so the
+gateway is **not** contactable by someone who can reach your Klangk server.
+
+Hermes does ship an OpenAI-compatible HTTP API server, but it is **off by
+default** (`API_SERVER_ENABLED=false`) and, even when enabled, binds
+`127.0.0.1` (loopback) on port `8642`. `setup.sh` never enables it and never
+maps that port, so it is reachable only from within the container.
+
+This is the intended posture. If you later enable the API server and want it
+reachable outside the container, you must do all of the following yourself:
+set `API_SERVER_HOST=0.0.0.0`, set a strong `API_SERVER_KEY` (it is mandatory
+— the server grants full agent tool access, including the terminal), and
+arrange a Klangk port mapping. None of this is done by the sandbox.
+
 ## Why a sandbox, not a plugin
 
 Hermes was previously a compile-time [plugin](../../docs/features/plugins.md)
