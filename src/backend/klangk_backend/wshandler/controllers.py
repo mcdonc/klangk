@@ -239,8 +239,14 @@ class ExecController:
         ssh_agent_socket = self._conn._ssh_agent_socket
         if ssh_agent_socket is not None:
             env.append(f"SSH_AUTH_SOCK={ssh_agent_socket}")
+        # `login` (default raw) selects whether the command runs as a
+        # bash login shell (sources ~/.profile, like a terminal) or as
+        # raw argv (no shell, for programmatic transports like rsync).
+        # klangkc exec sends login=true; klangkc exec --raw and the
+        # rsync transport send login=false. See #1041.
+        login = bool(msg.get("login", False))
         session = ExecSession(container_id, env=env, work_dir=work_dir)
-        await session.start(command)
+        await session.start(command, login=login)
         self.session = session
         self.task = asyncio.create_task(self.forward_output(session))
         container.registry.record_activity(container_id)

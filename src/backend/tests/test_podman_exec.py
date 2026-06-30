@@ -1,6 +1,7 @@
 """Tests for podman ExecSession: raw podman exec without PTY."""
 
 import asyncio
+import shlex
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -49,6 +50,61 @@ class TestExecSession:
         async for data in session.output():
             chunks.append(data)
         assert b"hello world" in b"".join(chunks)
+
+    async def test_start_default_is_raw_argv(self):
+        """#1041: with no ``login`` flag the command is spliced into the
+        podman exec argv verbatim -- no shell. This is what programmatic
+        transports (rsync) need: their argv must round-trip untouched,
+        and a ~/.profile that prints must not corrupt the binary stream.
+        """
+        session = ExecSession("cid")
+        proc = _mock_proc(b"")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ) as mock_exec:
+            await session.start(["echo", "hello"])
+        argv = mock_exec.call_args.args
+        # raw: the command words are the tail of the argv, no wrapper.
+        assert argv[-2:] == ("echo", "hello")
+        assert "bash" not in argv
+        assert "-lc" not in argv
+
+    async def test_start_login_wraps_in_bash_login_shell(self):
+        """#1041: ``login=True`` wraps the command in
+        ``bash -lc shlex.join(command)`` so it sources ~/.profile and a
+        PATH-only binary (e.g. an nvm-installed tool) resolves, matching
+        an interactive terminal.
+        """
+        session = ExecSession("cid")
+        proc = _mock_proc(b"")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ) as mock_exec:
+            await session.start(["openclaw", "--version"], login=True)
+        argv = mock_exec.call_args.args
+        # ... bash -lc 'openclaw --version'
+        assert argv[-3:-1] == ("bash", "-lc")
+        assert argv[-1] == "openclaw --version"
+
+    async def test_start_login_shlex_round_trips_metachars(self):
+        """#1041: shell-special characters survive the shlex.join ->
+        bash re-parse round trip, so a command's argv still parses back
+        to the same words (spaces, $, quotes) after the login wrap.
+        """
+        session = ExecSession("cid")
+        proc = _mock_proc(b"")
+        cmd = ["echo", "a b", "$X", "o'reilly"]
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ) as mock_exec:
+            await session.start(cmd, login=True)
+        argv = mock_exec.call_args.args
+        assert argv[-2] == "-lc"
+        # bash -lc would re-tokenise this string back to ``cmd``.
+        assert argv[-1] == shlex.join(cmd)
 
     async def test_write_sends_to_stdin(self):
         session = ExecSession("cid")

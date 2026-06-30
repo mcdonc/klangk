@@ -5,9 +5,9 @@ set up the environment before your personal `~/.bashrc` runs:
 
 - `/etc/profile.d/klangk-*.sh` — environment exports (`PATH=/opt/klangk/bin`,
   `EDITOR`) sourced by **every login shell**, interactive or not. This is
-  why one-shot commands like the workspace health check (`bash -lc`)
-  still find `pi`, `herdr`, and the `klangk-*` helpers. (Note:
-  `klangkc exec` does not yet run a login shell — see [#1041].)
+  why one-shot commands like the workspace health check (`bash -lc`) and
+  `klangkc exec` (also `bash -lc`, #1041) still find `pi`, `herdr`, and
+  the `klangk-*` helpers.
 - `/etc/bash.bashrc` — interactive-shell setup: waits for container
   readiness, runs `on-shell-init` plugin hooks, and (via the default
   command) launches the workspace's configured service.
@@ -100,12 +100,13 @@ you're at a prompt, it goes in `~/.bashrc`.
 
 ### Which code path sources what
 
-| In-container command                         | How Klangk runs it                            | Sources `~/.profile`? |
-| -------------------------------------------- | --------------------------------------------- | --------------------- |
-| Interactive terminal                         | `tmux new-session` (login shell) or `bash -l` | yes                   |
-| `default_command` (the `default-cmd` window) | login shell (tmux window 0)                   | yes                   |
-| Workspace health check                       | `bash -lc` (a login shell, #1087)             | yes                   |
-| `klangkc exec`                               | raw command (no shell)                        | no — see [#1041]      |
+| In-container command                         | How Klangk runs it                            | Sources `~/.profile`?                                              |
+| -------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------ |
+| Interactive terminal                         | `tmux new-session` (login shell) or `bash -l` | yes                                                                |
+| `default_command` (the `default-cmd` window) | login shell (tmux window 0)                   | yes                                                                |
+| Workspace health check                       | `bash -lc` (a login shell, #1087)             | yes                                                                |
+| `klangkc exec` (default)                     | `bash -lc` (a login shell, #1041)             | yes                                                                |
+| `klangkc exec --raw` / `klangkc sync`        | raw command (no shell)                        | no — programmatic transports (rsync) must not source startup files |
 
 This is why workspace setup scripts (`sandboxes/*/setup.sh`) persist
 their env exports to `~/.profile` rather than `~/.bashrc`: the exports

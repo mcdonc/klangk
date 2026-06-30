@@ -161,7 +161,8 @@ klangkc shell my-project debug           # attach to the "debug" terminal window
 klangkc sandbox myws                     # create workspace from .klangk-sandbox.yaml
 klangkc sandbox myws ~/projects/myapp    # specify sandbox root explicitly
 klangkc sandbox myws --force             # re-apply config and re-run setup on existing workspace
-klangkc exec my-project ls /home/klangk/work         # run a command in the container
+klangkc exec my-project ls /home/klangk/work         # run a command in the container (login shell: sources ~/.profile)
+klangkc exec --raw my-project rsync --server ...      # raw argv, no shell (for transports like rsync)
 klangkc monitor                                        # stream all server events as JSON
 klangkc monitor --type service_health | jq .           # pretty-print health transitions
 klangkc monitor --type service_health -- notify-send "Service unhealthy"  # react to unhealthy events

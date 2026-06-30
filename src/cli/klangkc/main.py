@@ -1720,10 +1720,27 @@ def unshare_terminal(
 def exec_cmd(
     ctx: typer.Context,
     workspace: str = typer.Argument(..., help="Workspace name"),
+    raw: bool = typer.Option(
+        False,
+        "--raw",
+        help=(
+            "Pass the command as raw argv (no login shell). Defaults off, "
+            "so commands run as a bash login shell and source ~/.profile "
+            "just like a terminal (#1041). Intended for programmatic "
+            "transports such as rsync; not for interactive use."
+        ),
+    ),
 ) -> None:
     """Run a command in a workspace container.
 
-    Also usable as an rsync transport: rsync -avz -e "klangkc exec" src/ ws:/dest/
+    By default the command runs as a bash login shell (``bash -lc``) so
+    it sources ``~/.profile`` and sees the same environment an
+    interactive terminal does -- PATH additions, tool homes
+    (OPENCLAW_HOME, nvm/asdf), etc. (#1041). Pass ``--raw`` to run raw
+    argv with no shell (used by ``klangkc sync``'s rsync transport).
+
+    Also usable as an rsync transport:
+    rsync -avz -e "klangkc exec --raw" src/ ws:/dest/
     """
     _require_auth()
 
@@ -1744,7 +1761,14 @@ def exec_cmd(
     token = _state().get_token(_server_url())
 
     exit_code = asyncio.run(
-        _ws_exec(ws_url, token, ws.id, command, max_size=_ws_max_size())
+        _ws_exec(
+            ws_url,
+            token,
+            ws.id,
+            command,
+            max_size=_ws_max_size(),
+            login=not raw,
+        )
     )
     raise typer.Exit(code=exit_code)
 
@@ -1794,7 +1818,11 @@ def sync(
         "-avz",
         "--blocking-io",
         "-e",
-        f"{klangkc_bin} exec",
+        # ``--raw`` so the rsync transport runs raw argv (no login
+        # shell): rsync's binary protocol must not be corrupted by a
+        # ~/.profile that prints to stdout, and rsync shell-quotes its
+        # argv so a non-login round-trips cleanly. See #1041.
+        f"{klangkc_bin} exec --raw",
         *ctx.args,
         src,
         dest,

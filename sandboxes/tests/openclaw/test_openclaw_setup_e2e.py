@@ -97,6 +97,12 @@ WS3 = "e2e-openclaw-setup-3"
 # end-to-end health-check path (config -> monitor -> status endpoint)
 # against a real gateway, not to re-run the install.
 WS4 = "e2e-openclaw-setup-4"
+# Fifth workspace at the same mount, used by the #1041 klangkc-exec
+# test. setup skips the install (mount populated) so it's fast; the
+# point is to prove `klangkc exec` runs as a login shell so a
+# PATH-only binary (nvm-installed `openclaw`) resolves -- the exact
+# repro in the issue.
+WS5 = "e2e-openclaw-setup-5"
 # Own port + instance id so it never collides with other e2e suites
 # (cli-e2e 18995, autostart 18996/18997).
 PORT = "18998"
@@ -782,6 +788,81 @@ class TestOpenclawSetupProfileExports:
             # seconds after setup, then the first poll lands within one
             # interval.
             self._await_health(ws4_id, expected="healthy", timeout=180)
+        finally:
+            if sandbox_proc.poll() is None:
+                sandbox_proc.kill()
+
+    def test_klangkc_exec_resolves_path_only_binary(self):
+        """`klangkc exec` runs as a bash login shell so a PATH-only
+        binary (the nvm-installed `openclaw`) resolves -- the exact #1041
+        repro.
+
+        Before #1041, exec passed raw argv to `podman exec` with no
+        shell, so `~/.profile` was never sourced and `openclaw` (only on
+        PATH via `~/.profile`'s nvm source + `/openclaw/bin`) was not
+        found: `klangkc exec ws openclaw --version` failed with
+        'command not found'. Now exec wraps the command in
+        `bash -lc shlex.join(argv)`, sourcing `~/.profile` exactly like
+        an interactive terminal, so the binary resolves.
+
+        Uses `--raw` as a control: the same command under `--raw` (no
+        shell) must still fail to resolve, proving the login shell is
+        what fixes it and that `--raw` preserves the old raw behavior.
+        """
+        # Precondition: openclaw on the shared mount (full-install test
+        # ran first).
+        assert glob.glob(
+            os.path.join(
+                SANDBOX_DIR, ".nvm", "versions", "node", "v*", "bin", "openclaw"
+            )
+        ), "openclaw not on the shared mount -- run the full-install test first"
+
+        # WS5 reuses the populated mount (setup skips the install --
+        # fast), so we can exercise the exec path without a full setup.
+        sandbox_proc = subprocess.Popen(
+            ["klangkc", "sandbox", WS5, SANDBOX_DIR],
+            env=self._env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            rc = sandbox_proc.wait(timeout=SETUP_TIMEOUT)
+            out = sandbox_proc.stdout.read() or ""
+            assert rc == 0, f"klangkc sandbox (WS5) failed:\n{out}"
+            assert "openclaw already installed, skipping." in out
+            self._await_container(name=WS5)
+
+            # The fix: default `klangkc exec` sources ~/.profile (login
+            # shell), so the nvm-installed openclaw resolves.
+            res = _run(
+                ["klangkc", "exec", WS5, "openclaw", "--version"],
+                env=self._env,
+                timeout=120,
+            )
+            assert res.returncode == 0, (
+                "klangkc exec openclaw --version failed under the login "
+                f"shell (should resolve via ~/.profile):\n{res.stderr}"
+            )
+            assert res.stdout.strip(), (
+                "openclaw --version produced no output:\n" + res.stdout
+            )
+
+            # The control: `--raw` skips the login shell, so openclaw is
+            # NOT on PATH (it lives behind the nvm source in ~/.profile)
+            # and the command must fail. This proves the login wrap is
+            # what fixes resolution and that --raw preserves raw argv.
+            res_raw = _run(
+                ["klangkc", "exec", "--raw", WS5, "openclaw", "--version"],
+                env=self._env,
+                timeout=120,
+            )
+            assert res_raw.returncode != 0, (
+                "klangkc exec --raw openclaw --version unexpectedly "
+                "succeeded -- under --raw no shell runs, so ~/.profile "
+                "is not sourced and openclaw should not be on PATH. "
+                f"Output:\n{res_raw.stdout}"
+            )
         finally:
             if sandbox_proc.poll() is None:
                 sandbox_proc.kill()
