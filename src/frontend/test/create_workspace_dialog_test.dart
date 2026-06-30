@@ -83,7 +83,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(4));
+      expect(find.byType(TextField), findsNWidgets(5));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -127,6 +127,46 @@ void main() {
 
       expect(postedBody, isNotNull);
       expect(postedBody!['name'], 'My WS');
+    });
+
+    testWidgets('submits health_check when provided', (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'My WS', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      await tester.enterText(find.byType(TextField).first, 'My WS');
+      final healthCheckField = find.byWidgetPredicate(
+        (w) =>
+            w is TextField &&
+            w.decoration?.labelText == 'Health check command (optional)',
+      );
+      await tester.ensureVisible(healthCheckField);
+      await tester.enterText(
+        healthCheckField,
+        'curl -sf http://localhost:8080/health',
+      );
+      // Submit via Enter key in the health-check field — exercises its
+      // onSubmitted -> _submit() path (the 'Create' tap is covered by
+      // the basic submit test above).
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      expect(
+          postedBody!['health_check'], 'curl -sf http://localhost:8080/health');
     });
 
     testWidgets('shows error on failure', (tester) async {
@@ -210,6 +250,7 @@ void main() {
 
       // 4th TextField is env input
       await tester.enterText(find.byType(TextField).at(3), 'FOO=bar');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
 
@@ -225,6 +266,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       await tester.enterText(find.byType(TextField).at(3), 'NOEQUALS');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
 
@@ -240,6 +282,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       await tester.enterText(find.byType(TextField).at(3), '=value');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
 
@@ -255,6 +298,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       await tester.enterText(find.byType(TextField).at(3), 'MYKEY=val');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.widgetWithText(SelectableText, 'MYKEY=val'), findsOneWidget);
@@ -366,12 +410,14 @@ void main() {
 
       // Invalid env
       await tester.enterText(envInput, 'bad');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.text('Expected KEY=VALUE format'), findsOneWidget);
 
       // Valid env clears error
       await tester.enterText(envInput, 'OK=yes');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.text('Expected KEY=VALUE format'), findsNothing);

@@ -7,6 +7,7 @@ import asyncio
 import io
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -27,7 +28,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from .auth import login, logout as do_logout
+from .auth import login, logout as do_logout, refresh_token
 from .client import (
     AuthError,
     KlangkClient,
@@ -294,6 +295,14 @@ def create(
         "--auto-start",
         help="Start container automatically on server boot",
     ),
+    health_check: str | None = typer.Option(
+        None,
+        "--health-check",
+        help=(
+            "Shell command polled inside the container to gauge service "
+            "health (exit 0 = healthy). See the Health Check docs."
+        ),
+    ),
     mount: list[str] | None = typer.Option(
         None,
         "--mount",
@@ -321,6 +330,7 @@ def create(
             auto_start=auto_start,
             mounts=mount or None,
             env=env_dict,
+            health_check=health_check,
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)
@@ -572,6 +582,14 @@ def edit(
         "--auto-start/--no-auto-start",
         help="Start container automatically on server boot",
     ),
+    health_check: str | None = typer.Option(
+        None,
+        "--health-check",
+        help=(
+            "Shell command polled inside the container to gauge service "
+            "health (exit 0 = healthy). Use '' to clear."
+        ),
+    ),
     mount: list[str] | None = typer.Option(
         None,
         "--mount",
@@ -601,6 +619,7 @@ def edit(
         or image is not None
         or command is not None
         or auto_start is not None
+        or health_check is not None
         or isinstance(mount, list)
         or isinstance(env, list)
     )
@@ -609,6 +628,7 @@ def edit(
         new_name = _prompt("Name", ws.name)
         new_image = _prompt("Container Image", ws.image)
         new_command = _prompt("Default shell command", ws.default_command)
+        new_health_check = _prompt("Health check command", ws.health_check)
 
         # Interactive mount editing loop
         current_mounts = list(ws.mounts or [])
@@ -706,6 +726,8 @@ def edit(
             body["image"] = new_image or None
         if new_command is not _SENTINEL:
             body["default_command"] = new_command or None
+        if new_health_check is not _SENTINEL:
+            body["health_check"] = new_health_check or None
         if mounts_changed:
             body["mounts"] = current_mounts or None
         if env_changed:
@@ -721,6 +743,8 @@ def edit(
             body["default_command"] = command or None
         if auto_start is not None:
             body["auto_start"] = auto_start
+        if health_check is not None:
+            body["health_check"] = health_check or None
         if isinstance(mount, list):
             for m in mount:
                 err = validate_mount_spec(m)
@@ -870,6 +894,247 @@ def shell(
         raise typer.Exit(code=1) from None
 
 
+def _dispatch_monitor_event(msg: dict, command: list[str]) -> None:
+    """Act on one server event.
+
+    With no *command*, the event is streamed as line-delimited JSON to
+    stdout. With a command, its stdin gets the event JSON and env vars
+    ``KLANGK_EVENT``, ``KLANGK_EVENT_TYPE``, ``KLANGK_WORKSPACE_ID`` and
+    (for health events) ``KLANGK_HEALTHY`` are set.
+
+    Pure (no WebSocket) so it can be unit-tested in isolation.
+    """
+    payload = json.dumps(msg)
+    if not command:
+        sys.stdout.write(payload + "\n")
+        sys.stdout.flush()
+        return
+    env = dict(os.environ)
+    env["KLANGK_EVENT"] = payload
+    env["KLANGK_EVENT_TYPE"] = str(msg.get("type", ""))
+    wid = msg.get("workspace_id")
+    if wid is not None:
+        env["KLANGK_WORKSPACE_ID"] = str(wid)
+    if msg.get("type") == "service_health":
+        env["KLANGK_HEALTHY"] = "true" if msg.get("healthy") else "false"
+    # FileNotFoundError (missing binary) propagates to the caller.
+    subprocess.run(command, input=payload.encode(), env=env, check=False)
+
+
+async def _monitor_connection(
+    ws_url: str,
+    token: str,
+    max_size: int,
+    command: list[str],
+    types: list[str],
+    workspaces: list[str],
+) -> None:
+    """One connection: dispatch events until the socket closes.
+
+    Network/auth errors propagate to :func:`_monitor_run`, which owns
+    reconnect + refresh. Filtering by event type and workspace id is
+    applied here so the dispatcher only sees relevant events.
+    """
+    type_filter = {t for t in types}
+    ws_filter = {w for w in workspaces}
+    async with websockets.connect(
+        f"{ws_url}?token={token}", max_size=max_size
+    ) as conn:
+        async for raw in conn:
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            etype = msg.get("type")
+            if etype is None:
+                continue  # control/ack messages aren't events
+            if type_filter and etype not in type_filter:
+                continue
+            wid = msg.get("workspace_id")
+            if ws_filter and (wid is None or wid not in ws_filter):
+                continue
+            _dispatch_monitor_event(msg, command)
+
+
+def _monitor_backoff(attempt: int, max_delay: float) -> float:
+    """Capped exponential backoff with jitter (mirrors the web UI)."""
+    base = min(1 << attempt, max_delay)
+    jitter = random.random() * base
+    return (base + jitter) / 2
+
+
+async def _refresh_token_threaded(server_url: str, token: str) -> str | None:
+    """Refresh the JWT off-loop; returns the new token or None."""
+    return await asyncio.to_thread(refresh_token, server_url, token)
+
+
+async def _monitor_run(
+    server_url: str,
+    ws_url: str,
+    token: str,
+    max_size: int,
+    command: list[str],
+    types: list[str],
+    workspaces: list[str],
+    *,
+    max_reconnects: int | None,
+    max_delay: float,
+) -> None:
+    """Run the monitor with automatic reconnect + JWT refresh.
+
+    Reconnects indefinitely when *max_reconnects* is ``None`` (the
+    default), or up to that many times, with capped exponential
+    backoff. On an auth-related close (HTTP/WS 4001 or 4002) it tries
+    to refresh the JWT via the server's refresh endpoint before
+    reconnecting; if refresh fails it keeps retrying with the current
+    token so the monitor self-heals once the server/token recovers.
+    """
+    current_token = token
+    _err.print("[green]Monitoring events. Press Ctrl+C to stop.[/green]")
+    attempt = 0
+    while True:
+        auth_close = False
+        try:
+            await _monitor_connection(
+                ws_url, current_token, max_size, command, types, workspaces
+            )
+            reason = "connection closed"
+        except websockets.ConnectionClosed as exc:
+            code = exc.rcvd.code if exc.rcvd else None
+            auth_close = code in (4001, 4002)
+            reason = f"closed (code {code})"
+        except websockets.InvalidStatus as exc:
+            code = exc.response.status_code
+            auth_close = code in (4001, 4002)
+            reason = f"rejected (HTTP {code})"
+        except (OSError, asyncio.TimeoutError) as exc:
+            reason = f"network error: {exc}"
+
+        # On an auth-related close, try to refresh the JWT. A successful
+        # refresh lets the next attempt authenticate cleanly; a failed
+        # one still reconnects (the server/token may recover).
+        if auth_close:
+            new = await _refresh_token_threaded(server_url, current_token)
+            if new:
+                current_token = new
+                _err.print("[green]Token refreshed.[/green]")
+            else:
+                _err.print(
+                    "[yellow]Token refresh failed; retrying with the"
+                    " current token.[/yellow]"
+                )
+
+        if max_reconnects is not None and attempt >= max_reconnects:
+            _err.print(
+                f"[red]{reason}; max reconnects ({max_reconnects})"
+                " reached, giving up.[/red]"
+            )
+            raise typer.Exit(code=1)
+        attempt += 1
+        delay = _monitor_backoff(attempt, max_delay)
+        _err.print(
+            f"[yellow]{reason}; reconnecting in {delay:.1f}s"
+            f" (attempt {attempt})...[/yellow]"
+        )
+        await asyncio.sleep(delay)
+
+
+@app.command()
+def monitor(
+    command: list[str] = typer.Argument(
+        None,
+        help=(
+            "Optional command to run for each event. Pass it after '--' "
+            "so its own flags aren't parsed by klangkc."
+        ),
+    ),
+    event_type: list[str] = typer.Option(
+        [],
+        "--type",
+        "-t",
+        help=(
+            "Only react to these event types (repeatable). Common: "
+            "service_health, container_status, workspaces_changed."
+        ),
+    ),
+    workspace: list[str] = typer.Option(
+        [],
+        "--workspace",
+        "-w",
+        help="Only react to events for these workspace ids (repeatable).",
+    ),
+    no_reconnect: bool = typer.Option(
+        False,
+        "--no-reconnect",
+        help="Exit after the first disconnect instead of reconnecting.",
+    ),
+    max_reconnects: int | None = typer.Option(
+        None,
+        "--max-reconnects",
+        help=(
+            "Stop after this many failed reconnects. Default: retry"
+            " forever. Implied as 0 by --no-reconnect."
+        ),
+    ),
+    max_delay: float = typer.Option(
+        60.0,
+        "--max-delay",
+        help="Cap (seconds) on the reconnect backoff.",
+    ),
+) -> None:
+    """Stream server events, optionally running a command for each.
+
+    Connects to the server and listens for the same events the web UI
+    receives (health-check transitions, container starts/stops, workspace
+    changes). With no command, events are printed as line-delimited JSON
+    (pipe to jq to inspect). With a command after '--', the command's
+    stdin gets the event JSON and env vars KLANGK_EVENT_TYPE,
+    KLANGK_WORKSPACE_ID, and KLANGK_HEALTHY are set.
+
+    The monitor reconnects automatically (by default forever, with
+    capped exponential backoff) and refreshes its JWT on auth failures,
+    so it survives server restarts and token expiry. Use
+    ``--max-reconnects`` or ``--no-reconnect`` to bound it.
+
+    \b
+    Examples:
+      klangkc monitor                                # stream all events
+      klangkc monitor --type service_health | jq .   # pretty health events
+      klangkc monitor --type service_health -- sh -c \
+        '[ "$KLANGK_HEALTHY" = false ] && notify-send "Service unhealthy"'
+      klangkc monitor --workspace <id> --type service_health
+    """
+    _require_auth()
+    server_url = _server_url().rstrip("/")
+    ws_url = _build_ws_url(server_url)
+    token = _state().get_token(server_url)
+    if not token:  # pragma: no cover  # _require_auth already guards this
+        _err.print("[red]Not logged in. Run `klangkc login` first.[/red]")
+        raise typer.Exit(code=1)
+    effective_max = 0 if no_reconnect else max_reconnects
+    try:
+        asyncio.run(
+            _monitor_run(
+                server_url,
+                ws_url,
+                token,
+                max_size=_ws_max_size(),
+                command=list(command) if command else [],
+                types=event_type,
+                workspaces=workspace,
+                max_reconnects=effective_max,
+                max_delay=max_delay,
+            )
+        )
+    except websockets.InvalidStatus as e:
+        # A rejection during the very first connect (before the loop's
+        # reconnect path is established).
+        _err.print(f"[red]Connection rejected: {e}[/red]")
+        raise typer.Exit(code=1) from None
+    except KeyboardInterrupt:
+        _err.print("[dim]Stopped.[/dim]")
+
+
 def _resolve_workspace_and_url(
     workspace_name: str,
 ) -> tuple:
@@ -1016,6 +1281,7 @@ def sandbox(
             setup_state="pending"
             if resolve_setup_command(config, handle)
             else None,
+            health_check=config.health_check,
         )
         _err.print(f"Workspace [bold]{workspace}[/bold] created.")
         created = True

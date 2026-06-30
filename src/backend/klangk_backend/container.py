@@ -180,6 +180,15 @@ PORT_RANGE_START = int(
 CONTAINER_PORT_START = 8000
 DEFAULT_PORTS_PER_WORKSPACE = 5
 
+# Health-check polling interval (seconds) for HealthMonitor.  See #1015.
+HEALTH_CHECK_INTERVAL_SECONDS = int(
+    util.resolve_env_value("KLANGK_HEALTH_CHECK_INTERVAL") or "30"
+)
+# Per-invocation timeout for a single `podman exec` health check.
+HEALTH_CHECK_TIMEOUT_SECONDS = float(
+    util.resolve_env_value("KLANGK_HEALTH_CHECK_TIMEOUT") or "10"
+)
+
 
 class ContainerState:
     """Per-workspace container lifecycle state."""
@@ -190,6 +199,13 @@ class ContainerState:
         self.last_activity = time.time()
         self.idle_timeout: int | None = None
         self.idle_callbacks: list = []
+        # Health-monitoring state (#1015).  Populated at container start
+        # time so HealthMonitor can poll without a DB lookup per tick.
+        self.health_status: str | None = None  # "healthy" | "unhealthy"
+        self.health_checked_at: float | None = None  # time.time() of last
+        self.health_check: str | None = None  # shell command, None = disabled
+        self.owner_id: str | None = None
+        self.setup_state: str | None = None
 
     def record_activity(self) -> None:
         self.last_activity = time.time()
@@ -373,13 +389,142 @@ class IdleMonitor:
             )
 
 
+class HealthMonitor:
+    """Periodically poll container service health via ``podman exec``.
+
+    Mirrors :class:`IdleMonitor` in shape.  For each workspace with a
+    running container and a configured ``health_check`` command, runs
+    the command inside the container as the creating user with their
+    HOME set.  Exit 0 -> healthy; anything else (non-zero, timeout,
+    error) -> unhealthy.  Status transitions are broadcast to
+    connected clients as ``service_health`` events.
+
+    See #1015 for the design rationale (external polling beats a
+    container-side WS agent here).
+    """
+
+    def __init__(self, registry: "ContainerRegistry") -> None:
+        self._registry = registry
+        self.health_task: asyncio.Task | None = None
+
+    def _setup_complete(self, state: ContainerState) -> bool:
+        """True if health checks may run for this workspace.
+
+        Checks are skipped until setup has finished (setup_state ==
+        "complete"); running them during setup would report false
+        negatives (the service isn't running yet because setup.sh
+        hasn't installed it).
+        """
+        return state.setup_state == "complete"
+
+    async def _run_one(self, state: ContainerState) -> str:
+        """Run a single workspace's health check, returning the new status.
+
+        Resolves the owner's container home (same logic as
+        ``eager_start_workspace``) and invokes the check via
+        ``podman exec`` as the creating user with HOME set.  Errors and
+        timeouts count as ``"unhealthy"``.
+        """
+        owner_id = state.owner_id
+        if owner_id is None:
+            return "unhealthy"
+        handle = await model.get_user_handle(owner_id)
+        if not handle:
+            return "unhealthy"
+        # Resolve the owner's container home the same way
+        # eager_start_workspace does, so the check runs in the right
+        # HOME rather than as root in /.
+        from . import workspaces as _wm  # noqa: allow-deferred-import
+
+        ws_home = _wm.home_path(owner_id, state.workspace_id)
+        user_home, _created = _wm.ensure_home_symlink(
+            ws_home, handle, owner_id
+        )
+        cid_short = state.container_id[:12]
+        logger.debug(
+            "Health check: container %s (workspace %s) running %r",
+            cid_short,
+            state.workspace_id,
+            state.health_check,
+        )
+        try:
+            rc, _out, _err = await podman.exec_container(
+                state.container_id,
+                ["sh", "-c", state.health_check],
+                user="klangk",
+                extra_env={"HOME": user_home},
+                timeout=HEALTH_CHECK_TIMEOUT_SECONDS,
+            )
+        except (podman.PodmanError, asyncio.TimeoutError, OSError) as e:
+            logger.info(
+                "Health check for container %s (workspace %s) failed: %s",
+                cid_short,
+                state.workspace_id,
+                e,
+            )
+            return "unhealthy"
+        logger.debug(
+            "Health check: container %s (workspace %s) exited %d",
+            cid_short,
+            state.workspace_id,
+            rc,
+        )
+        return "healthy" if rc == 0 else "unhealthy"
+
+    async def _check_workspace(self, state: ContainerState) -> None:
+        """Poll one workspace and broadcast on status transition."""
+        new_status = await self._run_one(state)
+        old_status = state.health_status
+        state.health_status = new_status
+        state.health_checked_at = time.time()
+        if new_status != old_status:
+            self._broadcast(state.workspace_id, new_status)
+
+    def _broadcast(self, workspace_id: str, status: str) -> None:
+        """Emit a ``service_health`` event to all connections.
+
+        Fanned out via :meth:`WsState.notify_service_health` so the
+        workspace list page learns about health transitions for
+        auto-started services even when nobody is connected to the
+        workspace's terminal session (#1015).
+        """
+        # Imported lazily to avoid an import cycle with wshandler.
+        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
+
+        _ws_state.notify_service_health(
+            workspace_id, healthy=status == "healthy"
+        )
+
+    async def run_health_loop(self) -> None:
+        """Background loop: every interval, poll eligible workspaces."""
+        while True:
+            await asyncio.sleep(HEALTH_CHECK_INTERVAL_SECONDS)
+            for state in list(self._registry.states.values()):
+                if not state.health_check:
+                    continue
+                if not self._setup_complete(state):
+                    continue
+                try:
+                    await self._check_workspace(state)
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.error(
+                        "Health check error for workspace %s: %s",
+                        state.workspace_id,
+                        e,
+                    )
+
+    def start_health_loop(self) -> None:
+        if self.health_task is None:
+            self.health_task = asyncio.create_task(self.run_health_loop())
+
+
 class ContainerRegistry:
     """Singleton managing all container state and podman interactions.
 
-    Composes :class:`PortAllocator`, :class:`BrowserRouter`, and
-    :class:`IdleMonitor` as collaborators.  Backward-compatible proxy
-    methods delegate to the collaborators so existing callers are
-    unchanged.
+    Composes :class:`PortAllocator`, :class:`BrowserRouter`,
+    :class:`IdleMonitor`, and :class:`HealthMonitor` as collaborators.
+    Backward-compatible proxy methods delegate to the collaborators so
+    existing callers are unchanged.
     """
 
     def __init__(self):
@@ -395,6 +540,7 @@ class ContainerRegistry:
         self.ports = PortAllocator()
         self.browsers = BrowserRouter()
         self.idle = IdleMonitor(self)
+        self.health = HealthMonitor(self)
 
     def workspace_id_for(self, container_id: str) -> str | None:
         """Return the workspace_id for a container, or None."""
@@ -408,7 +554,15 @@ class ContainerRegistry:
 
     # --- State tracking ---
 
-    def track_activity(self, container_id: str, workspace_id: str) -> None:
+    def track_activity(
+        self,
+        container_id: str,
+        workspace_id: str,
+        *,
+        health_check: str | None = None,
+        owner_id: str | None = None,
+        setup_state: str | None = None,
+    ) -> None:
         state = self.states.get(workspace_id)
         was_new = state is None
         if was_new:
@@ -421,6 +575,13 @@ class ContainerRegistry:
             state.container_id = container_id
         self._cid_to_wsid[container_id] = workspace_id
         state.record_activity()
+        # Health-monitoring metadata (#1015).  Always refresh so a
+        # config change (or a recreated container) is picked up.
+        state.health_check = health_check
+        if owner_id is not None:
+            state.owner_id = owner_id
+        if setup_state is not None:
+            state.setup_state = setup_state
         if was_new:
             self._notify_status_changed(workspace_id, True)
 
@@ -523,6 +684,15 @@ class ContainerRegistry:
     def start_cleanup_loop(self) -> None:
         self.idle.start_cleanup_loop()
 
+    # --- Proxy: HealthMonitor ---
+
+    @property
+    def health_task(self) -> asyncio.Task | None:
+        return self.health.health_task
+
+    def start_health_loop(self) -> None:
+        self.health.start_health_loop()
+
     # --- Container lifecycle ---
 
     async def start_container(
@@ -540,6 +710,8 @@ class ContainerRegistry:
         extra_mounts: list[str] | None = None,
         extra_env: dict[str, str] | None = None,
         user_id: str | None = None,
+        health_check: str | None = None,
+        setup_state: str | None = None,
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -564,6 +736,8 @@ class ContainerRegistry:
                 extra_mounts=extra_mounts,
                 extra_env=extra_env,
                 user_id=user_id,
+                health_check=health_check,
+                setup_state=setup_state,
             )
 
     async def _handle_existing_container(
@@ -571,6 +745,10 @@ class ContainerRegistry:
         existing_container_id: str,
         workspace_id: str,
         t_start: float,
+        *,
+        health_check: str | None = None,
+        owner_id: str | None = None,
+        setup_state: str | None = None,
     ) -> tuple[str, str] | None:
         """Check an existing container and reuse/remove it.
 
@@ -592,7 +770,13 @@ class ContainerRegistry:
             )
             return None
         if info["State"]["Running"]:
-            self.track_activity(existing_container_id, workspace_id)
+            self.track_activity(
+                existing_container_id,
+                workspace_id,
+                health_check=health_check,
+                owner_id=owner_id,
+                setup_state=setup_state,
+            )
             logger.info(
                 "workspace-open: DONE — container was already running, "
                 "no work needed: %.3fs",
@@ -734,6 +918,10 @@ class ContainerRegistry:
         publish: list[tuple[int, int]],
         allow_sudo: bool,
         create_kwargs: dict,
+        *,
+        health_check: str | None = None,
+        owner_id: str | None = None,
+        setup_state: str | None = None,
     ) -> str:
         """Create the container, persist it, start it, and configure it.
 
@@ -749,7 +937,13 @@ class ContainerRegistry:
             time.monotonic() - t_create,
         )
         await model.update_workspace_container(workspace_id, cid)
-        self.track_activity(cid, workspace_id)
+        self.track_activity(
+            cid,
+            workspace_id,
+            health_check=health_check,
+            owner_id=owner_id,
+            setup_state=setup_state,
+        )
         t_podman_start = time.monotonic()
         try:
             await podman.start_container(cid)
@@ -839,6 +1033,8 @@ class ContainerRegistry:
         extra_mounts: list[str] | None = None,
         extra_env: dict[str, str] | None = None,
         user_id: str | None = None,
+        health_check: str | None = None,
+        setup_state: str | None = None,
     ) -> tuple[str, str]:
         """Inner implementation of start_container (called under lock)."""
         t_start = time.monotonic()
@@ -852,7 +1048,12 @@ class ContainerRegistry:
         # Reuse a running container or remove a stopped one.
         if existing_container_id:
             result = await self._handle_existing_container(
-                existing_container_id, workspace_id, t_start
+                existing_container_id,
+                workspace_id,
+                t_start,
+                health_check=health_check,
+                owner_id=user_id,
+                setup_state=setup_state,
             )
             if result is not None:
                 return result
@@ -925,6 +1126,9 @@ class ContainerRegistry:
                 publish,
                 allow_sudo,
                 create_kwargs,
+                health_check=health_check,
+                owner_id=user_id,
+                setup_state=setup_state,
             )
         )
 
@@ -1044,6 +1248,13 @@ class ContainerRegistry:
             except asyncio.CancelledError:
                 pass
             self.cleanup_task = None
+        if self.health_task:
+            self.health_task.cancel()
+            try:
+                await self.health_task
+            except asyncio.CancelledError:
+                pass
+            self.health.health_task = None
         # Skip container cleanup when running inside a container
         # (developing klangk in klangk -- don't kill our own container).
         if os.path.exists("/.dockerenv") or os.path.exists(

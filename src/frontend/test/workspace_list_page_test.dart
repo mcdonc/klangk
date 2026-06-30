@@ -28,12 +28,17 @@ class _MockWsClient extends WsClient {
       StreamController<void>.broadcast();
   final StreamController<Map<String, dynamic>> _containerStatus =
       StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _serviceHealth =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   @override
   Stream<void> get workspacesChanged => _workspacesChanged.stream;
 
   @override
   Stream<Map<String, dynamic>> get containerStatus => _containerStatus.stream;
+
+  @override
+  Stream<Map<String, dynamic>> get serviceHealth => _serviceHealth.stream;
 
   void emitWorkspacesChanged() => _workspacesChanged.add(null);
 
@@ -44,10 +49,18 @@ class _MockWsClient extends WsClient {
         'running': running,
       });
 
+  void emitServiceHealth(String workspaceId, bool healthy) =>
+      _serviceHealth.add({
+        'type': 'service_health',
+        'workspace_id': workspaceId,
+        'healthy': healthy,
+      });
+
   @override
   void dispose() {
     _workspacesChanged.close();
     _containerStatus.close();
+    _serviceHealth.close();
     super.dispose();
   }
 }
@@ -963,7 +976,7 @@ void main() {
       expect(
           find.descendant(
               of: find.byType(AlertDialog), matching: find.byType(TextField)),
-          findsNWidgets(4));
+          findsNWidgets(5));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -2096,6 +2109,7 @@ void main() {
                   matching: find.byType(TextField))
               .at(3),
           'FOO=bar');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.text('FOO=bar'), findsOneWidget);
@@ -2114,6 +2128,7 @@ void main() {
 
       // Remove the first env var via X button
       // close icons: mount has none, env has 2 (FOO=bar, X=1)
+      await tester.ensureVisible(find.byIcon(Icons.close).first);
       await tester.tap(find.byIcon(Icons.close).first);
       await tester.pumpAndSettle();
       expect(find.text('FOO=bar'), findsNothing);
@@ -2321,6 +2336,116 @@ void main() {
 
       // Widget should still be rendered (no errors)
       expect(find.text('My WS'), findsOneWidget);
+    });
+
+    testWidgets('container stopping clears stale health status',
+        (tester) async {
+      final ws = _MockWsClient();
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode(_envelope([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'created_at': '2026-01-01',
+                'running': false,
+              },
+            ])),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage(wsClient: ws));
+      await tester.pumpAndSettle();
+
+      // Start the container, report it unhealthy (amber), then stop it —
+      // a stopped container has no health status, so the icon must drop
+      // back to grey rather than lingering on the stale unhealthy colour.
+      ws.emitContainerStatus('ws-1', true);
+      await tester.pump();
+      await tester.pump();
+
+      ws.emitServiceHealth('ws-1', false);
+      await tester.pump();
+      await tester.pump();
+      final unhealthyTile = tester.widget<ListTile>(
+        find.ancestor(
+          of: find.text('My WS'),
+          matching: find.byType(ListTile),
+        ),
+      );
+      expect((unhealthyTile.leading as Icon).color, Colors.orange);
+
+      ws.emitContainerStatus('ws-1', false);
+      await tester.pump();
+      await tester.pump();
+      final stoppedTile = tester.widget<ListTile>(
+        find.ancestor(
+          of: find.text('My WS'),
+          matching: find.byType(ListTile),
+        ),
+      );
+      expect((stoppedTile.leading as Icon).color, KColors.textSecondary);
+    });
+
+    testWidgets('service_health event recolours the list icon', (tester) async {
+      final ws = _MockWsClient();
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode(_envelope([
+              {
+                'id': 'ws-1',
+                'name': 'My WS',
+                'container_id': null,
+                'created_at': '2026-01-01',
+                'running': false,
+              },
+            ])),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage(wsClient: ws));
+      await tester.pumpAndSettle();
+
+      // Start the container, then report it as unhealthy.  The
+      // leading terminal icon should turn amber for an unhealthy
+      // container and green for a healthy one.
+      ws.emitContainerStatus('ws-1', true);
+      await tester.pump();
+
+      ws.emitServiceHealth('ws-1', false);
+      // The broadcast stream delivers on a microtask; a single pump may
+      // build its frame before the microtask runs. Pump twice so the
+      // handler's setState is flushed into a real rebuild.
+      await tester.pump();
+      await tester.pump();
+      final unhealthyTile = tester.widget<ListTile>(
+        find.ancestor(
+          of: find.text('My WS'),
+          matching: find.byType(ListTile),
+        ),
+      );
+      expect((unhealthyTile.leading as Icon).color, Colors.orange);
+
+      ws.emitServiceHealth('ws-1', true);
+      // Same microtask flush as above.
+      await tester.pump();
+      await tester.pump();
+      final healthyTile = tester.widget<ListTile>(
+        find.ancestor(
+          of: find.text('My WS'),
+          matching: find.byType(ListTile),
+        ),
+      );
+      expect((healthyTile.leading as Icon).color, KColors.accentGreen);
     });
   });
 }

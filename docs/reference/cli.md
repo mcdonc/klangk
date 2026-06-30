@@ -150,7 +150,8 @@ klangkc create my-project --auto-start   # create with auto-start on server boot
 klangkc create my-project --mount ~/src:/home/klangk/work/src          # with bind mount
 klangkc create my-project --mount nix-store:/nix           # with named volume
 klangkc create my-project --env FOO=bar                      # with env vars
-klangkc edit my-project                  # interactive edit (name, image, command, mounts, env)
+klangkc create my-project --health-check 'curl -sf http://localhost:8080/health'  # with a service health check
+klangkc edit my-project                  # interactive edit (name, image, command, health check, mounts, env)
 klangkc edit my-project --auto-start     # enable auto-start on server boot
 klangkc edit my-project --no-auto-start  # disable auto-start
 klangkc edit my-project --env FOO=bar    # set env var via flag
@@ -161,6 +162,9 @@ klangkc sandbox myws                     # create workspace from .klangk-sandbox
 klangkc sandbox myws ~/projects/myapp    # specify sandbox root explicitly
 klangkc sandbox myws --force             # re-apply config and re-run setup on existing workspace
 klangkc exec my-project ls /home/klangk/work         # run a command in the container
+klangkc monitor                                        # stream all server events as JSON
+klangkc monitor --type service_health | jq .           # pretty-print health transitions
+klangkc monitor --type service_health -- notify-send "Service unhealthy"  # react to unhealthy events
 klangkc sync ~/src my-project:/home/klangk/work      # sync files to/from the container
 klangkc rm my-project                # delete a workspace
 klangkc restart my-project           # restart the container for a workspace (owner only)

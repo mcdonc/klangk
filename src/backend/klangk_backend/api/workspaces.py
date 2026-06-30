@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import (
@@ -127,6 +128,7 @@ class CreateWorkspaceRequest(BaseModel):
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
     setup_state: Literal["pending", "complete", "failed"] | None = None
+    health_check: str | None = None
 
 
 async def _grant_owner_and_create_role_groups(ws: dict, user_id: str) -> None:
@@ -212,6 +214,7 @@ async def create_workspace(
             mounts=body.mounts,
             env=body.env,
             setup_state=body.setup_state or "complete",
+            health_check=body.health_check,
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -248,6 +251,7 @@ class UpdateWorkspaceRequest(BaseModel):
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
     setup_state: Literal["pending", "complete", "failed"] | None = None
+    health_check: str | None = None
 
 
 @router.put("/workspaces/{workspace_id}")
@@ -286,6 +290,21 @@ async def update_workspace(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Propagate health-relevant config changes to the live container
+    # state (#1015) so HealthMonitor picks them up without a container
+    # restart: setup_state may flip to "complete" after setup finishes,
+    # and health_check may be edited at any time.
+    live_state = container.registry.get_state(workspace_id)
+    if live_state is not None:
+        if "setup_state" in fields:
+            live_state.setup_state = fields["setup_state"]
+        if "health_check" in fields:
+            live_state.health_check = fields["health_check"] or None
+            # Reset the cached status so the next poll re-broadcasts.
+            live_state.health_status = None
+            live_state.health_checked_at = None
+
     return {"status": "updated"}
 
 
@@ -311,6 +330,7 @@ async def duplicate_workspace(
             auto_start=source.get("auto_start", False),
             mounts=source.get("mounts"),
             env=source.get("env"),
+            health_check=source.get("health_check"),
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -412,6 +432,7 @@ async def workspace_status(
             "running": False,
             "container_id": None,
             "health": None,
+            "health_checked_at": None,
             "idle_seconds": None,
             "idle_timeout": None,
             "ports": [],
@@ -421,10 +442,23 @@ async def workspace_status(
     idle_timeout = live_state.get_idle_timeout()
     ports = await container.registry.get_workspace_ports(workspace_id)
 
+    # Map the internal status to the API shape.  ``health`` is None
+    # until the first check completes (or when no health_check is
+    # configured) (#1015).
+    health = live_state.health_status
+    checked_at = (
+        datetime.fromtimestamp(
+            live_state.health_checked_at, tz=timezone.utc
+        ).isoformat()
+        if live_state.health_checked_at is not None
+        else None
+    )
+
     return {
         "running": True,
         "container_id": live_state.container_id,
-        "health": None,  # placeholder for #1015
+        "health": health,
+        "health_checked_at": checked_at,
         "idle_seconds": round(idle_secs, 1),
         "idle_timeout": idle_timeout,
         "ports": ports,
@@ -591,6 +625,7 @@ def _extract_archive_metadata(archive_path: str, name: str | None) -> dict:
         "auto_start": metadata.get("auto_start", False),
         "mounts": mounts,
         "env": env,
+        "health_check": metadata.get("health_check"),
     }
 
 
@@ -655,6 +690,7 @@ async def import_workspace(
                 auto_start=meta["auto_start"],
                 mounts=meta["mounts"],
                 env=meta["env"],
+                health_check=meta["health_check"],
             )
         except SAIntegrityError:
             raise HTTPException(

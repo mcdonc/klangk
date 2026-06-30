@@ -4026,6 +4026,68 @@ class TestNotifyContainerStatus:
             wshandler.state.connections.pop(sock, None)
 
 
+class TestNotifyServiceHealth:
+    """notify_service_health fans health events out to all connections."""
+
+    def _register(self, sock, user):
+        conn = _base_conn(user=user, ws=sock)
+        wshandler.state.connections[sock] = conn
+        return conn
+
+    def test_sends_healthy_to_all_authenticated(self):
+        sock_a = _mock_sock()
+        sock_b = _mock_sock()
+        try:
+            self._register(sock_a, {"id": "uid-1", "email": "a@x"})
+            self._register(sock_b, {"id": "uid-2", "email": "b@x"})
+            wshandler.state.notify_service_health("ws-123", healthy=True)
+        finally:
+            wshandler.state.connections.pop(sock_a, None)
+            wshandler.state.connections.pop(sock_b, None)
+        expected = {
+            "type": "service_health",
+            "workspace_id": "ws-123",
+            "healthy": True,
+        }
+        sock_a.send_json.assert_called_once_with(expected)
+        sock_b.send_json.assert_called_once_with(expected)
+
+    def test_sends_unhealthy(self):
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"})
+            wshandler.state.notify_service_health("ws-9", healthy=False)
+        finally:
+            wshandler.state.connections.pop(sock, None)
+        msg = sock.send_json.call_args[0][0]
+        assert msg["healthy"] is False
+        assert msg["type"] == "service_health"
+
+    def test_skips_unauthenticated(self):
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": None, "email": ""})
+            wshandler.state.notify_service_health("ws-1", healthy=True)
+        finally:
+            wshandler.state.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    async def test_dead_socket_is_pruned(self):
+        from klangk_backend.wshandler import _WS_ERRORS
+
+        sock = _mock_sock()
+        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        try:
+            conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
+            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
+                wshandler.state.notify_service_health("ws-1", healthy=True)
+                await asyncio.sleep(0)
+                mock.assert_awaited_once()
+            assert sock not in wshandler.state.connections
+        finally:
+            wshandler.state.connections.pop(sock, None)
+
+
 class TestRemoveSessionLocked:
     async def test_removes_session(self):
         session = wshandler.state.get_or_create_session("ws-locked-rm")

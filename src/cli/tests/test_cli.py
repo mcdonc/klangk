@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import typer
 import websockets
 import io
 from io import BytesIO
@@ -2298,6 +2299,22 @@ class TestCreateWorkspaceClient:
         body = mock_post.call_args.kwargs.get("json")
         assert body["default_command"] == "openclaw gateway"
 
+    def test_create_workspace_with_health_check(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "ws-hc",
+            "name": "hc-ws",
+            "created_at": "2025-01-01",
+        }
+        with patch.object(client, "post", return_value=mock_resp) as mock_post:
+            client.create_workspace(
+                "hc-ws", health_check="curl -sf http://localhost:8080/h"
+            )
+        body = mock_post.call_args.kwargs.get("json")
+        assert body["health_check"] == "curl -sf http://localhost:8080/h"
+
     def test_create_workspace_with_auto_start(self):
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock()
@@ -2457,3 +2474,476 @@ class TestExecSessionRunClosedWs:
         session = _ExecSession(ws, command=["echo", "hi"], stdin=None)
         exit_code = await session.run()
         assert exit_code == 0
+
+
+class _FakeMonitorConn:
+    """Async-iterator WS stub for ``klangkc monitor``."""
+
+    def __init__(self, messages: list[str]):
+        self._messages = list(messages)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._messages:
+            raise StopAsyncIteration
+        return self._messages.pop(0)
+
+
+class _ClosedStub(websockets.ConnectionClosed):
+    """A ConnectionClosed with a specific close code (for reconnect tests)."""
+
+    def __init__(self, code: int):
+        rcvd = MagicMock()
+        rcvd.code = code
+        super().__init__(rcvd=rcvd, sent=None)
+
+
+class _FakeMonitorCM:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *args):
+        return None
+
+
+class TestMonitor:
+    @pytest.mark.asyncio
+    async def test_no_command_streams_json(self, capsys):
+        from klangkc.main import _monitor_connection
+
+        messages = [
+            json.dumps(
+                {
+                    "type": "service_health",
+                    "workspace_id": "w1",
+                    "healthy": True,
+                }
+            ),
+            json.dumps({"cmd": "terminal_ack"}),  # no type → skipped
+            json.dumps(
+                {
+                    "type": "container_status",
+                    "workspace_id": "w1",
+                    "running": False,
+                }
+            ),
+        ]
+        conn = _FakeMonitorConn(messages)
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            await _monitor_connection(
+                "ws://x/ws", "tok", 1024, command=[], types=[], workspaces=[]
+            )
+        out = capsys.readouterr().out.strip().splitlines()
+        assert len(out) == 2
+        assert json.loads(out[0])["type"] == "service_health"
+        assert json.loads(out[1])["type"] == "container_status"
+
+    @pytest.mark.asyncio
+    async def test_type_filter(self, capsys):
+        from klangkc.main import _monitor_connection
+
+        messages = [
+            json.dumps(
+                {
+                    "type": "service_health",
+                    "workspace_id": "w1",
+                    "healthy": False,
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "container_status",
+                    "workspace_id": "w1",
+                    "running": True,
+                }
+            ),
+        ]
+        conn = _FakeMonitorConn(messages)
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            await _monitor_connection(
+                "ws://x/ws",
+                "tok",
+                1024,
+                command=[],
+                types=["service_health"],
+                workspaces=[],
+            )
+        out = capsys.readouterr().out.strip().splitlines()
+        assert len(out) == 1
+        assert json.loads(out[0])["type"] == "service_health"
+
+    @pytest.mark.asyncio
+    async def test_workspace_filter_skips_others(self, capsys):
+        from klangkc.main import _monitor_connection
+
+        messages = [
+            json.dumps(
+                {
+                    "type": "service_health",
+                    "workspace_id": "w2",
+                    "healthy": False,
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "service_health",
+                    "workspace_id": "w1",
+                    "healthy": True,
+                }
+            ),
+        ]
+        conn = _FakeMonitorConn(messages)
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            await _monitor_connection(
+                "ws://x/ws",
+                "tok",
+                1024,
+                command=[],
+                types=[],
+                workspaces=["w1"],
+            )
+        out = capsys.readouterr().out.strip().splitlines()
+        assert len(out) == 1
+        assert json.loads(out[0])["workspace_id"] == "w1"
+
+    @pytest.mark.asyncio
+    async def test_runs_command_with_payload_and_env(self):
+        from klangkc.main import _monitor_connection
+
+        event = {
+            "type": "service_health",
+            "workspace_id": "w1",
+            "healthy": False,
+        }
+        conn = _FakeMonitorConn([json.dumps(event)])
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            with patch("klangkc.main.subprocess.run") as run_mock:
+                await _monitor_connection(
+                    "ws://x/ws",
+                    "tok",
+                    1024,
+                    command=["notify-send"],
+                    types=[],
+                    workspaces=[],
+                )
+        run_mock.assert_called_once()
+        _, kwargs = run_mock.call_args
+        assert kwargs["input"] == json.dumps(event).encode()
+        env = kwargs["env"]
+        assert env["KLANGK_EVENT_TYPE"] == "service_health"
+        assert env["KLANGK_WORKSPACE_ID"] == "w1"
+        assert env["KLANGK_HEALTHY"] == "false"
+        assert "KLANGK_EVENT" in env
+
+    @pytest.mark.asyncio
+    async def test_command_not_found_propagates(self, monkeypatch):
+        # A missing command binary propagates FileNotFoundError out of
+        # the single-connection loop (the runner turns it into an exit).
+        from klangkc.main import _monitor_connection
+
+        event = {
+            "type": "service_health",
+            "workspace_id": "w1",
+            "healthy": True,
+        }
+        conn = _FakeMonitorConn([json.dumps(event)])
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            monkeypatch.setattr(
+                "klangkc.main.subprocess.run",
+                MagicMock(side_effect=FileNotFoundError()),
+            )
+            with pytest.raises(FileNotFoundError):
+                await _monitor_connection(
+                    "ws://x/ws",
+                    "tok",
+                    1024,
+                    command=["nope"],
+                    types=[],
+                    workspaces=[],
+                )
+
+    @pytest.mark.asyncio
+    async def test_reconnects_after_disconnect(self):
+        # Two clean closes → _monitor_connection called twice, with a
+        # backoff sleep in between.
+        from klangkc import main as main_mod
+
+        calls = {"conn": 0, "sleep": 0}
+
+        async def fake_conn(*args, **kwargs):
+            calls["conn"] += 1
+            if calls["conn"] >= 2:
+                raise typer.Exit(code=0)  # break the infinite loop
+            return None  # clean close → triggers reconnect
+
+        async def fake_sleep(delay):
+            calls["sleep"] += 1
+            assert delay > 0
+
+        with (
+            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.01),
+        ):
+            with pytest.raises(typer.Exit) as exc_info:
+                await main_mod._monitor_run(
+                    "http://x",
+                    "ws://x/ws",
+                    "tok",
+                    1024,
+                    command=[],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=None,
+                    max_delay=1.0,
+                )
+        assert exc_info.value.exit_code == 0
+        assert calls["conn"] == 2
+        assert calls["sleep"] == 1
+
+    @pytest.mark.asyncio
+    async def test_stops_after_max_reconnects(self):
+        from klangkc import main as main_mod
+
+        async def fake_conn(*args, **kwargs):
+            raise OSError("boom")
+
+        sleeps = []
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        with (
+            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+        ):
+            with pytest.raises(typer.Exit) as exc_info:
+                await main_mod._monitor_run(
+                    "http://x",
+                    "ws://x/ws",
+                    "tok",
+                    1024,
+                    command=[],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=2,
+                    max_delay=1.0,
+                )
+        assert exc_info.value.exit_code == 1
+        # 2 reconnects attempted before giving up.
+        assert len(sleeps) == 2
+
+    @pytest.mark.asyncio
+    async def test_no_reconnect_gives_up_immediately(self):
+        from klangkc import main as main_mod
+
+        async def fake_conn(*args, **kwargs):
+            raise OSError("boom")
+
+        async def fake_sleep(delay):
+            pytest.fail("should not sleep before giving up")
+
+        with (
+            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+        ):
+            with pytest.raises(typer.Exit) as exc_info:
+                await main_mod._monitor_run(
+                    "http://x",
+                    "ws://x/ws",
+                    "tok",
+                    1024,
+                    command=[],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=0,
+                    max_delay=1.0,
+                )
+        assert exc_info.value.exit_code == 1
+
+    @pytest.mark.asyncio
+    async def test_refreshes_token_on_4002_close(self):
+        # A 4002 close triggers refresh; the refreshed token is used on
+        # the next attempt.
+        from klangkc import main as main_mod
+
+        seen_tokens = []
+
+        async def fake_conn(ws_url, token, *args, **kwargs):
+            seen_tokens.append(token)
+            # First call: simulate a 4002 close.
+            raise _ClosedStub(4002)
+
+        async def fake_refresh(server_url, token):
+            return "NEW_TOKEN"
+
+        async def fake_sleep(delay):
+            pass
+
+        with (
+            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod, "_refresh_token_threaded", fake_refresh),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+        ):
+            # Stop the loop after the second connect via max_reconnects.
+            with pytest.raises(typer.Exit):
+                await main_mod._monitor_run(
+                    "http://x",
+                    "ws://x/ws",
+                    "OLD_TOKEN",
+                    1024,
+                    command=[],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=1,
+                    max_delay=1.0,
+                )
+        assert seen_tokens[0] == "OLD_TOKEN"
+        assert seen_tokens[1] == "NEW_TOKEN"
+
+    @pytest.mark.asyncio
+    async def test_refresh_failure_keeps_current_token(self):
+        from klangkc import main as main_mod
+
+        seen_tokens = []
+
+        async def fake_conn(ws_url, token, *args, **kwargs):
+            seen_tokens.append(token)
+            raise _ClosedStub(4002)
+
+        async def fake_refresh(server_url, token):
+            return None  # refresh failed
+
+        async def fake_sleep(delay):
+            pass
+
+        with (
+            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod, "_refresh_token_threaded", fake_refresh),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+        ):
+            with pytest.raises(typer.Exit):
+                await main_mod._monitor_run(
+                    "http://x",
+                    "ws://x/ws",
+                    "OLD_TOKEN",
+                    1024,
+                    command=[],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=1,
+                    max_delay=1.0,
+                )
+        # Token unchanged after failed refresh.
+        assert seen_tokens[0] == "OLD_TOKEN"
+        assert seen_tokens[1] == "OLD_TOKEN"
+
+    def test_backoff_is_capped(self):
+        from klangkc.main import _monitor_backoff
+
+        # Small attempts grow; large attempts never exceed the cap.
+        for attempt in range(1, 20):
+            delay = _monitor_backoff(attempt, max_delay=30.0)
+            assert 0 < delay <= 30.0
+
+    @pytest.mark.asyncio
+    async def test_connection_skips_invalid_json(self, capsys):
+        # Malformed frames are ignored rather than crashing the monitor.
+        from klangkc.main import _monitor_connection
+
+        messages = [
+            "this is not json",
+            json.dumps(
+                {
+                    "type": "service_health",
+                    "workspace_id": "w1",
+                    "healthy": True,
+                }
+            ),
+        ]
+        conn = _FakeMonitorConn(messages)
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            await _monitor_connection(
+                "ws://x/ws", "tok", 1024, command=[], types=[], workspaces=[]
+            )
+        out = capsys.readouterr().out.strip().splitlines()
+        assert len(out) == 1
+        assert json.loads(out[0])["type"] == "service_health"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_threaded_delegates(self):
+        # _refresh_token_threaded runs the sync refresh_token off-loop
+        # and returns whatever it yields.
+        from klangkc import main as main_mod
+
+        with patch.object(
+            main_mod, "refresh_token", return_value="FRESH"
+        ) as mock_refresh:
+            result = await main_mod._refresh_token_threaded("http://x", "OLD")
+        assert result == "FRESH"
+        mock_refresh.assert_called_once_with("http://x", "OLD")
+
+    @pytest.mark.asyncio
+    async def test_invalid_status_4001_triggers_refresh(self):
+        # An HTTP 4001 rejection (InvalidStatus) is treated as auth-related
+        # and triggers a token refresh before reconnecting.
+        from klangkc import main as main_mod
+
+        seen_tokens = []
+
+        async def fake_conn(ws_url, token, *args, **kwargs):
+            seen_tokens.append(token)
+            raise websockets.InvalidStatus(MagicMock(status_code=4001))
+
+        async def fake_refresh(server_url, token):
+            return "NEW_TOKEN"
+
+        async def fake_sleep(delay):
+            pass
+
+        with (
+            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod, "_refresh_token_threaded", fake_refresh),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+        ):
+            with pytest.raises(typer.Exit):
+                await main_mod._monitor_run(
+                    "http://x",
+                    "ws://x/ws",
+                    "OLD_TOKEN",
+                    1024,
+                    command=[],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=1,
+                    max_delay=1.0,
+                )
+        assert seen_tokens[0] == "OLD_TOKEN"
+        assert seen_tokens[1] == "NEW_TOKEN"

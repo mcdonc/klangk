@@ -21,6 +21,9 @@ optionally configure:
   Klangk server starts. Useful for service workspaces that should
   be running before any user connects. If the workspace also has a
   default command, it will already be running when you connect.
+- **Health check** — a shell command Klangk polls inside the
+  container to verify the service is actually healthy (exit 0 =
+  healthy). See [Health Check](health-check.md).
 - **Bind mounts** — mount host directories into the container.
   If `KLANGK_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
   paths), only directories under those roots can be bind-mounted.

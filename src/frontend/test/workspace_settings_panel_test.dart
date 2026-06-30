@@ -164,7 +164,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).at(2), // mounts add-row input
+        find.byType(TextField).at(3), // mounts add-row input
         '/etc:/etc',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -179,7 +179,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).at(2),
+        find.byType(TextField).at(3),
         'no-colon',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -286,6 +286,60 @@ void main() {
       // timer fires (clearing the message) and none is left pending at
       // dispose — flutter_test fails on pending timers. pumpAndSettle
       // alone won't fire it (a timer isn't a scheduled frame).
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('save sends health_check when a command is set',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          return http.Response(jsonEncode([_workspace]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'status': 'updated'}),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final healthCheckField = find.byWidgetPredicate(
+        (w) =>
+            w is TextField && w.decoration?.labelText == 'Health Check Command',
+      );
+      await tester.ensureVisible(healthCheckField);
+      await tester.pump();
+      await tester.enterText(
+        healthCheckField,
+        'curl -sf http://localhost:8080/',
+      );
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['health_check'], 'curl -sf http://localhost:8080/');
+      // Drain the 2s auto-clear timer.
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });

@@ -65,6 +65,7 @@ def workspace_metadata(ws: dict) -> dict:
         "auto_start": ws.get("auto_start", False),
         "mounts": ws.get("mounts"),
         "env": ws.get("env"),
+        "health_check": ws.get("health_check"),
         "num_ports": ws.get("num_ports", 5),
     }
 
@@ -235,6 +236,7 @@ async def create_workspace(
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
     setup_state: str | None = None,
+    health_check: str | None = None,
 ) -> dict:
     workspace = await model.create_workspace(
         user_id,
@@ -245,6 +247,7 @@ async def create_workspace(
         mounts=mounts,
         env=env,
         setup_state=setup_state or model.SETUP_STATE_COMPLETE,
+        health_check=health_check,
     )
     home = home_path(user_id, workspace["id"])
     home.mkdir(parents=True, exist_ok=True)
@@ -430,6 +433,8 @@ async def eager_start_workspace(
         extra_mounts=ws.get("mounts"),
         extra_env=ws.get("env"),
         user_id=owner_id,
+        health_check=ws.get("health_check"),
+        setup_state=ws.get("setup_state"),
     )
     state = container.registry.states.get(workspace_id)
     if state:

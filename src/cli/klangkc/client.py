@@ -154,6 +154,7 @@ class Workspace:
     auto_start: bool = False
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
+    health_check: str | None = None
     owner_email: str | None = None
 
 
@@ -374,6 +375,7 @@ class KlangkClient:
             auto_start=bool(w.get("auto_start", False)),
             mounts=w.get("mounts"),
             env=w.get("env"),
+            health_check=w.get("health_check"),
             owner_email=w.get("owner_email") if shared else None,
         )
 
@@ -386,6 +388,7 @@ class KlangkClient:
         mounts: list[str] | None = None,
         env: dict[str, str] | None = None,
         setup_state: str | None = None,
+        health_check: str | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
         if image:
@@ -400,6 +403,8 @@ class KlangkClient:
             body["env"] = env
         if setup_state:
             body["setup_state"] = setup_state
+        if health_check:
+            body["health_check"] = health_check
         resp = self.post("/api/v1/workspaces", json=body)
         self._check_auth(resp)
         self._raise_for_status(resp)

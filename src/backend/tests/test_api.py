@@ -1476,6 +1476,49 @@ class TestWorkspaceRoutes:
         assert match[0]["name"] == "renamed"
         assert match[0]["default_command"] == "pi"
 
+    async def test_update_workspace_propagates_to_live_state(
+        self, client, user
+    ):
+        # Editing setup_state/health_check on a workspace whose
+        # container is live updates the cached ContainerState so the
+        # health monitor picks it up without a restart (#1015).
+        import klangk_backend.container as container
+
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "live-ws"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+
+        # Simulate a running container by registering a live state.
+        container.registry.track_activity(
+            "cid-live",
+            ws_id,
+            health_check="old-cmd",
+            setup_state="pending",
+        )
+        live = container.registry.get_state(ws_id)
+        live.health_status = "healthy"  # will be reset on edit
+        try:
+            resp = await client.put(
+                f"/api/v1/workspaces/{ws_id}",
+                json={
+                    "health_check": "curl -sf http://localhost:8080/h",
+                    "setup_state": "complete",
+                },
+                headers=headers,
+            )
+            assert resp.status_code == 200
+            assert live.health_check == ("curl -sf http://localhost:8080/h")
+            assert live.setup_state == "complete"
+            # Editing health_check resets the cached status.
+            assert live.health_status is None
+            assert live.health_checked_at is None
+        finally:
+            container.registry.remove_state(ws_id)
+
     async def test_update_workspace_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.put(
@@ -5094,6 +5137,7 @@ class TestWorkspaceMetadata:
             "auto_start": True,
             "mounts": ["/data:/data"],
             "env": {"FOO": "bar"},
+            "health_check": None,
             "num_ports": 3,
         }
 
