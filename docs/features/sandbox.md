@@ -177,7 +177,9 @@ mounts:
   - .env:~/.env:ro
 ```
 
-Then in your `.bashrc` or setup script:
+Then in your `~/.profile` (so the health check and default command see
+the variables too — see [The Shell](the-shell.md#startup-files)) or
+setup script:
 
 ```bash
 [ -f ~/.env ] && . ~/.env
@@ -366,10 +368,14 @@ mkdir -p ~/.config/nix
 grep -q experimental-features ~/.config/nix/nix.conf 2>/dev/null \
   || echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
-# Source nix in non-login shells too.
+# Source nix in every login shell -- interactive terminals, the
+# default command, and the health check (bash -lc) all source
+# ~/.profile. Writing this to ~/.bashrc instead would hide it from
+# the health check (its interactivity guard returns early for
+# non-interactive shells). See the-shell.md#startup-files.
 # shellcheck disable=SC2016
-grep -q nix-profile ~/.bashrc 2>/dev/null \
-  || echo '. "$HOME/.nix-profile/etc/profile.d/nix.sh"' >> ~/.bashrc
+grep -q nix-profile ~/.profile 2>/dev/null \
+  || echo '. "$HOME/.nix-profile/etc/profile.d/nix.sh"' >> ~/.profile
 
 # Install devenv.
 if ! command -v devenv &>/dev/null; then

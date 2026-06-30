@@ -5,8 +5,9 @@ set up the environment before your personal `~/.bashrc` runs:
 
 - `/etc/profile.d/klangk-*.sh` — environment exports (`PATH=/opt/klangk/bin`,
   `EDITOR`) sourced by **every login shell**, interactive or not. This is
-  why one-shot commands like the workspace health check (`bash -lc`) and
-  `klangkc exec` still find `pi`, `herdr`, and the `klangk-*` helpers.
+  why one-shot commands like the workspace health check (`bash -lc`)
+  still find `pi`, `herdr`, and the `klangk-*` helpers. (Note:
+  `klangkc exec` does not yet run a login shell — see [#1041].)
 - `/etc/bash.bashrc` — interactive-shell setup: waits for container
   readiness, runs `on-shell-init` plugin hooks, and (via the default
   command) launches the workspace's configured service.
@@ -63,13 +64,55 @@ you share the workspace with untrusted users.
 ## Customizing your environment
 
 You can customize your shell the same way you would on any UNIX
-system:
+system. The key question is _which file_ to put a change in, because
+Klangk runs commands in several contexts and not all of them source the
+same startup files (see [Startup files](#startup-files) below):
 
-- Edit `~/.bashrc` for aliases, prompt customization, PATH changes
+- Edit `~/.profile` for **environment exports** (PATH additions,
+  `OPENCLAW_HOME`, tool-manager setup like nvm/asdf) that every shell
+  — including non-interactive ones like the health check — must see.
+- Edit `~/.bashrc` for **interactive niceties** (aliases, prompt
+  customization) that only matter in a terminal you're typing into.
 - Add scripts to `~/bin`
 - Configure `~/.gitconfig`, `~/.vimrc`, etc.
 
 All changes persist across container restarts.
+
+## Startup files
+
+Klangk runs in-container commands in a few different ways, and each
+sources a different set of startup files. Getting this right matters:
+an environment export buried below `~/.bashrc`'s interactivity guard is
+invisible to the health check, so a check like `openclaw health` reports
+perpetually unhealthy even though the service is fine (#1087).
+
+### Convention
+
+| File                                        | Purpose                                                                                                              | Sourced by                                                                              |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `/etc/profile.d/klangk-*.sh`                | system-wide defaults (klangk `PATH`, `EDITOR`)                                                                       | every login shell                                                                       |
+| `~/.profile`                                | **per-user environment exports** (PATH additions, tool homes, nvm/asdf) — anything non-interactive commands must see | login shells: interactive terminals, the default command, the health check (`bash -lc`) |
+| `~/.bashrc` (below the interactivity guard) | interactive niceties (aliases, prompt)                                                                               | interactive non-login bash shells; also chained from `~/.profile` for login shells      |
+
+**Rule of thumb:** if a non-interactive command (health check, a
+script) needs it, it goes in `~/.profile`. If it only matters when
+you're at a prompt, it goes in `~/.bashrc`.
+
+### Which code path sources what
+
+| In-container command                         | How Klangk runs it                            | Sources `~/.profile`? |
+| -------------------------------------------- | --------------------------------------------- | --------------------- |
+| Interactive terminal                         | `tmux new-session` (login shell) or `bash -l` | yes                   |
+| `default_command` (the `default-cmd` window) | login shell (tmux window 0)                   | yes                   |
+| Workspace health check                       | `bash -lc` (a login shell, #1087)             | yes                   |
+| `klangkc exec`                               | raw command (no shell)                        | no — see [#1041]      |
+
+This is why workspace setup scripts (`sandboxes/*/setup.sh`) persist
+their env exports to `~/.profile` rather than `~/.bashrc`: the exports
+must be visible to the health check and the default command, both of
+which are login shells that source `~/.profile`. `~/.bashrc`'s
+interactivity guard (`case $- in *i*) ;; *) return`) hides its body
+from those non-interactive login shells.
 
 ## Using zsh instead
 

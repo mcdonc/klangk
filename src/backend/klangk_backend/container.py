@@ -422,7 +422,12 @@ class HealthMonitor:
 
         Resolves the owner's container home (same logic as
         ``eager_start_workspace``) and invokes the check via
-        ``podman exec`` as the creating user with HOME set.  Errors and
+        ``podman exec`` as the creating user with HOME set.  The check
+        runs as a bash *login* shell (``bash -lc``) so it sources
+        ``~/.profile`` -- the POSIX file where workspace setup persists
+        env exports (PATH, tool homes) that the check may depend on
+        (#1087).  A non-login ``sh -c`` would source nothing and fail
+        to resolve e.g. an asdf/nvm-installed binary.  Errors and
         timeouts count as ``"unhealthy"``.
         """
         owner_id = state.owner_id
@@ -450,7 +455,11 @@ class HealthMonitor:
         try:
             rc, _out, _err = await podman.exec_container(
                 state.container_id,
-                ["sh", "-c", state.health_check],
+                # bash -lc: login shell sources ~/.profile so the
+                # check sees the user's env (PATH, tool homes). See
+                # #1087. Skipped until setup_state == complete, so the
+                # exports are guaranteed present by the time this runs.
+                ["bash", "-lc", state.health_check],
                 user="klangk",
                 extra_env={"HOME": user_home},
                 timeout=HEALTH_CHECK_TIMEOUT_SECONDS,

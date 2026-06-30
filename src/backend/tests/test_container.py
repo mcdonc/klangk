@@ -2024,6 +2024,11 @@ class TestHealthMonitorRunOne:
         assert call.kwargs["user"] == "klangk"
         assert call.kwargs["extra_env"] == {"HOME": "/home/klangk"}
         assert call.kwargs["timeout"] == container.HEALTH_CHECK_TIMEOUT_SECONDS
+        # #1087: the check runs as a bash LOGIN shell (bash -lc) so it
+        # sources ~/.profile and sees the user's env (PATH, tool homes).
+        # A regression to "sh -c" would hide asdf/nvm-installed binaries.
+        assert call.args[1][:2] == ["bash", "-lc"]
+        assert call.args[1][2] == st.health_check
 
     async def test_nonzero_exit_is_unhealthy(self):
         monitor = container.registry.health
