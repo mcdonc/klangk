@@ -5,7 +5,7 @@ set up the environment before your personal `~/.bashrc` runs:
 
 - `/etc/profile.d/klangk-*.sh` — environment exports (`PATH=/opt/klangk/bin`,
   `EDITOR`) sourced by **every login shell**, interactive or not. This is
-  why one-shot commands like `klangkc exec` (`bash -lc`, #1041) still find
+  why one-shot commands like `klangkc exec` (`bash -lc`) still find
   `pi` and the `klangk-*` helpers. (The workspace health check is the
   exception — it runs as a non-login `bash -c` and sources nothing; see
   [Health Check](health-check.md).)
@@ -115,7 +115,7 @@ health check is not a `~/.profile` consumer — see
 | Interactive terminal                         | `tmux new-session` (login shell) or `bash -l` | yes                                                                                        |
 | `default_command` (the `default-cmd` window) | login shell (tmux window 0)                   | yes                                                                                        |
 | Workspace health check                       | `bash -c` (a **non-login** shell)             | no — the probe is deterministic; uses absolute paths (see [Health Check](health-check.md)) |
-| `klangkc exec` (default)                     | `bash -lc` (a login shell, #1041)             | yes                                                                                        |
+| `klangkc exec` (default)                     | `bash -lc` (a login shell)                    | yes                                                                                        |
 | `klangkc exec --raw` / `klangkc sync`        | raw command (no shell)                        | no — programmatic transports (rsync) must not source startup files                         |
 
 This is why workspace setup scripts (`sandboxes/*/setup.sh`) persist

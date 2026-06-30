@@ -183,14 +183,14 @@ workspace:
   health-check: /openclaw/bin/healthcheck.sh
 ```
 
-This is exactly what the [openclaw sandbox](https://github.com/mcdonc/klangk/tree/main/sandboxes/openclaw)
+This is exactly what the [openclaw sandbox](../sandboxes/openclaw.md)
 ships. Rather than a bare `openclaw health` (which would need the
 user's nvm `PATH` + `OPENCLAW_HOME` from `~/.profile` — invisible to
 the non-login probe), `setup.sh` writes `/openclaw/bin/healthcheck.sh`:
 a tiny script with `#!/usr/bin/env bash` that `export`s `OPENCLAW_HOME`
 and `exec`s `/openclaw/bin/openclaw health` by absolute path. The
 config points `health-check` at that absolute path. The [hermes
-sandbox](https://github.com/mcdonc/klangk/tree/main/sandboxes/hermes)
+sandbox](../sandboxes/hermes.md)
 does the same. This is the recommended pattern for any non-trivial
 check. See [The Shell](the-shell.md#startup-files) for why the probe
 can't see the user's `~/.profile`.

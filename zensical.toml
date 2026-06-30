@@ -36,6 +36,11 @@ nav = [
     { "GitHub HTTPS Authentication" = "features/github-authentication.md" },
     { "Debug Panel" = "features/debug-panel.md" },
   ]},
+  { "Sandboxes" = [
+    { "Overview" = "sandboxes/index.md" },
+    { "OpenClaw" = "sandboxes/openclaw.md" },
+    { "Hermes" = "sandboxes/hermes.md" },
+  ]},
   { "Deployment" = [
     { "Running with Docker" = "deployment/docker.md" },
     { "Hosting & Nginx" = "deployment/hosting.md" },

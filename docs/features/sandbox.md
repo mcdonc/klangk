@@ -317,19 +317,17 @@ the workspace is left in an inconsistent state. To recover:
 
 ## Example
 
-See the [sandboxes/](https://github.com/mcdonc/klangk/tree/main/sandboxes)
-directory in the klangk repo for working sandbox configurations. Bundled
-examples:
+Klangk ships working sandbox configurations, documented in
+[Available Sandboxes](../sandboxes/index.md):
 
-- **[openclaw](https://github.com/mcdonc/klangk/tree/main/sandboxes/openclaw)**
-  — the OpenClaw assistant, pre-configured for the Klangk LLM proxy, with a
-  `default-command` gateway and a `health-check`.
-- **[hermes](https://github.com/mcdonc/klangk/tree/main/sandboxes/hermes)**
-  — the NousResearch Hermes Agent, installed per-workspace and routed through
-  the Klangk LLM proxy. Hermes was previously a compile-time
-  [plugin](plugins.md); it moved to a runtime sandbox so each workspace can
-  configure it independently (and so its installer's `bash -i` PATH probe no
-  longer needs an image-build bailout). See #1109.
+- **[OpenClaw](../sandboxes/openclaw.md)** — the OpenClaw assistant,
+  pre-configured for the Klangk LLM proxy, with a `default-command` gateway
+  and a `health-check`.
+- **[Hermes](../sandboxes/hermes.md)** — the NousResearch Hermes Agent,
+  installed per-workspace and routed through the Klangk LLM proxy. Hermes was
+  previously a compile-time [plugin](plugins.md); it moved to a runtime
+  sandbox so each workspace can configure it independently (and so its
+  installer's `bash -i` PATH probe no longer needs an image-build bailout).
 
 A project that needs nix/devenv, custom dotfiles, a data directory,
 and SSH access to GitHub:
