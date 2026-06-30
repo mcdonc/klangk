@@ -290,6 +290,60 @@ void main() {
       await tester.pumpAndSettle();
     });
 
+    testWidgets('save sends health_check when a command is set',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          return http.Response(jsonEncode([_workspace]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'status': 'updated'}),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final healthCheckField = find.byWidgetPredicate(
+        (w) =>
+            w is TextField && w.decoration?.labelText == 'Health Check Command',
+      );
+      await tester.ensureVisible(healthCheckField);
+      await tester.pump();
+      await tester.enterText(
+        healthCheckField,
+        'curl -sf http://localhost:8080/',
+      );
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['health_check'], 'curl -sf http://localhost:8080/');
+      // Drain the 2s auto-clear timer.
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
     testWidgets('save failure shows a "Failed:" message', (tester) async {
       testAuthHttpClientOverride = _client(
         saveStatus: 400,

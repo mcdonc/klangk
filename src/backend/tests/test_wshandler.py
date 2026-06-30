@@ -4072,6 +4072,21 @@ class TestNotifyServiceHealth:
             wshandler.state.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
+    async def test_dead_socket_is_pruned(self):
+        from klangk_backend.wshandler import _WS_ERRORS
+
+        sock = _mock_sock()
+        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        try:
+            conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
+            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
+                wshandler.state.notify_service_health("ws-1", healthy=True)
+                await asyncio.sleep(0)
+                mock.assert_awaited_once()
+            assert sock not in wshandler.state.connections
+        finally:
+            wshandler.state.connections.pop(sock, None)
+
 
 class TestRemoveSessionLocked:
     async def test_removes_session(self):

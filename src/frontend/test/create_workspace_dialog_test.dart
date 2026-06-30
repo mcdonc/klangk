@@ -129,6 +129,43 @@ void main() {
       expect(postedBody!['name'], 'My WS');
     });
 
+    testWidgets('submits health_check when provided', (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'My WS', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      await tester.enterText(find.byType(TextField).first, 'My WS');
+      final healthCheckField = find.byWidgetPredicate(
+        (w) =>
+            w is TextField &&
+            w.decoration?.labelText == 'Health check command (optional)',
+      );
+      await tester.ensureVisible(healthCheckField);
+      await tester.enterText(
+        healthCheckField,
+        'curl -sf http://localhost:8080/health',
+      );
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      expect(
+          postedBody!['health_check'], 'curl -sf http://localhost:8080/health');
+    });
+
     testWidgets('shows error on failure', (tester) async {
       testAuthHttpClientOverride = mockClient((request) async {
         if (request.method == 'POST') {
