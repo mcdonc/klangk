@@ -8,12 +8,6 @@
 # for interactive shells, so anything placed here is invisible to one-shot
 # non-interactive commands. See issue #1093.
 
-# Nothing below here is meaningful during image build. The Dockerfile touches
-# /tmp/.klangk-image-build before running plugin hooks and removes it after;
-# any `bash -i` spawned by those hooks (e.g. hermes installer probing PATH)
-# exits early here.
-[ -f /tmp/.klangk-image-build ] && return 0
-
 # Change to the user's home directory (podman exec -w can't use symlinks
 # without resolving them, so we start in /home and cd here instead).
 cd "$HOME" 2>/dev/null
