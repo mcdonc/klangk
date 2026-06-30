@@ -49,9 +49,9 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     }
 
     var ws = workspaces.cast<Map<String, dynamic>?>().firstWhere(
-      (w) => w!['id'] == widget.workspaceId,
-      orElse: () => null,
-    );
+          (w) => w!['id'] == widget.workspaceId,
+          orElse: () => null,
+        );
 
     // Try shared workspaces if not found in owned
     if (ws == null) {
@@ -62,9 +62,9 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
           jsonDecode(sharedResp.body),
         );
         ws = shared.cast<Map<String, dynamic>?>().firstWhere(
-          (w) => w!['id'] == widget.workspaceId,
-          orElse: () => null,
-        );
+              (w) => w!['id'] == widget.workspaceId,
+              orElse: () => null,
+            );
       }
     }
 
@@ -232,9 +232,8 @@ class _SettingsFormState extends State<_SettingsForm> {
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
-      'default_command': _cmdCtrl.text.trim().isEmpty
-          ? null
-          : _cmdCtrl.text.trim(),
+      'default_command':
+          _cmdCtrl.text.trim().isEmpty ? null : _cmdCtrl.text.trim(),
       'health_check': _healthCheckCtrl.text.trim().isEmpty
           ? null
           : _healthCheckCtrl.text.trim(),
@@ -447,12 +446,12 @@ class _SettingsFormState extends State<_SettingsForm> {
       error: _mountError,
       onAdd: _tryAddMount,
       items: _mounts.asMap().entries.map(
-        (e) => _buildEditableListItem(
-          text: e.value,
-          onCopy: e.value,
-          onRemove: () => setState(() => _mounts.removeAt(e.key)),
-        ),
-      ),
+            (e) => _buildEditableListItem(
+              text: e.value,
+              onCopy: e.value,
+              onRemove: () => setState(() => _mounts.removeAt(e.key)),
+            ),
+          ),
     );
   }
 
@@ -465,12 +464,12 @@ class _SettingsFormState extends State<_SettingsForm> {
       error: _envError,
       onAdd: _tryAddEnv,
       items: _envVars.entries.toList().asMap().entries.map(
-        (e) => _buildEditableListItem(
-          text: '${e.value.key}=${e.value.value}',
-          onCopy: '${e.value.key}=${e.value.value}',
-          onRemove: () => setState(() => _envVars.remove(e.value.key)),
-        ),
-      ),
+            (e) => _buildEditableListItem(
+              text: '${e.value.key}=${e.value.value}',
+              onCopy: '${e.value.key}=${e.value.value}',
+              onRemove: () => setState(() => _envVars.remove(e.value.key)),
+            ),
+          ),
     );
   }
 
@@ -606,17 +605,28 @@ class _SettingsFormState extends State<_SettingsForm> {
     setState(() => _exporting = true);
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet(
-        '/api/v1/workspaces/${widget.workspaceId}/export',
+      final name = widget.workspace['name'] as String? ?? 'workspace';
+      final filename = '$name.tar.gz';
+      final exportPath = '/api/v1/workspaces/${widget.workspaceId}/export';
+
+      // Prefer streaming straight to disk (no in-memory buffering) when the
+      // browser supports the File System Access API. Falls back to the
+      // buffered path on Firefox/Safari/older browsers (#700).
+      final streamed = await downloadStreamedUrl(
+        exportPath,
+        filename: filename,
+        headers: auth.authHeaders,
       );
-      if (resp.statusCode == 200) {
-        final name = widget.workspace['name'] as String? ?? 'workspace';
-        downloadBytes(resp.bodyBytes, '$name.tar.gz');
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Export failed: ${resp.statusCode}')),
-          );
+      if (!streamed) {
+        final resp = await auth.authGet(exportPath);
+        if (resp.statusCode == 200) {
+          downloadBytes(resp.bodyBytes, filename);
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Export failed: ${resp.statusCode}')),
+            );
+          }
         }
       }
     } catch (_) {

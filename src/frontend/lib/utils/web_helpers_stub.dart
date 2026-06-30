@@ -52,3 +52,12 @@ String getBuildHash() => '';
 
 /// Stub — no file picker outside the browser.
 Future<List<int>?> pickFileBytes({String accept = ''}) async => null;
+
+/// Stub — File System Access API is browser-only; signal "not handled" so the
+/// caller falls back to a buffered download (or no-op in VM tests).
+Future<bool> downloadStreamedUrl(
+  String url, {
+  required String filename,
+  Map<String, String>? headers,
+}) async =>
+    false;
