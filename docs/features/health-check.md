@@ -48,8 +48,14 @@ For each workspace with a health check configured:
 4. The current status and the time of the last check are exposed via
    `GET /api/v1/workspaces/{id}/status`.
 
-The check runs through `sh -c "<your command>"`, so any shell syntax
-works — pipes, `&&`, redirects, etc.
+The check runs through `bash -lc "<your command>"` — a bash **login
+shell** — so any shell syntax works (pipes, `&&`, redirects, etc.)
+**and** the command sees the workspace user's environment: it sources
+`~/.profile`, where `setup.sh` persists PATH additions and tool homes.
+This means a check like `openclaw health` resolves the `openclaw`
+binary even though it was installed under nvm/asdf. See
+[The Shell — Startup files](the-shell.md#startup-files) for the
+convention on where setup scripts should put environment exports.
 
 ### When checks are skipped
 
