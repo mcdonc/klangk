@@ -42,7 +42,7 @@ jobs:
             -o /tmp/workspace.tar "${KLANGK_IMAGE_NAME:-klangk-workspace}:latest"
 
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.2.0
+        uses: aquasecurity/setup-trivy@v0.3.1
         with:
           version: v0.69.3
           cache: true
