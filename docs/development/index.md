@@ -33,27 +33,28 @@ changes.
 
 Inside `devenv shell`, these commands are available:
 
-| Command                 | Description                                 |
-| ----------------------- | ------------------------------------------- |
-| `test-backend`          | Run backend unit tests                      |
-| `test-cli`              | Run CLI unit tests                          |
-| `test-frontend`         | Run frontend unit tests with coverage       |
-| `test-backend-e2e`      | Run backend E2E tests                       |
-| `test-cli-e2e`          | Run CLI E2E tests                           |
-| `test-frontend-e2e`     | Run frontend E2E tests (Playwright)         |
-| `flutterbuildweb`       | Rebuild Flutter web only                    |
-| `build-workspace-image` | Rebuild workspace image (podman)            |
-| `build-base-image`      | Rebuild workspace base image                |
-| `build-host-image`      | Build host container image                  |
-| `run-host-container`    | Run host container locally                  |
-| `trivy-host`            | Scan host image for vulnerabilities         |
-| `trivy-workspace`       | Scan workspace image for vulnerabilities    |
-| `update-plugins`        | Fetch plugins from plugins.yaml             |
-| `kill-containers`       | Stop and remove all klangk containers       |
-| `restart`               | Rebuild images and restart devenv processes |
-| `rebuild`               | Rebuild workspace image and Flutter web     |
-| `serve-docs`            | Serve docs locally for preview              |
-| `build-docs`            | Build docs for deployment                   |
+| Command                  | Description                                 |
+| ------------------------ | ------------------------------------------- |
+| `test-backend`           | Run backend unit tests                      |
+| `test-cli`               | Run CLI unit tests                          |
+| `test-frontend`          | Run frontend unit tests with coverage       |
+| `test-backend-e2e`       | Run backend E2E tests                       |
+| `test-cli-e2e`           | Run CLI E2E tests                           |
+| `test-frontend-e2e`      | Run frontend E2E tests (Playwright)         |
+| `flutterbuildweb`        | Rebuild Flutter web only                    |
+| `build-workspace-image`  | Rebuild workspace image (podman)            |
+| `build-base-image`       | Rebuild workspace base image                |
+| `build-host-image`       | Build host container image                  |
+| `run-host-container`     | Run host container locally                  |
+| `trivy-host`             | Scan host image for vulnerabilities         |
+| `trivy-workspace`        | Scan workspace image for vulnerabilities    |
+| `trivy-workspace-report` | Scan + report no-fix CVEs (or render JSON)  |
+| `update-plugins`         | Fetch plugins from plugins.yaml             |
+| `kill-containers`        | Stop and remove all klangk containers       |
+| `restart`                | Rebuild images and restart devenv processes |
+| `rebuild`                | Rebuild workspace image and Flutter web     |
+| `serve-docs`             | Serve docs locally for preview              |
+| `build-docs`             | Build docs for deployment                   |
 
 ## Branch Protection
 

@@ -195,6 +195,14 @@ in
   scripts.build-host-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-host-image.sh" "$@"'';
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
   scripts.trivy-workspace.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-workspace.sh" "$@"'';
+  scripts.trivy-workspace-report.exec = ''
+    cd $DEVENV_ROOT
+    if [ "$#" -eq 0 ]; then
+      echo "Scanning workspace image and rendering no-fix report..." >&2
+      exec bash "$DEVENV_ROOT/scripts/trivy-workspace.sh" --severity CRITICAL,HIGH --format json \
+        | python3 "$DEVENV_ROOT/scripts/trivy-report-nofix.py" -
+    fi
+    exec python3 "$DEVENV_ROOT/scripts/trivy-report-nofix.py" "$@"'';
 
   scripts.run-host-container.exec = ''exec bash "$DEVENV_ROOT/scripts/run-host-container.sh" "$@"'';
 
