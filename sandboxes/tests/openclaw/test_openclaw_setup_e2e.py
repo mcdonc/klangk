@@ -1,6 +1,15 @@
-"""E2E test: openclaw sandbox writes all ~/.profile exports before slow setup steps.
+"""E2E tests for the openclaw sandbox.
 
-Guards #1039 (ordering) and #1087 (location).
+Covers three invariants:
+
+- #1039 (ordering) + #1087 (location): ``setup.sh`` writes every env
+  export the default_command depends on to ``~/.profile`` up front,
+  before the slow ``npm install``.
+- #1089: the ``health-check: openclaw health`` config reaches the
+  workspace, the health monitor runs it as a bash login shell
+  (``bash -lc``, #1087), and the status endpoint reports ``healthy``
+  once the gateway (launched by ``default-command``) is up.
+
 ``sandboxes/openclaw/setup.sh`` persists every env export the
 default_command depends on (``NVM_DIR`` + nvm source, ``/openclaw/bin``
 on ``PATH``, ``OPENCLAW_HOME``) to ``~/.profile`` in one block at the
@@ -82,6 +91,12 @@ WS2 = "e2e-openclaw-setup-2"
 # pauses at the sentinel, so the test can drive a VISITOR terminal_start
 # while setup is genuinely mid-flight -- the exact #1033 race.
 WS3 = "e2e-openclaw-setup-3"
+# Fourth workspace at the same mount, used by the #1089 health-check
+# test. Like WS2/WS3 its setup skips the install (mount already
+# populated) so it comes up fast; the point is to exercise the
+# end-to-end health-check path (config -> monitor -> status endpoint)
+# against a real gateway, not to re-run the install.
+WS4 = "e2e-openclaw-setup-4"
 # Own port + instance id so it never collides with other e2e suites
 # (cli-e2e 18995, autostart 18996/18997).
 PORT = "18998"
@@ -135,6 +150,13 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         "KLANGK_TEST_MODE": "1",
         "KLANGK_INSTANCE_ID": instance_id,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+        # Poll health every 3s instead of the 30s default so the
+        # #1089 health-check test sees the healthy transition quickly
+        # (the gateway takes a few seconds to bind after setup). This
+        # is harmless to the other tests: they hold setup_state=pending
+        # at the sentinel (health checks are skipped until complete) or
+        # have already finished asserting by the time polling starts.
+        "KLANGK_HEALTH_CHECK_INTERVAL": "3",
         "KLANGK_PORT_RANGE_START": "9000",
         "KLANGK_ALLOW_AUTOSTART": "1",
         "LOGFIRE_TOKEN": "",
@@ -252,6 +274,22 @@ def _container_up(base_url, token, ws_id):
     )
     r.raise_for_status()
     return bool(r.json().get("container_id"))
+
+
+def _health_status(base_url, token, ws_id):
+    """Return (health, health_checked_at) from the status endpoint.
+
+    ``health`` is ``None`` until the first check completes (or when no
+    health_check is configured), then ``"healthy"`` / ``"unhealthy"``.
+    """
+    r = httpx.get(
+        f"{base_url}/api/v1/workspaces/{ws_id}/status",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    body = r.json()
+    return body.get("health"), body.get("health_checked_at")
 
 
 def _owning_profile(data_dir, user_id, ws_id):
@@ -678,6 +716,103 @@ class TestOpenclawSetupProfileExports:
                 os.remove(SENTINEL)
             if sandbox_proc.poll() is None:
                 sandbox_proc.kill()
+
+    def test_health_check_reports_healthy_when_gateway_up(self):
+        """The ``health-check: openclaw health`` config reaches the
+        workspace, the health monitor runs it as a bash login shell
+        (``bash -lc``, #1087), and the status endpoint reports
+        ``healthy`` once the gateway (launched by ``default-command``)
+        is up.
+
+        This is the #1089 end-to-end validation. The whole chain must
+        work for the status to flip to healthy:
+
+        1. ``klangkc sandbox`` creates the workspace carrying
+           ``health_check`` from the sandbox config.
+        2. setup completes -> ``setup_state == complete`` (the monitor
+           skips checks until then).
+        3. ``default-command: openclaw gateway`` fires and the gateway
+           binds its port.
+        4. the monitor runs ``bash -lc "openclaw health"``; the login
+           shell sources ``~/.profile`` (#1087) so the nvm-installed
+           ``openclaw`` binary resolves and the command connects to
+           the gateway over WebSocket, exiting 0.
+
+        The gateway takes a few seconds to bind after setup, so an
+        initial ``unhealthy`` window is expected and tolerated -- the
+        test waits for the transition to ``healthy``.
+        """
+        # Precondition: openclaw on the shared mount (full-install test
+        # ran first). Fail fast rather than doing a misleading full
+        # install that would hide a config-wiring regression.
+        assert glob.glob(
+            os.path.join(
+                SANDBOX_DIR, ".nvm", "versions", "node", "v*", "bin", "openclaw"
+            )
+        ), (
+            "openclaw not on the shared mount -- run the full-install test "
+            "first so this test exercises the health-check path, not a "
+            "full install"
+        )
+
+        # WS4 reuses the populated mount, so its setup SKIPS the install
+        # (fast) -- the point here is the health-check path, not install.
+        sandbox_proc = subprocess.Popen(
+            ["klangkc", "sandbox", WS4, SANDBOX_DIR],
+            env=self._env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            rc = sandbox_proc.wait(timeout=SETUP_TIMEOUT)
+            out = sandbox_proc.stdout.read() or ""
+            assert rc == 0, f"klangkc sandbox (WS4) failed:\n{out}"
+            # The install was genuinely skipped, proving the fast path.
+            assert "openclaw already installed, skipping." in out, (
+                "expected setup to SKIP the install (mount already "
+                "populated); it didn't.\n" + out
+            )
+
+            ws4_id = self._await_container(name=WS4)
+
+            # Wait for the gateway to come up AND the monitor (polling
+            # every KLANGK_HEALTH_CHECK_INTERVAL=3s in this fixture) to
+            # report healthy. Generous timeout: the gateway binds a few
+            # seconds after setup, then the first poll lands within one
+            # interval.
+            self._await_health(ws4_id, expected="healthy", timeout=180)
+        finally:
+            if sandbox_proc.poll() is None:
+                sandbox_proc.kill()
+
+    def _await_health(self, ws_id, expected="healthy", timeout=180):
+        """Poll /status until ``health == expected`` or timeout.
+
+        Raises with diagnostics on timeout -- the last status and the
+        server log tail -- so a failure distinguishes "never checked"
+        (health stuck at None -> config-wiring bug) from "always
+        unhealthy" (check ran but the gateway never came up).
+        """
+        deadline = time.monotonic() + timeout
+        last = None
+        last_checked_at = None
+        while time.monotonic() < deadline:
+            last, last_checked_at = _health_status(self._base_url, self._token, ws_id)
+            if last == expected:
+                return
+            time.sleep(2)
+        raise AssertionError(
+            f"workspace health never reached {expected!r} within "
+            f"{timeout}s (last={last!r}, "
+            f"health_checked_at={last_checked_at!r}). If last is None "
+            "the health check never ran (config-wiring bug: "
+            "health_check did not reach the workspace, or "
+            "setup_state never became complete). If last is "
+            "'unhealthy' the check ran but the gateway never came up "
+            "or the command could not resolve.\n"
+            f"--- server.log tail ---\n{self._server_log_tail()}"
+        )
 
     def _await_container(self, name=WS, timeout=180):
         deadline = time.monotonic() + timeout

@@ -70,7 +70,7 @@ workspace:
   image: klangk-workspace
   default-command: openclaw gateway
   auto-start: true
-  health-check: curl -sf http://localhost:8080/health
+  health-check: openclaw health
 ```
 
 | Field             | Required | Default              | Description                                                                                                                |
@@ -331,7 +331,7 @@ sandbox:
 
 workspace:
   default-command: openclaw gateway
-  health-check: pgrep -f 'openclaw gateway'
+  health-check: openclaw health
 
 copy:
   - ~/.gitconfig:~/.gitconfig
