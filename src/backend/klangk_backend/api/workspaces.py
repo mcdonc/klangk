@@ -250,6 +250,7 @@ async def update_workspace(
             # Reset the cached status so the next poll re-broadcasts.
             live_state.health_status = None
             live_state.health_checked_at = None
+            live_state.health_message = None
 
     return {"status": "updated"}
 
@@ -377,6 +378,7 @@ async def workspace_status(
             "running": False,
             "container_id": None,
             "health": None,
+            "health_message": None,
             "health_checked_at": None,
             "idle_seconds": None,
             "idle_timeout": None,
@@ -403,6 +405,10 @@ async def workspace_status(
         "running": True,
         "container_id": live_state.container_id,
         "health": health,
+        # Why the last check failed (bounded stderr/stdout tail), or
+        # None when healthy -- so an unhealthy workspace isn't a black
+        # box (#1088).
+        "health_message": live_state.health_message,
         "health_checked_at": checked_at,
         "idle_seconds": round(idle_secs, 1),
         "idle_timeout": idle_timeout,

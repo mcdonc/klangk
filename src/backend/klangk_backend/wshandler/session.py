@@ -479,7 +479,9 @@ class WebSocketState:
             self.connections.pop(sock, None)
             asyncio.create_task(conn.cleanup())
 
-    def notify_service_health(self, workspace_id: str, healthy: bool) -> None:
+    def notify_service_health(
+        self, workspace_id: str, healthy: bool, message: str | None = None
+    ) -> None:
         """Broadcast service-health status to all connections.
 
         Fanned out to every connection (like
@@ -487,18 +489,24 @@ class WebSocketState:
         reflect health transitions for auto-started services even when no
         one is connected to that workspace's terminal session (#1015).
         The frontend ignores events for workspaces it doesn't display.
+
+        ``message`` carries the failure *reason* (a bounded tail of the
+        check's stderr/stdout) so an unhealthy workspace isn't a black
+        box -- operators can see *why* it failed without log access
+        (#1088).  ``None`` when healthy.
         """
-        message = {
+        message_dict = {
             "type": "service_health",
             "workspace_id": workspace_id,
             "healthy": healthy,
+            "health_message": message,
         }
         dead = []
         for sock, conn in self.connections.items():
             if conn.user.get("id") is None:
                 continue
             try:
-                sock.send_json(message)
+                sock.send_json(message_dict)
             except _WS_ERRORS:
                 dead.append((sock, conn))
         for sock, conn in dead:

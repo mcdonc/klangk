@@ -4172,20 +4172,26 @@ class TestNotifyServiceHealth:
             "type": "service_health",
             "workspace_id": "ws-123",
             "healthy": True,
+            "health_message": None,
         }
         sock_a.send_json.assert_called_once_with(expected)
         sock_b.send_json.assert_called_once_with(expected)
 
-    def test_sends_unhealthy(self):
+    def test_sends_unhealthy_with_reason(self):
+        # The failure reason rides along on the broadcast so operators
+        # can see *why* it's unhealthy (#1088).
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"})
-            wshandler.state.notify_service_health("ws-9", healthy=False)
+            wshandler.state.notify_service_health(
+                "ws-9", healthy=False, message="curl: connection refused"
+            )
         finally:
             wshandler.state.connections.pop(sock, None)
         msg = sock.send_json.call_args[0][0]
         assert msg["healthy"] is False
         assert msg["type"] == "service_health"
+        assert msg["health_message"] == "curl: connection refused"
 
     def test_skips_unauthenticated(self):
         sock = _mock_sock()

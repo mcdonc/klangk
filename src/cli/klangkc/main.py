@@ -900,7 +900,8 @@ def _dispatch_monitor_event(msg: dict, command: list[str]) -> None:
     With no *command*, the event is streamed as line-delimited JSON to
     stdout. With a command, its stdin gets the event JSON and env vars
     ``KLANGK_EVENT``, ``KLANGK_EVENT_TYPE``, ``KLANGK_WORKSPACE_ID`` and
-    (for health events) ``KLANGK_HEALTHY`` are set.
+    (for health events) ``KLANGK_HEALTHY`` / ``KLANGK_HEALTH_MESSAGE``
+    are set.
 
     Pure (no WebSocket) so it can be unit-tested in isolation.
     """
@@ -917,6 +918,9 @@ def _dispatch_monitor_event(msg: dict, command: list[str]) -> None:
         env["KLANGK_WORKSPACE_ID"] = str(wid)
     if msg.get("type") == "service_health":
         env["KLANGK_HEALTHY"] = "true" if msg.get("healthy") else "false"
+        health_msg = msg.get("health_message")
+        if health_msg:
+            env["KLANGK_HEALTH_MESSAGE"] = str(health_msg)
     # FileNotFoundError (missing binary) propagates to the caller.
     subprocess.run(command, input=payload.encode(), env=env, check=False)
 

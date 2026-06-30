@@ -1501,6 +1501,7 @@ class TestWorkspaceRoutes:
         )
         live = container.registry.get_state(ws_id)
         live.health_status = "healthy"  # will be reset on edit
+        live.health_message = "stale reason"  # also reset on edit (#1088)
         try:
             resp = await client.put(
                 f"/api/v1/workspaces/{ws_id}",
@@ -1516,6 +1517,7 @@ class TestWorkspaceRoutes:
             # Editing health_check resets the cached status.
             assert live.health_status is None
             assert live.health_checked_at is None
+            assert live.health_message is None
         finally:
             container.registry.remove_state(ws_id)
 
