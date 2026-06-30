@@ -6,9 +6,13 @@
 # clobbering the /opt/klangk/bin prefix that the Dockerfile ENV sets. This
 # snippet re-prepends it so EVERY login shell finds pi and the
 # klangk-* helpers — including non-interactive login shells (`bash -lc`),
-# which is what the workspace health check and `klangkc exec` use.
+# which is what `klangkc exec` uses.
 # /etc/bash.bashrc was the wrong home because it is only sourced for
 # interactive shells; a non-interactive login shell never saw the export.
+#
+# (The workspace health check is NOT a consumer of this: it runs a
+# non-login `bash -c` and sources nothing. See
+# docs/features/health-check.md.)
 #
 # Sourced by /etc/profile via run-parts for every login shell. /etc/profile
 # runs profile.d unconditionally (no PS1 guard), so this covers `bash -lc`

@@ -46,10 +46,14 @@ Everything installs to `/hermes` (the sandbox mount point):
 
 ## Health check
 
-`health-check` runs `hermes gateway status` and greps its output for the
-running marker. `hermes gateway status` always exits 0 (it only prints state),
-so the liveness signal is derived from the printed line rather than the exit
-code — hermes's own process detection (PID file + `/proc` scan) does the work.
+`health-check` points at `/hermes/bin/healthcheck.sh`, a wrapper that sets
+`HERMES_HOME` and runs the venv `hermes gateway status` by absolute path,
+grepping its output for the running marker. The host monitor runs the check
+via `bash -c` (a non-login shell that sources no startup file), so the wrapper
+bakes in everything it needs instead of relying on the user's `~/.profile`.
+`hermes gateway status` always exits 0 (it only prints state), so the liveness
+signal is derived from the printed line rather than the exit code — hermes's
+own process detection (PID file + `/proc` scan) does the work.
 See [docs/features/health-check.md](../../docs/features/health-check.md).
 
 ## Why a sandbox, not a plugin
