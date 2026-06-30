@@ -1694,7 +1694,7 @@ class TestHandleWorkspaceConnect:
             )
 
         calls = [c[0][0] for c in sock.send_json.call_args_list]
-        ready = [c for c in calls if c.get("type") == "workspace_ready"]
+        ready = [c for c in calls if c.get("type") == "container_ready"]
         assert len(ready) == 1
         assert ready[0]["workspaceId"] == workspace["id"]
         assert ready[0]["defaultCommand"] is None
@@ -1729,7 +1729,7 @@ class TestHandleWorkspaceConnect:
             )
 
         calls = [c[0][0] for c in sock.send_json.call_args_list]
-        ready = [c for c in calls if c.get("type") == "workspace_ready"]
+        ready = [c for c in calls if c.get("type") == "container_ready"]
         assert ready[0]["defaultCommand"] == "pi"
 
     async def test_connect_denied_no_acl(self, user):

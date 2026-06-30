@@ -474,7 +474,7 @@ class Connection:
 
         self.sock.send_json(
             {
-                "type": "workspace_ready",
+                "type": "container_ready",
                 "workspaceId": workspace_id,
                 "userId": self.user["id"],
                 "ports": ports,
@@ -501,7 +501,7 @@ class Connection:
         self.pending_status_msg = status_msg
         logger.info(
             "workspace-open: TOTAL workspace connect (user sees "
-            "workspace_ready after this): %.3fs",
+            "container_ready after this): %.3fs",
             time.monotonic() - t_connect_start,
         )
         logger.info(

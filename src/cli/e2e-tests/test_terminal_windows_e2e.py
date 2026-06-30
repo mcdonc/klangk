@@ -265,7 +265,7 @@ class _WebSession:
                 }
             )
         )
-        await self._drain_until("workspace_ready")
+        await self._drain_until("container_ready")
         await self.ws.send(
             json.dumps(
                 {

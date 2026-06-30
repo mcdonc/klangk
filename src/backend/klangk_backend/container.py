@@ -973,6 +973,15 @@ class ContainerRegistry:
         workspace_token = auth.create_workspace_token(workspace_id)
         await terminal.set_workspace_token(cid, workspace_token)
 
+        # Block until the entrypoint's one-time setup is done. ``podman
+        # start`` returns when the entrypoint has *begun*, not finished;
+        # the sentinel below is created only after the on-entrypoint hooks
+        # complete. Waiting here means every caller of start_container —
+        # terminals, exec, agent, health check — gets a genuine readiness
+        # guarantee regardless of shell, closing the race that previously
+        # only the in-bashrc gate covered (and only for bash).
+        await podman.wait_for_container_ready(cid)
+
         return cid
 
     @staticmethod

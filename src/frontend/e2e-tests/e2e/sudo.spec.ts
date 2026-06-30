@@ -24,7 +24,7 @@ async function execInContainer(
     ws.on("message", (raw: Buffer | string) => {
       const msg = JSON.parse(raw.toString());
 
-      if (msg.type === "workspace_ready" && !connected) {
+      if (msg.type === "container_ready" && !connected) {
         connected = true;
         ws.send(JSON.stringify({ cmd: "ui_ready" }));
         return;

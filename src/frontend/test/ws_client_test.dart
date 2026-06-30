@@ -512,7 +512,7 @@ void main() {
       // Simulate workspace connection
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
       expect(client.currentWorkspaceId, 'ws-1');
 
@@ -549,7 +549,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       // Consume error stream to prevent unhandled errors
@@ -575,7 +575,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       final errors = <String>[];
@@ -602,7 +602,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       // Disconnect
@@ -615,9 +615,9 @@ void main() {
       await Future.delayed(Duration.zero);
       expect(channels.length, 2);
 
-      // Backend responds with workspace_ready
+      // Backend responds with container_ready
       channels[1]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       expect(client.reconnecting, isFalse);
@@ -638,7 +638,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       client.disconnect();
@@ -660,7 +660,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       client.disconnectWorkspace();
@@ -682,7 +682,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       // First disconnect
@@ -723,7 +723,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       // First disconnect triggers reconnect cycle
@@ -759,7 +759,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       // Simulate both onDone and onError firing (race condition)
@@ -859,7 +859,7 @@ void main() {
       // Join a workspace so _pendingWorkspaceId is set on drop.
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       // First drop — triggers reconnect.
@@ -870,7 +870,7 @@ void main() {
       expect(channels.length, 2, reason: 'reconnect should open channel 2');
       expect(client.connected, isTrue);
 
-      // Drop channel 2 *before* workspace_ready arrives (simulates drop
+      // Drop channel 2 *before* container_ready arrives (simulates drop
       // during connectWorkspace).
       channels[1].serverClose();
       await Future.delayed(Duration.zero);
@@ -903,7 +903,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       // Server closes
@@ -931,7 +931,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       channels[0].serverClose();
@@ -959,7 +959,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       channels[0].serverClose();
@@ -980,7 +980,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       final errors = <String>[];
@@ -1007,7 +1007,7 @@ void main() {
       await client.connect();
       client.connectWorkspace('ws-1');
       channels[0]
-          .serverSend({'type': 'workspace_ready', 'workspaceId': 'ws-1'});
+          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
       await Future.delayed(Duration.zero);
 
       final errors = <String>[];
@@ -1159,12 +1159,12 @@ void main() {
       expect(msg.containsKey('rows'), isFalse);
     });
 
-    test('receives workspace_ready from server', () async {
+    test('receives container_ready from server', () async {
       bool notified = false;
       client.addListener(() => notified = true);
 
       channel.serverSend({
-        'type': 'workspace_ready',
+        'type': 'container_ready',
         'workspaceId': 'ws-42',
         'userId': 'user-42',
         'defaultCommand': 'pi',
@@ -1179,9 +1179,9 @@ void main() {
       expect(notified, isTrue);
     });
 
-    test('workspace_ready starts heartbeat timer', () async {
+    test('container_ready starts heartbeat timer', () async {
       channel.serverSend({
-        'type': 'workspace_ready',
+        'type': 'container_ready',
         'workspaceId': 'ws-hb',
       });
       await Future.delayed(Duration.zero);
@@ -1194,7 +1194,7 @@ void main() {
 
     test('disconnect stops heartbeat timer', () async {
       channel.serverSend({
-        'type': 'workspace_ready',
+        'type': 'container_ready',
         'workspaceId': 'ws-hb2',
       });
       await Future.delayed(Duration.zero);
@@ -1211,7 +1211,7 @@ void main() {
 
     test('disconnectWorkspace stops heartbeat timer', () async {
       channel.serverSend({
-        'type': 'workspace_ready',
+        'type': 'container_ready',
         'workspaceId': 'ws-hb3',
       });
       await Future.delayed(Duration.zero);

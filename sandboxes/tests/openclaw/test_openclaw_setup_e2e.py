@@ -283,14 +283,14 @@ async def _visitor_terminal_env(base_url, token, ws_id, var, timeout=25.0):
     async with websockets.connect(f"{ws_url}?token={token}", max_size=2**24) as ws:
         await ws.send(json.dumps({"cmd": "workspace_connect", "workspaceId": ws_id}))
         windows = []
-        # Drain until workspace_ready.
+        # Drain until container_ready.
         deadline = asyncio.get_event_loop().time() + timeout
         while True:
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
-                raise asyncio.TimeoutError("visitor: no workspace_ready")
+                raise asyncio.TimeoutError("visitor: no container_ready")
             msg = json.loads(await asyncio.wait_for(ws.recv(), remaining))
-            if msg.get("type") == "workspace_ready":
+            if msg.get("type") == "container_ready":
                 break
             if msg.get("type") == "error":
                 raise ConnectionError(f"visitor connect failed: {msg}")

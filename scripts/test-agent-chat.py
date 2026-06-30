@@ -85,7 +85,7 @@ async def main():
             json.dumps({"cmd": "workspace_connect", "workspaceId": ws["id"]})
         )
         resp = json.loads(await conn.recv())
-        assert resp.get("type") == "workspace_ready", f"Unexpected: {resp}"
+        assert resp.get("type") == "container_ready", f"Unexpected: {resp}"
         print("✓ Connected to workspace")
 
         # Signal UI ready so container starts

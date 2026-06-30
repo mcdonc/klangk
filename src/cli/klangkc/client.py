@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _RETRY_ATTEMPTS = 3
 _RETRY_BACKOFF = 2.0  # seconds, doubled each retry
 
-_WS_CONNECT_TIMEOUT = 60  # seconds to wait for workspace_ready
+_WS_CONNECT_TIMEOUT = 60  # seconds to wait for container_ready
 
 
 def _query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
@@ -69,18 +69,18 @@ def _query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
         agent.close()
 
 
-async def _wait_workspace_ready(
+async def _wait_container_ready(
     ws: websockets.ClientConnection,
     workspace_id: str,
     timeout: float = _WS_CONNECT_TIMEOUT,
 ) -> dict:
-    """Send workspace_connect and wait for workspace_ready, skipping broadcasts.
+    """Send workspace_connect and wait for container_ready, skipping broadcasts.
 
     The server may send broadcast messages (e.g. presence_list from eager
-    agent startup) before workspace_ready.  This drains them rather than
+    agent startup) before container_ready.  This drains them rather than
     treating the first non-ready message as an error.
 
-    Returns the workspace_ready payload.
+    Returns the container_ready payload.
     """
     await ws.send(
         json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})
@@ -89,10 +89,10 @@ async def _wait_workspace_ready(
     while True:
         remaining = deadline - asyncio.get_event_loop().time()
         if remaining <= 0:
-            raise asyncio.TimeoutError("Timed out waiting for workspace_ready")
+            raise asyncio.TimeoutError("Timed out waiting for container_ready")
         raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
         resp = json.loads(raw)
-        if resp.get("type") == "workspace_ready":
+        if resp.get("type") == "container_ready":
             return resp
         if resp.get("type") == "error":
             raise ConnectionError(f"Connection failed: {resp}")
@@ -726,7 +726,7 @@ async def _ws_shell(
         f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
         # 1. Connect to workspace
-        await _wait_workspace_ready(ws, workspace_id)
+        await _wait_container_ready(ws, workspace_id)
 
         # 2a. Start SSH agent forwarding if requested and available.
         ssh_agent_active = False
@@ -1441,7 +1441,7 @@ async def _ws_exec(
     async with websockets.connect(
         f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
-        await _wait_workspace_ready(ws, workspace_id)
+        await _wait_container_ready(ws, workspace_id)
         return await _exec_on_ws(
             ws, command, stdin=sys.stdin.buffer, stdout=sys.stdout.buffer
         )
@@ -1463,7 +1463,7 @@ async def _ws_exec_piped(
     async with websockets.connect(
         f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
-        await _wait_workspace_ready(ws, workspace_id)
+        await _wait_container_ready(ws, workspace_id)
         stdin_buf = io.BytesIO(stdin_data) if stdin_data else None
         stdout_buf = io.BytesIO()
         exit_code = await _exec_on_ws(

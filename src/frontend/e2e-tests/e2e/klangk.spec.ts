@@ -1702,7 +1702,7 @@ test.describe("Klangk E2E", () => {
         );
         page.on("websocket", (ws) => {
           ws.on("framereceived", (frame: { payload: string | Buffer }) => {
-            if (frame.payload.toString().includes("workspace_ready")) {
+            if (frame.payload.toString().includes("container_ready")) {
               clearTimeout(timeout);
               resolve();
             }

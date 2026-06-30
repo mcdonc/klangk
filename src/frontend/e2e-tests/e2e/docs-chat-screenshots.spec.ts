@@ -74,7 +74,7 @@ async function sendChatAndWait(
     let ready = false;
     ws.on("message", (raw: Buffer | string) => {
       const msg = JSON.parse(raw.toString());
-      if (msg.type === "workspace_ready") {
+      if (msg.type === "container_ready") {
         ws.send(JSON.stringify({ cmd: "ui_ready" }));
       }
       if (msg.type === "event" && msg.event?.name === "container_ready") {

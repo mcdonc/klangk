@@ -22,11 +22,11 @@ done
 # Create the workspace token directory.
 mkdir -p /tmp/klangk
 
-# Signal that setup is complete. Terminal sessions (podman exec) source
-# /etc/bash.bashrc which waits for this file before showing a prompt.
-# Per-user Pi agent config is handled by klangk-setup-clankers (called from
-# bash.bashrc on each login).
-# /tmp is a tmpfs, so .klangk-ready is cleared on every container start.
+# Signal that the entrypoint's one-time setup is done. The backend polls
+# this sentinel (podman.wait_for_container_ready) before reporting the
+# container as ready, so every consumer — terminals, exec, agent, health
+# check — gets the guarantee regardless of shell. /tmp is a tmpfs, so the
+# sentinel is cleared on every container start and recreated here.
 touch /tmp/.klangk-ready
 
 # Keep the container alive. Terminal sessions are started via podman exec.

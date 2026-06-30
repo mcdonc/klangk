@@ -312,7 +312,7 @@ class WsClient extends ChangeNotifier {
   /// branches live in named `_on…` methods so the `notifyListeners()`
   /// calls and mutations stay auditable. See #952.
   late final Map<String, void Function(Map<String, dynamic>)> _handlers = {
-    'workspace_ready': _onWorkspaceReady,
+    'container_ready': _onContainerReady,
     'terminal_output': (json) =>
         _terminalOutputController.add(json['data'] as String? ?? ''),
     'error': (json) =>
@@ -402,7 +402,7 @@ class WsClient extends ChangeNotifier {
     );
   }
 
-  void _onWorkspaceReady(Map<String, dynamic> json) {
+  void _onContainerReady(Map<String, dynamic> json) {
     _currentWorkspaceId = json['workspaceId'] as String?;
     _currentUserId = json['userId'] as String?;
     _defaultCommand = json['defaultCommand'] as String?;
