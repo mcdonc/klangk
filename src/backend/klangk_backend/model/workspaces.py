@@ -11,6 +11,36 @@ from .users import get_user_group_ids
 # Must match the DB default and container.DEFAULT_PORTS_PER_WORKSPACE.
 _DEFAULT_PORTS_PER_WORKSPACE = 5
 
+# Per-workspace role groups created for every workspace. The key is the
+# group-name suffix appended to ``<suffix>-<workspace_id>``; the value is the
+# ordered list of permissions granted to that group on ``/workspaces/{id}``.
+# Seeded atomically with the row in :func:`create_workspace_with_acl` so a
+# failure mid-seed can never leave orphaned ACEs/groups (#128).
+_ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
+    "owners": ["*"],
+    "coders": [
+        "terminal",
+        "code-in-isolation",
+        "spectate-on-shared-terminals",
+        "files",
+        "chat",
+    ],
+    "collaborators": [
+        "terminal",
+        "code-in-isolation",
+        "code-in-shared-terminals",
+        "spectate-on-shared-terminals",
+        "share-terminals",
+        "files",
+        "chat",
+    ],
+    "spectators": [
+        "terminal",
+        "spectate-on-shared-terminals",
+        "chat",
+    ],
+}
+
 # setup_state lifecycle values (#1033). A workspace always holds
 # exactly one. Descriptive, not proscriptive: created in whichever
 # state matches reality.
@@ -20,6 +50,158 @@ SETUP_STATE_FAILED = "failed"
 SETUP_STATES = frozenset(
     {SETUP_STATE_PENDING, SETUP_STATE_COMPLETE, SETUP_STATE_FAILED}
 )
+
+
+async def _insert_workspace_row(
+    db,
+    user_id: str,
+    name: str,
+    image: str | None,
+    default_command: str | None,
+    auto_start: bool,
+    mounts: list[str] | None,
+    env: dict[str, str] | None,
+    setup_state: str,
+    health_check: str | None,
+) -> dict:
+    """INSERT a workspace row on ``db`` and return the new workspace dict.
+
+    Runs on the caller's connection so it can participate in a larger
+    transaction (see :func:`create_workspace_with_acl`). Does not commit.
+    """
+    workspace_id = str(uuid.uuid4())
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    mounts_json = json.dumps(mounts) if mounts else None
+    env_json = json.dumps(env) if env else None
+    await db.execute(
+        "INSERT INTO workspaces"
+        " (id, user_id, name, image, default_command, auto_start,"
+        " setup_state, health_check, mounts, env, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            workspace_id,
+            user_id,
+            name,
+            image,
+            default_command,
+            1 if auto_start else 0,
+            setup_state,
+            health_check,
+            mounts_json,
+            env_json,
+            created_at,
+        ),
+    )
+    return {
+        "id": workspace_id,
+        "user_id": user_id,
+        "name": name,
+        "image": image,
+        "default_command": default_command,
+        "auto_start": auto_start,
+        "setup_state": setup_state,
+        "health_check": health_check,
+        "mounts": mounts,
+        "env": env,
+        "num_ports": _DEFAULT_PORTS_PER_WORKSPACE,
+        "created_at": created_at,
+    }
+
+
+async def _seed_workspace_acl(db, ws: dict, user_id: str) -> None:
+    """Seed the owner ACE and per-workspace role groups on ``db``.
+
+    Writes the owner ``Allow`` ACE at position 0, then creates the four
+    role groups (``owners``/``coders``/``collaborators``/``spectators``)
+    with their permission ACEs at incrementing positions, and adds the
+    creator to the ``owners`` group. Runs on the caller's connection so
+    it commits/rolls back with the surrounding transaction. Must stay
+    in sync with :func:`workspaces.delete_workspace`'s teardown.
+    """
+    resource = f"/workspaces/{ws['id']}"
+    await db.execute(
+        "INSERT INTO acl_entries"
+        " (resource, position, action, principal_type,"
+        " user_id, group_id, system_principal, permission)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (resource, 0, ACTION_ALLOW, PRINCIPAL_USER, user_id, None, None, "*"),
+    )
+    pos = 1
+    for suffix, perms in _ROLE_GROUP_PERMISSIONS.items():
+        group_name = f"{suffix}-{ws['id']}"
+        group_id = str(uuid.uuid4())
+        await db.execute(
+            "INSERT INTO groups (id, name, description) VALUES (?, ?, ?)",
+            (
+                group_id,
+                group_name,
+                f"{group_name} for workspace {ws['name']}",
+            ),
+        )
+        for perm in perms:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                " user_id, group_id, system_principal, permission)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    resource,
+                    pos,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    None,
+                    group_id,
+                    None,
+                    perm,
+                ),
+            )
+            pos += 1
+        if suffix == "owners":
+            await db.execute(
+                "INSERT OR IGNORE INTO user_groups"
+                " (user_id, group_id, source) VALUES (?, ?, ?)",
+                (user_id, group_id, "manual"),
+            )
+
+
+async def create_workspace_with_acl(
+    user_id: str,
+    name: str,
+    image: str | None = None,
+    default_command: str | None = None,
+    auto_start: bool = False,
+    mounts: list[str] | None = None,
+    env: dict[str, str] | None = None,
+    setup_state: str = SETUP_STATE_COMPLETE,
+    health_check: str | None = None,
+) -> dict:
+    """Create a workspace row AND seed its owner ACE + role groups.
+
+    The row insert and the ACL/group seeding run in a **single
+    transaction**, so any failure rolls the whole thing back — no
+    orphaned row, ACEs, or role groups (#128). Directory creation and
+    port allocation happen later in the service layer
+    (:func:`workspaces.create_workspace`); port-allocation failure is
+    cleaned up by :func:`delete_workspace`, which removes everything
+    this function wrote.
+    """
+    if setup_state not in SETUP_STATES:
+        raise ValueError(f"Invalid setup_state: {setup_state!r}")
+    async with transaction() as db:
+        ws = await _insert_workspace_row(
+            db,
+            user_id,
+            name,
+            image=image,
+            default_command=default_command,
+            auto_start=auto_start,
+            mounts=mounts,
+            env=env,
+            setup_state=setup_state,
+            health_check=health_check,
+        )
+        await _seed_workspace_acl(db, ws, user_id)
+        return ws
 
 
 async def create_workspace(
@@ -33,46 +215,28 @@ async def create_workspace(
     setup_state: str = SETUP_STATE_COMPLETE,
     health_check: str | None = None,
 ) -> dict:
+    """Insert a workspace row only (no ACL seeding).
+
+    Prefer :func:`create_workspace_with_acl` for normal workspace
+    creation — it seeds the owner ACE and role groups atomically and is
+    what the service layer uses. This row-only primitive is kept for
+    callers that manage ACLs separately.
+    """
     if setup_state not in SETUP_STATES:
         raise ValueError(f"Invalid setup_state: {setup_state!r}")
     async with transaction() as db:
-        workspace_id = str(uuid.uuid4())
-        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        mounts_json = json.dumps(mounts) if mounts else None
-        env_json = json.dumps(env) if env else None
-        await db.execute(
-            "INSERT INTO workspaces"
-            " (id, user_id, name, image, default_command, auto_start,"
-            " setup_state, health_check, mounts, env, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                workspace_id,
-                user_id,
-                name,
-                image,
-                default_command,
-                1 if auto_start else 0,
-                setup_state,
-                health_check,
-                mounts_json,
-                env_json,
-                created_at,
-            ),
+        return await _insert_workspace_row(
+            db,
+            user_id,
+            name,
+            image=image,
+            default_command=default_command,
+            auto_start=auto_start,
+            mounts=mounts,
+            env=env,
+            setup_state=setup_state,
+            health_check=health_check,
         )
-        return {
-            "id": workspace_id,
-            "user_id": user_id,
-            "name": name,
-            "image": image,
-            "default_command": default_command,
-            "auto_start": auto_start,
-            "setup_state": setup_state,
-            "health_check": health_check,
-            "mounts": mounts,
-            "env": env,
-            "num_ports": _DEFAULT_PORTS_PER_WORKSPACE,
-            "created_at": created_at,
-        }
 
 
 # Whitelisted sort columns for workspace list queries. Values are the

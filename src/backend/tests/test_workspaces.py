@@ -40,9 +40,17 @@ class TestCreateWorkspace:
 
     async def test_invalid_setup_state_rejected(self, user):
         """Invalid setup_state raises ValueError (#1033)."""
+        from klangk_backend import model
+
+        # Service layer (goes through create_workspace_with_acl).
         with pytest.raises(ValueError, match="Invalid setup_state"):
             await ws_mod.create_workspace(
                 user["id"], "bad-state", setup_state="bogus"
+            )
+        # Row-only model primitive validates the same way.
+        with pytest.raises(ValueError, match="Invalid setup_state"):
+            await model.create_workspace(
+                user["id"], "bad-row", setup_state="bogus"
             )
 
     async def test_setup_state_defaults_to_complete(self, user):
@@ -90,6 +98,74 @@ async def test_update_workspace_sets_setup_state(user):
     await update_workspace(ws["id"], ws["user_id"], setup_state="complete")
     refreshed = await get_workspace(ws["id"])
     assert refreshed["setup_state"] == "complete"
+
+
+async def test_create_workspace_with_acl_seeds_owner_and_role_groups(user):
+    """create_workspace_with_acl seeds the owner ACE + 4 role groups (#128)."""
+    from klangk_backend import model
+
+    ws = await model.create_workspace_with_acl(user["id"], "seeded")
+    resource = f"/workspaces/{ws['id']}"
+
+    # Owner ACE at position 0 grants the creator everything.
+    entries = await model.get_acl_entries(resource)
+    owner_aces = [
+        e
+        for e in entries
+        if e["principal_type"] == model.PRINCIPAL_USER
+        and e["user_id"] == user["id"]
+    ]
+    assert len(owner_aces) == 1
+    assert owner_aces[0]["position"] == 0
+    assert owner_aces[0]["permission"] == "*"
+
+    # All four role groups exist and the creator is in owners.
+    for suffix in ["owners", "coders", "collaborators", "spectators"]:
+        group = await model.get_group_by_name(f"{suffix}-{ws['id']}")
+        assert group is not None, f"expected {suffix} group"
+    owner_group = await model.get_group_by_name(f"owners-{ws['id']}")
+    assert owner_group["id"] in await model.get_user_group_ids(user["id"])
+
+    # Position counter is global across all groups (no collisions).
+    positions = sorted(e["position"] for e in entries)
+    assert positions == list(range(len(entries)))
+    # 1 owner ACE + 1 + 5 + 7 + 3 group ACEs.
+    assert len(entries) == 1 + 1 + 5 + 7 + 3
+
+
+async def test_create_workspace_with_acl_rollback_on_seeding_failure(user):
+    """If ACL seeding fails, the row and any partial ACEs/groups are rolled
+    back — nothing is orphaned (#128)."""
+    from klangk_backend import model
+    from klangk_backend.model import workspaces as model_ws
+
+    captured: dict = {}
+
+    async def _boom(db, ws, user_id):
+        captured["id"] = ws["id"]
+        raise RuntimeError("seeding boom")
+
+    with patch.object(
+        model_ws,
+        "_seed_workspace_acl",
+        new_callable=AsyncMock,
+        side_effect=_boom,
+    ):
+        with pytest.raises(RuntimeError, match="seeding boom"):
+            await model.create_workspace_with_acl(user["id"], "orphan-test")
+
+    ws_id = captured["id"]
+    resource = f"/workspaces/{ws_id}"
+
+    # No workspace row, no ACL entries, no role groups left behind.
+    assert await model.get_workspace(ws_id) is None
+    assert await model.get_acl_entries(resource) == []
+    for suffix in ["owners", "coders", "collaborators", "spectators"]:
+        assert await model.get_group_by_name(f"{suffix}-{ws_id}") is None
+
+    # Name is reusable — proves full cleanup of the row.
+    ws = await model.create_workspace_with_acl(user["id"], "orphan-test")
+    assert ws["name"] == "orphan-test"
 
 
 class TestListWorkspaces:

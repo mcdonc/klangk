@@ -144,20 +144,13 @@ async def _conn_in_workspace(
 
 
 async def _create_workspace_with_acl(user_id, name, **kwargs):
-    """Create a workspace and grant the owner full ACL access."""
-    from klangk_backend import model
-    from klangk_backend.model import ACTION_ALLOW, PRINCIPAL_USER
+    """Create a workspace whose owner has full access.
 
-    workspace = await ws_mod.create_workspace(user_id, name, **kwargs)
-    await model.add_acl_entry(
-        f"/workspaces/{workspace['id']}",
-        0,
-        ACTION_ALLOW,
-        "*",
-        PRINCIPAL_USER,
-        user_id=user_id,
-    )
-    return workspace
+    The service-layer ``create_workspace`` now seeds the owner ACE and role
+    groups atomically (see model.create_workspace_with_acl, #128), so this
+    is a thin alias kept for call-site readability.
+    """
+    return await ws_mod.create_workspace(user_id, name, **kwargs)
 
 
 # --- SafeWebSocket ---
@@ -8298,7 +8291,7 @@ class TestPresence:
         )
         await model.add_acl_entry(
             f"/workspaces/{workspace['id']}",
-            1,
+            100,
             model.ACTION_ALLOW,
             "*",
             model.PRINCIPAL_USER,
@@ -8409,7 +8402,7 @@ class TestPresence:
         other = await model.create_user("flap@test.com", "hash", verified=True)
         await model.add_acl_entry(
             f"/workspaces/{workspace['id']}",
-            1,
+            100,
             model.ACTION_ALLOW,
             "*",
             model.PRINCIPAL_USER,

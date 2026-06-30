@@ -131,59 +131,6 @@ class CreateWorkspaceRequest(BaseModel):
     health_check: str | None = None
 
 
-async def _grant_owner_and_create_role_groups(ws: dict, user_id: str) -> None:
-    """Grant owner ACL and create the four role groups for a workspace.
-
-    Used by create_workspace, duplicate_workspace, and import_workspace.
-    """
-    resource = f"/workspaces/{ws['id']}"
-    await model.add_acl_entry(
-        resource, 0, ACTION_ALLOW, "*", PRINCIPAL_USER, user_id=user_id
-    )
-
-    role_groups = {
-        f"owners-{ws['id']}": ["*"],
-        f"coders-{ws['id']}": [
-            "terminal",
-            "code-in-isolation",
-            "spectate-on-shared-terminals",
-            "files",
-            "chat",
-        ],
-        f"collaborators-{ws['id']}": [
-            "terminal",
-            "code-in-isolation",
-            "code-in-shared-terminals",
-            "spectate-on-shared-terminals",
-            "share-terminals",
-            "files",
-            "chat",
-        ],
-        f"spectators-{ws['id']}": [
-            "terminal",
-            "spectate-on-shared-terminals",
-            "chat",
-        ],
-    }
-    pos = 1
-    for group_name, perms in role_groups.items():
-        group = await model.create_group(
-            group_name, description=f"{group_name} for workspace {ws['name']}"
-        )
-        for perm in perms:
-            await model.add_acl_entry(
-                resource,
-                pos,
-                ACTION_ALLOW,
-                perm,
-                PRINCIPAL_GROUP,
-                group_id=group["id"],
-            )
-            pos += 1
-        if group_name.startswith("owners-"):
-            await model.add_user_to_group(user_id, group["id"])
-
-
 @router.post("/workspaces")
 async def create_workspace(
     body: CreateWorkspaceRequest, user: dict = Depends(auth.get_current_user)
@@ -223,7 +170,6 @@ async def create_workspace(
         )
     except OSError as e:  # pragma: no cover
         raise HTTPException(status_code=400, detail=str(e))
-    await _grant_owner_and_create_role_groups(ws, user["id"])
 
     # Eagerly start the container so it's running by the time the
     # user connects.  Errors are logged but don't fail the create.
@@ -337,7 +283,6 @@ async def duplicate_workspace(
             status_code=409,
             detail=f"A workspace named {body.name!r} already exists",
         )
-    await _grant_owner_and_create_role_groups(ws, user["id"])
     return ws
 
 
@@ -697,8 +642,6 @@ async def import_workspace(
                 status_code=409,
                 detail=f"A workspace named {meta['name']!r} already exists",
             )
-
-        await _grant_owner_and_create_role_groups(ws, user["id"])
 
         try:
             await _extract_home_directory(archive_path, user["id"], ws["id"])
