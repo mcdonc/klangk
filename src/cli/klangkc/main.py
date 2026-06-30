@@ -1108,7 +1108,7 @@ def monitor(
     server_url = _server_url().rstrip("/")
     ws_url = _build_ws_url(server_url)
     token = _state().get_token(server_url)
-    if not token:
+    if not token:  # pragma: no cover  # _require_auth already guards this
         _err.print("[red]Not logged in. Run `klangkc login` first.[/red]")
         raise typer.Exit(code=1)
     effective_max = 0 if no_reconnect else max_reconnects

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 import typer
+import websockets
 
 from klangkc.client import WorkspaceNotFoundError
 from klangkc.config import (
@@ -1431,6 +1432,33 @@ class TestMainCLI:
         assert body["default_command"] == "pi"
         assert "image" not in body  # not provided, not sent
 
+    def test_edit_with_health_check_flag(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            image="klangk",
+            default_command="klangk-pi",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--health-check", "curl -sf http://x/h"],
+            )
+            assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["health_check"] == "curl -sf http://x/h"
+
     def test_edit_clear_command(self, logged_in_cfg, monkeypatch):
         from klangkc import main
 
@@ -1486,6 +1514,36 @@ class TestMainCLI:
         assert "name" not in body  # kept current
         assert "image" not in body  # kept current
         assert body["default_command"] == "pi"
+
+    def test_edit_interactive_health_check(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            image="klangk",
+            default_command="klangk-pi",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        # keep name/image/command, set health check, skip mounts/env
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=["", "", "", "curl -sf http://x/h", "", ""],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["health_check"] == "curl -sf http://x/h"
+        assert "default_command" not in body  # kept current
 
     def test_edit_interactive_change_all(self, logged_in_cfg, monkeypatch):
         from klangkc import main
@@ -3265,3 +3323,63 @@ class TestSandboxSetupOnly:
             )
         assert result.exit_code == 1
         assert "Bind mount source does not exist" in result.output
+
+
+class TestMonitorCommand:
+    def test_monitor_invokes_run_when_logged_in(self, logged_in_cfg):
+        from klangkc import main
+
+        mock_run = AsyncMock(return_value=None)
+        with patch.object(main, "_monitor_run", new=mock_run):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["monitor"])
+            assert result.exit_code == 0
+
+        assert mock_run.await_count == 1
+        args, kwargs = mock_run.call_args
+        assert args[0] == "http://localhost:8995"  # server_url
+        assert args[1] == "ws://localhost:8995/ws"  # ws_url
+        assert args[2] == "test-token"  # token
+        assert kwargs["max_reconnects"] != 0  # reconnects by default
+
+    def test_monitor_no_reconnect_passes_zero(self, logged_in_cfg):
+        from klangkc import main
+
+        mock_run = AsyncMock(return_value=None)
+        with patch.object(main, "_monitor_run", new=mock_run):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["monitor", "--no-reconnect"])
+            assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["max_reconnects"] == 0
+
+    def test_monitor_invalid_status_exits(self, logged_in_cfg):
+        from klangkc import main
+
+        async def _raise(*a, **kw):
+            raise websockets.InvalidStatus(MagicMock(status_code=4001))
+
+        with patch.object(main, "_monitor_run", new=_raise):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["monitor"])
+            assert result.exit_code == 1
+            assert "Connection rejected" in result.output
+
+    def test_monitor_keyboard_interrupt_stops_cleanly(self, logged_in_cfg):
+        from klangkc import main
+
+        async def _kb(*a, **kw):
+            raise KeyboardInterrupt
+
+        with patch.object(main, "_monitor_run", new=_kb):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["monitor"])
+            assert result.exit_code == 0
+            assert "Stopped" in result.output

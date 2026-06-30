@@ -2299,6 +2299,22 @@ class TestCreateWorkspaceClient:
         body = mock_post.call_args.kwargs.get("json")
         assert body["default_command"] == "openclaw gateway"
 
+    def test_create_workspace_with_health_check(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "ws-hc",
+            "name": "hc-ws",
+            "created_at": "2025-01-01",
+        }
+        with patch.object(client, "post", return_value=mock_resp) as mock_post:
+            client.create_workspace(
+                "hc-ws", health_check="curl -sf http://localhost:8080/h"
+            )
+        body = mock_post.call_args.kwargs.get("json")
+        assert body["health_check"] == "curl -sf http://localhost:8080/h"
+
     def test_create_workspace_with_auto_start(self):
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock()
@@ -2852,3 +2868,82 @@ class TestMonitor:
         for attempt in range(1, 20):
             delay = _monitor_backoff(attempt, max_delay=30.0)
             assert 0 < delay <= 30.0
+
+    @pytest.mark.asyncio
+    async def test_connection_skips_invalid_json(self, capsys):
+        # Malformed frames are ignored rather than crashing the monitor.
+        from klangkc.main import _monitor_connection
+
+        messages = [
+            "this is not json",
+            json.dumps(
+                {
+                    "type": "service_health",
+                    "workspace_id": "w1",
+                    "healthy": True,
+                }
+            ),
+        ]
+        conn = _FakeMonitorConn(messages)
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            await _monitor_connection(
+                "ws://x/ws", "tok", 1024, command=[], types=[], workspaces=[]
+            )
+        out = capsys.readouterr().out.strip().splitlines()
+        assert len(out) == 1
+        assert json.loads(out[0])["type"] == "service_health"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_threaded_delegates(self):
+        # _refresh_token_threaded runs the sync refresh_token off-loop
+        # and returns whatever it yields.
+        from klangkc import main as main_mod
+
+        with patch.object(
+            main_mod, "refresh_token", return_value="FRESH"
+        ) as mock_refresh:
+            result = await main_mod._refresh_token_threaded("http://x", "OLD")
+        assert result == "FRESH"
+        mock_refresh.assert_called_once_with("http://x", "OLD")
+
+    @pytest.mark.asyncio
+    async def test_invalid_status_4001_triggers_refresh(self):
+        # An HTTP 4001 rejection (InvalidStatus) is treated as auth-related
+        # and triggers a token refresh before reconnecting.
+        from klangkc import main as main_mod
+
+        seen_tokens = []
+
+        async def fake_conn(ws_url, token, *args, **kwargs):
+            seen_tokens.append(token)
+            raise websockets.InvalidStatus(MagicMock(status_code=4001))
+
+        async def fake_refresh(server_url, token):
+            return "NEW_TOKEN"
+
+        async def fake_sleep(delay):
+            pass
+
+        with (
+            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod, "_refresh_token_threaded", fake_refresh),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+        ):
+            with pytest.raises(typer.Exit):
+                await main_mod._monitor_run(
+                    "http://x",
+                    "ws://x/ws",
+                    "OLD_TOKEN",
+                    1024,
+                    command=[],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=1,
+                    max_delay=1.0,
+                )
+        assert seen_tokens[0] == "OLD_TOKEN"
+        assert seen_tokens[1] == "NEW_TOKEN"

@@ -963,7 +963,7 @@ void main() {
       expect(
           find.descendant(
               of: find.byType(AlertDialog), matching: find.byType(TextField)),
-          findsNWidgets(4));
+          findsNWidgets(5));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -2096,6 +2096,7 @@ void main() {
                   matching: find.byType(TextField))
               .at(3),
           'FOO=bar');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.text('FOO=bar'), findsOneWidget);
@@ -2114,6 +2115,7 @@ void main() {
 
       // Remove the first env var via X button
       // close icons: mount has none, env has 2 (FOO=bar, X=1)
+      await tester.ensureVisible(find.byIcon(Icons.close).first);
       await tester.tap(find.byIcon(Icons.close).first);
       await tester.pumpAndSettle();
       expect(find.text('FOO=bar'), findsNothing);

@@ -164,7 +164,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).at(2), // mounts add-row input
+        find.byType(TextField).at(3), // mounts add-row input
         '/etc:/etc',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -179,7 +179,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).at(2),
+        find.byType(TextField).at(3),
         'no-colon',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);

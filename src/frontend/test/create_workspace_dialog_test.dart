@@ -83,7 +83,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(4));
+      expect(find.byType(TextField), findsNWidgets(5));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -210,6 +210,7 @@ void main() {
 
       // 4th TextField is env input
       await tester.enterText(find.byType(TextField).at(3), 'FOO=bar');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
 
@@ -225,6 +226,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       await tester.enterText(find.byType(TextField).at(3), 'NOEQUALS');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
 
@@ -240,6 +242,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       await tester.enterText(find.byType(TextField).at(3), '=value');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
 
@@ -255,6 +258,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       await tester.enterText(find.byType(TextField).at(3), 'MYKEY=val');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.widgetWithText(SelectableText, 'MYKEY=val'), findsOneWidget);
@@ -366,12 +370,14 @@ void main() {
 
       // Invalid env
       await tester.enterText(envInput, 'bad');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.text('Expected KEY=VALUE format'), findsOneWidget);
 
       // Valid env clears error
       await tester.enterText(envInput, 'OK=yes');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.text('Expected KEY=VALUE format'), findsNothing);

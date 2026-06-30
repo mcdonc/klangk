@@ -132,6 +132,27 @@ class TestActivityTracking:
     def test_get_state_returns_none_for_unknown(self):
         assert container.registry.get_state("nonexistent") is None
 
+    def test_track_activity_stores_health_metadata(self):
+        # health_check, owner_id, and setup_state are cached on the
+        # ContainerState for the health monitor to read on each poll.
+        container.registry.track_activity(
+            "cid-hm",
+            "ws-hm",
+            health_check="curl -sf http://localhost:8080/health",
+            owner_id="uid-owner",
+            setup_state="complete",
+        )
+        try:
+            state = container.registry.states["ws-hm"]
+            assert state.health_check == (
+                "curl -sf http://localhost:8080/health"
+            )
+            assert state.owner_id == "uid-owner"
+            assert state.setup_state == "complete"
+        finally:
+            container.registry.states.pop("ws-hm", None)
+            container.registry._cid_to_wsid.pop("cid-hm", None)
+
 
 def _noop_callback(ws):
     pass
@@ -1488,6 +1509,19 @@ class TestShutdown:
         assert task.cancelled()
         assert container.registry.cleanup_task is None
 
+    async def test_shutdown_cancels_health_task(self):
+        # A running health loop task is cancelled on shutdown.
+        async def fake_health():
+            await asyncio.sleep(999)
+
+        task = asyncio.create_task(fake_health())
+        container.registry.health.health_task = task
+
+        with patch_podman():
+            await container.registry.shutdown()
+        assert task.cancelled()
+        assert container.registry.health.health_task is None
+
     async def test_shutdown_handles_podman_error(self):
         with patch_podman(
             list_containers=AsyncMock(
@@ -2034,6 +2068,19 @@ class TestHealthMonitorRunOne:
         monitor = container.registry.health
         st = _health_state(owner_id=None)
         with patch.object(podman, "exec_container") as exec_mock:
+            assert await monitor._run_one(st) == "unhealthy"
+        exec_mock.assert_not_called()
+
+    async def test_no_handle_is_unhealthy(self):
+        # Owner exists in the state but has no handle resolved.
+        monitor = container.registry.health
+        st = _health_state(owner_id="uid-owner")
+        with (
+            patch.object(
+                model, "get_user_handle", AsyncMock(return_value=None)
+            ),
+            patch.object(podman, "exec_container") as exec_mock,
+        ):
             assert await monitor._run_one(st) == "unhealthy"
         exec_mock.assert_not_called()
 

@@ -194,6 +194,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                 ),
                 onSubmitted: (_) => _submit(),
               ),
+              ..._buildMountsEditor(),
+              ..._buildEnvVarsEditor(),
               const SizedBox(height: 16),
               TextField(
                 controller: _healthCheckController,
@@ -207,8 +209,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                 ),
                 onSubmitted: (_) => _submit(),
               ),
-              ..._buildMountsEditor(),
-              ..._buildEnvVarsEditor(),
             ],
           ),
         ),
@@ -230,35 +230,35 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
       Text('Mounts', style: _labelStyle),
       const SizedBox(height: 8),
       ..._mounts.asMap().entries.map(
-        (e) => Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: SelectableText(
-                  e.value,
-                  style: const TextStyle(fontSize: 13),
-                ),
+            (e) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      e.value,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 16),
+                    tooltip: 'Copy',
+                    onPressed: () =>
+                        Clipboard.setData(ClipboardData(text: e.value)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => setState(() => _mounts.removeAt(e.key)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
               ),
-              IconButton(
-                icon: const Icon(Icons.copy, size: 16),
-                tooltip: 'Copy',
-                onPressed: () =>
-                    Clipboard.setData(ClipboardData(text: e.value)),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: const Icon(Icons.close, size: 18),
-                onPressed: () => setState(() => _mounts.removeAt(e.key)),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
       if (_mountError != null) ...[
         Text(
           _mountError!,
@@ -296,36 +296,37 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
       Text('Environment Variables', style: _labelStyle),
       const SizedBox(height: 8),
       ..._envVars.entries.toList().asMap().entries.map(
-        (e) => Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: SelectableText(
-                  '${e.value.key}=${e.value.value}',
-                  style: const TextStyle(fontSize: 13),
-                ),
+            (e) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      '${e.value.key}=${e.value.value}',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 16),
+                    tooltip: 'Copy',
+                    onPressed: () => Clipboard.setData(
+                      ClipboardData(text: '${e.value.key}=${e.value.value}'),
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () =>
+                        setState(() => _envVars.remove(e.value.key)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
               ),
-              IconButton(
-                icon: const Icon(Icons.copy, size: 16),
-                tooltip: 'Copy',
-                onPressed: () => Clipboard.setData(
-                  ClipboardData(text: '${e.value.key}=${e.value.value}'),
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: const Icon(Icons.close, size: 18),
-                onPressed: () => setState(() => _envVars.remove(e.value.key)),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
       if (_envError != null) ...[
         Text(
           _envError!,
