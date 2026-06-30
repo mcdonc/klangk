@@ -92,5 +92,4 @@ These plugins ship with klangk but are **not** included in the default
 | ------------- | ---------------------------------------------------------------------------------- |
 | `claude-code` | Installs Claude Code CLI agent at image build time                                 |
 | `bobdobbs`    | Bob Dobbs overlay via Pi                                                           |
-| `hermes`      | Hermes agent — NousResearch's terminal-based assistant                             |
 | `herdr`       | Installs herdr (terminal-based agent runtime) and sets up its per-shell API socket |

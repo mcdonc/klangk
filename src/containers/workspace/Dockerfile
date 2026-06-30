@@ -73,12 +73,11 @@ COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 
 # Run plugin on-image-build hooks (alphabetical by plugin name).
-# These run as root at image build time for system-level config.
-# /tmp/.klangk-image-build tells bash.bashrc to bail out early so that any
-# `bash -i` spawned by plugin installers doesn't run user-session setup.
-# Removed after hooks finish so it doesn't persist into the final image.
-RUN touch /tmp/.klangk-image-build \
-    && for f in /opt/klangk/plugins/*/on-image-build.sh; do \
+# These run as root at image build time for system-level config. No klangk
+# plugin installer spawns an interactive `bash -i` (hermes, the only one that
+# did, is now a runtime sandbox -- #1109), so bash.bashrc's body never runs
+# during image build and no build-time bailout is needed.
+RUN for f in /opt/klangk/plugins/*/on-image-build.sh; do \
       [ -x "$f" ] || continue; \
       plugin=$(basename "$(dirname "$f")"); \
       label=" $plugin (on-image-build) "; \
@@ -87,7 +86,7 @@ RUN touch /tmp/.klangk-image-build \
       printf '\033[33m%s%s%s\033[0m\n' "$line" "$label" "$line"; \
       "$f"; \
       printf '\033[33m%s\033[0m\n' "$(printf '%*s' 60 '' | tr ' ' '-')"; \
-    done; rm -f /tmp/.klangk-image-build; true
+    done; true
 
 # Fix non-root group ownership that causes crun fchownat errors with
 # --userns=keep-id. crun cannot remap groups like utmp, shadow, adm, ssh

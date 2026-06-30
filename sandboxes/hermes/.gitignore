@@ -1,0 +1,11 @@
+# Hermes runtime install artifacts (written to the mount by setup.sh).
+# These are gitignored, never committed.
+hermes-agent/
+node/
+bin/
+.env
+config.yaml
+gateway.pid
+gateway.lock
+gateway_state.json
+logs/

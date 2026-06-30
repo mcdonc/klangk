@@ -15,7 +15,9 @@ concurrency:
 jobs:
   test-sandbox-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # openclaw + hermes both do real installs (npm/uv + git clone) that take
+    # several minutes each; they run sequentially in one job.
+    timeout-minutes: 60
     env:
       KLANGK_LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       KLANGK_LLM_BASE_URL: https://ollama.com/v1
