@@ -31,8 +31,7 @@ trivy-host --severity CRITICAL    # critical only
 Most HIGH/CRITICAL findings in the workspace image have no fixed Debian/Node
 package available yet (Trivy status `affected` / `fix_deferred`). These can't
 be resolved by an upgrade until upstream ships a patched package, so they are
-tracked for awareness in [issue #570](https://github.com/mcdonc/klangk/issues/570)
-and re-scanned periodically.
+tracked for awareness and re-scanned periodically.
 
 To render a focused report that separates **upgradeable** findings from the
 **no upstream fix yet** set:

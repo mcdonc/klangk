@@ -1372,7 +1372,7 @@ The `health` field is the check status (`"healthy"`, `"unhealthy"`, or
 `null` when no check is configured or no container is running). When
 unhealthy, `health_message` carries a bounded tail of the check's
 stderr/stdout explaining _why_ it failed (`null` otherwise) — so a
-failing check isn't a black box (#1088).
+failing check isn't a black box.
 
 ---
 
