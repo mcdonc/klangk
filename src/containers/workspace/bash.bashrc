@@ -14,11 +14,6 @@
 # exits early here.
 [ -f /tmp/.klangk-image-build ] && return 0
 
-# Keep herdr's API socket on tmpfs — virtiofs (macOS) rejects chmod on sockets.
-# Per-user with random suffix to prevent predictable-path attacks in /tmp.
-_herdr_dir=$(mktemp -d "/tmp/herdr-${KLANGK_USER_ID:-default}-XXXXXXXX")
-export HERDR_SOCKET_PATH="$_herdr_dir/herdr.sock"
-
 # Change to the user's home directory (podman exec -w can't use symlinks
 # without resolving them, so we start in /home and cd here instead).
 cd "$HOME" 2>/dev/null
