@@ -2178,6 +2178,7 @@ class TestMainCLI:
     def test_exec_runs_command(self, logged_in_cfg, monkeypatch):
         from klangkc import main
         from klangkc.client import Workspace
+        from typer.testing import CliRunner
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2187,16 +2188,45 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
 
-        async def fake_exec(*args, **kwargs):
-            return 0
-
-        ctx = MagicMock()
-        ctx.args = ["ls", "-la"]
         with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "_ws_exec", fake_exec):
-                with pytest.raises(typer.Exit) as exc_info:
-                    main.exec_cmd(ctx, workspace="my-ws")
-                assert exc_info.value.exit_code == 0
+            with patch.object(
+                main, "_ws_exec", AsyncMock(return_value=0)
+            ) as mock_exec:
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app, ["exec", "my-ws", "echo", "hi"]
+                )
+        assert result.exit_code == 0
+        # #1041: default exec runs as a login shell so ~/.profile is
+        # sourced (login=True); the command list is passed through.
+        assert mock_exec.call_args.kwargs["login"] is True
+        assert mock_exec.call_args.args[3] == ["echo", "hi"]
+
+    def test_exec_raw_flag_passes_login_false(self, logged_in_cfg):
+        """#1041: ``--raw`` opts out of the login shell so the command
+        runs as raw argv -- used by programmatic transports (rsync)."""
+        from klangkc import main
+        from klangkc.client import Workspace
+        from typer.testing import CliRunner
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(
+                main, "_ws_exec", AsyncMock(return_value=0)
+            ) as mock_exec:
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app, ["exec", "--raw", "my-ws", "echo", "hi"]
+                )
+        assert result.exit_code == 0
+        assert mock_exec.call_args.kwargs["login"] is False
 
     def test_exec_no_command(self, logged_in_cfg):
         from klangkc import main
@@ -2238,7 +2268,10 @@ class TestMainCLI:
         assert "-avz" in cmd
         assert "/tmp/foo" in cmd
         assert "ws:/work/foo" in cmd
-        assert "klangkc exec" in " ".join(cmd)
+        # #1041: sync uses ``exec --raw`` as the rsync transport so the
+        # remote command runs raw (no login shell) -- a ~/.profile that
+        # prints would otherwise corrupt the binary rsync stream.
+        assert "klangkc exec --raw" in " ".join(cmd)
 
     def test_sync_no_rsync(self, logged_in_cfg):
         from klangkc import main

@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import tempfile
 import time
 from collections.abc import AsyncGenerator
@@ -515,11 +516,32 @@ class ExecSession:
         self._read_task: asyncio.Task | None = None
         self._returncode: int | None = None
 
-    async def start(self, command: list[str]) -> None:
-        """Start a command via podman exec with piped stdin/stdout."""
+    async def start(self, command: list[str], *, login: bool = False) -> None:
+        """Start a command via podman exec with piped stdin/stdout.
+
+        By default *command* is passed to ``podman exec`` as raw argv
+        (no shell) -- the right thing for programmatic transports like
+        ``klangkc sync``'s rsync, which must NOT source startup files: a
+        ``~/.profile`` that prints to stdout would corrupt the binary
+        rsync stream (the classic ssh/scp footgun), and rsync's argv is
+        shell-quoted precisely so a non-login round-trips cleanly.
+
+        When *login* is set the command is wrapped in
+        ``bash -lc shlex.join(command)`` so it runs as a **login shell**
+        and sources ``~/.profile`` -- matching what an interactive
+        terminal sees. This is what ``klangkc exec`` uses by default
+        (#1041): a user typing ``klangkc exec ws openclaw --version``
+        expects the nvm-installed binary on PATH, exactly like a
+        terminal. ``shlex.join`` re-quots so a re-parse by bash
+        round-trips to the same argv.
+        """
         env_flags: list[str] = []
         for entry in self.env:
             env_flags += ["-e", entry]
+        if login:
+            argv = ["bash", "-lc", shlex.join(command)]
+        else:
+            argv = command
         exec_cmd = [
             PODMAN_BIN,
             "exec",
@@ -530,7 +552,7 @@ class ExecSession:
             "-w",
             self.work_dir,
             self.container_id,
-            *command,
+            *argv,
         ]
 
         self._running = True
@@ -543,8 +565,9 @@ class ExecSession:
         )
         self._read_task = asyncio.create_task(self._read_stdout())
         logger.info(
-            "Exec session started for container %s: %s",
+            "Exec session started for container %s (login=%s): %s",
             self.container_id,
+            login,
             command,
         )
 

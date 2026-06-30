@@ -2696,6 +2696,47 @@ class TestExecController:
         assert kwargs["env"] == []
         assert kwargs["work_dir"] == "/home/work"
 
+    async def test_start_default_login_false(self):
+        """#1041: a message with no ``login`` key runs raw argv (no
+        shell) -- the safe default for any caller, and what rsync needs."""
+        ctrl, _, _ = self._controller()
+        with (
+            patch(
+                "klangk_backend.wshandler.controllers.ExecSession"
+            ) as MockExec,
+            patch.object(container.registry, "record_activity"),
+        ):
+            mock_session = MockExec.return_value
+            mock_session.start = AsyncMock()
+            await ctrl.start({"command": ["ls"]})
+            ctrl.task.cancel()
+            try:
+                await ctrl.task
+            except asyncio.CancelledError:
+                pass
+        mock_session.start.assert_awaited_with(["ls"], login=False)
+
+    async def test_start_login_true_threads_through(self):
+        """#1041: ``login: True`` in the message reaches ExecSession.start
+        so the command runs as a bash login shell (sources ~/.profile).
+        This is the klangkc exec default."""
+        ctrl, _, _ = self._controller()
+        with (
+            patch(
+                "klangk_backend.wshandler.controllers.ExecSession"
+            ) as MockExec,
+            patch.object(container.registry, "record_activity"),
+        ):
+            mock_session = MockExec.return_value
+            mock_session.start = AsyncMock()
+            await ctrl.start({"command": ["ls"], "login": True})
+            ctrl.task.cancel()
+            try:
+                await ctrl.task
+            except asyncio.CancelledError:
+                pass
+        mock_session.start.assert_awaited_with(["ls"], login=True)
+
     async def test_input_no_session(self):
         ctrl, _, _ = self._controller()
         await ctrl.input({"data": base64.b64encode(b"x").decode()})

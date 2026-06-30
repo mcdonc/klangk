@@ -1245,6 +1245,7 @@ class _ExecSession(_ShellSession):
         stdin: io.RawIOBase | None = None,
         stdout: io.RawIOBase | None = None,
         timeout: int | None = None,
+        login: bool = True,
     ):
         local_sock = os.environ.get("SSH_AUTH_SOCK")
         sock = (
@@ -1255,6 +1256,11 @@ class _ExecSession(_ShellSession):
         self.stdin = stdin
         self.stdout = stdout
         self.timeout = timeout
+        # ``login`` (default True): run the command as a bash login shell
+        # so it sources ~/.profile, matching a terminal (#1041). Set
+        # False for programmatic transports (rsync) that must not source
+        # startup files.
+        self.login = login
         self.exit_code = 1
         self._loop = asyncio.get_event_loop()
         self._stdout_fd = -1
@@ -1339,7 +1345,13 @@ class _ExecSession(_ShellSession):
 
     async def run(self) -> int:
         await self.ws.send(
-            json.dumps({"cmd": "exec_start", "command": self.command})
+            json.dumps(
+                {
+                    "cmd": "exec_start",
+                    "command": self.command,
+                    "login": self.login,
+                }
+            )
         )
 
         stdout_task = asyncio.create_task(self.stdout_forward())
@@ -1412,10 +1424,15 @@ async def _exec_on_ws(
     stdin: io.RawIOBase | None = None,
     stdout: io.RawIOBase | None = None,
     timeout: int | None = None,
+    login: bool = False,
 ) -> int:
     """Run a command on an already-connected WebSocket.
 
-    Returns the remote process exit code.
+    Returns the remote process exit code.  ``login`` defaults to False
+    (raw argv) -- this is the low-level primitive used by setup/file-copy
+    paths that already build their own ``sh -c`` command; the
+    interactive ``klangkc exec`` entrypoint (_ws_exec) overrides it to
+    True. See #1041.
     """
     session = _ExecSession(
         ws,
@@ -1423,6 +1440,7 @@ async def _exec_on_ws(
         stdin=stdin,
         stdout=stdout,
         timeout=timeout,
+        login=login,
     )
     return await session.run()
 
@@ -1433,17 +1451,25 @@ async def _ws_exec(
     workspace_id: str,
     command: list[str],
     max_size: int = _WS_MAX_SIZE,
+    login: bool = True,
 ) -> int:
     """Run a command interactively, piping real stdin/stdout.
 
-    Returns the remote process exit code.
+    Returns the remote process exit code.  Defaults to ``login=True``
+    (run as a bash login shell so ~/.profile is sourced, like a
+    terminal -- #1041); ``klangkc exec --raw`` and the rsync transport
+    pass False for raw argv.
     """
     async with websockets.connect(
         f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
         await _wait_container_ready(ws, workspace_id)
         return await _exec_on_ws(
-            ws, command, stdin=sys.stdin.buffer, stdout=sys.stdout.buffer
+            ws,
+            command,
+            stdin=sys.stdin.buffer,
+            stdout=sys.stdout.buffer,
+            login=login,
         )
 
 
