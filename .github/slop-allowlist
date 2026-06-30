@@ -6,3 +6,12 @@ runyaga
 tseaver
 bd-mkt
 Shridharrrr
+# --- Bots ---
+# github-actions[bot] opens the "Bump workspace base image" PRs from
+# .github/workflows/image-workspace-base.yml (it runs `gh pr create` with
+# secrets.GITHUB_TOKEN, which GitHub attributes to github-actions[bot]).
+# Allowlist it so the default-closed slop policy doesn't auto-close the
+# bumper's PRs. (Note: the GraphQL/REST API surfaces this actor as
+# `app/github-actions`; the webhook `.pull_request.user.login` that
+# auto-close.yml matches is `github-actions[bot]`.)
+github-actions[bot]
