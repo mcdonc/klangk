@@ -1,33 +1,43 @@
-"""E2E test: openclaw sandbox writes all .bashrc exports before slow setup steps.
+"""E2E test: openclaw sandbox writes all ~/.profile exports before slow setup steps.
 
-Guards the #1039 fix. ``sandboxes/openclaw/setup.sh`` appends every env
-export the default_command depends on (``NVM_DIR``, ``/openclaw/bin`` on
-``PATH``, ``OPENCLAW_HOME``) to ``~/.bashrc`` in one block at the very
-top of setup, before the long ``npm install -g openclaw``. Previously
-``OPENCLAW_HOME`` was appended near the end, so a shell spawned mid-setup
-(e.g. the ``default-cmd`` pane from an early ``terminal_start`` -- the
-#1033 race) inherited ``PATH`` but not ``OPENCLAW_HOME``; with
-``OPENCLAW_HOME`` unset, ``openclaw gateway`` looked for config at
-``$HOME/.openclaw`` instead of ``/openclaw/.openclaw`` and reported
-"Missing config".
+Guards #1039 (ordering) and #1087 (location).
+``sandboxes/openclaw/setup.sh`` persists every env export the
+default_command depends on (``NVM_DIR`` + nvm source, ``/openclaw/bin``
+on ``PATH``, ``OPENCLAW_HOME``) to ``~/.profile`` in one block at the
+very top of setup, before the long ``npm install -g openclaw``.
+
+Why ``~/.profile`` and not ``~/.bashrc`` (#1087): ``~/.profile`` is the
+POSIX file sourced by ALL login shells -- interactive terminals (the
+default-cmd tmux pane is an interactive login shell) AND non-interactive
+``bash -lc`` (which the health check uses, ``container.py``
+``HealthMonitor._run_one``). ``~/.bashrc`` has an interactivity guard
+that hides its body from non-interactive shells, so exports the health
+check needs cannot live there. ``~/.profile`` is the one file BOTH the
+default_command and the health check reliably source.
+
+Previously ``OPENCLAW_HOME`` was appended near the end of setup (and to
+``~/.bashrc``), so a shell spawned mid-setup (e.g. the ``default-cmd``
+pane from an early ``terminal_start`` -- the #1033 race) inherited
+``PATH`` but not ``OPENCLAW_HOME``; with ``OPENCLAW_HOME`` unset,
+``openclaw gateway`` looked for config at ``$HOME/.openclaw`` instead of
+``/openclaw/.openclaw`` and reported "Missing config".
 
 How the test exercises this deterministically: ``setup.sh`` blocks while
 a sentinel file (``/openclaw/.klangk-test-pause``, i.e. on the bind
 mount) exists. The sentinel is placed right after the consolidated export
 block and before the slow install, so while setup is parked there the
-test reads ``~/.bashrc`` straight off the host filesystem and asserts
+test reads ``~/.profile`` straight off the host filesystem and asserts
 the export is already present. On a regression that moves the
-``OPENCLAW_HOME`` append back to the end of setup, ``~/.bashrc`` lacks it
+``OPENCLAW_HOME`` append back to the end of setup, ``~/.profile`` lacks it
 at this point and the test fails. Releasing the sentinel lets the real
 ``npm install -g openclaw`` run, and the test confirms the binary lands
 on the mount.
 
 This reads files directly from the host (the per-user home and the
 ``/openclaw`` mount both live under the server data dir / the sandbox
-dir). It deliberately avoids ``klangkc exec``: exec runs a
-non-interactive shell that short-circuits ``~/.bashrc`` at its
-interactivity guard (#1041), so it would not see these exports and would
-give a false negative.
+dir). It deliberately avoids ``klangkc exec``: exec runs a raw command
+with no login shell (#1041), so it would not source ``~/.profile`` and
+would give a false negative.
 
 Run locally (the workspace image must be built first):
 
@@ -62,8 +72,8 @@ SENTINEL = os.path.join(SANDBOX_DIR, ".klangk-test-pause")
 WS = "e2e-openclaw-setup"
 # Second workspace pointed at the SAME /openclaw mount. openclaw is
 # already installed there after WS's setup ran, so WS2's setup SKIPS the
-# install but must still write a complete per-workspace ~/.bashrc. This
-# is the shared-mount + per-workspace-.bashrc interaction at the heart
+# install but must still write a complete per-workspace ~/.profile. This
+# is the shared-mount + per-workspace-~/.profile interaction at the heart
 # of #1039 -- a regression that moves an export inside the install-skip
 # guard breaks WS2 permanently (not just a race) while WS may still pass.
 WS2 = "e2e-openclaw-setup-2"
@@ -244,8 +254,8 @@ def _container_up(base_url, token, ws_id):
     return bool(r.json().get("container_id"))
 
 
-def _owning_bashrc(data_dir, user_id, ws_id):
-    """Path to the owning user's ~/.bashrc on the host for *ws_id*.
+def _owning_profile(data_dir, user_id, ws_id):
+    """Path to the owning user's ~/.profile on the host for *ws_id*.
 
     The per-workspace home is bind-mounted at /home; the owning user's
     real home is ``<data>/workspaces/<uid>/home/<ws_id>/.users/<uid>/``
@@ -259,7 +269,7 @@ def _owning_bashrc(data_dir, user_id, ws_id):
         ws_id,
         ".users",
         user_id,
-        ".bashrc",
+        ".profile",
     )
 
 
@@ -271,7 +281,7 @@ async def _visitor_two_phase_terminal_env(
     Phase 1 -- mid-setup: fire ``terminal_start`` while setup is parked
     at the sentinel.  Only the ``bash`` window (window 0) is created;
     ``default-cmd`` is gated on ``setup_state == complete`` (#1051).
-    The spawned shell sources ``~/.bashrc`` at that instant; under the
+    The spawned shell sources ``~/.profile`` at that instant; under the
     #1039 fix the exports are already present, so ``$var`` is set.
 
     Then ``await between_phases()`` runs -- the caller releases the
@@ -373,8 +383,8 @@ async def _visitor_probe_env(ws, var, timeout):
     )
 
 
-class TestOpenclawSetupBashrcExports:
-    """Real openclaw sandbox: .bashrc exports precede the slow install."""
+class TestOpenclawSetupProfileExports:
+    """Real openclaw sandbox: ~/.profile exports precede the slow install."""
 
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
@@ -430,20 +440,20 @@ class TestOpenclawSetupBashrcExports:
         with open(log_path) as f:
             return "".join(f.readlines()[-n:])
 
-    def test_bashrc_has_openclaw_home_before_slow_install(self):
-        """~/.bashrc contains OPENCLAW_HOME before the npm install runs.
+    def test_profile_has_openclaw_home_before_slow_install(self):
+        """~/.profile contains OPENCLAW_HOME before the npm install runs.
 
         This is the #1039 invariant: every export the default_command
         depends on is written up front, so a shell spawned at any point
         during setup (here, held by the sentinel after the export block
-        but before the npm install) sources a complete ~/.bashrc. Under
+        but before the npm install) sources a complete ~/.profile. Under
         the original bug OPENCLAW_HOME was appended after the install, so
-        .bashrc would be missing it at this point.
+        .profile would be missing it at this point.
         """
         env = self._env
 
         # Run the sandbox in the background; it blocks on the sentinel
-        # right after writing the consolidated .bashrc exports.
+        # right after writing the consolidated ~/.profile exports.
         sandbox_proc = subprocess.Popen(
             ["klangkc", "sandbox", WS, SANDBOX_DIR],
             env=env,
@@ -455,19 +465,20 @@ class TestOpenclawSetupBashrcExports:
             # Wait for the container to be up (setup is running, held by
             # the sentinel after the export block).
             ws_id = self._await_container()
-            bashrc_path = self._await_setup_exports(ws_id)
-            with open(bashrc_path) as f:
-                bashrc = f.read()
+            profile_path = self._await_setup_exports(ws_id)
+            with open(profile_path) as f:
+                profile = f.read()
 
             # The invariant under test: OPENCLAW_HOME is already in
-            # .bashrc while setup is still parked before the slow install.
-            assert 'export OPENCLAW_HOME="/openclaw"' in bashrc, (
-                "OPENCLAW_HOME missing from ~/.bashrc before the slow "
+            # ~/.profile while setup is still parked before the slow
+            # install.
+            assert 'export OPENCLAW_HOME="/openclaw"' in profile, (
+                "OPENCLAW_HOME missing from ~/.profile before the slow "
                 "install step -- the #1039 export ordering regressed; a "
                 "shell spawned during setup cannot locate openclaw "
-                "config.\n.bashrc:\n" + bashrc
+                "config.\n~/.profile:\n" + profile
             )
-            assert 'export PATH="/openclaw/bin:$PATH"' in bashrc
+            assert 'export PATH="/openclaw/bin:$PATH"' in profile
 
             # Release setup.sh and let the real openclaw install finish.
             os.remove(SENTINEL)
@@ -494,13 +505,13 @@ class TestOpenclawSetupBashrcExports:
                 if out:
                     print(f"--- klangkc sandbox output ---\n{out}")
 
-    def test_second_workspace_reuses_install_but_writes_own_bashrc(self):
+    def test_second_workspace_reuses_install_but_writes_own_profile(self):
         """A second workspace at the same /openclaw mount SKIPS the install
         (openclaw is already there) yet must still write a complete
-        per-workspace ~/.bashrc.
+        per-workspace ~/.profile.
 
-        This is the shared-mount + per-workspace-.bashrc interaction at
-        the heart of #1039. ``~/.bashrc`` is fresh per workspace (the
+        This is the shared-mount + per-workspace-~/.profile interaction
+        at the heart of #1039. ``~/.profile`` is fresh per workspace (the
         owning user's home is per-workspace), while the ``/openclaw``
         mount (nvm/node/openclaw) is shared. A regression that moves an
         export INSIDE the install-skip guard breaks this workspace
@@ -541,7 +552,7 @@ class TestOpenclawSetupBashrcExports:
 
             # The install was genuinely skipped -- proving we're on the
             # skip path, not a vacuous pass where a regression re-ran
-            # the full install and wrote .bashrc that way.
+            # the full install and wrote ~/.profile that way.
             assert "openclaw already installed, skipping." in out, (
                 "expected setup to SKIP the install (mount already "
                 "populated); it didn't print the skip message -- either "
@@ -549,22 +560,22 @@ class TestOpenclawSetupBashrcExports:
                 "regressed.\n" + out
             )
 
-            # WS2's container is up; read ITS own per-workspace .bashrc
+            # WS2's container is up; read ITS own per-workspace ~/.profile
             # (a different ws_id from WS).
             ws2_id = self._await_container(name=WS2)
-            bashrc_path = _owning_bashrc(self._data_dir, self._user_id, ws2_id)
-            with open(bashrc_path) as f:
-                bashrc = f.read()
+            profile_path = _owning_profile(self._data_dir, self._user_id, ws2_id)
+            with open(profile_path) as f:
+                profile = f.read()
 
-            assert 'export OPENCLAW_HOME="/openclaw"' in bashrc, (
+            assert 'export OPENCLAW_HOME="/openclaw"' in profile, (
                 "OPENCLAW_HOME missing from the second workspace's "
-                "~/.bashrc even though setup completed -- a regression "
+                "~/.profile even though setup completed -- a regression "
                 "that moved the export inside the install-skip guard "
                 "leaves it out permanently here (the install is skipped, "
                 "so the guard body never runs). This is the #1039 "
-                "shared-mount failure mode.\n.bashrc:\n" + bashrc
+                "shared-mount failure mode.\n~/.profile:\n" + profile
             )
-            assert 'export PATH="/openclaw/bin:$PATH"' in bashrc
+            assert 'export PATH="/openclaw/bin:$PATH"' in profile
         finally:
             if sandbox_proc.poll() is None:
                 sandbox_proc.kill()
@@ -578,7 +589,7 @@ class TestOpenclawSetupBashrcExports:
 
         Phase 1 (mid-setup): the visitor's ``terminal_start`` creates
         the ``bash`` window (window 0) but NOT ``default-cmd`` -- #1051
-        gates it.  The spawned shell sources ``~/.bashrc`` at that
+        gates it.  The spawned shell sources ``~/.profile`` at that
         instant; under the #1039 fix the exports are already there
         (written before the slow install), so ``OPENCLAW_HOME`` is set.
         This is the "Missing config" window that #1039 closes.
@@ -606,7 +617,7 @@ class TestOpenclawSetupBashrcExports:
         try:
             ws3_id = self._await_container(name=WS3)
             # setup.sh is now parked at the sentinel, AFTER writing the
-            # consolidated .bashrc exports.
+            # consolidated ~/.profile exports.
             self._await_setup_exports(ws3_id)
 
             async def _release_and_wait_setup():
@@ -644,12 +655,12 @@ class TestOpenclawSetupBashrcExports:
                 "setup_state == complete. Windows seen: " + repr(mid_names)
             )
 
-            # The shell spawned mid-setup sourced a ~/.bashrc that
+            # The shell spawned mid-setup sourced a ~/.profile that
             # already has OPENCLAW_HOME (the #1039 fix).
             assert value == "/openclaw", (
                 "a shell spawned by a visitor terminal_start mid-setup "
                 "did NOT have OPENCLAW_HOME set -- the #1033 race bit: "
-                "the mid-setup .bashrc lacked the export, so the spawned "
+                "the mid-setup ~/.profile lacked the export, so the spawned "
                 f"shell's $OPENCLAW_HOME was {value!r} (expected "
                 "'/openclaw'). This is the 'Missing config' window."
             )
@@ -686,21 +697,21 @@ class TestOpenclawSetupBashrcExports:
         )
 
     def _await_setup_exports(self, ws_id, timeout=120):
-        """Poll ~/.bashrc until setup has appended its first export.
+        """Poll ~/.profile until setup has appended its first export.
 
         setup.sh writes the consolidated export block then blocks on the
         sentinel, so once ``export NVM_DIR`` appears setup is parked.
-        Returns the path to the owning user's .bashrc.
+        Returns the path to the owning user's .profile.
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            path = _owning_bashrc(self._data_dir, self._user_id, ws_id)
+            path = _owning_profile(self._data_dir, self._user_id, ws_id)
             if path and os.path.exists(path):
                 with open(path) as f:
                     if "export NVM_DIR" in f.read():
                         return path
             time.sleep(1)
         raise AssertionError(
-            "setup never wrote .bashrc exports (sentinel not reached); "
+            "setup never wrote ~/.profile exports (sentinel not reached); "
             f"user_id={self._user_id} data_dir={self._data_dir}"
         )

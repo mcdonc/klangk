@@ -4,12 +4,24 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="/openclaw"
 
-# Persist every env export the default_command depends on to ~/.bashrc UP
-# FRONT, before any long-running install step. A shell that sources
-# ~/.bashrc while setup is still running (e.g. the default-cmd pane
-# created by an early terminal_start during setup -- see #1033) must see
-# the complete pointer set from its very first spawn:
-#   - NVM_DIR (so nvm/node load in new shells)
+# Persist every env export the default_command depends on to ~/.profile
+# UP FRONT, before any long-running install step.
+#
+# Why ~/.profile and not ~/.bashrc (#1087): ~/.profile is the POSIX file
+# sourced by ALL login shells -- interactive terminals (the default-cmd
+# tmux pane is an interactive login shell) AND non-interactive
+# `bash -lc` (which the health check uses). ~/.bashrc has an
+# interactivity guard near its top (`case $- in *i*) ;; *) return`)
+# that hides anything appended below it from non-interactive shells, so
+# exports the health check needs cannot live there. ~/.profile is the
+# one file BOTH the default_command and the health check reliably
+# source.
+#
+# Why UP FRONT (#1039): a shell that sources ~/.profile while setup is
+# still running (e.g. the default-cmd pane created by an early
+# terminal_start during setup -- see #1033) must see the complete
+# pointer set from its very first spawn:
+#   - NVM_DIR + nvm.sh source (so nvm/node load in new shells)
 #   - /openclaw/bin on PATH (so the `openclaw` binary is found)
 #   - OPENCLAW_HOME (so openclaw locates its config; the owning user's
 #     $HOME is /home/<handle>, not /openclaw, so without this openclaw
@@ -18,25 +30,25 @@ INSTALL_DIR="/openclaw"
 # mid-setup pane inherited PATH but not OPENCLAW_HOME. Each line is
 # guarded so re-running setup never duplicates it.
 # shellcheck disable=SC2016
-if ! grep -q NVM_DIR ~/.bashrc 2>/dev/null; then
-  cat >>~/.bashrc <<BASH
+if ! grep -q NVM_DIR ~/.profile 2>/dev/null; then
+  cat >>~/.profile <<BASH
 export NVM_DIR="$INSTALL_DIR/.nvm"
 [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
 BASH
 fi
 # shellcheck disable=SC2016
-if ! grep -q "$INSTALL_DIR/bin" ~/.bashrc 2>/dev/null; then
-  echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >>~/.bashrc
+if ! grep -q "$INSTALL_DIR/bin" ~/.profile 2>/dev/null; then
+  echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >>~/.profile
 fi
 # shellcheck disable=SC2016
-if ! grep -q OPENCLAW_HOME ~/.bashrc 2>/dev/null; then
-  echo "export OPENCLAW_HOME=\"$INSTALL_DIR\"" >>~/.bashrc
+if ! grep -q OPENCLAW_HOME ~/.profile 2>/dev/null; then
+  echo "export OPENCLAW_HOME=\"$INSTALL_DIR\"" >>~/.profile
 fi
 
 # Test hook (no-op in production): the e2e test in sandboxes/tests/openclaw/
 # drops a sentinel file on the mount to hold setup here, spawns a terminal
 # mid-setup, and asserts the exports above are already in the spawned
-# shell's environment. This guards the #1039 invariant: every .bashrc
+# shell's environment. This guards the #1039 invariant: every ~/.profile
 # export the default_command depends on must be written before any
 # long-running step, so a shell spawned at any point sees the full set.
 # The sentinel never exists outside that test.
