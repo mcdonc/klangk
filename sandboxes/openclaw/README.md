@@ -12,6 +12,10 @@ container auto-starts with the server.
 
 ## Usage
 
+> **WARNING:** OpenClaw will start in a mode where it is contactable by
+> anyone who can contact your klangk server. Configure its authentication
+> immediately after installation if your server answers on a public network.
+
 ```bash
 cd sandboxes/openclaw
 klangkc sandbox openclaw
@@ -22,11 +26,16 @@ pointing at the Klangk LLM proxy, and runs a non-interactive onboard.
 The setup script prints the hosted app URL at the end.
 
 The gateway starts automatically in the first terminal window. To
-add messaging channels:
+add messaging channels (i.e. to configure the authentication the WARNING above
+refers to):
 
 ```bash
 openclaw onboard
 ```
+
+> Note: the [hermes sandbox](../hermes/README.md#network-exposure) is the
+> opposite case — its gateway is not exposed on an HTTP port and is not
+> contactable by someone who can reach your klangk server.
 
 ## What gets installed
 
