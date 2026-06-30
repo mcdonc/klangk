@@ -5,6 +5,14 @@ and container customizations. A plugin can install system packages
 at image build time, add CLI tools to the container PATH, extend the
 Pi agent with new tools, or add UI widgets to the web frontend.
 
+> **Plugins vs. sandboxes.** Plugins are a _compile-time_ feature:
+> they bake software into the workspace image at build time, so it's
+> already installed and needn't be added later. The tools and UI they
+> add are available to _any_ workspace, but adding or changing a plugin
+> requires rebuilding the Klangk image. For _runtime_ additions of
+> software and configuration scoped to a _particular user within a
+> particular workspace_ instead, use a [sandbox](sandbox.md).
+
 For details on creating plugins, see the
 [Creating Plugins](../development/creating-plugins.md) reference.
 
