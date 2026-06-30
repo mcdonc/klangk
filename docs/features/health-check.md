@@ -148,12 +148,28 @@ In `.klangk-sandbox.yaml` (see [Sandbox](sandbox.md)):
 
 ```yaml
 workspace:
-  health-check: curl -sf http://localhost:8080/health
+  health-check: openclaw health
 ```
+
+This is exactly what the [openclaw sandbox](https://github.com/mcdonc/klangk/tree/main/sandboxes/openclaw)
+ships: `openclaw health` connects to the running gateway over
+WebSocket and exits non-zero if it's unreachable — a liveness check
+for the service the `default-command` (`openclaw gateway`) launches.
+Because the check runs as a bash login shell (`bash -lc`), it sources
+`~/.profile` and resolves the nvm-installed `openclaw` binary — see
+[The Shell](the-shell.md#startup-files).
 
 ## Example commands
 
-A health check is any command that exits 0 when things are good:
+A health check is any command that exits 0 when things are good. The
+canonical real-world example is the openclaw sandbox's own check:
+
+```yaml
+# A real service's own health command (openclaw ships this)
+openclaw health
+```
+
+Other common patterns:
 
 ```yaml
 # HTTP health endpoint
