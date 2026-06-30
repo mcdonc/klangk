@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import ANY, AsyncMock, MagicMock, patch, PropertyMock
 
 from fastapi import WebSocketDisconnect
 
@@ -728,6 +728,7 @@ class TestHandleTerminalStart:
             ssh_agent_socket=None,
             default_command=None,
             setup_state="complete",
+            on_default_command_started=ANY,
         )
         # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -757,6 +758,134 @@ class TestHandleTerminalStart:
         assert ws_session.terminal_windows["uid"][0]["name"] == "bash"
 
         # Clean up
+        wshandler.state.sessions.pop("ws", None)
+        wshandler.state.connections.pop(sock, None)
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
+        container.registry.revoke_workspace_browsers("ws")
+        container.registry.states.pop("ws", None)
+
+    async def test_default_command_started_event_emitted(self):
+        """The on_default_command_started callback passed to TerminalSession
+        emits a default_command_started WS event once the command runs."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+        conn._default_command = "openclaw gateway"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        container.registry.track_activity("cid", "ws")
+        session = wshandler.state.get_or_create_session("ws")
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+
+        with (
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "bash", "active": True}
+                ],
+            ),
+            patch(
+                "klangk_backend.terminal.load_workspace_state",
+                return_value={},
+            ),
+            patch("klangk_backend.terminal.restore_windows"),
+            patch.object(_ws_controllers, "attach_browser"),
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+            # Grab the callback the controller wired through.
+            cb = MockTS.call_args.kwargs["on_default_command_started"]
+            await cb()
+
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict)
+            and m.get("type") == "default_command_started"
+            and m.get("workspaceId") == "ws"
+            and m.get("command") == "openclaw gateway"
+            for m in sent
+        )
+
+        wshandler.state.sessions.pop("ws", None)
+        wshandler.state.connections.pop(sock, None)
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
+        container.registry.revoke_workspace_browsers("ws")
+        container.registry.states.pop("ws", None)
+
+    async def test_default_command_started_swallows_socket_error(self):
+        """If the socket is gone when the callback fires, it must NOT
+        raise -- the command started fine; notification is best-effort."""
+        sock = _mock_sock()
+        sock.send_json.side_effect = SlowClientError("gone")
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+        conn._default_command = "openclaw gateway"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        container.registry.track_activity("cid", "ws")
+        session = wshandler.state.get_or_create_session("ws")
+        await session.add_subscriber(sock, "cid")
+        wshandler.state.connections[sock] = conn
+
+        with (
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
+            patch(
+                "klangk_backend.terminal.list_windows",
+                return_value=[],
+            ),
+            patch(
+                "klangk_backend.terminal.load_workspace_state",
+                return_value={},
+            ),
+            patch("klangk_backend.terminal.restore_windows"),
+            patch.object(_ws_controllers, "attach_browser"),
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+            cb = MockTS.call_args.kwargs["on_default_command_started"]
+            # Must not raise even though send_json explodes.
+            await cb()
+
         wshandler.state.sessions.pop("ws", None)
         wshandler.state.connections.pop(sock, None)
         conn.terminal_task.cancel()
@@ -1210,6 +1339,7 @@ class TestHandleTerminalStart:
             ssh_agent_socket=None,
             default_command="pi",
             setup_state="complete",
+            on_default_command_started=ANY,
         )
 
         conn.terminal_task.cancel()
@@ -2968,6 +3098,7 @@ class TestSSHAgentHandlers:
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             default_command=None,
             setup_state="complete",
+            on_default_command_started=ANY,
         )
 
 
