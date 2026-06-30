@@ -188,6 +188,10 @@ HEALTH_CHECK_INTERVAL_SECONDS = int(
 HEALTH_CHECK_TIMEOUT_SECONDS = float(
     util.resolve_env_value("KLANGK_HEALTH_CHECK_TIMEOUT") or "10"
 )
+# Maximum bytes of check output retained as the failure reason (#1088).
+# A bounded tail keeps a verbose check from growing memory unbounded
+# across many workspaces while still capturing *why* it failed.
+HEALTH_MESSAGE_MAX_BYTES = 512
 
 
 class ContainerState:
@@ -203,6 +207,11 @@ class ContainerState:
         # time so HealthMonitor can poll without a DB lookup per tick.
         self.health_status: str | None = None  # "healthy" | "unhealthy"
         self.health_checked_at: float | None = None  # time.time() of last
+        # Short, human-readable reason for the last unhealthy result
+        # (stderr/stdout tail or exception text).  None when healthy or
+        # not yet checked.  Surfaced via the status API + service_health
+        # event so an unhealthy workspace isn't a black box (#1088).
+        self.health_message: str | None = None
         self.health_check: str | None = None  # shell command, None = disabled
         self.owner_id: str | None = None
         self.setup_state: str | None = None
@@ -389,6 +398,21 @@ class IdleMonitor:
             )
 
 
+def _unhealthy_message(rc: int, out: str, err: str) -> str:
+    """Build a bounded failure reason from a check's exit code/output.
+
+    Prefers stderr (where shells/diagnostics write their failures);
+    falls back to a tail of stdout; if both are empty, reports just
+    the exit code.  Truncated to ``HEALTH_MESSAGE_MAX_BYTES`` so a
+    verbose check can't grow memory unbounded across workspaces --
+    the goal is "why did it fail", not a full transcript (#1088).
+    """
+    body = (err or "").strip() or (out or "").strip()
+    if body and len(body) > HEALTH_MESSAGE_MAX_BYTES:
+        body = "..." + body[-HEALTH_MESSAGE_MAX_BYTES:]
+    return f"exited {rc}: {body}" if body else f"exited {rc}"
+
+
 class HealthMonitor:
     """Periodically poll container service health via ``podman exec``.
 
@@ -417,8 +441,15 @@ class HealthMonitor:
         """
         return state.setup_state == "complete"
 
-    async def _run_one(self, state: ContainerState) -> str:
-        """Run a single workspace's health check, returning the new status.
+    async def _run_one(self, state: ContainerState) -> tuple[str, str]:
+        """Run a single workspace's health check.
+
+        Returns ``(status, message)`` where *status* is ``"healthy"`` or
+        ``"unhealthy"`` and *message* is a short, human-readable reason
+        for an unhealthy result (a bounded tail of the check's
+        stderr/stdout, or the exception text) -- empty when healthy.
+        Surfacing the reason turns an ``unhealthy`` status from a black
+        box into a diagnosable failure instead of "good luck" (#1088).
 
         Resolves the owner's container home (same logic as
         ``eager_start_workspace``) and invokes the check via
@@ -432,10 +463,10 @@ class HealthMonitor:
         """
         owner_id = state.owner_id
         if owner_id is None:
-            return "unhealthy"
+            return "unhealthy", "no owner recorded for workspace"
         handle = await model.get_user_handle(owner_id)
         if not handle:
-            return "unhealthy"
+            return "unhealthy", f"owner {owner_id} has no handle"
         # Resolve the owner's container home the same way
         # eager_start_workspace does, so the check runs in the right
         # HOME rather than as root in /.
@@ -453,7 +484,7 @@ class HealthMonitor:
             state.health_check,
         )
         try:
-            rc, _out, _err = await podman.exec_container(
+            rc, out, err = await podman.exec_container(
                 state.container_id,
                 # bash -lc: login shell sources ~/.profile so the
                 # check sees the user's env (PATH, tool homes). See
@@ -465,43 +496,56 @@ class HealthMonitor:
                 timeout=HEALTH_CHECK_TIMEOUT_SECONDS,
             )
         except (podman.PodmanError, asyncio.TimeoutError, OSError) as e:
-            logger.info(
-                "Health check for container %s (workspace %s) failed: %s",
-                cid_short,
-                state.workspace_id,
-                e,
-            )
-            return "unhealthy"
-        logger.debug(
-            "Health check: container %s (workspace %s) exited %d",
-            cid_short,
-            state.workspace_id,
-            rc,
-        )
-        return "healthy" if rc == 0 else "unhealthy"
+            return "unhealthy", f"{type(e).__name__}: {e}"
+        if rc == 0:
+            return "healthy", ""
+        return "unhealthy", _unhealthy_message(rc, out, err)
 
     async def _check_workspace(self, state: ContainerState) -> None:
-        """Poll one workspace and broadcast on status transition."""
-        new_status = await self._run_one(state)
+        """Poll one workspace, record the reason, and broadcast on change."""
+        new_status, message = await self._run_one(state)
         old_status = state.health_status
         state.health_status = new_status
+        # Clear the reason once healthy again so a stale failure message
+        # can't linger next to a "healthy" status (#1088).
+        state.health_message = message if new_status == "unhealthy" else None
         state.health_checked_at = time.time()
+        if new_status == "unhealthy":
+            # Log the reason at info on a fresh transition (so it's
+            # visible without debug logs), debug on steady-state polls
+            # so a persistently-broken check doesn't spam at info (#1088).
+            log = logger.info if old_status != "unhealthy" else logger.debug
+            log(
+                "Health check for workspace %s (container %s) unhealthy: %s",
+                state.workspace_id,
+                state.container_id[:12],
+                message,
+            )
         if new_status != old_status:
-            self._broadcast(state.workspace_id, new_status)
+            self._broadcast(
+                state.workspace_id, new_status, state.health_message
+            )
 
-    def _broadcast(self, workspace_id: str, status: str) -> None:
+    def _broadcast(
+        self,
+        workspace_id: str,
+        status: str,
+        message: str | None = None,
+    ) -> None:
         """Emit a ``service_health`` event to all connections.
 
         Fanned out via :meth:`WsState.notify_service_health` so the
         workspace list page learns about health transitions for
         auto-started services even when nobody is connected to the
-        workspace's terminal session (#1015).
+        workspace's terminal session (#1015).  The failure *reason*
+        rides along as ``health_message`` so operators can see *why*
+        it's unhealthy without digging through logs (#1088).
         """
         # Imported lazily to avoid an import cycle with wshandler.
         from .wshandler import state as _ws_state  # noqa: allow-deferred-import
 
         _ws_state.notify_service_health(
-            workspace_id, healthy=status == "healthy"
+            workspace_id, healthy=status == "healthy", message=message
         )
 
     async def run_health_loop(self) -> None:

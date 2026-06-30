@@ -164,7 +164,7 @@ klangkc sandbox myws --force             # re-apply config and re-run setup on e
 klangkc exec my-project ls /home/klangk/work         # run a command in the container
 klangkc monitor                                        # stream all server events as JSON
 klangkc monitor --type service_health | jq .           # pretty-print health transitions
-klangkc monitor --type service_health -- notify-send "Service unhealthy"  # react to unhealthy events
+klangkc monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
 klangkc sync ~/src my-project:/home/klangk/work      # sync files to/from the container
 klangkc rm my-project                # delete a workspace
 klangkc restart my-project           # restart the container for a workspace (owner only)

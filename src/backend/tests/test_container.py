@@ -1999,7 +1999,7 @@ def _health_state(
 
 
 class TestHealthMonitorRunOne:
-    """_run_one: rc 0 → healthy, non-zero/error → unhealthy."""
+    """_run_one: rc 0 → healthy, non-zero/error → unhealthy (with reason)."""
 
     async def test_exit_zero_is_healthy(self):
         monitor = container.registry.health
@@ -2016,7 +2016,7 @@ class TestHealthMonitorRunOne:
                 return_value=("/home/klangk", False),
             ),
         ):
-            assert await monitor._run_one(st) == "healthy"
+            assert await monitor._run_one(st) == ("healthy", "")
         # The check runs as the workspace user with HOME set, and is
         # logged with the container id (first 12 chars).
         call = exec_mock.call_args
@@ -2030,14 +2030,16 @@ class TestHealthMonitorRunOne:
         assert call.args[1][:2] == ["bash", "-lc"]
         assert call.args[1][2] == st.health_check
 
-    async def test_nonzero_exit_is_unhealthy(self):
+    async def test_nonzero_exit_is_unhealthy_with_stderr_reason(self):
+        # The stderr that explains the non-zero exit is captured as the
+        # reason instead of being thrown away (#1088).
         monitor = container.registry.health
         st = _health_state()
         with (
             patch.object(
                 podman,
                 "exec_container",
-                AsyncMock(return_value=(1, "", "err")),
+                AsyncMock(return_value=(1, "", "curl: connection refused")),
             ),
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
@@ -2048,16 +2050,20 @@ class TestHealthMonitorRunOne:
                 return_value=("/home/klangk", False),
             ),
         ):
-            assert await monitor._run_one(st) == "unhealthy"
+            status, message = await monitor._run_one(st)
+        assert status == "unhealthy"
+        assert "connection refused" in message
+        assert "exited 1" in message
 
-    async def test_exec_error_is_unhealthy(self):
+    async def test_nonzero_exit_falls_back_to_stdout(self):
+        # No stderr → the reason uses stdout instead.
         monitor = container.registry.health
         st = _health_state()
         with (
             patch.object(
                 podman,
                 "exec_container",
-                AsyncMock(side_effect=podman.PodmanError(500, "nope")),
+                AsyncMock(return_value=(2, "all good on stdout", "")),
             ),
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
@@ -2068,16 +2074,79 @@ class TestHealthMonitorRunOne:
                 return_value=("/home/klangk", False),
             ),
         ):
-            assert await monitor._run_one(st) == "unhealthy"
+            status, message = await monitor._run_one(st)
+        assert status == "unhealthy"
+        assert "all good on stdout" in message
 
-    async def test_no_owner_is_unhealthy(self):
+    async def test_nonzero_exit_no_output_reports_exit_code(self):
+        # Non-zero exit but no output at all → still surface the exit
+        # code so it isn't a complete black box (#1088).
+        monitor = container.registry.health
+        st = _health_state()
+        with (
+            patch.object(
+                podman,
+                "exec_container",
+                AsyncMock(return_value=(127, "", "")),
+            ),
+            patch.object(
+                model, "get_user_handle", AsyncMock(return_value="owner")
+            ),
+            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
+            patch(
+                "klangk_backend.workspaces.ensure_home_symlink",
+                return_value=("/home/klangk", False),
+            ),
+        ):
+            status, message = await monitor._run_one(st)
+        assert status == "unhealthy"
+        assert message == "exited 127"
+
+    async def test_message_truncated_to_bounded_tail(self):
+        # A verbose check can't grow the retained reason unbounded; only
+        # the last HEALTH_MESSAGE_MAX_BYTES bytes are kept (#1088).
+        big = "x" * (container.HEALTH_MESSAGE_MAX_BYTES * 4)
+        assert len(
+            container._unhealthy_message(1, "", big)
+        ) == container.HEALTH_MESSAGE_MAX_BYTES + len("...") + len(
+            "exited 1: "
+        )
+
+    async def test_exec_error_is_unhealthy_with_reason(self):
+        # The podman/timeout failure text is captured as the reason
+        # instead of being discarded (#1088).
+        monitor = container.registry.health
+        st = _health_state()
+        with (
+            patch.object(
+                podman,
+                "exec_container",
+                AsyncMock(side_effect=podman.PodmanError(500, "boom")),
+            ),
+            patch.object(
+                model, "get_user_handle", AsyncMock(return_value="owner")
+            ),
+            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
+            patch(
+                "klangk_backend.workspaces.ensure_home_symlink",
+                return_value=("/home/klangk", False),
+            ),
+        ):
+            status, message = await monitor._run_one(st)
+        assert status == "unhealthy"
+        assert "PodmanError" in message
+        assert "boom" in message
+
+    async def test_no_owner_is_unhealthy_with_reason(self):
         monitor = container.registry.health
         st = _health_state(owner_id=None)
         with patch.object(podman, "exec_container") as exec_mock:
-            assert await monitor._run_one(st) == "unhealthy"
+            status, message = await monitor._run_one(st)
+        assert status == "unhealthy"
+        assert "owner" in message
         exec_mock.assert_not_called()
 
-    async def test_no_handle_is_unhealthy(self):
+    async def test_no_handle_is_unhealthy_with_reason(self):
         # Owner exists in the state but has no handle resolved.
         monitor = container.registry.health
         st = _health_state(owner_id="uid-owner")
@@ -2087,39 +2156,105 @@ class TestHealthMonitorRunOne:
             ),
             patch.object(podman, "exec_container") as exec_mock,
         ):
-            assert await monitor._run_one(st) == "unhealthy"
+            status, message = await monitor._run_one(st)
+        assert status == "unhealthy"
+        assert "handle" in message
         exec_mock.assert_not_called()
 
 
 class TestHealthMonitorCheckWorkspace:
-    """_check_workspace: records status and broadcasts on transitions."""
+    """_check_workspace: records status + reason and broadcasts changes."""
 
     async def test_broadcasts_on_transition_to_unhealthy(self):
         monitor = container.registry.health
         st = _health_state(health_status=None)  # unknown → unhealthy
         with (
             patch.object(
-                monitor, "_run_one", AsyncMock(return_value="unhealthy")
+                monitor,
+                "_run_one",
+                AsyncMock(return_value=("unhealthy", "connection refused")),
             ),
             patch.object(monitor, "_broadcast") as bcast,
         ):
             await monitor._check_workspace(st)
         assert st.health_status == "unhealthy"
+        assert st.health_message == "connection refused"
         assert st.health_checked_at is not None
-        bcast.assert_called_once_with("ws-h", "unhealthy")
+        bcast.assert_called_once_with(
+            "ws-h", "unhealthy", "connection refused"
+        )
 
     async def test_no_broadcast_when_status_unchanged(self):
         monitor = container.registry.health
         st = _health_state(health_status="healthy")  # stays healthy
         with (
             patch.object(
-                monitor, "_run_one", AsyncMock(return_value="healthy")
+                monitor, "_run_one", AsyncMock(return_value=("healthy", ""))
             ),
             patch.object(monitor, "_broadcast") as bcast,
         ):
             await monitor._check_workspace(st)
         assert st.health_status == "healthy"
         bcast.assert_not_called()
+
+    async def test_clears_message_when_becomes_healthy(self):
+        # A stale failure reason must not linger next to a "healthy"
+        # status once the check starts passing again (#1088).
+        monitor = container.registry.health
+        st = _health_state(health_status="unhealthy")
+        st.health_message = "old reason"
+        with patch.object(
+            monitor, "_run_one", AsyncMock(return_value=("healthy", ""))
+        ):
+            await monitor._check_workspace(st)
+        assert st.health_status == "healthy"
+        assert st.health_message is None
+
+    async def test_logs_reason_at_info_on_transition_to_unhealthy(
+        self, caplog
+    ):
+        # Acceptance criterion: a failing check's reason appears in the
+        # logs at least once per unhealthy transition, at info (#1088).
+        import logging
+
+        monitor = container.registry.health
+        st = _health_state(health_status=None)
+        with patch.object(
+            monitor,
+            "_run_one",
+            AsyncMock(return_value=("unhealthy", "curl: connection refused")),
+        ):
+            with caplog.at_level(
+                logging.INFO, logger="klangk_backend.container"
+            ):
+                await monitor._check_workspace(st)
+        assert any(
+            "connection refused" in r.message and r.levelno == logging.INFO
+            for r in caplog.records
+        )
+
+    async def test_logs_reason_at_debug_on_steady_unhealthy(self, caplog):
+        # A persistently-failing check doesn't spam at info; steady-state
+        # polls log the reason at debug (#1088).
+        import logging
+
+        monitor = container.registry.health
+        st = _health_state(health_status="unhealthy")
+        with patch.object(
+            monitor,
+            "_run_one",
+            AsyncMock(return_value=("unhealthy", "still down")),
+        ):
+            with caplog.at_level(
+                logging.DEBUG, logger="klangk_backend.container"
+            ):
+                await monitor._check_workspace(st)
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert not any("still down" in r.message for r in info_records)
+        assert any(
+            "still down" in r.message and r.levelno == logging.DEBUG
+            for r in caplog.records
+        )
 
 
 class TestHealthMonitorBroadcast:
@@ -2136,7 +2271,7 @@ class TestHealthMonitorBroadcast:
             )
             # No WorkspaceSession registered for this workspace — yet
             # the event must still reach the connection.
-            monitor._broadcast("ws-h", "unhealthy")
+            monitor._broadcast("ws-h", "unhealthy", "connection refused")
         finally:
             _ws_state.connections.pop(sock, None)
         sock.send_json.assert_called_once_with(
@@ -2144,6 +2279,7 @@ class TestHealthMonitorBroadcast:
                 "type": "service_health",
                 "workspace_id": "ws-h",
                 "healthy": False,
+                "health_message": "connection refused",
             }
         )
 

@@ -45,8 +45,15 @@ For each workspace with a health check configured:
    error counts as **unhealthy**.
 3. When the status changes, every connected client gets a
    `service_health` event so the UI can update in real time.
-4. The current status and the time of the last check are exposed via
-   `GET /api/v1/workspaces/{id}/status`.
+4. The current status, the **reason** it's unhealthy (a tail of the
+   check's stderr/stdout), and the time of the last check are exposed
+   via `GET /api/v1/workspaces/{id}/status`.
+
+A failing check is **not a black box**: the tail of its output (stderr
+preferred) is logged when the status flips to unhealthy, retained on
+the workspace as `health_message`, and carried on the `service_health`
+event -- so you can see _why_ it's unhealthy without `podman exec`'ing
+in by hand.
 
 The check runs through `bash -lc "<your command>"` — a bash **login
 shell** — so any shell syntax works (pipes, `&&`, redirects, etc.)
@@ -83,8 +90,11 @@ miss:
 - **Web UI** — the workspace list shows a health-colored icon (green =
   healthy, amber = unhealthy, grey = stopped), updated live as checks run.
   The **Settings** tab shows the configured check command.
-- **`GET /api/v1/workspaces/{id}/status`** — returns `health` plus the
-  time of the last check (`health_checked_at`).
+- **`GET /api/v1/workspaces/{id}/status`** — returns `health`, the failure
+  `health_message` (a bounded tail of the check's stderr/stdout, or `null`
+  when healthy), plus the time of the last check (`health_checked_at`).
+- **Server logs** — on each transition to unhealthy, the check's output is
+  logged at `INFO` (steady-state unhealthy polls log it at `DEBUG`).
 - **`klangkc monitor`** — stream events and optionally **run a command**
   when something changes. This is the automation hook.
 
@@ -94,13 +104,14 @@ miss:
 the web UI does — health transitions, container starts/stops, workspace
 changes — and can run a command for each one. The event JSON is piped
 to the command's stdin, and details are exposed as environment
-variables (`KLANGK_EVENT_TYPE`, `KLANGK_WORKSPACE_ID`, `KLANGK_HEALTHY`).
+variables (`KLANGK_EVENT_TYPE`, `KLANGK_WORKSPACE_ID`, `KLANGK_HEALTHY`,
+and `KLANGK_HEALTH_MESSAGE` — the failure reason, when unhealthy).
 
 Fire a desktop notification when a service goes unhealthy:
 
 ```bash
 klangkc monitor --type service_health -- \
-  sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "Service unhealthy"'
+  sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'
 ```
 
 Page yourself (or a Slack webhook) on any health change:

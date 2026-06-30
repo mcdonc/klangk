@@ -1347,6 +1347,7 @@ No request body.
   "running": true,
   "container_id": "abc123...",
   "health": null,
+  "health_message": null,
   "idle_seconds": 42.5,
   "idle_timeout": 1800,
   "ports": [9000, 9001]
@@ -1360,14 +1361,18 @@ No request body.
   "running": false,
   "container_id": null,
   "health": null,
+  "health_message": null,
   "idle_seconds": null,
   "idle_timeout": null,
   "ports": []
 }
 ```
 
-The `health` field is a placeholder (`null`) until a container
-health check is implemented (#1015).
+The `health` field is the check status (`"healthy"`, `"unhealthy"`, or
+`null` when no check is configured or no container is running). When
+unhealthy, `health_message` carries a bounded tail of the check's
+stderr/stdout explaining _why_ it failed (`null` otherwise) — so a
+failing check isn't a black box (#1088).
 
 ---
 

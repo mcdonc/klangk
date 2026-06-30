@@ -2653,6 +2653,36 @@ class TestMonitor:
         assert "KLANGK_EVENT" in env
 
     @pytest.mark.asyncio
+    async def test_health_message_env_set_when_present(self):
+        # The failure reason is exposed as KLANGK_HEALTH_MESSAGE so a
+        # monitor command can act on / report *why* it's unhealthy (#1088).
+        from klangkc.main import _monitor_connection
+
+        event = {
+            "type": "service_health",
+            "workspace_id": "w1",
+            "healthy": False,
+            "health_message": "curl: connection refused",
+        }
+        conn = _FakeMonitorConn([json.dumps(event)])
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            with patch("klangkc.main.subprocess.run") as run_mock:
+                await _monitor_connection(
+                    "ws://x/ws",
+                    "tok",
+                    1024,
+                    command=["notify-send"],
+                    types=[],
+                    workspaces=[],
+                )
+        env = run_mock.call_args.kwargs["env"]
+        assert env["KLANGK_HEALTHY"] == "false"
+        assert env["KLANGK_HEALTH_MESSAGE"] == "curl: connection refused"
+
+    @pytest.mark.asyncio
     async def test_command_not_found_propagates(self, monkeypatch):
         # A missing command binary propagates FileNotFoundError out of
         # the single-connection loop (the runner turns it into an exit).
