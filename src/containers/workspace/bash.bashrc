@@ -1,9 +1,12 @@
 # shellcheck shell=bash
 # System-wide bash defaults for Klangk containers.
 # Users can override these in ~/.bashrc on the persistent home mount.
-
-# Plugin tools on PATH (ENV in Dockerfile is overridden by login shells).
-export PATH="/opt/klangk/bin:$PATH"
+#
+# NOTE: environment exports (PATH=/opt/klangk/bin, EDITOR) live in
+# /etc/profile.d/klangk-*.sh so that non-interactive login shells (bash -lc
+# — the health check, klangkc exec) see them too. This file is only sourced
+# for interactive shells, so anything placed here is invisible to one-shot
+# non-interactive commands. See issue #1093.
 
 # Nothing below here is meaningful during image build. The Dockerfile touches
 # /tmp/.klangk-image-build before running plugin hooks and removes it after;
@@ -15,9 +18,6 @@ export PATH="/opt/klangk/bin:$PATH"
 # Per-user with random suffix to prevent predictable-path attacks in /tmp.
 _herdr_dir=$(mktemp -d "/tmp/herdr-${KLANGK_USER_ID:-default}-XXXXXXXX")
 export HERDR_SOCKET_PATH="$_herdr_dir/herdr.sock"
-
-# Default editor for git commit, crontab -e, etc.
-export EDITOR=nano
 
 # Block interactive shells until the entrypoint signals that setup is done.
 # /tmp is a tmpfs, so .klangk-ready starts absent on every container boot
