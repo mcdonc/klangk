@@ -5742,6 +5742,218 @@ class TestTerminalController:
             wshandler.state.connections.pop(other_sock, None)
             wshandler.state.sessions.pop("ws-1", None)
 
+    # --- default-command window fan-out (#1114) ---
+
+    async def test_fanout_refreshes_second_browser_of_owner(self):
+        """A second browser of the owner (same user) gets the new tab."""
+        owner = {"id": "uid", "email": "a@x", "handle": "a"}
+        sock1 = _mock_sock()
+        sock2 = _mock_sock()
+        conn1 = _base_conn(user=owner, ws=sock1)
+        conn2 = _base_conn(user=owner, ws=sock2)
+        for c in (conn1, conn2):
+            c.workspace_id = "ws-fanout"
+            c.container_id = "cid"
+            c._user_home = "/home/a"
+            c._default_command = "openclaw gateway"
+        ws_session = wshandler.state.get_or_create_session("ws-fanout")
+        await ws_session.add_subscriber(sock1, "cid")
+        await ws_session.add_subscriber(sock2, "cid")
+        wshandler.state.connections[sock1] = conn1
+        wshandler.state.connections[sock2] = conn2
+        windows = [
+            {"id": "@0", "index": 0, "name": "bash", "active": False},
+            {"id": "@1", "index": 1, "name": "default-cmd", "active": True},
+        ]
+        try:
+            with (
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "_has_tmux_session",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "_ensure_base_session",
+                    new=AsyncMock(),
+                ),
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "list_windows",
+                    new=AsyncMock(return_value=windows),
+                ),
+            ):
+                await conn1.terminal._fanout_default_command_windows()
+            # Both of the owner's connections receive the updated list.
+            for sock in (sock1, sock2):
+                sent = [c[0][0] for c in sock.send_json.call_args_list]
+                assert any(
+                    isinstance(m, dict)
+                    and m.get("type") == "terminal_windows"
+                    and any(w["name"] == "default-cmd" for w in m["windows"])
+                    for m in sent
+                )
+        finally:
+            await ws_session.remove_subscriber(sock1)
+            await ws_session.remove_subscriber(sock2)
+            wshandler.state.connections.pop(sock1, None)
+            wshandler.state.connections.pop(sock2, None)
+            wshandler.state.sessions.pop("ws-fanout", None)
+
+    async def test_fanout_creates_default_cmd_for_different_user_visitor(self):
+        """A visitor under a different account gets the tab too.
+
+        Their own tmux session lacks the default-cmd window (their
+        terminal_start predated setup completion), so the fan-out must
+        create it in their session before re-listing (#1114).
+        """
+        owner = {"id": "owner-uid", "email": "a@x", "handle": "a"}
+        visitor = {"id": "visitor-uid", "email": "b@x", "handle": "b"}
+        owner_sock = _mock_sock()
+        vis_sock = _mock_sock()
+        owner_conn = _base_conn(user=owner, ws=owner_sock)
+        vis_conn = _base_conn(user=visitor, ws=vis_sock)
+        for c in (owner_conn, vis_conn):
+            c.workspace_id = "ws-vis"
+            c.container_id = "cid"
+            c._user_home = "/home/x"
+            c._default_command = "openclaw gateway"
+        ws_session = wshandler.state.get_or_create_session("ws-vis")
+        await ws_session.add_subscriber(owner_sock, "cid")
+        await ws_session.add_subscriber(vis_sock, "cid")
+        wshandler.state.connections[owner_sock] = owner_conn
+        wshandler.state.connections[vis_sock] = vis_conn
+        windows = [
+            {"id": "@1", "index": 1, "name": "default-cmd", "active": True}
+        ]
+        try:
+            with (
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "_has_tmux_session",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "_ensure_base_session",
+                    new=AsyncMock(),
+                ) as ensure,
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "list_windows",
+                    new=AsyncMock(return_value=windows),
+                ),
+            ):
+                await owner_conn.terminal._fanout_default_command_windows()
+            # _ensure_base_session fired for the visitor's session.
+            session_args = [c.args[1] for c in ensure.call_args_list]
+            assert "visitor-uid" in session_args
+            # The visitor's socket received the default-cmd tab.
+            sent = [c[0][0] for c in vis_sock.send_json.call_args_list]
+            assert any(
+                isinstance(m, dict)
+                and m.get("type") == "terminal_windows"
+                and any(w["name"] == "default-cmd" for w in m["windows"])
+                for m in sent
+            )
+        finally:
+            await ws_session.remove_subscriber(owner_sock)
+            await ws_session.remove_subscriber(vis_sock)
+            wshandler.state.connections.pop(owner_sock, None)
+            wshandler.state.connections.pop(vis_sock, None)
+            wshandler.state.sessions.pop("ws-vis", None)
+
+    async def test_fanout_skips_spectator_without_tmux_session(self):
+        """A subscriber who never started a terminal is left alone.
+
+        They have no tmux session and no tabs; creating one for them
+        would spawn a terminal they never asked for (#1114).
+        """
+        owner = {"id": "uid", "email": "a@x", "handle": "a"}
+        spec = {"id": "spec-uid", "email": "s@x", "handle": "s"}
+        owner_sock = _mock_sock()
+        spec_sock = _mock_sock()
+        owner_conn = _base_conn(user=owner, ws=owner_sock)
+        spec_conn = _base_conn(user=spec, ws=spec_sock)
+        for c in (owner_conn, spec_conn):
+            c.workspace_id = "ws-spec"
+            c.container_id = "cid"
+            c._user_home = "/home/x"
+            c._default_command = "openclaw gateway"
+        ws_session = wshandler.state.get_or_create_session("ws-spec")
+        await ws_session.add_subscriber(owner_sock, "cid")
+        await ws_session.add_subscriber(spec_sock, "cid")
+        wshandler.state.connections[owner_sock] = owner_conn
+        wshandler.state.connections[spec_sock] = spec_conn
+        # Owner has a session; spectator does not.
+        has_session = AsyncMock(side_effect=lambda cid, sn: sn == "uid")
+        try:
+            with (
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "_has_tmux_session",
+                    new=has_session,
+                ),
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "_ensure_base_session",
+                    new=AsyncMock(),
+                ) as ensure,
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "list_windows",
+                    new=AsyncMock(
+                        return_value=[
+                            {
+                                "id": "@1",
+                                "index": 1,
+                                "name": "default-cmd",
+                                "active": True,
+                            }
+                        ]
+                    ),
+                ),
+            ):
+                await owner_conn.terminal._fanout_default_command_windows()
+            # _ensure_base_session called only for the owner, not the
+            # spectator.
+            session_args = [c.args[1] for c in ensure.call_args_list]
+            assert session_args == ["uid"]
+            # Spectator received no terminal_windows.
+            spec_sent = [c[0][0] for c in spec_sock.send_json.call_args_list]
+            assert not any(
+                isinstance(m, dict) and m.get("type") == "terminal_windows"
+                for m in spec_sent
+            )
+        finally:
+            await ws_session.remove_subscriber(owner_sock)
+            await ws_session.remove_subscriber(spec_sock)
+            wshandler.state.connections.pop(owner_sock, None)
+            wshandler.state.connections.pop(spec_sock, None)
+            wshandler.state.sessions.pop("ws-spec", None)
+
+    async def test_on_default_command_started_emits_event_and_task(self):
+        """The callback announces the event to self and schedules fan-out."""
+        ctrl, sock, conn = self._controller()
+        conn.workspace_id = "ws-cb"
+        conn._default_command = "openclaw gateway"
+        with patch.object(
+            ctrl, "_fanout_default_command_windows", new=AsyncMock()
+        ) as fanout:
+            await ctrl._on_default_command_started()
+            # The fan-out runs in a fire-and-forget task; let it run.
+            if ctrl._default_cmd_fanout_task is not None:
+                await ctrl._default_cmd_fanout_task
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict)
+            and m.get("type") == "default_command_started"
+            and m.get("command") == "openclaw gateway"
+            for m in sent
+        )
+        # The fan-out task was created and ran to completion.
+        assert fanout.await_count == 1
+
     # --- browser_reattach ---
 
     async def test_browser_reattach_no_browser_id(self):

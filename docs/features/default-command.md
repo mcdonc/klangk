@@ -11,9 +11,10 @@ that should be running whenever the workspace is in use.
 ## How it works
 
 When a workspace has a default command configured, the server sends
-it as keystrokes into the first tmux window immediately after
-creating the terminal session. The command runs as a normal
-foreground process inside a bash login shell.
+it as keystrokes into a **dedicated `default-cmd` tmux window**
+immediately after creating the terminal session. The command runs as a
+normal foreground process inside a bash login shell, leaving your
+interactive window 0 free for a shell.
 
 This means:
 
@@ -69,7 +70,14 @@ If the workspace has [auto-start](workspaces.md#auto-start) enabled,
 the container starts when the Klangk server starts and the default
 command begins running immediately — before any user connects. When
 you later run `klangkc shell`, you walk up to the service already
-running in tmux window 0.
+running in the `default-cmd` tab.
+
+The `default-cmd` tab is surfaced to **every** connected client the
+moment it is created — including a visitor who opened the workspace
+while setup was still running (their initial tab snapshot predates the
+window). Each user has their own tmux session, so a visitor under a
+different account gets the tab in their own session without a manual
+refresh.
 
 ## Shell features
 

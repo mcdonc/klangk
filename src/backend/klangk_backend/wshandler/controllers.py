@@ -343,6 +343,7 @@ class TerminalController:
         self._conn = conn
         self.session: TerminalSession | None = None
         self.task: asyncio.Task | None = None
+        self._default_cmd_fanout_task: asyncio.Task | None = None
         self.cols: int = 80
         self.rows: int = 24
 
@@ -389,6 +390,115 @@ class TerminalController:
         windows = await terminal.list_windows(conn.container_id, sname)
         conn._sync_terminal_windows(windows)
         conn.sock.send_json({"type": "terminal_windows", "windows": windows})
+
+    async def _on_default_command_started(self) -> None:
+        """Hook fired once the default-cmd window is running (#1114).
+
+        Announces ``default_command_started`` to this connection, then
+        fans a ``terminal_windows`` refresh out to EVERY workspace
+        subscriber (fire-and-forget). The fan-out is what actually
+        fixes the UI: the default-cmd tab is rendered from
+        ``terminal_windows``, and any client whose snapshot predates
+        the window's creation — a second browser of the owner, or a
+        visitor under a different account whose ``terminal_start``
+        fired while setup was still pending — would otherwise never
+        see the tab until a manual re-sync.
+        """
+        try:
+            self._conn.sock.send_json(
+                {
+                    "type": "default_command_started",
+                    "workspaceId": self._conn.workspace_id,
+                    "command": self._conn._default_command,
+                }
+            )
+        except _WS_ERRORS:
+            logger.debug(
+                "default_command_started: socket gone, could not emit"
+            )
+        # Best-effort, non-blocking: must not delay or break the
+        # terminal start that triggered it.
+        self._default_cmd_fanout_task = asyncio.create_task(
+            self._fanout_default_command_windows()
+        )
+
+    async def _fanout_default_command_windows(self) -> None:
+        """Refresh the window list of every workspace subscriber.
+
+        Each user has their own tmux session (named after their user
+        id). For each subscribed user who already has a session, ensure
+        that session now has the default-cmd window, then re-list and
+        send them their OWN window list — not the owner's, which would
+        clobber a visitor's interactive tabs. Users without a tmux
+        session (spectators who never sent ``terminal_start``) are
+        skipped: they have no tabs to refresh, and creating a session
+        for them would spawn a terminal they never asked for (#1114).
+        """
+        ws_session = state.get_session(self._conn.workspace_id)
+        if ws_session is None or not self._conn.container_id:
+            return
+        container_id = self._conn.container_id
+        # One refresh per distinct subscribed user (each owns one
+        # tmux session). A user may have several sockets open.
+        refreshed: set[str] = set()
+        for sock in list(ws_session.subscribers):
+            conn = state.connections.get(sock)
+            uid = conn.user.get("id") if conn is not None else None
+            if not uid or uid in refreshed:
+                continue
+            refreshed.add(uid)
+            try:
+                await self._refresh_user_terminal_windows(container_id, conn)
+            except Exception:
+                logger.exception(
+                    "default-cmd fan-out: window refresh failed for user %s",
+                    uid,
+                )
+
+    async def _refresh_user_terminal_windows(
+        self, container_id: str, conn: "Connection"
+    ) -> None:
+        """Ensure conn's session has the default-cmd window; re-list + send.
+
+        For the owner the window already exists, so ``_ensure_base_session``
+        is a no-op. For a visitor whose ``terminal_start`` predated setup
+        completion it creates the window (the predicate now holds) so the
+        tab appears for them too (#1114).
+        """
+        uid = conn.user["id"]
+        # Skip spectators without a tmux session (see docstring above).
+        if not await terminal._has_tmux_session(container_id, uid):
+            return
+        if conn._user_home and conn._default_command:
+            await terminal._ensure_base_session(
+                container_id,
+                uid,
+                user_home=conn._user_home,
+                ssh_agent_socket=conn._ssh_agent_socket,
+                default_command=conn._default_command,
+                setup_state=terminal.SETUP_STATE_COMPLETE,
+            )
+        windows = await terminal.list_windows(container_id, uid)
+        conn._sync_terminal_windows(windows)
+        self._send_terminal_windows_to_user(conn, windows)
+
+    @staticmethod
+    def _send_terminal_windows_to_user(
+        conn: "Connection", windows: list[dict]
+    ) -> None:
+        """Send ``terminal_windows`` to all of a user's connections."""
+        ws_session = state.get_session(conn.workspace_id)
+        if ws_session is None:
+            return
+        uid = conn.user["id"]
+        msg = {"type": "terminal_windows", "windows": windows}
+        for sock in list(ws_session.subscribers):
+            sc = state.connections.get(sock)
+            if sc is not None and sc.user.get("id") == uid:
+                try:
+                    sock.send_json(msg)
+                except _WS_ERRORS:
+                    pass
 
     def _send_shared_terminals(self) -> None:
         """Send the current shared terminal list to the client."""
@@ -464,21 +574,10 @@ class TerminalController:
         # ``_ensure_base_session`` (terminal.py); the background
         # auto-start path has no connection and passes no callback.
         # A closed socket here must NOT abort the terminal (the
-        # command started fine), so swallow WS errors.
-        async def _emit_default_command_started() -> None:
-            try:
-                self._conn.sock.send_json(
-                    {
-                        "type": "default_command_started",
-                        "workspaceId": self._conn.workspace_id,
-                        "command": self._conn._default_command,
-                    }
-                )
-            except _WS_ERRORS:
-                logger.debug(
-                    "default_command_started: socket gone, could not emit"
-                )
-
+        # command started fine), so swallow WS errors. The callback
+        # ALSO fans a terminal_windows refresh out to every workspace
+        # subscriber so the new default-cmd tab appears for clients
+        # whose snapshot was taken before the window existed (#1114).
         session = TerminalSession(
             self._conn.container_id,
             session_name=self._conn.user["id"],
@@ -494,7 +593,7 @@ class TerminalController:
             # holds 'complete'. A cached value would wrongly block
             # the post-setup fire (#1033).
             setup_state=await self._setup_state_for_workspace(),
-            on_default_command_started=_emit_default_command_started,
+            on_default_command_started=self._on_default_command_started,
         )
 
         browser_id = msg.get("browser_id")
@@ -815,6 +914,14 @@ class TerminalController:
             except asyncio.CancelledError:
                 pass
             self.task = None
+        fanout = self._default_cmd_fanout_task
+        if fanout is not None:
+            fanout.cancel()
+            try:
+                await fanout
+            except asyncio.CancelledError:
+                pass
+            self._default_cmd_fanout_task = None
         await self.claim_and_stop()
         # Broadcast viewer change so other users see updated viewer list
         if was_viewing and self._conn.workspace_id:
