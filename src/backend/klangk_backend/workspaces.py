@@ -238,7 +238,7 @@ async def create_workspace(
     setup_state: str | None = None,
     health_check: str | None = None,
 ) -> dict:
-    workspace = await model.create_workspace(
+    workspace = await model.create_workspace_with_acl(
         user_id,
         name,
         image=image,
