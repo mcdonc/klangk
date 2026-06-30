@@ -225,3 +225,169 @@ Widget buildSuppressor(Widget child) {
     child: child,
   );
 }
+
+// --- Streaming download via the File System Access API ---------------------
+//
+// `downloadBytes` buffers the whole response in memory (it builds a Blob),
+// which for a large workspace export can be hundreds of MB of RAM. Where the
+// browser supports the File System Access API (Chrome, Edge, Opera, and most
+// desktop Chromium derivatives), we instead `fetch()` the URL with the auth
+// header and stream the response body straight to a user-chosen file on disk,
+// one chunk at a time — so memory use stays flat regardless of archive size.
+//
+// Firefox and Safari don't implement `showSaveFilePicker`; there the function
+// returns `false` so the caller can fall back to the buffered path. This is
+// the reason `downloadStreamedUrl` is `Future<bool>` rather than `void`.
+
+@JS()
+extension type _SaveFilePickerOptions._(JSObject _) implements JSObject {
+  external factory _SaveFilePickerOptions({JSString suggestedName});
+}
+
+@JS()
+extension type _FileSystemFileHandle._(JSObject _) implements JSObject {
+  external JSPromise createWritable();
+}
+
+@JS()
+extension type _FileSystemWritableFileStream._(JSObject _) implements JSObject {
+  external JSPromise write(JSUint8Array chunk);
+  external JSPromise close();
+}
+
+@JS()
+extension type _FetchOptions._(JSObject _) implements JSObject {
+  external factory _FetchOptions({JSString method, JSObject headers});
+}
+
+@JS()
+extension type _FetchResponse._(JSObject _) implements JSObject {
+  external int get status;
+  external JSString get statusText;
+  external _ReadableStream? get body;
+}
+
+@JS()
+extension type _ReadableStream._(JSObject _) implements JSObject {
+  external JSPromise getReader();
+}
+
+@JS()
+extension type _StreamReader._(JSObject _) implements JSObject {
+  external JSPromise read();
+  external void releaseLock();
+}
+
+@JS()
+extension type _ReadResult._(JSObject _) implements JSObject {
+  external bool get done;
+  external JSUint8Array? get value;
+}
+
+@JS('fetch')
+external JSPromise _streamFetch(JSString url, _FetchOptions options);
+
+@JS()
+extension type _WindowWithSavePicker._(JSObject _) implements JSObject {
+  external JSPromise showSaveFilePicker(_SaveFilePickerOptions options);
+}
+
+/// Download [url] (issuing [headers], e.g. `Authorization`) by streaming the
+/// response body straight to a file on disk via the File System Access API.
+///
+/// Returns `true` if the download was handled (streamed to disk). Returns
+/// `false` if the browser lacks `showSaveFilePicker` (Firefox/Safari) — the
+/// caller should then fall back to a buffered download. Throws on a non-200
+/// response or on an I/O error mid-stream.
+Future<bool> downloadStreamedUrl(
+  String url, {
+  required String filename,
+  Map<String, String>? headers,
+}) async {
+  // Feature-detect the File System Access API. Absent in Firefox/Safari.
+  // `Reflect.has` is a plain JS global; `package:web`'s Window doesn't
+  // expose an index operator in this version, so we probe via Reflect.
+  if (!_reflectHas(web.window, 'showSaveFilePicker'.toJS)) {
+    return false;
+  }
+
+  // Issue the request first (without reading the body). The body stays a
+  // pending stream, so nothing is buffered yet; the backend's tar process is
+  // simply held open by backpressure until we start reading.
+  final fetchOpts = _FetchOptions(
+    method: 'GET'.toJS,
+    headers: _headersToJS(headers),
+  );
+  final response =
+      (await _streamFetch(url.toJS, fetchOpts).toDart) as _FetchResponse;
+  if (response.status != 200) {
+    throw StreamedDownloadException(
+        response.status, response.statusText.toDart);
+  }
+  final body = response.body;
+  if (body == null) {
+    throw StreamedDownloadException(response.status, 'response had no body');
+  }
+
+  // Now prompt for the destination. Doing this after the fetch lets us bail
+  // (no empty file created) on auth/server errors.
+  final handle = (await (web.window as _WindowWithSavePicker)
+      .showSaveFilePicker(
+        _SaveFilePickerOptions(suggestedName: filename.toJS),
+      )
+      .toDart) as _FileSystemFileHandle;
+  final writable =
+      (await handle.createWritable().toDart) as _FileSystemWritableFileStream;
+  final reader = (await body.getReader().toDart) as _StreamReader;
+  try {
+    while (true) {
+      final result = (await reader.read().toDart) as _ReadResult;
+      if (result.done) break;
+      final chunk = result.value;
+      if (chunk != null && chunk.toDart.length > 0) {
+        await writable.write(chunk).toDart;
+      }
+    }
+    await writable.close().toDart;
+  } catch (e) {
+    // Best-effort close so we don't leave a dangling writable; the partial
+    // file remains on disk, which is better than a locked handle.
+    try {
+      await writable.close().toDart;
+    } catch (_) {}
+    rethrow;
+  } finally {
+    reader.releaseLock();
+  }
+  return true;
+}
+
+/// Build a plain JS headers object from a Dart map, via `Object.fromEntries`.
+/// (`package:web` 1.1 has no JSObject index setter; this avoids needing it.)
+@JS('Object.fromEntries')
+external JSObject _objectFromEntries(JSArray entries);
+
+/// `Reflect.has(target, key)` — property probe that works on any JS object.
+@JS('Reflect.has')
+external bool _reflectHas(JSObject target, JSString key);
+
+JSObject _headersToJS(Map<String, String>? headers) {
+  if (headers == null || headers.isEmpty) {
+    return _objectFromEntries([] as JSArray);
+  }
+  // Build [[k, v], ...] as JSArray<JSArray<JSString>>.
+  final entries = <JSArray>[];
+  headers.forEach((k, v) {
+    entries.add([k.toJS, v.toJS].toJS);
+  });
+  return _objectFromEntries(entries.toJS);
+}
+
+/// Thrown by [downloadStreamedUrl] when the response isn't 200.
+class StreamedDownloadException implements Exception {
+  final int status;
+  final String statusText;
+  StreamedDownloadException(this.status, this.statusText);
+  @override
+  String toString() => 'StreamedDownloadException: $status $statusText';
+}

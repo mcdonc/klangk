@@ -187,6 +187,12 @@ class AuthService extends ChangeNotifier {
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
+  /// Public access to the auth headers, for callers that issue their own
+  /// authenticated requests outside the `http` package (e.g. the streaming
+  /// workspace export, which uses `fetch()` directly to stream the body to
+  /// disk without buffering it in memory).
+  Map<String, String> get authHeaders => _authHeaders;
+
   Future<String?> register(String email, String password) async {
     _loading = true;
     notifyListeners();
