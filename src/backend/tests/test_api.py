@@ -312,7 +312,7 @@ class TestAuthRoutes:
         ):
             resp = await client.post(
                 "/api/v1/auth/register",
-                json={"email": "new@example.com", "password": "newpass"},
+                json={"email": "new@example.com", "password": "newpass1"},
                 headers={"Authorization": f"Bearer {token}"},
             )
         assert resp.status_code == 200
@@ -325,7 +325,7 @@ class TestAuthRoutes:
         monkeypatch.setenv("KLANGK_TEST_MODE", "1")
         resp = await client.post(
             "/api/v1/auth/register",
-            json={"email": "new@example.com", "password": "newpass"},
+            json={"email": "new@example.com", "password": "newpass1"},
         )
         assert resp.status_code == 200
         assert "access_token" in resp.json()
@@ -339,7 +339,7 @@ class TestAuthRoutes:
         ):
             resp = await client.post(
                 "/api/v1/auth/register",
-                json={"email": "new@example.com", "password": "newpass"},
+                json={"email": "new@example.com", "password": "newpass1"},
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "pending_verification"
@@ -354,7 +354,7 @@ class TestAuthRoutes:
         ):
             resp = await client.post(
                 "/api/v1/auth/register",
-                json={"email": "fail@example.com", "password": "newpass"},
+                json={"email": "fail@example.com", "password": "newpass1"},
             )
         assert resp.status_code == 503
         # User should not exist — transaction was rolled back
@@ -719,7 +719,7 @@ class TestResetPassword:
         token = auth.create_password_reset_token(user["id"])
         resp = await client.post(
             "/api/v1/auth/reset-password",
-            json={"token": token, "password": "newpass"},
+            json={"token": token, "password": "newpass1"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -730,7 +730,7 @@ class TestResetPassword:
             "/api/v1/auth/login",
             json={
                 "email": "reset@example.com",
-                "password": "newpass",
+                "password": "newpass1",
             },
         )
         assert resp2.status_code == 200
@@ -738,7 +738,7 @@ class TestResetPassword:
     async def test_reset_invalid_token(self, client, db):
         resp = await client.post(
             "/api/v1/auth/reset-password",
-            json={"token": "garbage", "password": "newpass"},
+            json={"token": "garbage", "password": "newpass1"},
         )
         assert resp.status_code == 400
 
@@ -750,13 +750,13 @@ class TestResetPassword:
             json={"token": token, "password": "ab"},
         )
         assert resp.status_code == 400
-        assert "4 characters" in resp.json()["detail"]
+        assert "8 characters" in resp.json()["detail"]
 
     async def test_reset_agent_user_rejected(self, client, db):
         token = auth.create_password_reset_token(model.AGENT_USER_ID)
         resp = await client.post(
             "/api/v1/auth/reset-password",
-            json={"token": token, "password": "newpass"},
+            json={"token": token, "password": "newpass1"},
         )
         assert resp.status_code == 400
         assert "system agent" in resp.json()["detail"]
@@ -769,7 +769,7 @@ class TestChangePassword:
             "/api/v1/auth/change-password",
             json={
                 "current_password": "testpass",
-                "new_password": "newpass",
+                "new_password": "newpass1",
             },
             headers=headers,
         )
@@ -780,7 +780,7 @@ class TestChangePassword:
             "/api/v1/auth/login",
             json={
                 "email": "testuser@example.com",
-                "password": "newpass",
+                "password": "newpass1",
             },
         )
         assert resp2.status_code == 200
@@ -791,7 +791,7 @@ class TestChangePassword:
             "/api/v1/auth/change-password",
             json={
                 "current_password": "wrongpass",
-                "new_password": "newpass",
+                "new_password": "newpass1",
             },
             headers=headers,
         )
@@ -814,7 +814,7 @@ class TestChangePassword:
             "/api/v1/auth/change-password",
             json={
                 "current_password": "testpass",
-                "new_password": "newpass",
+                "new_password": "newpass1",
             },
         )
         assert resp.status_code == 401
@@ -826,7 +826,7 @@ class TestChangePassword:
             "/api/v1/auth/change-password",
             json={
                 "current_password": "anything",
-                "new_password": "newpass",
+                "new_password": "newpass1",
             },
             headers=headers,
         )

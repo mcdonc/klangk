@@ -427,7 +427,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Min 4 characters'), findsOneWidget);
+      expect(find.text('Min 8 characters'), findsOneWidget);
     });
 
     testWidgets('empty email shows Required validation', (tester) async {

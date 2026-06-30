@@ -116,12 +116,13 @@ def require_secure_jwt_secret() -> None:
     )
 
 
-MIN_PASSWORD_LENGTH = int(resolve_env_value("KLANGK_MIN_PASSWORD_LENGTH", "4"))
+MIN_PASSWORD_LENGTH = int(resolve_env_value("KLANGK_MIN_PASSWORD_LENGTH", "8"))
 MAX_PASSWORD_BYTES = 72  # bcrypt limit
 
-# Set KLANGK_LOGIN_LOCKOUT_FAILURES=0 to disable login lockout.
+# Default of 5 enables brute-force protection out of the box. Set to 0
+# to disable (not recommended — see #938).
 LOGIN_LOCKOUT_FAILURES = int(
-    resolve_env_value("KLANGK_LOGIN_LOCKOUT_FAILURES", "0")
+    resolve_env_value("KLANGK_LOGIN_LOCKOUT_FAILURES", "5")
 )
 
 security = HTTPBearer(auto_error=False)
