@@ -165,11 +165,11 @@ async def ws_connect(server, auth, workspace_id):
     await ws.send(
         json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})
     )
-    # Drain until workspace_ready
+    # Drain until container_ready
     deadline = asyncio.get_event_loop().time() + 60
     while asyncio.get_event_loop().time() < deadline:
         msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
-        if msg.get("type") == "workspace_ready":
+        if msg.get("type") == "container_ready":
             break
     await ws.send(json.dumps({"cmd": "ui_ready"}))
     # Wait for container_ready (handle is auto-set during ui_ready)

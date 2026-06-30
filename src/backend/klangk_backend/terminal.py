@@ -20,7 +20,7 @@ import signal
 import struct
 import termios
 import tty
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 
 from . import podman
 from .exceptions import TerminalError
@@ -174,6 +174,7 @@ async def _ensure_base_session(
     ssh_agent_socket: str | None = None,
     default_command: str | None = None,
     setup_state: str = SETUP_STATE_COMPLETE,
+    on_default_command_started: Callable[[], Awaitable[None]] | None = None,
 ) -> bool:
     """Ensure the base tmux session exists and maybe fire the default cmd.
 
@@ -273,6 +274,14 @@ async def _ensure_base_session(
                 logger.warning(
                     "Failed to send default command to %s", session_name
                 )
+            else:
+                # The command is genuinely running in the default-cmd
+                # window now. Notify the caller (e.g. the WS controller)
+                # so it can surface a ``default_command_started`` event
+                # to interested clients. Skipped on the background
+                # auto-start path, which passes no callback.
+                if on_default_command_started is not None:
+                    await on_default_command_started()
 
     return not session_existed
 
@@ -781,6 +790,8 @@ class TerminalSession:
         ssh_agent_socket: str | None = None,
         default_command: str | None = None,
         setup_state: str = SETUP_STATE_COMPLETE,
+        on_default_command_started: Callable[[], Awaitable[None]]
+        | None = None,
     ):
         self.container_id = container_id
         self.session_name = session_name
@@ -793,6 +804,7 @@ class TerminalSession:
         self.ssh_agent_socket = ssh_agent_socket
         self.default_command = default_command
         self.setup_state = setup_state
+        self.on_default_command_started = on_default_command_started
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -824,6 +836,7 @@ class TerminalSession:
                 ssh_agent_socket=self.ssh_agent_socket,
                 default_command=self.default_command,
                 setup_state=self.setup_state,
+                on_default_command_started=self.on_default_command_started,
             )
         env = _build_environment(
             self.user_home,

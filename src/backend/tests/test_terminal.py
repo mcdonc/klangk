@@ -1433,6 +1433,69 @@ class TestEnsureBaseSession:
         assert created is True
         assert mock_exec.await_count == 5
 
+    async def test_default_command_started_callback_invoked(self):
+        """The on_default_command_started callback fires once the default
+        command is genuinely running (send-keys succeeded)."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        callback = AsyncMock()
+        with (
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (1, "", ""),  # has-session fails
+                    (0, "", ""),  # new-session ok
+                    (0, "", ""),  # list-windows: default-cmd absent
+                    (0, "", ""),  # new-window ok
+                    (0, "", ""),  # send-keys ok
+                ],
+            ),
+            patch(
+                "klangk_backend.terminal.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
+            created = await _ensure_base_session(
+                "cid",
+                "my-session",
+                default_command="openclaw gateway",
+                on_default_command_started=callback,
+            )
+        assert created is True
+        callback.assert_awaited_once_with()
+
+    async def test_default_command_started_callback_not_invoked_on_failure(
+        self,
+    ):
+        """The callback does NOT fire when send-keys fails -- the command
+        never actually ran."""
+        from klangk_backend.terminal import _ensure_base_session
+
+        callback = AsyncMock()
+        with (
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (1, "", ""),  # has-session fails
+                    (0, "", ""),  # new-session ok
+                    (0, "", ""),  # list-windows: default-cmd absent
+                    (0, "", ""),  # new-window ok
+                    OSError("send-keys failed"),  # send-keys fails
+                ],
+            ),
+            patch(
+                "klangk_backend.terminal.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
+            await _ensure_base_session(
+                "cid",
+                "my-session",
+                default_command="openclaw gateway",
+                on_default_command_started=callback,
+            )
+        callback.assert_not_awaited()
+
     async def test_default_cmd_window_exists_exception_returns_false(self):
         """_default_cmd_window_exists returns False if list-windows raises."""
         from klangk_backend.terminal import _default_cmd_window_exists

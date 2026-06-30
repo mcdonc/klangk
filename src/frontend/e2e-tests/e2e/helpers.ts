@@ -453,8 +453,8 @@ export async function connectContainer(
   // Send workspace_connect
   ws.send(JSON.stringify({ cmd: "workspace_connect", workspaceId }));
 
-  // Wait for workspace_ready, then send ui_ready, then wait for container_ready
-  let phase: "workspace_ready" | "container_ready" = "workspace_ready";
+  // Wait for container_ready, then send ui_ready, then wait for container_ready
+  let phase: "container_ready" | "container_ready" = "container_ready";
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`Container did not start within ${timeout}ms`)),
@@ -462,7 +462,7 @@ export async function connectContainer(
     );
     ws.on("message", (data: Buffer | string) => {
       const msg = JSON.parse(data.toString());
-      if (phase === "workspace_ready" && msg.type === "workspace_ready") {
+      if (phase === "container_ready" && msg.type === "container_ready") {
         phase = "container_ready";
         ws.send(JSON.stringify({ cmd: "ui_ready" }));
       } else if (phase === "container_ready" && msg.type === "event") {

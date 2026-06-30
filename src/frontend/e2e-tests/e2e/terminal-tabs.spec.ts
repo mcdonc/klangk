@@ -105,8 +105,8 @@ async function connectToWorkspace(
 
     // Drive through the connection flow
     (async () => {
-      // Wait for workspace_ready
-      await client.recvUntil((m) => m.type === "workspace_ready");
+      // Wait for container_ready
+      await client.recvUntil((m) => m.type === "container_ready");
       // Send ui_ready
       client.send({ cmd: "ui_ready" });
       // Wait for container_ready

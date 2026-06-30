@@ -37,7 +37,7 @@ from .client import (
     _get_terminal_size,
     _send_ignore_closed,
     _exec_on_ws,
-    _wait_workspace_ready,
+    _wait_container_ready,
     _ws_exec,
     _ws_shell,
     reset_terminal,
@@ -1155,7 +1155,7 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
     """Copy files and run setup script on an open WebSocket.
 
     Called once after workspace creation, before the shell starts.
-    The caller has already connected and called _wait_workspace_ready.
+    The caller has already connected and called _wait_container_ready.
 
     Returns the setup script's exit code, or ``None`` if no setup
     command was configured (in which case there is nothing to fail).
@@ -1346,7 +1346,7 @@ async def _sandbox_setup_only(
     if max_size is not None:
         kwargs["max_size"] = max_size
     async with websockets.connect(f"{ws_url}?token={token}", **kwargs) as ws:
-        await _wait_workspace_ready(ws, workspace_id)
+        await _wait_container_ready(ws, workspace_id)
         # Re-enter 'pending' before running setup (#1033). On first
         # create the workspace is already 'pending', but on --force
         # re-setup it may be 'complete'/'failed'; either way this is
@@ -1427,7 +1427,7 @@ def terminals(
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
-            await _wait_workspace_ready(conn, ws.id)
+            await _wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
@@ -1559,7 +1559,7 @@ def share_terminal(
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
-            await _wait_workspace_ready(conn, ws.id)
+            await _wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
@@ -1640,7 +1640,7 @@ def unshare_terminal(
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
-            await _wait_workspace_ready(conn, ws.id)
+            await _wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 

@@ -451,6 +451,28 @@ class TerminalController:
         rows = msg.get("rows", self.rows)
         self.cols = cols
         self.rows = rows
+
+        # Surface a WS event the moment the default command is
+        # genuinely running in its tmux window, so clients can stop
+        # polling and know the workspace is live. Fired from inside
+        # ``_ensure_base_session`` (terminal.py); the background
+        # auto-start path has no connection and passes no callback.
+        # A closed socket here must NOT abort the terminal (the
+        # command started fine), so swallow WS errors.
+        async def _emit_default_command_started() -> None:
+            try:
+                self._conn.sock.send_json(
+                    {
+                        "type": "default_command_started",
+                        "workspaceId": self._conn.workspace_id,
+                        "command": self._conn._default_command,
+                    }
+                )
+            except _WS_ERRORS:
+                logger.debug(
+                    "default_command_started: socket gone, could not emit"
+                )
+
         session = TerminalSession(
             self._conn.container_id,
             session_name=self._conn.user["id"],
@@ -466,6 +488,7 @@ class TerminalController:
             # holds 'complete'. A cached value would wrongly block
             # the post-setup fire (#1033).
             setup_state=await self._setup_state_for_workspace(),
+            on_default_command_started=_emit_default_command_started,
         )
 
         browser_id = msg.get("browser_id")

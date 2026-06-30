@@ -1047,7 +1047,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
 
         messages = [
-            json.dumps({"type": "workspace_ready"}),
+            json.dumps({"type": "container_ready"}),
             json.dumps(
                 {
                     "type": "shared_terminals",
@@ -1105,7 +1105,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
 
         messages = [
-            json.dumps({"type": "workspace_ready"}),
+            json.dumps({"type": "container_ready"}),
             json.dumps(
                 {"type": "event", "event": {"name": "container_ready"}}
             ),
@@ -1171,7 +1171,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
 
         messages = [
-            json.dumps({"type": "workspace_ready"}),
+            json.dumps({"type": "container_ready"}),
             json.dumps(
                 {"type": "event", "event": {"name": "container_ready"}}
             ),
@@ -1227,7 +1227,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
 
         messages = [
-            json.dumps({"type": "workspace_ready"}),
+            json.dumps({"type": "container_ready"}),
             json.dumps(
                 {"type": "event", "event": {"name": "container_ready"}}
             ),
@@ -1373,7 +1373,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
 
         messages = [
-            json.dumps({"type": "workspace_ready"}),
+            json.dumps({"type": "container_ready"}),
             json.dumps(
                 {"type": "event", "event": {"name": "container_ready"}}
             ),
@@ -2920,7 +2920,7 @@ class TestSandboxSetupOnly:
 
         mock_ws = AsyncMock()
         mock_ws.recv = AsyncMock(
-            return_value=json.dumps({"type": "workspace_ready"})
+            return_value=json.dumps({"type": "container_ready"})
         )
 
         with (
@@ -2958,7 +2958,7 @@ class TestSandboxSetupOnly:
         mock_ws = AsyncMock()
         mock_ws.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 json.dumps({"type": "terminal_started"}),
             ]
         )
@@ -3004,7 +3004,7 @@ class TestSandboxSetupOnly:
         mock_ws = AsyncMock()
         mock_ws.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 websockets.ConnectionClosed(None, None),
             ]
         )
@@ -3042,7 +3042,7 @@ class TestSandboxSetupOnly:
         mock_ws = AsyncMock()
         mock_ws.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 json.dumps({"type": "terminal_started"}),
             ]
         )
@@ -3087,7 +3087,7 @@ class TestSandboxSetupOnly:
 
         mock_ws = AsyncMock()
         mock_ws.recv = AsyncMock(
-            return_value=json.dumps({"type": "workspace_ready"})
+            return_value=json.dumps({"type": "container_ready"})
         )
         mock_client = MagicMock()
         mock_client.set_setup_state = MagicMock()

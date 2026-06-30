@@ -273,6 +273,41 @@ async def start_container(container_id: str) -> None:
     await _run(["start", container_id], timeout=120.0)
 
 
+async def wait_for_container_ready(
+    container_id: str, *, timeout: float = 60.0
+) -> None:
+    """Block until the container's entrypoint signals readiness.
+
+    ``podman start`` returns the moment the container reaches "running"
+    state — i.e. the entrypoint has *begun*, not finished. The entrypoint
+    creates ``/tmp/.klangk-ready`` once its one-time setup (on-entrypoint
+    plugin hooks) is done, so this blocks until that sentinel exists and
+    callers can treat the container as fully ready, not just started.
+
+    Implemented as a single ``podman exec`` that spins on the sentinel
+    file: one round-trip, no poll interval, so the only latency is the
+    irreducible entrypoint work itself.
+
+    Raises :class:`PodmanError` if the sentinel does not appear within
+    *timeout* seconds.
+    """
+    rc, _out, _err = await exec_container(
+        container_id,
+        [
+            "sh",
+            "-c",
+            "while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done",
+        ],
+        timeout=timeout,
+    )
+    if rc != 0:
+        raise PodmanError(
+            500,
+            f"Container {container_id} did not become ready within "
+            f"{timeout}s (entrypoint did not create /tmp/.klangk-ready)",
+        )
+
+
 def _exec_args(
     container_id: str,
     cmd: list[str],

@@ -277,6 +277,31 @@ class TestExecContainer:
         assert err == "fail"
 
 
+class TestWaitForContainerReady:
+    async def test_returns_when_sentinel_appears(self):
+        with patch(EXEC, _exec(("", "", 0))) as m:
+            result = await podman.wait_for_container_ready("cid")
+        assert result is None
+        # One podman exec spinning on the sentinel until it exists.
+        assert _args(m) == [
+            "exec",
+            "cid",
+            "sh",
+            "-c",
+            "while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done",
+        ]
+
+    async def test_raises_when_exec_fails(self):
+        # _run returns rc=-1 on timeout (check=False); the sentinel never
+        # appeared, so wait_for_container_ready raises PodmanError(500).
+        with patch(EXEC, _exec(("", "timed out", -1))):
+            with pytest.raises(podman.PodmanError) as exc:
+                await podman.wait_for_container_ready("cid", timeout=0.5)
+        assert exc.value.status == 500
+        assert "cid" in exc.value.message
+        assert "0.5s" in exc.value.message
+
+
 class TestExecContainerWithStdin:
     async def test_stdin_data_adds_interactive_flag(self):
         with patch(EXEC, _exec(("ok", "", 0))) as m:

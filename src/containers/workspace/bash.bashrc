@@ -19,13 +19,6 @@
 _herdr_dir=$(mktemp -d "/tmp/herdr-${KLANGK_USER_ID:-default}-XXXXXXXX")
 export HERDR_SOCKET_PATH="$_herdr_dir/herdr.sock"
 
-# Block interactive shells until the entrypoint signals that setup is done.
-# /tmp is a tmpfs, so .klangk-ready starts absent on every container boot
-# and is created by the entrypoint when setup finishes.
-trap '' INT
-while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done
-trap - INT
-
 # Change to the user's home directory (podman exec -w can't use symlinks
 # without resolving them, so we start in /home and cd here instead).
 cd "$HOME" 2>/dev/null

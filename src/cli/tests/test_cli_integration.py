@@ -40,9 +40,9 @@ class TestWsShell:
                 await _ws_shell("ws://localhost/ws", "token", "ws1")
 
     @pytest.mark.asyncio
-    async def test_wait_workspace_ready_timeout(self):
-        """Times out if workspace_ready never arrives."""
-        from klangkc.client import _wait_workspace_ready
+    async def test_wait_container_ready_timeout(self):
+        """Times out if container_ready never arrives."""
+        from klangkc.client import _wait_container_ready
 
         ws_mock = AsyncMock()
         # Always return a non-ready message
@@ -52,25 +52,25 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
 
         with pytest.raises(asyncio.TimeoutError):
-            await _wait_workspace_ready(ws_mock, "ws1", timeout=0.01)
+            await _wait_container_ready(ws_mock, "ws1", timeout=0.01)
 
     @pytest.mark.asyncio
-    async def test_wait_workspace_ready_skips_broadcasts(self):
-        """Broadcast messages before workspace_ready are skipped."""
-        from klangkc.client import _wait_workspace_ready
+    async def test_wait_container_ready_skips_broadcasts(self):
+        """Broadcast messages before container_ready are skipped."""
+        from klangkc.client import _wait_container_ready
 
         ws_mock = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
                 json.dumps({"type": "presence_list", "users": [{"id": "u1"}]}),
                 json.dumps({"type": "chat_history", "messages": []}),
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
             ]
         )
         ws_mock.send = AsyncMock()
 
-        resp = await _wait_workspace_ready(ws_mock, "ws1")
-        assert resp["type"] == "workspace_ready"
+        resp = await _wait_container_ready(ws_mock, "ws1")
+        assert resp["type"] == "container_ready"
         assert resp["workspaceId"] == "ws1"
 
     @pytest.mark.asyncio
@@ -90,7 +90,7 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {"type": "terminal_output", "data": "\x1b[2J\x1b[H"}
                 ),
@@ -144,7 +144,7 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 json.dumps(
                     {
                         "type": "shared_terminals",
@@ -205,7 +205,7 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 json.dumps(
                     {
                         "type": "terminal_windows",
@@ -269,7 +269,7 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 json.dumps(
                     {
                         "type": "terminal_windows",
@@ -350,7 +350,7 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 json.dumps(
                     {
                         "type": "shared_terminals",
@@ -424,7 +424,7 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 json.dumps({"type": "shared_terminals", "terminals": []}),
                 json.dumps({"type": "terminal_output", "data": "$ "}),
                 json.dumps(
@@ -469,7 +469,7 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready"}),
+                json.dumps({"type": "container_ready"}),
                 json.dumps(
                     {
                         "type": "shared_terminals",
@@ -1175,7 +1175,7 @@ class TestWsExec:
         output_chunk = base64.b64encode(b"file-list").decode()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps({"type": "exec_output", "data": output_chunk}),
                 json.dumps({"type": "exec_exit", "code": 0}),
             ]
@@ -1334,7 +1334,7 @@ class TestSSHAgentForwarding:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {
                         "type": "ssh_agent_started",
@@ -1401,7 +1401,7 @@ class TestSSHAgentForwarding:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {
                         "type": "terminal_windows",
@@ -1465,7 +1465,7 @@ class TestSSHAgentForwarding:
             recv_count += 1
             if recv_count == 1:
                 return json.dumps(
-                    {"type": "workspace_ready", "workspaceId": "ws1"}
+                    {"type": "container_ready", "workspaceId": "ws1"}
                 )
             if recv_count == 2:
                 # During agent start wait, hang forever — asyncio.wait_for
@@ -1545,7 +1545,7 @@ class TestSSHAgentForwarding:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps({"type": "error", "message": "no container"}),
                 json.dumps(
                     {
@@ -1609,7 +1609,7 @@ class TestSSHAgentForwarding:
         ws_mock.send = AsyncMock()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {
                         "type": "ssh_agent_started",
@@ -1905,7 +1905,7 @@ class TestWsExecPipedWithInput:
         output_chunk = base64.b64encode(b"echoed").decode()
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps({"type": "exec_output", "data": output_chunk}),
                 json.dumps({"type": "exec_exit", "code": 0}),
             ]
@@ -2267,7 +2267,7 @@ class TestWsExecWrapper:
 
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps({"type": "exec_exit", "code": 42}),
             ]
         )
@@ -2320,7 +2320,7 @@ class TestSandboxSetupHook:
 
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {
                         "type": "terminal_windows",
@@ -2380,13 +2380,13 @@ class TestWindowAutoCreate:
         ws_mock.__aexit__ = fake_exit
         ws_mock.send = AsyncMock()
 
-        # First recv: workspace_ready
+        # First recv: container_ready
         # Second recv: terminal_windows with only "bash" (no "debug")
         # Third recv: terminal_windows after creation (includes "debug")
         # Fourth recv: stop
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {
                         "type": "terminal_windows",
@@ -2469,7 +2469,7 @@ class TestWindowAutoCreate:
 
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {
                         "type": "terminal_windows",
@@ -2533,7 +2533,7 @@ class TestWindowAutoCreate:
 
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {
                         "type": "terminal_windows",
@@ -2610,7 +2610,7 @@ class TestWindowAutoCreate:
 
         ws_mock.recv = AsyncMock(
             side_effect=[
-                json.dumps({"type": "workspace_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
                 json.dumps(
                     {
                         "type": "terminal_windows",

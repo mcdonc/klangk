@@ -130,7 +130,7 @@ async function connectWs(
     });
 
     (async () => {
-      await client.recvUntil((m) => m.type === "workspace_ready");
+      await client.recvUntil((m) => m.type === "container_ready");
       client.send({ cmd: "ui_ready" });
       await client.recvUntil(
         (m) =>

@@ -301,6 +301,7 @@ def patch_podman(**overrides):
         "inspect_container": AsyncMock(return_value=None),
         "create_container": AsyncMock(return_value="new-cid"),
         "start_container": AsyncMock(),
+        "wait_for_container_ready": AsyncMock(),
         "remove_container": AsyncMock(),
         "list_containers": AsyncMock(return_value=[]),
         "exec_container": AsyncMock(return_value=(0, "", "")),
