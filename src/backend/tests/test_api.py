@@ -6761,6 +6761,20 @@ class TestInvitations:
         assert resp.status_code == 200
         assert "invitations_enabled" in resp.json()
 
+    async def test_config_advertises_allow_autostart(
+        self, client, monkeypatch
+    ):
+        # Default: flag unset -> not allowed, so the UI hides its checkbox.
+        monkeypatch.delenv("KLANGK_ALLOW_AUTOSTART", raising=False)
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert resp.json()["allow_autostart"] is False
+
+        # Flag set -> advertised as true so the UI may show the checkbox.
+        monkeypatch.setenv("KLANGK_ALLOW_AUTOSTART", "1")
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["allow_autostart"] is True
+
 
 # --- OIDC endpoints ---
 

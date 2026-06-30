@@ -82,6 +82,7 @@ void main() {
       String bannerTitle = '',
       String bannerText = '',
       String instanceId = 'default',
+      bool allowAutostart = false,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -90,6 +91,7 @@ void main() {
               'login_banner_title': bannerTitle,
               'login_banner': bannerText,
               'instance_id': instanceId,
+              'allow_autostart': allowAutostart,
             }),
             200,
           );
@@ -120,6 +122,20 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(service.instanceId, 'prod');
+    });
+
+    test('loads allow_autostart from /api/config', () async {
+      // Defaults to false when the flag is absent.
+      testAuthHttpClientOverride = _bannerClient();
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.allowAutostart, isFalse);
+
+      // Set when the server advertises it.
+      testAuthHttpClientOverride = _bannerClient(allowAutostart: true);
+      final service2 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service2.allowAutostart, isTrue);
     });
 
     test('bannerRequired is false when no banner text', () async {

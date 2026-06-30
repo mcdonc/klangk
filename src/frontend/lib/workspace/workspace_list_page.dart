@@ -344,6 +344,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         auth: _auth,
         defaultImage: defaultImage,
         allowedImages: allowedImages,
+        allowAutostart: _auth.allowAutostart,
       ),
     );
 

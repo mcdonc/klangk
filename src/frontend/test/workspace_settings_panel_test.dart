@@ -164,7 +164,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).at(3), // mounts add-row input
+        find.byType(TextField).at(1), // mounts add-row input
         '/etc:/etc',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -179,7 +179,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).at(3),
+        find.byType(TextField).at(1),
         'no-colon',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -218,7 +218,7 @@ void main() {
 
       // Env add-row is the last TextField.
       await tester.enterText(
-        find.byType(TextField).last,
+        find.byType(TextField).at(2),
         'BAR=baz',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -231,7 +231,7 @@ void main() {
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).last, 'NOEQUALS');
+      await tester.enterText(find.byType(TextField).at(2), 'NOEQUALS');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
@@ -248,7 +248,7 @@ void main() {
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).last, '=val');
+      await tester.enterText(find.byType(TextField).at(2), '=val');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
@@ -359,6 +359,79 @@ void main() {
       expect(find.textContaining('Failed'), findsOneWidget);
       expect(find.textContaining('bad mounts'), findsOneWidget);
       // Drain the 2s auto-clear timer (see save-success test).
+      await tester.pumpAndSettle();
+    });
+  });
+
+  group('auto start', () {
+    testWidgets('hides the checkbox when auto-start is not allowed',
+        (tester) async {
+      // Default _client returns 404 for /config -> allow_autostart false.
+      testAuthHttpClientOverride = _client();
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Auto start'), findsNothing);
+      expect(find.byType(Checkbox), findsNothing);
+    });
+
+    testWidgets('shows the checkbox and round-trips auto_start when allowed',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') {
+          return http.Response(
+            jsonEncode({'allow_autostart': true}),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {..._workspace, 'auto_start': true}
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('nf', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Checkbox present + checked (workspace had auto_start: true).
+      final checkbox = find.byType(Checkbox);
+      expect(checkbox, findsOneWidget);
+      expect(tester.widget<Checkbox>(checkbox).value, isTrue);
+
+      // Toggle it off and save.
+      await tester.ensureVisible(checkbox);
+      await tester.tap(checkbox);
+      await tester.pump();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['auto_start'], false);
+      // Drain the 2s auto-clear timer (see save-success test).
+      await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });
   });
@@ -486,8 +559,10 @@ void main() {
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
-      // Open the dropdown and pick the non-default image.
-      await tester.tap(find.text('klangk-pi'));
+      // Open the dropdown and pick the non-default image. The dropdown
+      // sits at the bottom of the config card (after the field reorder),
+      // so scroll it into view first.
+      await _scrollToAndTap(tester, find.text('klangk-pi'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('other:latest').last);
       await tester.pumpAndSettle();

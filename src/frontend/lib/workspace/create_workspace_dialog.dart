@@ -5,18 +5,26 @@ import '../auth/auth_service.dart';
 import '../theme/colors.dart';
 import 'workspace_list_page.dart' show validateMountSpec;
 
-/// Dialog for creating a new workspace with name, image, command,
-/// mounts, and environment variables.
+/// Dialog for creating a new workspace. Fields, top to bottom:
+/// Name, Mounts, Environment Variables, Default shell command, Health
+/// check command, Container Image, and (when the server permits
+/// auto-start) an Auto start checkbox. The same field set and order is
+/// used by the Workspace Configuration card in the settings panel.
 class CreateWorkspaceDialog extends StatefulWidget {
   final AuthService auth;
   final String defaultImage;
   final List<String> allowedImages;
+
+  /// Whether to render the Auto start checkbox. The caller derives this
+  /// from AuthService.allowAutostart (server's KLANGK_ALLOW_AUTOSTART).
+  final bool allowAutostart;
 
   const CreateWorkspaceDialog({
     super.key,
     required this.auth,
     required this.defaultImage,
     required this.allowedImages,
+    this.allowAutostart = false,
   });
 
   @override
@@ -32,6 +40,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   late String _selectedImage;
   final _mounts = <String>[];
   final _envVars = <String, String>{};
+  bool _autoStart = false;
   String? _errorMessage;
   String? _mountError;
   String? _envError;
@@ -111,6 +120,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     if (_envVars.isNotEmpty) {
       body['env'] = Map<String, String>.from(_envVars);
     }
+    if (widget.allowAutostart && _autoStart) {
+      body['auto_start'] = true;
+    }
 
     try {
       final response = await widget.auth.authPost(
@@ -164,6 +176,34 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                 autofocus: true,
                 onSubmitted: (_) => _submit(),
               ),
+              ..._buildMountsEditor(),
+              ..._buildEnvVarsEditor(),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _cmdController,
+                decoration: InputDecoration(
+                  labelText: 'Default Shell Command',
+                  labelStyle: _labelStyle,
+                  floatingLabelStyle: _labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'Optional — runs on terminal open',
+                ),
+                onSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _healthCheckController,
+                decoration: InputDecoration(
+                  labelText: 'Health Check Command',
+                  labelStyle: _labelStyle,
+                  floatingLabelStyle: _labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'Optional — polled to gauge service health',
+                ),
+                onSubmitted: (_) => _submit(),
+              ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
                 value: _selectedImage,
@@ -182,33 +222,19 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                 onChanged: (v) =>
                     setState(() => _selectedImage = v ?? widget.defaultImage),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _cmdController,
-                decoration: InputDecoration(
-                  labelText: 'Default shell command (optional)',
-                  labelStyle: _labelStyle,
-                  floatingLabelStyle: _labelStyle,
-                  floatingLabelBehavior: FloatingLabelBehavior.always,
-                  border: const OutlineInputBorder(),
+              if (widget.allowAutostart) ...[
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  value: _autoStart,
+                  onChanged: (v) => setState(() => _autoStart = v ?? false),
+                  title: const Text('Auto start'),
+                  subtitle: const Text(
+                    'Start this workspace when the server starts',
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
                 ),
-                onSubmitted: (_) => _submit(),
-              ),
-              ..._buildMountsEditor(),
-              ..._buildEnvVarsEditor(),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _healthCheckController,
-                decoration: InputDecoration(
-                  labelText: 'Health check command (optional)',
-                  labelStyle: _labelStyle,
-                  floatingLabelStyle: _labelStyle,
-                  floatingLabelBehavior: FloatingLabelBehavior.always,
-                  border: const OutlineInputBorder(),
-                  hintText: 'e.g. curl -sf http://localhost:8080/health',
-                ),
-                onSubmitted: (_) => _submit(),
-              ),
+              ],
             ],
           ),
         ),

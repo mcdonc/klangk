@@ -1454,7 +1454,9 @@ void main() {
       // Dropdown should show the default image (logo also contains 'klangk')
       expect(find.text('klangk'), findsWidgets);
 
-      // Select non-default image
+      // Select non-default image (dropdown is near the dialog's bottom
+      // after the field reorder, so scroll it into view first).
+      await tester.ensureVisible(find.byType(DropdownButtonFormField<String>));
       await tester.tap(find.byType(DropdownButtonFormField<String>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('klangk-custom').last);
@@ -1519,7 +1521,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(1),
+              .at(3),
           'klangk-pi');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
@@ -1586,7 +1588,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(1),
+              .at(3),
           'pi');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
@@ -1897,7 +1899,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(2),
+              .at(1),
           '/host/src:/work/src');
       // Tap the add (+) button next to the mount input
       // The FAB also has an add icon, so find the one inside the dialog
@@ -1915,7 +1917,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(2),
+              .at(1),
           'nix-vol:/nix');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -1979,7 +1981,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(2),
+              .at(1),
           '/a:/b');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
@@ -2014,7 +2016,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(2),
+              .at(1),
           'bad-mount');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2029,7 +2031,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(2),
+              .at(1),
           '/host:relative');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2042,7 +2044,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(2),
+              .at(1),
           '/host:/container:bogus');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2055,7 +2057,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(2),
+              .at(1),
           '/a:/b');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2107,7 +2109,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(3),
+              .at(2),
           'FOO=bar');
       await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
@@ -2120,7 +2122,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(3),
+              .at(2),
           'X=1');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
@@ -2163,7 +2165,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(3),
+              .at(2),
           'NOEQ');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
@@ -2175,7 +2177,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(3),
+              .at(2),
           '=value');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
@@ -2187,7 +2189,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(3),
+              .at(2),
           'A=1');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
@@ -2219,7 +2221,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(2),
+              .at(1),
           '/src:/work');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2253,7 +2255,7 @@ void main() {
               .descendant(
                   of: find.byType(AlertDialog),
                   matching: find.byType(TextField))
-              .at(3),
+              .at(2),
           'FOO=bar');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();

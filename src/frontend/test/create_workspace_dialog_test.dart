@@ -47,6 +47,7 @@ void main() {
     AuthService? auth,
     String defaultImage = 'klangk-pi',
     List<String>? allowedImages,
+    bool allowAutostart = false,
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -61,6 +62,7 @@ void main() {
                   auth: a,
                   defaultImage: defaultImage,
                   allowedImages: allowedImages ?? [defaultImage, 'klangk-full'],
+                  allowAutostart: allowAutostart,
                 ),
               );
             });
@@ -149,8 +151,7 @@ void main() {
       await tester.enterText(find.byType(TextField).first, 'My WS');
       final healthCheckField = find.byWidgetPredicate(
         (w) =>
-            w is TextField &&
-            w.decoration?.labelText == 'Health check command (optional)',
+            w is TextField && w.decoration?.labelText == 'Health Check Command',
       );
       await tester.ensureVisible(healthCheckField);
       await tester.enterText(
@@ -200,7 +201,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       // 3rd TextField is mount input
-      await tester.enterText(find.byType(TextField).at(2), '/host:/container');
+      await tester.enterText(find.byType(TextField).at(1), '/host:/container');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
 
@@ -215,7 +216,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(2), 'invalid');
+      await tester.enterText(find.byType(TextField).at(1), 'invalid');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
 
@@ -230,7 +231,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(2), '/a:/b');
+      await tester.enterText(find.byType(TextField).at(1), '/a:/b');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.text('/a:/b'), findsOneWidget);
@@ -249,7 +250,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       // 4th TextField is env input
-      await tester.enterText(find.byType(TextField).at(3), 'FOO=bar');
+      await tester.enterText(find.byType(TextField).at(2), 'FOO=bar');
       await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
@@ -265,7 +266,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(3), 'NOEQUALS');
+      await tester.enterText(find.byType(TextField).at(2), 'NOEQUALS');
       await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
@@ -281,7 +282,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(3), '=value');
+      await tester.enterText(find.byType(TextField).at(2), '=value');
       await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
@@ -297,7 +298,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(3), 'MYKEY=val');
+      await tester.enterText(find.byType(TextField).at(2), 'MYKEY=val');
       await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -316,7 +317,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(2), '/a:/b');
+      await tester.enterText(find.byType(TextField).at(1), '/a:/b');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
@@ -339,7 +340,9 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      // Open dropdown and select non-default
+      // Open dropdown and select non-default (now near the dialog's
+      // bottom after the field reordering, so scroll it into view first).
+      await tester.ensureVisible(find.byType(DropdownButtonFormField<String>));
       await tester.tap(find.byType(DropdownButtonFormField<String>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('klangk-full').last);
@@ -386,13 +389,13 @@ void main() {
       await tester.pump(); // dialog renders
 
       // First: invalid mount to trigger error
-      await tester.enterText(find.byType(TextField).at(2), 'bad');
+      await tester.enterText(find.byType(TextField).at(1), 'bad');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.textContaining('Expected'), findsOneWidget);
 
       // Then: valid mount clears error
-      await tester.enterText(find.byType(TextField).at(2), '/a:/b');
+      await tester.enterText(find.byType(TextField).at(1), '/a:/b');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.textContaining('Expected'), findsNothing);
@@ -421,6 +424,81 @@ void main() {
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.text('Expected KEY=VALUE format'), findsNothing);
+    });
+
+    testWidgets('hides auto-start checkbox when not allowed', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog()); // allowAutostart defaults false
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      expect(find.text('Auto start'), findsNothing);
+      expect(find.byType(Checkbox), findsNothing);
+    });
+
+    testWidgets('shows auto-start checkbox and sends auto_start when allowed',
+        (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'Auto', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(allowAutostart: true));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      expect(find.text('Auto start'), findsOneWidget);
+      // Toggle the checkbox on, then submit (checkbox is at the bottom of
+      // the dialog, so ensure it's visible before tapping).
+      final checkbox = find.byType(Checkbox);
+      await tester.ensureVisible(checkbox);
+      await tester.tap(checkbox);
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).first, 'Auto');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      expect(postedBody!['auto_start'], true);
+    });
+
+    testWidgets('does not send auto_start when checkbox is left off',
+        (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'Auto', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(allowAutostart: true));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      // Checkbox is present but unchecked.
+      expect(find.byType(Checkbox), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, 'Auto');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      expect(postedBody!.containsKey('auto_start'), isFalse);
     });
   });
 }

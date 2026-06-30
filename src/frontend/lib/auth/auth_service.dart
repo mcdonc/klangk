@@ -22,6 +22,7 @@ class AuthService extends ChangeNotifier {
   String _bannerText = '';
   bool _bannerAccepted = false;
   String _instanceId = 'default';
+  bool _allowAutostart = false;
   Timer? _permissionTimer;
   Timer? _refreshTimer;
 
@@ -34,6 +35,12 @@ class AuthService extends ChangeNotifier {
   bool get bannerAccepted => _bannerAccepted;
   bool get bannerRequired => _bannerText.isNotEmpty && !_bannerAccepted;
   String get instanceId => _instanceId;
+
+  /// Whether the server permits per-workspace auto-start
+  /// (KLANGK_ALLOW_AUTOSTART). The UI gates its "Auto start" checkbox
+  /// on this — setting auto_start on a server that rejects it would
+  /// 400 (#1115).
+  bool get allowAutostart => _allowAutostart;
 
   /// Decode the JWT payload.
   Map<String, dynamic>? get _payload {
@@ -90,6 +97,7 @@ class AuthService extends ChangeNotifier {
         _bannerTitle = (data['login_banner_title'] as String?) ?? '';
         _bannerText = (data['login_banner'] as String?) ?? '';
         _instanceId = (data['instance_id'] as String?) ?? 'default';
+        _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
       }
     } catch (e) {
       // coverage:ignore-start

@@ -131,6 +131,8 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       workspace: _workspace!,
       allowedImages: _allowedImages,
       defaultImage: _defaultImage,
+      allowAutostart:
+          context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
       onSave: _saveSettings,
     );
@@ -142,6 +144,7 @@ class _SettingsForm extends StatefulWidget {
   final Map<String, dynamic> workspace;
   final List<String> allowedImages;
   final String defaultImage;
+  final bool allowAutostart;
   final String? saveMessage;
   final Future<void> Function(Map<String, dynamic>) onSave;
 
@@ -150,6 +153,7 @@ class _SettingsForm extends StatefulWidget {
     required this.workspace,
     required this.allowedImages,
     required this.defaultImage,
+    required this.allowAutostart,
     required this.saveMessage,
     required this.onSave,
   });
@@ -167,6 +171,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   late String _selectedImage;
   late List<String> _mounts;
   late Map<String, String> _envVars;
+  bool _autoStart = false;
   String? _mountError;
   String? _envError;
   bool _saving = false;
@@ -196,6 +201,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       (widget.workspace['env'] as Map?)?.cast<String, String>() ??
           <String, String>{},
     );
+    _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
   }
 
   @override
@@ -214,6 +220,10 @@ class _SettingsFormState extends State<_SettingsForm> {
     if (old.workspace['health_check'] != widget.workspace['health_check']) {
       // coverage:ignore-start
       _healthCheckCtrl.text = widget.workspace['health_check'] as String? ?? '';
+    } // coverage:ignore-end
+    if (old.workspace['auto_start'] != widget.workspace['auto_start']) {
+      // coverage:ignore-start
+      _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
     } // coverage:ignore-end
   }
 
@@ -239,6 +249,7 @@ class _SettingsFormState extends State<_SettingsForm> {
           : _healthCheckCtrl.text.trim(),
       'mounts': _mounts.isNotEmpty ? _mounts : null,
       'env': _envVars.isNotEmpty ? _envVars : null,
+      if (widget.allowAutostart) 'auto_start': _autoStart,
     });
     if (mounted) setState(() => _saving = false);
   }
@@ -367,28 +378,16 @@ class _SettingsFormState extends State<_SettingsForm> {
         TextField(
           controller: _nameCtrl,
           decoration: InputDecoration(
-            labelText: 'Workspace Name',
+            labelText: 'Name',
             labelStyle: labelStyle,
             floatingLabelBehavior: FloatingLabelBehavior.always,
             border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
-        if (widget.allowedImages.isNotEmpty)
-          DropdownButtonFormField<String>(
-            value: _selectedImage,
-            decoration: InputDecoration(
-              labelText: 'Container Image',
-              labelStyle: labelStyle,
-              floatingLabelBehavior: FloatingLabelBehavior.always,
-              border: const OutlineInputBorder(),
-            ),
-            items: widget.allowedImages
-                .map((img) => DropdownMenuItem(value: img, child: Text(img)))
-                .toList(),
-            onChanged: (v) =>
-                setState(() => _selectedImage = v ?? widget.defaultImage),
-          ),
+        _buildMountsEditor(labelStyle),
+        const SizedBox(height: 16),
+        _buildEnvVarsEditor(labelStyle),
         const SizedBox(height: 16),
         TextField(
           controller: _cmdCtrl,
@@ -412,9 +411,34 @@ class _SettingsFormState extends State<_SettingsForm> {
           ),
         ),
         const SizedBox(height: 16),
-        _buildMountsEditor(labelStyle),
-        const SizedBox(height: 16),
-        _buildEnvVarsEditor(labelStyle),
+        if (widget.allowedImages.isNotEmpty)
+          DropdownButtonFormField<String>(
+            value: _selectedImage,
+            decoration: InputDecoration(
+              labelText: 'Container Image',
+              labelStyle: labelStyle,
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              border: const OutlineInputBorder(),
+            ),
+            items: widget.allowedImages
+                .map((img) => DropdownMenuItem(value: img, child: Text(img)))
+                .toList(),
+            onChanged: (v) =>
+                setState(() => _selectedImage = v ?? widget.defaultImage),
+          ),
+        if (widget.allowAutostart) ...[
+          const SizedBox(height: 8),
+          CheckboxListTile(
+            value: _autoStart,
+            onChanged: (v) => setState(() => _autoStart = v ?? false),
+            title: const Text('Auto start'),
+            subtitle: const Text(
+              'Start this workspace when the server starts',
+            ),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ],
         const SizedBox(height: 16),
         Align(
           alignment: Alignment.centerRight,
