@@ -1,16 +1,10 @@
 import { Type } from "@sinclair/typebox";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export default function (pi: any) {
-  // Parse KLANGK_PORT_MAPPINGS: "8000:9000,8001:9001,8002:9002,..."
-  const portMap: Map<number, number> = new Map();
-  const mappingsStr = process.env.KLANGK_PORT_MAPPINGS || "";
-  for (const pair of mappingsStr.split(",")) {
-    const [container, host] = pair.split(":").map(Number);
-    if (!isNaN(container) && !isNaN(host)) {
-      portMap.set(container, host);
-    }
-  }
-
   pi.registerTool({
     name: "get_hosted_url",
     description:
@@ -28,32 +22,22 @@ export default function (pi: any) {
       _onUpdate: any,
       _ctx: any,
     ) {
-      const port = params.container_port;
-      const externalPort = portMap.get(port);
-      if (externalPort === undefined) {
-        const mapped = Array.from(portMap.keys()).sort((a, b) => a - b);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Port ${port} is not a mapped port. Mapped container ports: ${mapped.join(", ")}. Use one of these ports for your server.`,
-            },
-          ],
-          details: {},
-        };
+      // Delegate to the `klangk-hosted-url` shell script — the single source
+      // of truth for hosted-URL construction, shared with setup.sh, the
+      // default_command, the health check, and the shell. On success it
+      // prints the URL to stdout; on error it writes a message to stderr and
+      // exits non-zero, which we surface to the agent.
+      let text: string;
+      try {
+        const { stdout } = await execFileAsync("klangk-hosted-url", [
+          String(params.container_port),
+        ]);
+        text = stdout.trim();
+      } catch (err: any) {
+        text = (err.stderr || "").trim() || err.message;
       }
-      const proto = process.env.KLANGK_HOSTING_PROTO || "http";
-      const hostname = process.env.KLANGK_HOSTING_HOSTNAME || "localhost";
-      const basePath = process.env.KLANGK_HOSTING_BASE_PATH || "";
-      const workspaceId = process.env.KLANGK_WORKSPACE_ID || "";
-      const url = `${proto}://${hostname}${basePath}/hosted/${workspaceId}/${externalPort}/`;
       return {
-        content: [
-          {
-            type: "text",
-            text: `Container port ${port} is mapped to external port ${externalPort}. The user can access it at ${url}`,
-          },
-        ],
+        content: [{ type: "text", text }],
         details: {},
       };
     },

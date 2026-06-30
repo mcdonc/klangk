@@ -41,6 +41,27 @@ WebSocket connections are supported — tools like Jupyter and Marimo work out o
 
 Extensions and scripts inside the container can use these to construct correct URLs for their hosted apps. Pi's built-in `get_hosted_url` tool does this automatically.
 
+### `klangk-hosted-url` (from inside a container)
+
+The easiest way to get a hosted app URL from the shell is the
+`klangk-hosted-url` script, baked into the workspace image:
+
+```bash
+$ klangk-hosted-url 8000
+http://localhost:8995/hosted/abc123/9000/
+```
+
+Pass the **container port** (8000-8004); it resolves the mapped host port via
+`KLANGK_PORT_MAPPINGS` and combines it with the `KLANGK_HOSTING_*` and
+`KLANGK_WORKSPACE_ID` env vars to print the full URL. Use it from `setup.sh`,
+your `default_command`, a `health_check`, or interactively. Pi's
+`get_hosted_url` tool delegates to this same script, so the URL logic lives in
+one place.
+
+Error cases: no argument prints usage; a container port not present in
+`KLANGK_PORT_MAPPINGS` lists the valid ports; a missing `KLANGK_PORT_MAPPINGS`
+errors out. Each exits non-zero.
+
 ## Behind a reverse proxy
 
 When Klangk runs behind an outer reverse proxy (e.g., on a subpath like `/klangk`), the hosting info is auto-derived from standard headers:
