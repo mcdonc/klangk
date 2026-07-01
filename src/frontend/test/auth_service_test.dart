@@ -83,6 +83,7 @@ void main() {
       String bannerText = '',
       String instanceId = 'default',
       bool allowAutostart = false,
+      int? minPasswordLength,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -92,6 +93,8 @@ void main() {
               'login_banner': bannerText,
               'instance_id': instanceId,
               'allow_autostart': allowAutostart,
+              if (minPasswordLength != null)
+                'min_password_length': minPasswordLength,
             }),
             200,
           );
@@ -136,6 +139,24 @@ void main() {
       final service2 = AuthService();
       await Future.delayed(Duration.zero);
       expect(service2.allowAutostart, isTrue);
+    });
+
+    test('loads min_password_length from /api/config', () async {
+      testAuthHttpClientOverride = _bannerClient(minPasswordLength: 12);
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(service.minPasswordLength, 12);
+    });
+
+    test('min_password_length defaults to 8 when absent', () async {
+      testAuthHttpClientOverride = _bannerClient();
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(service.minPasswordLength, 8);
     });
 
     test('bannerRequired is false when no banner text', () async {

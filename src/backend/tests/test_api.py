@@ -294,6 +294,14 @@ class TestConfig:
         assert data["login_banner_title"] == "Notice"
         assert data["login_banner"] == "You must accept terms."
 
+    async def test_get_config_advertises_min_password_length(self, client):
+        # Surfaced so the UI can validate password length inline; matches the
+        # rule enforced server-side by auth.validate_password_length.
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["min_password_length"] == auth.MIN_PASSWORD_LENGTH
+
 
 # --- Auth routes ---
 

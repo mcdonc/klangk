@@ -126,13 +126,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   }
 
   Future<void> _addUser() async {
+    final auth = context.read<AuthService>();
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => _AddUserDialog(),
+      builder: (ctx) => _AddUserDialog(
+        minPasswordLength: auth.minPasswordLength,
+      ),
     );
     if (result == null) return;
 
-    final auth = context.read<AuthService>();
     final resp = await auth.authPost(
       '/api/v1/admin/users',
       body: jsonEncode(result),
@@ -202,16 +204,16 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   }
 
   Future<void> _editUser(Map<String, dynamic> user) async {
+    final auth = context.read<AuthService>();
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (ctx) => _EditUserDialog(
         currentEmail: user['email'] as String,
         currentHandle: user['handle'] as String? ?? '',
+        minPasswordLength: auth.minPasswordLength,
       ),
     );
     if (result == null) return;
-
-    final auth = context.read<AuthService>();
     final resp = await auth.authPatch(
       '/api/v1/admin/users/${user['id']}',
       body: jsonEncode(result),
@@ -1197,6 +1199,10 @@ class _InvitationsTabState extends State<_InvitationsTab> {
 // ---------------------------------------------------------------------------
 
 class _AddUserDialog extends StatefulWidget {
+  final int minPasswordLength;
+
+  const _AddUserDialog({this.minPasswordLength = 8});
+
   @override
   State<_AddUserDialog> createState() => _AddUserDialogState();
 }
@@ -1204,13 +1210,16 @@ class _AddUserDialog extends StatefulWidget {
 class _AddUserDialogState extends State<_AddUserDialog> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
   bool _sendVerificationEmail = false;
   bool _obscurePassword = true;
+  bool _obscureConfirm = true;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmController.dispose();
     super.dispose();
   }
 
@@ -1220,6 +1229,17 @@ class _AddUserDialogState extends State<_AddUserDialog> {
       color: KColors.textPrimary,
       fontWeight: FontWeight.bold,
     );
+    final min = widget.minPasswordLength;
+    final password = _passwordController.text;
+    final confirm = _confirmController.text;
+    // Show length/mismatch errors only once the user has typed something, so
+    // an empty field isn't flagged before input begins.
+    final passwordTooShort = password.isNotEmpty && password.length < min;
+    final passwordsMismatch = confirm.isNotEmpty && confirm != password;
+    final passwordValid = password.length >= min && password == confirm;
+    final email = _emailController.text.trim();
+    final canAdd =
+        email.isNotEmpty && (_sendVerificationEmail || passwordValid);
     return AlertDialog(
       title: Text('Add User', style: TextStyle(color: KColors.textPrimary)),
       content: SizedBox(
@@ -1237,6 +1257,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                 border: const OutlineInputBorder(),
               ),
               autofocus: true,
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 16),
             CheckboxListTile(
@@ -1260,6 +1281,12 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                   floatingLabelStyle: labelStyle,
                   floatingLabelBehavior: FloatingLabelBehavior.always,
                   border: const OutlineInputBorder(),
+                  // Make the rule discoverable before the first keystroke,
+                  // and surface a violation as soon as it's typed.
+                  helperText: 'At least $min characters',
+                  errorText: passwordTooShort
+                      ? 'Password must be at least $min characters'
+                      : null,
                   suffixIcon: IconButton(
                     icon: Icon(_obscurePassword
                         ? Icons.visibility_off
@@ -1269,6 +1296,29 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                   ),
                 ),
                 obscureText: _obscurePassword,
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _confirmController,
+                decoration: InputDecoration(
+                  labelText: 'Confirm Password',
+                  labelStyle: labelStyle,
+                  floatingLabelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  errorText:
+                      passwordsMismatch ? 'Passwords do not match' : null,
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscureConfirm
+                        ? Icons.visibility_off
+                        : Icons.visibility),
+                    onPressed: () =>
+                        setState(() => _obscureConfirm = !_obscureConfirm),
+                  ),
+                ),
+                obscureText: _obscureConfirm,
+                onChanged: (_) => setState(() {}),
               ),
             ],
           ],
@@ -1281,23 +1331,24 @@ class _AddUserDialogState extends State<_AddUserDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () {
-            final email = _emailController.text.trim();
-            if (email.isEmpty) return;
-            if (_sendVerificationEmail) {
-              Navigator.pop(context, <String, dynamic>{
-                'email': email,
-                'send_verification_email': true,
-              });
-            } else {
-              final password = _passwordController.text;
-              if (password.isEmpty) return;
-              Navigator.pop(context, <String, dynamic>{
-                'email': email,
-                'password': password,
-              });
-            }
-          },
+          // Disabled until the form is valid: email present, and either the
+          // verification-email path is chosen or the password meets the
+          // minimum length and matches its confirmation.
+          onPressed: canAdd
+              ? () {
+                  if (_sendVerificationEmail) {
+                    Navigator.pop(context, <String, dynamic>{
+                      'email': email,
+                      'send_verification_email': true,
+                    });
+                  } else {
+                    Navigator.pop(context, <String, dynamic>{
+                      'email': email,
+                      'password': password,
+                    });
+                  }
+                }
+              : null,
           child: const Text('Add'),
         ),
       ],
@@ -1308,10 +1359,12 @@ class _AddUserDialogState extends State<_AddUserDialog> {
 class _EditUserDialog extends StatefulWidget {
   final String currentEmail;
   final String currentHandle;
+  final int minPasswordLength;
 
   const _EditUserDialog({
     required this.currentEmail,
     required this.currentHandle,
+    this.minPasswordLength = 8,
   });
 
   @override
@@ -1322,7 +1375,9 @@ class _EditUserDialogState extends State<_EditUserDialog> {
   late final TextEditingController _emailController;
   late final TextEditingController _handleController;
   final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
   bool _obscurePassword = true;
+  bool _obscureConfirm = true;
 
   @override
   void initState() {
@@ -1336,6 +1391,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     _emailController.dispose();
     _handleController.dispose();
     _passwordController.dispose();
+    _confirmController.dispose();
     super.dispose();
   }
 
@@ -1345,6 +1401,18 @@ class _EditUserDialogState extends State<_EditUserDialog> {
       color: KColors.textPrimary,
       fontWeight: FontWeight.bold,
     );
+    final min = widget.minPasswordLength;
+    final password = _passwordController.text;
+    final confirm = _confirmController.text;
+    // The password field is optional ("leave blank to keep current"), so the
+    // length/mismatch checks only apply once the admin starts typing one.
+    final settingPassword = password.isNotEmpty;
+    final passwordTooShort = settingPassword && password.length < min;
+    final passwordsMismatch = confirm.isNotEmpty && confirm != password;
+    final passwordValid =
+        !settingPassword || (password.length >= min && password == confirm);
+    final email = _emailController.text.trim();
+    final canSave = email.isNotEmpty && passwordValid;
     return AlertDialog(
       title: Text('Edit User', style: TextStyle(color: KColors.textPrimary)),
       content: SizedBox(
@@ -1362,6 +1430,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 border: const OutlineInputBorder(),
               ),
               autofocus: true,
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -1383,6 +1452,10 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 floatingLabelStyle: labelStyle,
                 floatingLabelBehavior: FloatingLabelBehavior.always,
                 hintText: 'Leave blank to keep current',
+                helperText: settingPassword ? 'At least $min characters' : null,
+                errorText: passwordTooShort
+                    ? 'Password must be at least $min characters'
+                    : null,
                 border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
                   icon: Icon(_obscurePassword
@@ -1393,7 +1466,34 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 ),
               ),
               obscureText: _obscurePassword,
+              onChanged: (_) => setState(() {}),
             ),
+            // Confirm field appears only once a new password is being typed,
+            // so the optional case (blank = keep current) stays clean.
+            if (settingPassword) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _confirmController,
+                decoration: InputDecoration(
+                  labelText: 'Confirm New Password',
+                  labelStyle: labelStyle,
+                  floatingLabelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  errorText:
+                      passwordsMismatch ? 'Passwords do not match' : null,
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscureConfirm
+                        ? Icons.visibility_off
+                        : Icons.visibility),
+                    onPressed: () =>
+                        setState(() => _obscureConfirm = !_obscureConfirm),
+                  ),
+                ),
+                obscureText: _obscureConfirm,
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
           ],
         ),
       ),
@@ -1404,16 +1504,18 @@ class _EditUserDialogState extends State<_EditUserDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () {
-            final email = _emailController.text.trim();
-            final handle = _handleController.text.trim();
-            final password = _passwordController.text;
-            if (email.isEmpty) return;
-            final result = <String, String>{'email': email};
-            if (handle != widget.currentHandle) result['handle'] = handle;
-            if (password.isNotEmpty) result['password'] = password;
-            Navigator.pop(context, result);
-          },
+          // Disabled until valid: email present, and either no password is
+          // being set or the new password meets the minimum length and matches
+          // its confirmation.
+          onPressed: canSave
+              ? () {
+                  final handle = _handleController.text.trim();
+                  final result = <String, String>{'email': email};
+                  if (handle != widget.currentHandle) result['handle'] = handle;
+                  if (password.isNotEmpty) result['password'] = password;
+                  Navigator.pop(context, result);
+                }
+              : null,
           child: const Text('Save'),
         ),
       ],
