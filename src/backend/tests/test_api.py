@@ -2929,6 +2929,45 @@ class TestUserGroupEndpoints:
         )
         assert resp.status_code == 200
 
+    async def test_add_group_member_rejects_system_agent(
+        self, client, user, db
+    ):
+        # Skeleton-key guardrail (#1135): anyone with manage_members on a
+        # group adds members by UUID, and the agent's UUID is published
+        # in source — so adding it makes the agent a group principal that
+        # can hold cross-workspace grants via group shares.
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        headers = await _auth_headers(client)
+        # Allow the (non-admin) user to create groups; the creator gets
+        # manage_members on the group they create.
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            model.ACTION_ALLOW,
+            "create",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_AUTHENTICATED,
+        )
+        resp = await client.post(
+            "/api/v1/groups",
+            headers=headers,
+            json={"name": "agent-guard-group"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": agent["id"]},
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+        # Confirm the guard actually blocked the grant.
+        members = await model.get_group_members(group_id)
+        assert not any(m["id"] == agent["id"] for m in members)
+
     async def test_update_nonexistent_group(self, client, user):
         headers = await _auth_headers(client)
         # Grant * on fake group so ACL passes
@@ -4843,6 +4882,33 @@ class TestGroupEndpoints:
             json={"user_id": "x"},
         )
         assert resp.status_code == 404
+
+    async def test_add_admin_group_member_rejects_system_agent(
+        self, client, admin_user, db
+    ):
+        # Skeleton-key guardrail (#1135): the admin group-member-add path
+        # resolves the target by UUID, and the agent's UUID is published in
+        # source — same blast-radius risk as the workspace grant paths.
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/admin/groups",
+            headers=headers,
+            json={"name": "agent-guard-group"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/admin/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": agent["id"]},
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+        members = await model.get_group_members(group_id)
+        assert not any(m["id"] == agent["id"] for m in members)
 
     async def test_remove_group_member(self, client, admin_user, user):
         headers = await self._admin_headers(client)

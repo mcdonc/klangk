@@ -439,6 +439,12 @@ async def user_add_group_member(
     target = await model.get_user_by_id(req.user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if target["id"] == model.AGENT_USER_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="The system agent cannot be added to groups"
+            " (global fixed UUID — granting it cross-workspace blast radius).",
+        )
     await model.add_user_to_group(req.user_id, group_id)
     return {"status": "added"}
 
@@ -543,6 +549,12 @@ async def add_group_member(
     user = await model.get_user_by_id(req.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if user["id"] == model.AGENT_USER_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="The system agent cannot be added to groups"
+            " (global fixed UUID — granting it cross-workspace blast radius).",
+        )
     await model.add_user_to_group(req.user_id, group_id)
     return {"status": "added"}
 
