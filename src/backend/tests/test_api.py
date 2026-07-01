@@ -1023,6 +1023,58 @@ class TestWorkspaceRoutes:
         ws = next(w for w in resp.json() if w["id"] == ws_id)
         assert ws["running"] is False
 
+    async def test_list_includes_live_health(self, client, user):
+        """List payload carries live health for a steady-state failure (#1173).
+
+        The health monitor only broadcasts ``service_health`` on a
+        *transition*, so a workspace unhealthy before any client connects
+        would otherwise be invisible on the front page. The list endpoint
+        must surface the live ``health``/``health_message`` from the
+        in-memory ``ContainerState`` so the icon renders amber on load.
+        """
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "health-list-test"},
+        )
+        ws_id = resp.json()["id"]
+
+        # Simulate a running container that is steadily unhealthy.
+        from klangk_backend import container
+
+        container.registry.track_activity("cid-health", ws_id)
+        state = container.registry.get_state(ws_id)
+        assert state is not None
+        state.health_status = "unhealthy"
+        state.health_message = "gateway refused connection"
+        try:
+            resp = await client.get(
+                "/api/v1/workspaces?limit=10", headers=headers
+            )
+            items = resp.json()["items"]
+            ws = next(w for w in items if w["id"] == ws_id)
+            assert ws["running"] is True
+            assert ws["health"] == "unhealthy"
+            assert ws["health_message"] == "gateway refused connection"
+
+            # A healthy workspace carries "healthy" and no message.
+            state.health_status = "healthy"
+            state.health_message = None
+            resp = await client.get(
+                "/api/v1/workspaces?limit=10", headers=headers
+            )
+            ws = next(w for w in resp.json()["items"] if w["id"] == ws_id)
+            assert ws["health"] == "healthy"
+            assert ws["health_message"] is None
+        finally:
+            container.registry.remove_state(ws_id)
+
+        # Stopped workspace: no health fields beyond running=False.
+        resp = await client.get("/api/v1/workspaces?limit=10", headers=headers)
+        ws = next(w for w in resp.json()["items"] if w["id"] == ws_id)
+        assert ws["running"] is False
+
     async def test_list_pagination(self, client, user):
         headers = await _auth_headers(client)
         for name in ["ws-a", "ws-b", "ws-c"]:

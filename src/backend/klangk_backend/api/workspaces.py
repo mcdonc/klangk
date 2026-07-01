@@ -55,9 +55,30 @@ router = APIRouter()
 
 
 def _annotate_running(items: list[dict]) -> list[dict]:
-    """Add ``running`` boolean to each workspace dict."""
+    """Annotate each workspace dict with live container/health state.
+
+    Adds ``running`` (bool) and, for running workspaces, the live
+    ``health`` (``"healthy"`` / ``"unhealthy"`` / ``None`` until the
+    first poll completes) and ``health_message`` (the bounded failure
+    reason, or ``None``). Surfacing these here means the front-page
+    workspace list reflects a workspace that is *already* unhealthy on
+    page load -- not only one that transitions while the page is open.
+
+    The ``HealthMonitor`` only broadcasts a ``service_health`` WebSocket
+    event on a health *transition* (an anti-spam choice, so a steady-state
+    failure doesn't push to every connection every poll). Without this
+    annotation, a workspace unhealthy before any client connected would
+    never be visible: no transition event fires, and the list payload
+    carried no live health. ``registry.get_state`` is already fetched for
+    the ``running`` flag, so the health fields ride along at no extra
+    lookup cost. See #1173.
+    """
     for ws in items:
-        ws["running"] = container.registry.get_state(ws["id"]) is not None
+        state = container.registry.get_state(ws["id"])
+        ws["running"] = state is not None
+        if state is not None:
+            ws["health"] = state.health_status
+            ws["health_message"] = state.health_message
     return items
 
 
