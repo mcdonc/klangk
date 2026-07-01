@@ -108,19 +108,37 @@ async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
         "-e",
         f"HOME={container_home}",
         container_id,
-        "klangk-setup-pi",
+        "/opt/klangk/bin/klangk-setup-pi",
         "--force",
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=podman.subprocess_env(),
     )
-    await asyncio.wait_for(proc.communicate(), timeout=30)
-    logger.info(
-        "Agent home ready at %s for container %s",
-        container_home,
-        container_id,
-    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+    # Check the return code but do NOT fail the container bring-up over a
+    # provisioning hiccup: the workspace stays usable, and the lazy
+    # chat-start path (AgentSession._ensure_home) will retry on first
+    # mention.  Surface the failure loudly, though, so it's not silently
+    # swallowed (a previous silent-unconditional "ready" log hid a
+    # missing ~/.pi/agent entirely). #1162
+    if proc.returncode != 0:
+        logger.warning(
+            "klangk-setup-pi exited %s for container %s; agent home at "
+            "%s may be incomplete (chat will retry on first mention):\n"
+            "stdout: %s\nstderr: %s",
+            proc.returncode,
+            container_id,
+            container_home,
+            stdout.decode(errors="replace") if stdout else "",
+            stderr.decode(errors="replace") if stderr else "",
+        )
+    else:
+        logger.info(
+            "Agent home ready at %s for container %s",
+            container_home,
+            container_id,
+        )
     return container_home
 
 
