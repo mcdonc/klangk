@@ -8,6 +8,21 @@ import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/workspace/create_workspace_dialog.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
+/// Identity-based finders for the dialog's TextFields, matched by their
+/// InputDecoration rather than by position so reordering fields can't break
+/// these tests - see #1124.
+Finder _nameField() => find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.labelText == 'Name',
+    );
+Finder _mountInput() => find.byWidgetPredicate(
+      (w) =>
+          w is TextField &&
+          w.decoration?.hintText == '/host/path:/container/path',
+    );
+Finder _envInput() => find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'KEY=VALUE',
+    );
+
 void main() {
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
@@ -122,7 +137,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).first, 'My WS');
+      await tester.enterText(_nameField(), 'My WS');
       await tester.tap(find.text('Create'));
       await tester.pump();
       await tester.pump();
@@ -148,7 +163,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).first, 'My WS');
+      await tester.enterText(_nameField(), 'My WS');
       final healthCheckField = find.byWidgetPredicate(
         (w) =>
             w is TextField && w.decoration?.labelText == 'Health Check Command',
@@ -184,7 +199,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).first, 'Dup');
+      await tester.enterText(_nameField(), 'Dup');
       await tester.tap(find.text('Create'));
       await tester.pump();
       await tester.pump();
@@ -201,7 +216,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       // 3rd TextField is mount input
-      await tester.enterText(find.byType(TextField).at(1), '/host:/container');
+      await tester.enterText(_mountInput(), '/host:/container');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
 
@@ -216,7 +231,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(1), 'invalid');
+      await tester.enterText(_mountInput(), 'invalid');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
 
@@ -231,7 +246,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(1), '/a:/b');
+      await tester.enterText(_mountInput(), '/a:/b');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.text('/a:/b'), findsOneWidget);
@@ -250,7 +265,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       // 4th TextField is env input
-      await tester.enterText(find.byType(TextField).at(2), 'FOO=bar');
+      await tester.enterText(_envInput(), 'FOO=bar');
       await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
@@ -266,7 +281,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(2), 'NOEQUALS');
+      await tester.enterText(_envInput(), 'NOEQUALS');
       await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
@@ -282,7 +297,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(2), '=value');
+      await tester.enterText(_envInput(), '=value');
       await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pump();
@@ -298,7 +313,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(2), 'MYKEY=val');
+      await tester.enterText(_envInput(), 'MYKEY=val');
       await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -317,7 +332,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).at(1), '/a:/b');
+      await tester.enterText(_mountInput(), '/a:/b');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
@@ -348,7 +363,7 @@ void main() {
       await tester.tap(find.text('klangk-full').last);
       await tester.pump();
 
-      await tester.enterText(find.byType(TextField).first, 'Custom');
+      await tester.enterText(_nameField(), 'Custom');
       await tester.tap(find.text('Create'));
       await tester.pump();
       await tester.pump();
@@ -372,7 +387,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      await tester.enterText(find.byType(TextField).first, 'Default Img');
+      await tester.enterText(_nameField(), 'Default Img');
       await tester.tap(find.text('Create'));
       await tester.pump();
       await tester.pump();
@@ -389,13 +404,13 @@ void main() {
       await tester.pump(); // dialog renders
 
       // First: invalid mount to trigger error
-      await tester.enterText(find.byType(TextField).at(1), 'bad');
+      await tester.enterText(_mountInput(), 'bad');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.textContaining('Expected'), findsOneWidget);
 
       // Then: valid mount clears error
-      await tester.enterText(find.byType(TextField).at(1), '/a:/b');
+      await tester.enterText(_mountInput(), '/a:/b');
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.textContaining('Expected'), findsNothing);
@@ -463,7 +478,7 @@ void main() {
       await tester.ensureVisible(checkbox);
       await tester.tap(checkbox);
       await tester.pump();
-      await tester.enterText(find.byType(TextField).first, 'Auto');
+      await tester.enterText(_nameField(), 'Auto');
       await tester.tap(find.text('Create'));
       await tester.pump();
       await tester.pump();
@@ -492,7 +507,7 @@ void main() {
 
       // Checkbox is present but unchecked.
       expect(find.byType(Checkbox), findsOneWidget);
-      await tester.enterText(find.byType(TextField).first, 'Auto');
+      await tester.enterText(_nameField(), 'Auto');
       await tester.tap(find.text('Create'));
       await tester.pump();
       await tester.pump();

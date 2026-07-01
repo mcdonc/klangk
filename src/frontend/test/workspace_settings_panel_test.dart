@@ -13,6 +13,18 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Identity-based finders for the settings panel's add-row inputs, matched
+/// by hint rather than by position so reordering can't break these tests -
+/// see #1124.
+Finder _mountInput() => find.byWidgetPredicate(
+      (w) =>
+          w is TextField &&
+          w.decoration?.hintText == '/host/path:/container/path',
+    );
+Finder _envInput() => find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'KEY=VALUE',
+    );
+
 /// A WsClient whose sendShutdownContainer we can observe, for the danger-zone
 /// confirm dialog test.
 class _MockWsClient extends WsClient {
@@ -164,7 +176,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).at(1), // mounts add-row input
+        _mountInput(), // mounts add-row input
         '/etc:/etc',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -179,7 +191,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).at(1),
+        _mountInput(),
         'no-colon',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -218,7 +230,7 @@ void main() {
 
       // Env add-row is the last TextField.
       await tester.enterText(
-        find.byType(TextField).at(2),
+        _envInput(),
         'BAR=baz',
       );
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -231,7 +243,7 @@ void main() {
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).at(2), 'NOEQUALS');
+      await tester.enterText(_envInput(), 'NOEQUALS');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
@@ -248,7 +260,7 @@ void main() {
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).at(2), '=val');
+      await tester.enterText(_envInput(), '=val');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
