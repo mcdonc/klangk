@@ -5835,6 +5835,142 @@ class TestTerminalController:
         finally:
             wshandler.state.sessions.pop("ws-offline", None)
 
+    # --- #1114: owner-target / discovery error & guard branches ---
+
+    async def test_owner_default_cmd_target_no_workspace(self):
+        ctrl, _, _ = self._controller()
+        ctrl._conn.workspace = None
+        assert await ctrl._owner_default_cmd_target() == (None, None)
+
+    async def test_owner_default_cmd_target_no_owner_id(self):
+        ctrl, _, _ = self._controller()
+        ctrl._conn.workspace = {"name": "ws"}  # no user_id
+        assert await ctrl._owner_default_cmd_target() == (None, None)
+
+    async def test_owner_default_cmd_target_resolves_owner_home(self):
+        ctrl, _, _ = self._controller()
+        ctrl._conn.workspace = {"user_id": "owner-uid"}
+        with (
+            patch(
+                "klangk_backend.wshandler.controllers.model.get_user_handle",
+                new=AsyncMock(return_value="owner-handle"),
+            ),
+            patch(
+                "klangk_backend.wshandler.controllers.workspaces.home_path",
+                return_value="/data/.users/owner-uid",
+            ),
+            patch(
+                "klangk_backend.wshandler.controllers.workspaces."
+                "ensure_home_symlink",
+                return_value=("/home/owner-handle", None),
+            ),
+        ):
+            owner_id, owner_home = await ctrl._owner_default_cmd_target()
+        assert owner_id == "owner-uid"
+        assert owner_home == "/home/owner-handle"
+
+    async def test_resolve_user_home_no_handle_returns_none(self):
+        ctrl, _, _ = self._controller()
+        with patch(
+            "klangk_backend.wshandler.controllers.model.get_user_handle",
+            new=AsyncMock(return_value=None),
+        ):
+            assert await ctrl._resolve_user_home("uid") is None
+
+    async def test_on_default_command_started_no_ws_session_returns(self):
+        ctrl, sock, _ = self._controller()
+        ctrl._conn._default_command = "openclaw gateway"
+        with patch(
+            "klangk_backend.wshandler.controllers.state.get_session",
+            return_value=None,
+        ):
+            await ctrl._on_default_command_started()
+        # Event emitted to the firing socket, then bailed before sync.
+        assert any(
+            c[0][0].get("type") == "default_command_started"
+            for c in sock.send_json.call_args_list
+        )
+
+    async def test_on_default_command_started_sync_error_swallowed(self):
+        """A failure in _sync_owner_windows must not abort the shared
+        broadcast (#1114): creation notification is best-effort."""
+        ctrl, _, _ = self._controller()
+        ctrl._conn._default_command = "openclaw gateway"
+        ws_session = wshandler.state.get_or_create_session("ws-1")
+        try:
+            with (
+                patch.object(
+                    ctrl,
+                    "_sync_owner_windows",
+                    new=AsyncMock(side_effect=RuntimeError("boom")),
+                ),
+                patch.object(
+                    ctrl._conn, "_broadcast_shared_terminals"
+                ) as mock_bcast,
+            ):
+                await ctrl._on_default_command_started()
+            # Broadcast still ran despite the sync failure.
+            mock_bcast.assert_called_once_with(ws_session)
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_on_default_command_started_broadcast_error_swallowed(self):
+        ctrl, _, _ = self._controller()
+        ctrl._conn._default_command = "openclaw gateway"
+        wshandler.state.get_or_create_session("ws-1")
+        ctrl._conn._broadcast_shared_terminals.side_effect = RuntimeError(
+            "boom"
+        )
+        try:
+            # Must not raise even though the broadcast explodes.
+            await ctrl._on_default_command_started()
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_sync_owner_windows_no_workspace(self):
+        ctrl, _, _ = self._controller()
+        ctrl._conn.workspace = None
+        ws_session = wshandler.state.get_or_create_session("ws-1")
+        try:
+            assert await ctrl._sync_owner_windows(ws_session) is False
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_sync_owner_windows_no_owner_id(self):
+        ctrl, _, _ = self._controller()
+        ctrl._conn.workspace = {"name": "ws"}  # no user_id
+        ws_session = wshandler.state.get_or_create_session("ws-1")
+        try:
+            assert await ctrl._sync_owner_windows(ws_session) is False
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_sync_owner_windows_list_error_returns_false(self):
+        ctrl, _, _ = self._controller()
+        ctrl._conn.workspace = {"user_id": "owner-uid"}
+        ws_session = wshandler.state.get_or_create_session("ws-1")
+        try:
+            with patch(
+                "klangk_backend.wshandler.controllers.terminal.list_windows",
+                new=AsyncMock(side_effect=TerminalError("no session")),
+            ):
+                assert await ctrl._sync_owner_windows(ws_session) is False
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_sync_owner_windows_empty_returns_false(self):
+        ctrl, _, _ = self._controller()
+        ctrl._conn.workspace = {"user_id": "owner-uid"}
+        ws_session = wshandler.state.get_or_create_session("ws-1")
+        try:
+            with patch(
+                "klangk_backend.wshandler.controllers.terminal.list_windows",
+                new=AsyncMock(return_value=[]),
+            ):
+                assert await ctrl._sync_owner_windows(ws_session) is False
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
     # --- browser_reattach ---
 
     async def test_browser_reattach_no_browser_id(self):
