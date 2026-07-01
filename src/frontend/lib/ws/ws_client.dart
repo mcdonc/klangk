@@ -120,9 +120,6 @@ class WsClient extends ChangeNotifier {
   /// Buffered chat history — populated from chat_history and chat_message.
   final List<Map<String, dynamic>> chatHistory = [];
 
-  /// Workspace members for @mention autocomplete.
-  List<Map<String, dynamic>> workspaceMembers = [];
-
   /// Users currently connected to the workspace.
   List<Map<String, dynamic>> presenceUsers = [];
 
@@ -345,7 +342,6 @@ class WsClient extends ChangeNotifier {
     'chat_history_page': _chatHistoryPageController.add,
     'chat_updated': _chatController.add,
     'agent_thinking': _chatController.add,
-    'workspace_members': _onWorkspaceMembers,
     'presence_list': _onPresenceList,
     'presence_join': _onPresenceJoin,
     'presence_leave': _onPresenceLeave,
@@ -390,7 +386,6 @@ class WsClient extends ChangeNotifier {
         presenceUsers = [];
         terminalWindows = [];
         sharedTerminals = [];
-        workspaceMembers = [];
         final code = _channel?.closeCode;
         notifyListeners();
         if (code == 4001 || code == 4002) {
@@ -409,7 +404,6 @@ class WsClient extends ChangeNotifier {
         presenceUsers = [];
         terminalWindows = [];
         sharedTerminals = [];
-        workspaceMembers = [];
         notifyListeners();
         final code = _channel?.closeCode;
         if (code == 4001 || code == 4002) {
@@ -441,12 +435,6 @@ class WsClient extends ChangeNotifier {
       chatHistory.add(msg);
       _chatController.add(msg);
     }
-  }
-
-  void _onWorkspaceMembers(Map<String, dynamic> json) {
-    final members = json['members'] as List? ?? [];
-    workspaceMembers = members.cast<Map<String, dynamic>>();
-    notifyListeners();
   }
 
   void _onPresenceList(Map<String, dynamic> json) {
@@ -543,7 +531,6 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
     chatHistory.clear();
-    workspaceMembers = [];
     presenceUsers = [];
     notifyListeners();
   }

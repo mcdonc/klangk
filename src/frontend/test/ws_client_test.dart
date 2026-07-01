@@ -1306,17 +1306,10 @@ void main() {
           }
         ],
       });
-      channel.serverSend({
-        'type': 'workspace_members',
-        'members': [
-          {'user_id': 'u1', 'email': 'a@test.com', 'role': 'admin'}
-        ],
-      });
       await Future.delayed(Duration.zero);
       expect(client.presenceUsers, isNotEmpty);
       expect(client.terminalWindows, isNotEmpty);
       expect(client.sharedTerminals, isNotEmpty);
-      expect(client.workspaceMembers, isNotEmpty);
 
       // Disconnect
       channel.serverClose();
@@ -1325,7 +1318,6 @@ void main() {
       expect(client.presenceUsers, isEmpty);
       expect(client.terminalWindows, isEmpty);
       expect(client.sharedTerminals, isEmpty);
-      expect(client.workspaceMembers, isEmpty);
     });
 
     test('server error clears stale presence and terminal data', () async {
@@ -1351,17 +1343,10 @@ void main() {
           }
         ],
       });
-      channel.serverSend({
-        'type': 'workspace_members',
-        'members': [
-          {'user_id': 'u1', 'email': 'a@test.com', 'role': 'admin'}
-        ],
-      });
       await Future.delayed(Duration.zero);
       expect(client.presenceUsers, isNotEmpty);
       expect(client.terminalWindows, isNotEmpty);
       expect(client.sharedTerminals, isNotEmpty);
-      expect(client.workspaceMembers, isNotEmpty);
 
       // Error
       channel.serverError(Exception('boom'));
@@ -1370,7 +1355,6 @@ void main() {
       expect(client.presenceUsers, isEmpty);
       expect(client.terminalWindows, isEmpty);
       expect(client.sharedTerminals, isEmpty);
-      expect(client.workspaceMembers, isEmpty);
     });
 
     test('server error emits to error stream', () async {
@@ -1496,50 +1480,6 @@ void main() {
       expect(client.chatMessages.isBroadcast, isTrue);
     });
 
-    test('workspace_members populates workspaceMembers', () async {
-      channel.serverSend({
-        'type': 'workspace_members',
-        'members': [
-          {'id': 'u1', 'email': 'alice@test.com'},
-          {'id': 'u2', 'email': 'bob@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(client.workspaceMembers.length, 2);
-      expect(client.workspaceMembers[0]['email'], 'alice@test.com');
-      expect(client.workspaceMembers[1]['email'], 'bob@test.com');
-    });
-
-    test('workspace_members notifies listeners', () async {
-      bool notified = false;
-      client.addListener(() => notified = true);
-
-      channel.serverSend({
-        'type': 'workspace_members',
-        'members': [
-          {'id': 'u1', 'email': 'alice@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(notified, isTrue);
-    });
-
-    test('disconnectWorkspace clears workspaceMembers', () async {
-      channel.serverSend({
-        'type': 'workspace_members',
-        'members': [
-          {'id': 'u1', 'email': 'alice@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-      expect(client.workspaceMembers.length, 1);
-
-      client.disconnectWorkspace();
-      expect(client.workspaceMembers, isEmpty);
-    });
-
     test('presence_list populates presenceUsers', () async {
       channel.serverSend({
         'type': 'presence_list',
@@ -1627,23 +1567,10 @@ void main() {
       expect(client.presenceUsers, isEmpty);
     });
 
-    test('mentionCandidates uses presence, not the static member roster',
-        () async {
-      // The roster is populated... but must NOT feed autocomplete under the
-      // presence-only model: mentioning is synchronous, offline members can't
-      // receive it, so they aren't suggested.
-      channel.serverSend({
-        'type': 'workspace_members',
-        'members': [
-          {'id': 'u1', 'email': 'alice@test.com', 'handle': 'alice'},
-          {'id': 'u2', 'email': 'bob@test.com', 'handle': 'bob'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
+    test('mentionCandidates reflects presence (normalized keys)', () async {
       channel.serverSend({
         'type': 'presence_list',
         'users': [
-          // Only u1 is present; u2 is in the roster but offline.
           {
             'user_id': 'u1',
             'user_email': 'alice@test.com',
@@ -1654,10 +1581,7 @@ void main() {
       await Future.delayed(Duration.zero);
 
       final candidates = client.mentionCandidates;
-      final ids = candidates.map((m) => m['id']).toSet();
-      expect(ids, {'u1'});
-      // Offline roster member must not be suggested.
-      expect(ids.contains('u2'), isFalse);
+      expect(candidates.map((m) => m['id']).toSet(), {'u1'});
       // presence rows (user_* keys) normalized to {id,email,handle}.
       final alice = candidates.firstWhere((m) => m['id'] == 'u1');
       expect(alice['email'], 'alice@test.com');
