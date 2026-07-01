@@ -106,7 +106,7 @@ chmod +x "$INSTALL_DIR/bin/healthcheck.sh"
 export PATH="$INSTALL_DIR/bin:$PATH"
 
 # Ensure Pi's models.json and clanker config are up to date.
-/opt/klangk/bin/klangk-setup-clankers
+/opt/klangk/bin/klangk-setup-pi
 
 # Run onboard non-interactively first — it creates initial config
 # and sets up auth tokens. We overwrite the config afterward so

@@ -163,8 +163,8 @@ async def seed_agent_user() -> None:
     actionable message instead of letting a bare ``IntegrityError`` abort
     startup mid-sequence.  See #1137.
     """
-    email = resolve_env_value("KLANGK_CHAT_AGENT_EMAIL", "MrBoops@example.com")
-    handle = resolve_env_value("KLANGK_CHAT_AGENT_HANDLE", "MrBoops")
+    email = resolve_env_value("KLANGK_AGENT_EMAIL", "clanker@example.com")
+    handle = resolve_env_value("KLANGK_AGENT_HANDLE", "clanker")
     async with model.transaction() as db:
         # Pre-check: refuse a handle already claimed by a non-agent user.
         # Runs in the same transaction as the upsert so there is no
@@ -176,7 +176,7 @@ async def seed_agent_user() -> None:
         if await cursor.fetchone() is not None:
             raise RuntimeError(
                 f"Cannot seed chat agent: handle {handle!r} is already used"
-                " by another user. Set KLANGK_CHAT_AGENT_HANDLE to a"
+                " by another user. Set KLANGK_AGENT_HANDLE to a"
                 " unique value."
             )
         await db.execute(

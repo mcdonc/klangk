@@ -43,7 +43,7 @@ RUN curl -LsSf https://astral.sh/uv/0.11.23/install.sh | sh \
 COPY agent-context.md /opt/klangk/agent-context.md
 COPY entrypoint.sh /opt/klangk/entrypoint.sh
 COPY klangk-otel.sh /opt/klangk/bin/klangk-otel.sh
-COPY klangk-setup-clankers.py /opt/klangk/bin/klangk-setup-clankers
+COPY klangk-setup-pi.py /opt/klangk/bin/klangk-setup-pi
 COPY klangk-setup-home.sh /opt/klangk/bin/klangk-setup-home
 COPY klangk-attach-browser.sh /opt/klangk/bin/klangk-attach-browser
 COPY klangk-browser-id.sh /opt/klangk/bin/klangk-browser-id
@@ -54,7 +54,7 @@ COPY klangk-save-workspace-state.sh /opt/klangk/bin/klangk-save-workspace-state
 COPY klangk-set-workspace-token.sh /opt/klangk/bin/klangk-set-workspace-token
 COPY klangk-workspace-token.sh /opt/klangk/bin/klangk-workspace-token
 RUN chmod +x /opt/klangk/entrypoint.sh \
-      /opt/klangk/bin/klangk-setup-clankers \
+      /opt/klangk/bin/klangk-setup-pi \
       /opt/klangk/bin/klangk-setup-home \
       /opt/klangk/bin/klangk-attach-browser \
       /opt/klangk/bin/klangk-browser-id \

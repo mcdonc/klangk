@@ -119,7 +119,7 @@ cp "$SCRIPT_DIR/healthcheck.sh" "$INSTALL_DIR/bin/healthcheck.sh"
 chmod +x "$INSTALL_DIR/bin/healthcheck.sh"
 
 # Refresh Pi agent config (extensions, settings, models, skills).
-/opt/klangk/bin/klangk-setup-clankers
+/opt/klangk/bin/klangk-setup-pi
 
 echo ""
 echo "hermes: $(hermes --version 2>&1 | head -1)"

@@ -99,9 +99,9 @@ class AgentSession:
         """Ensure the agent has a home directory with Pi config.
 
         Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount
-        and populates it via ``klangk-setup-clankers`` (the same path real
+        and populates it via ``klangk-setup-pi`` (the same path real
         users take) by running a login shell.  Returns the container
-        path, e.g. ``/home/MrBoops``.
+        path, e.g. ``/home/clanker``.
         """
         if self._home_ready:
             handle = await model.agent_handle()
@@ -124,7 +124,7 @@ class AgentSession:
                 container_id, model.AGENT_USER_ID
             )
 
-        # Run klangk-setup-clankers to populate ~/.pi/agent/ with models.json,
+        # Run klangk-setup-pi to populate ~/.pi/agent/ with models.json,
         # settings.json, etc.  Unlike real users, the agent has no
         # personal preferences — --force deletes settings.json first so
         # it picks up the current KLANGK_LLM_MODEL env var.
@@ -136,7 +136,7 @@ class AgentSession:
             "-e",
             f"HOME={container_home}",
             container_id,
-            "klangk-setup-clankers",
+            "klangk-setup-pi",
             "--force",
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,

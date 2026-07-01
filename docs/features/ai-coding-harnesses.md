@@ -45,23 +45,23 @@ populated automatically at first login by klangk itself.
 Mention the agent handle in the [Chat](chat.md) panel:
 
 ```text
-@MrBoops create a Python Flask app on port 8000
+@clanker create a Python Flask app on port 8000
 ```
 
 The agent handle and email are set via environment variables and seeded
 into the database on startup. After initial seeding, the agent identity
 is read from the DB; changing the env vars updates the DB on next restart.
 
-| Variable                   | Default               |
-| -------------------------- | --------------------- |
-| `KLANGK_CHAT_AGENT_HANDLE` | `MrBoops`             |
-| `KLANGK_CHAT_AGENT_EMAIL`  | `MrBoops@example.com` |
+| Variable              | Default               |
+| --------------------- | --------------------- |
+| `KLANGK_AGENT_HANDLE` | `clanker`             |
+| `KLANGK_AGENT_EMAIL`  | `clanker@example.com` |
 
 The agent user cannot have a password and cannot log in via credentials.
 
 When invoked from chat, Pi runs in RPC mode — the backend manages
 the subprocess and streams responses back to the chat panel. See
-[Chat - AI Agent](chat.md#ai-agent-mrboops) for details on
+[Chat - AI Agent](chat.md#ai-agent-clanker) for details on
 follow-up conversations and interjections.
 
 ### Pi extensions

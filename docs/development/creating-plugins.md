@@ -83,7 +83,7 @@ Runs on **every shell open** from `bash.bashrc`. Use for per-user, per-session s
 
 - Runs as the `klangk` user
 - User environment is available (`HOME`, `KLANGK_USER_ID`, etc.)
-- Runs after `klangk-setup-clankers` (Pi agent config)
+- Runs after `klangk-setup-pi` (Pi agent config)
 - Keep it fast — this runs on every new terminal tab and window
 - Examples: per-user symlinks, session-specific env setup
 

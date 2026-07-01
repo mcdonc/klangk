@@ -27,16 +27,16 @@ Type `@` followed by a workspace member's email to mention them. Tab
 completion suggests matching members. Mentions are stored and the mentioned
 user is notified on their next connection.
 
-## AI Agent (@MrBoops)
+## AI Agent (@clanker)
 
-Every workspace has an AI agent named **MrBoops** that can answer questions
+Every workspace has an AI agent named **clanker** that can answer questions
 about the workspace, run commands in the terminal, and create or modify
 files.
 
 To interact with the agent, mention it in chat:
 
 ```text
-@MrBoops what files are in the home directory?
+@clanker what files are in the home directory?
 ```
 
 The agent runs inside the workspace container with full access to the
@@ -51,7 +51,7 @@ terminal and filesystem. It can:
 
 ### Follow-up Conversations
 
-After an @MrBoops mention, your subsequent messages automatically route to
+After an @clanker mention, your subsequent messages automatically route to
 the agent — you don't need to @mention it again. The conversation continues
 until another user speaks (interjection) or you @mention someone else.
 
@@ -63,17 +63,17 @@ The agent requires an LLM backend. Set these environment variables:
 - `KLANGK_LLM_MODEL` — model name (e.g. `gemma4:31b`)
 - `KLANGK_LLM_API_KEY` — API key (optional, depends on provider)
 
-Without these, the agent is unavailable and @MrBoops mentions are ignored.
+Without these, the agent is unavailable and @clanker mentions are ignored.
 
 ### Agent Identity
 
 The agent's handle and email are configured via environment variables and
 seeded into the database on first startup:
 
-| Variable                   | Default               |
-| -------------------------- | --------------------- |
-| `KLANGK_CHAT_AGENT_HANDLE` | `MrBoops`             |
-| `KLANGK_CHAT_AGENT_EMAIL`  | `MrBoops@example.com` |
+| Variable              | Default               |
+| --------------------- | --------------------- |
+| `KLANGK_AGENT_HANDLE` | `clanker`             |
+| `KLANGK_AGENT_EMAIL`  | `clanker@example.com` |
 
 After seeding, the agent identity is read from the database. Changing
 these env vars and restarting will update the agent's record in the
@@ -95,7 +95,7 @@ subprocess is never spawned, so the agent never comes online.
 there's no async delivery for offline members). Because the agent's
 presence is driven by whether its subprocess is alive, a disabled agent
 is simply never suggested — it disappears from autocomplete with no
-special-case gate. (Manually typing a full-handle `@MrBoops` would still
+special-case gate. (Manually typing a full-handle `@clanker` would still
 route to the agent and surface the refused-to-start error, but the
 autocomplete affordance for it is gone.)
 
@@ -109,7 +109,7 @@ on the per-workspace settings infrastructure,
 ## Message Types
 
 - **User messages** — sent by workspace members, shown with email and timestamp
-- **Agent messages** — sent by MrBoops, shown with a robot icon in cyan
+- **Agent messages** — sent by clanker, shown with a robot icon in cyan
 - **System messages** — join/leave notifications, centered and muted
 
 ## Message Deletion

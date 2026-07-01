@@ -34,7 +34,7 @@ run agents, and tear it down when you're done.
 ### AI Agent Integration
 
 Harnesses like Pi and Claude Code can run inside workspace containers
-with full terminal access. The built-in chat agent ([MrBoops](features/chat.md)) can
+with full terminal access. The built-in chat agent ([clanker](features/chat.md)) can
 answer questions, run commands, and edit files, confined to the workspace.
 
 - Any OpenAI-compatible LLM provider (Ollama, cloud APIs, self-hosted)
