@@ -2106,6 +2106,35 @@ class TestWorkspaceSharingRoutes:
         assert resp.status_code == 400
         assert "yourself" in resp.json()["detail"]
 
+    async def test_add_member_rejects_system_agent(self, client, user, db):
+        # Skeleton-key guardrail (#1135): granting the system agent direct
+        # ACE entries (view/terminal/files/chat as PRINCIPAL_USER) makes
+        # its public UUID a privileged principal — same blast-radius risk
+        # as the role-grant path.
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "share-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": agent["email"]},
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+        # Confirm the guard actually blocked the grant: no ACE entry on
+        # this workspace names the agent as the user principal.
+        resource = f"/workspaces/{ws_id}"
+        entries = await model.get_acl_entries(resource)
+        assert not any(e["user_id"] == agent["id"] for e in entries)
+
     async def test_remove_member(self, client, user):
         headers = await _auth_headers(client)
         other = await self._create_other_user()

@@ -714,6 +714,12 @@ async def add_workspace_member(
     target = await model.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if target["id"] == model.AGENT_USER_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="The system agent cannot be added as a workspace member"
+            " (global fixed UUID — granting it cross-workspace blast radius).",
+        )
     if target["id"] == user["id"]:
         raise HTTPException(
             status_code=400, detail="Cannot share with yourself"
