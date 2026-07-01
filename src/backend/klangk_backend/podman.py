@@ -123,7 +123,7 @@ async def _run(
         rc = -1
         err = err or f"{cmd_label} timed out after {timeout}s"
     elapsed = t3 - t0
-    logger.info(
+    logger.debug(
         "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",
         cmd_label,
         t1 - t0,
@@ -132,7 +132,7 @@ async def _run(
         elapsed,
     )
     if elapsed > 2.0 and err.strip():  # pragma: no cover
-        logger.info("podman-timing: %s stderr: %s", cmd_label, err.strip())
+        logger.debug("podman-timing: %s stderr: %s", cmd_label, err.strip())
     if check and rc != 0:
         raise PodmanError(_classify(err), err.strip() or f"podman {args[0]}")
     return rc, out, err
@@ -190,7 +190,7 @@ async def _run_raw(
         rc = -1
         err = err or f"{cmd_label} timed out after {timeout}s"
     elapsed = t3 - t0
-    logger.info(
+    logger.debug(
         "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",
         cmd_label,
         t1 - t0,
@@ -199,7 +199,7 @@ async def _run_raw(
         elapsed,
     )
     if elapsed > 2.0 and err.strip():  # pragma: no cover
-        logger.info("podman-timing: %s stderr: %s", cmd_label, err.strip())
+        logger.debug("podman-timing: %s stderr: %s", cmd_label, err.strip())
     if check and rc != 0:
         raise PodmanError(_classify(err), err.strip() or f"podman {args[0]}")
     return rc, out_bytes, err
