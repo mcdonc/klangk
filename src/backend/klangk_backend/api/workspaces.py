@@ -820,6 +820,9 @@ async def add_to_workspace_role(
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     await model.add_user_to_group(target["id"], group["id"])
+    await _broadcast_workspace_members(workspace_id)
+    wshandler.state.notify_user_workspaces_changed(user["id"])
+    wshandler.state.notify_user_workspaces_changed(target["id"])
     return {"ok": True}
 
 
@@ -838,6 +841,9 @@ async def remove_from_workspace_role(
     if group is None:
         raise HTTPException(status_code=404, detail="Role group not found")
     await model.remove_user_from_group(member_id, group["id"])
+    await _broadcast_workspace_members(workspace_id)
+    wshandler.state.notify_user_workspaces_changed(user["id"])
+    wshandler.state.notify_user_workspaces_changed(member_id)
     return {"ok": True}
 
 
@@ -883,6 +889,9 @@ async def change_workspace_role(
             raise HTTPException(status_code=404, detail="Role group not found")
         await model.add_user_to_group(target["id"], group["id"])
 
+    await _broadcast_workspace_members(workspace_id)
+    wshandler.state.notify_user_workspaces_changed(user["id"])
+    wshandler.state.notify_user_workspaces_changed(target["id"])
     return {"ok": True, "email": body.email, "role": body.role}
 
 
