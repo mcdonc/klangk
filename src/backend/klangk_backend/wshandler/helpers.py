@@ -60,13 +60,18 @@ def _get_shared_terminals(ws_session) -> list[dict]:
 
     terminals = []
     for user_id, windows in ws_session.terminal_windows.items():
-        # Look up the user's handle from any active connection
+        # Look up the user's handle from any active connection, falling
+        # back to the session's cached handle so shared windows stay
+        # visible when their owner has no active connection (#1114) --
+        # e.g. the default-cmd window after the owner logs out.
         handle = None
         for sock in ws_session.subscribers:
             conn = state.connections.get(sock)
             if conn and conn.user.get("id") == user_id:
                 handle = conn.user.get("handle")
                 break
+        if not handle:
+            handle = ws_session.shared_handles.get(user_id)
         if not handle:
             continue
         for w in windows:

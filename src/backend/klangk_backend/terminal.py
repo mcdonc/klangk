@@ -167,6 +167,40 @@ def _should_fire_default_command(
     return setup_state == SETUP_STATE_COMPLETE
 
 
+async def _ensure_tmux_session(
+    container_id: str,
+    session_name: str,
+    user_home: str | None = None,
+    ssh_agent_socket: str | None = None,
+) -> bool:
+    """Ensure a detached base tmux session exists for *session_name*.
+
+    Idempotent: returns ``True`` if the session was freshly created,
+    ``False`` if it already existed or could not be created. HOME and
+    SSH_AUTH_SOCK are passed as tmux ``-e`` flags (part of the command,
+    not podman's), so the session's window-0 shell sources the right
+    profile.
+    """
+    if await _has_tmux_session(container_id, session_name):
+        return False
+    env_args: list[str] = []
+    if user_home is not None:
+        env_args += ["-e", f"HOME={user_home}"]
+    if ssh_agent_socket is not None:
+        env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+    try:
+        await podman.exec_container(
+            container_id,
+            ["tmux", "new-session", "-d", "-s", session_name, *env_args],
+            user=CONTAINER_USER,
+            timeout=10,
+        )
+    except Exception:
+        logger.warning("Failed to create base tmux session %s", session_name)
+        return False
+    return True
+
+
 async def _ensure_base_session(
     container_id: str,
     session_name: str,
@@ -175,61 +209,69 @@ async def _ensure_base_session(
     default_command: str | None = None,
     setup_state: str = SETUP_STATE_COMPLETE,
     on_default_command_started: Callable[[], Awaitable[None]] | None = None,
+    default_cmd_session_name: str | None = None,
+    default_cmd_user_home: str | None = None,
 ) -> bool:
     """Ensure the base tmux session exists and maybe fire the default cmd.
 
     Two independent jobs, split out so that an early visitor's
     ``terminal_start`` no longer swallows the post-setup one (#1033):
 
-    1. *Base session + window 0* -- created idempotently and ALWAYS.
-       A visitor connecting mid-setup still gets a working interactive
-       shell. This is what every ``terminal_start`` needs regardless of
-       setup state.
+    1. *Firing user's base session + window 0* -- created idempotently
+       and ALWAYS. A visitor connecting mid-setup still gets a working
+       interactive shell. This is what every ``terminal_start`` needs
+       regardless of setup state.
 
-    2. *The ``default-cmd`` window* -- created only when the firing
+    2. *The ``default-cmd`` window* -- a per-workspace singleton that
+       lives in the **owner's** tmux session, regardless of who fired
+       ``terminal_start`` (#1114). It is created only when the firing
        predicate holds:
 
            default_command is set  AND  setup_state == complete
                                  AND  the window doesn't already exist
 
-       Crucially this runs EVEN IF the session already exists (created
-       by an earlier visitor). Previously the whole function returned
-       ``False`` the moment the session existed, so once an early
-       visitor made the session, the post-setup ``terminal_start`` was
-       a no-op and the default command never ran.
+       ``default_cmd_session_name`` (the owner id) targets the owner's
+       session; when omitted it falls back to *session_name*, which is
+       the historical single-user / boot-path behaviour (the boot path
+       already passes the owner id as ``session_name``). The owner's
+       session is ensured here too, so a visitor whose
+       ``terminal_start`` is the workspace's first can still spawn the
+       service in the owner's session.
 
-    Returns ``True`` if the base session was freshly created.
+       Crucially this runs EVEN IF the firing user's session already
+       existed (created by an earlier visitor). Previously the whole
+       function returned ``False`` the moment the session existed, so
+       once an early visitor made the session, the post-setup
+       ``terminal_start`` was a no-op and the default command never
+       ran (#1033).
+
+    Returns ``True`` if the firing user's base session was freshly
+    created.
     """
-    session_existed = await _has_tmux_session(container_id, session_name)
-    if not session_existed:
-        # Create detached base session.  HOME / SSH_AUTH_SOCK are passed
-        # as tmux's own ``-e`` flags (part of the command), not
-        # podman's.
-        env_args: list[str] = []
-        if user_home is not None:
-            env_args += ["-e", f"HOME={user_home}"]
-        if ssh_agent_socket is not None:
-            env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
-        try:
-            await podman.exec_container(
-                container_id,
-                ["tmux", "new-session", "-d", "-s", session_name, *env_args],
-                user=CONTAINER_USER,
-                timeout=10,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to create base tmux session %s", session_name
-            )
-            return False
+    created = await _ensure_tmux_session(
+        container_id, session_name, user_home, ssh_agent_socket
+    )
+    session_existed = not created
 
-    # The default-cmd window: fire iff the predicate holds AND it
-    # doesn't already exist (exactly-once-per-container). This block
-    # is reached even when the session pre-existed (early visitor),
-    # which is the #1033 fix.
+    # The default-cmd window targets the owner's session when told to,
+    # otherwise the firing user's (single-user / boot-path fallback).
+    dc_target = default_cmd_session_name or session_name
+    if dc_target != session_name:
+        # The owner's session may not exist yet (owner never connected,
+        # auto-start didn't run). Ensure it so ``new-window`` succeeds.
+        await _ensure_tmux_session(
+            container_id,
+            dc_target,
+            default_cmd_user_home,
+            ssh_agent_socket,
+        )
+
+    # Fire iff the predicate holds AND the window doesn't already exist
+    # (exactly-once-per-container, checked against the target session).
+    # Reached even when the firing user's session pre-existed (#1033).
     if _should_fire_default_command(
         default_command, setup_state
-    ) and not await _default_cmd_window_exists(container_id, session_name):
+    ) and not await _default_cmd_window_exists(container_id, dc_target):
         try:
             await podman.exec_container(
                 container_id,
@@ -238,7 +280,7 @@ async def _ensure_base_session(
                     "new-window",
                     "-d",
                     "-t",
-                    session_name,
+                    dc_target,
                     "-n",
                     DEFAULT_CMD_WINDOW,
                 ],
@@ -249,7 +291,7 @@ async def _ensure_base_session(
             logger.warning(
                 "Failed to create %s window in %s",
                 DEFAULT_CMD_WINDOW,
-                session_name,
+                dc_target,
             )
         else:
             # The new window's shell needs a moment to source
@@ -263,7 +305,7 @@ async def _ensure_base_session(
                         "tmux",
                         "send-keys",
                         "-t",
-                        f"{session_name}:{DEFAULT_CMD_WINDOW}",
+                        f"{dc_target}:{DEFAULT_CMD_WINDOW}",
                         default_command,
                         "Enter",
                     ],
@@ -272,7 +314,7 @@ async def _ensure_base_session(
                 )
             except Exception:
                 logger.warning(
-                    "Failed to send default command to %s", session_name
+                    "Failed to send default command to %s", dc_target
                 )
             else:
                 # The command is genuinely running in the default-cmd
@@ -792,6 +834,8 @@ class TerminalSession:
         setup_state: str = SETUP_STATE_COMPLETE,
         on_default_command_started: Callable[[], Awaitable[None]]
         | None = None,
+        default_cmd_session_name: str | None = None,
+        default_cmd_user_home: str | None = None,
     ):
         self.container_id = container_id
         self.session_name = session_name
@@ -805,6 +849,11 @@ class TerminalSession:
         self.default_command = default_command
         self.setup_state = setup_state
         self.on_default_command_started = on_default_command_started
+        # The default-cmd window is a per-workspace singleton that lives
+        # in the OWNER's session, not the firing user's (#1114). When set,
+        # ``_ensure_base_session`` targets this session for the window.
+        self.default_cmd_session_name = default_cmd_session_name
+        self.default_cmd_user_home = default_cmd_user_home
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -837,6 +886,8 @@ class TerminalSession:
                 default_command=self.default_command,
                 setup_state=self.setup_state,
                 on_default_command_started=self.on_default_command_started,
+                default_cmd_session_name=self.default_cmd_session_name,
+                default_cmd_user_home=self.default_cmd_user_home,
             )
         env = _build_environment(
             self.user_home,

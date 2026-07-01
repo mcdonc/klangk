@@ -722,6 +722,8 @@ class TestHandleTerminalStart:
             default_command=None,
             setup_state="complete",
             on_default_command_started=ANY,
+            default_cmd_session_name=None,
+            default_cmd_user_home=None,
         )
         # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -1333,6 +1335,8 @@ class TestHandleTerminalStart:
             default_command="pi",
             setup_state="complete",
             on_default_command_started=ANY,
+            default_cmd_session_name=None,
+            default_cmd_user_home=None,
         )
 
         conn.terminal_task.cancel()
@@ -3133,6 +3137,8 @@ class TestSSHAgentHandlers:
             default_command=None,
             setup_state="complete",
             on_default_command_started=ANY,
+            default_cmd_session_name=None,
+            default_cmd_user_home=None,
         )
 
 
@@ -5309,6 +5315,7 @@ class TestTerminalController:
             _viewing_shared=None,
             _default_command=None,
             user=user,
+            workspace=None,
             _has_perm=AsyncMock(return_value=has_perm),
             _broadcast_shared_terminals=MagicMock(),
             _save_state_snapshot=MagicMock(),
@@ -5741,6 +5748,92 @@ class TestTerminalController:
             wshandler.state.connections.pop(sock, None)
             wshandler.state.connections.pop(other_sock, None)
             wshandler.state.sessions.pop("ws-1", None)
+
+    # --- #1114: default-cmd shared singleton ---
+
+    async def test_sync_terminal_windows_marks_default_cmd_shared(self):
+        """The default-cmd window is shared by definition, so syncing the
+        owner's own windows marks it shared even with no prior entry (#1114)."""
+        ctrl, _, _ = self._controller()
+        ws_session = wshandler.state.get_or_create_session("ws-1")
+        try:
+            ctrl.sync_terminal_windows(
+                [
+                    {"id": "@0", "index": 0, "name": "bash"},
+                    {
+                        "id": "@1",
+                        "index": 1,
+                        "name": "default-cmd",
+                    },
+                ]
+            )
+            wins = ws_session.terminal_windows["uid"]
+            dc = next(w for w in wins if w["name"] == "default-cmd")
+            assert dc["shared"] is True
+            # A plain window is not implicitly shared.
+            bash = next(w for w in wins if w["name"] == "bash")
+            assert bash["shared"] is False
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_sync_owner_windows_injects_default_cmd_shared(self):
+        """Discovery: a visitor's connect syncs the owner's default-cmd window
+        into the session map (marked shared + handle cached) even though the
+        owner has never connected (#1114)."""
+        ctrl, _, conn = self._controller()
+        conn.workspace = {"user_id": "owner-uid"}
+        ws_session = wshandler.state.get_or_create_session("ws-1")
+        try:
+            with (
+                patch(
+                    "klangk_backend.wshandler.controllers.terminal."
+                    "list_windows",
+                    new=AsyncMock(
+                        return_value=[
+                            {
+                                "id": "@5",
+                                "index": 1,
+                                "name": "default-cmd",
+                                "active": True,
+                            }
+                        ]
+                    ),
+                ),
+                patch(
+                    "klangk_backend.wshandler.controllers.model."
+                    "get_user_handle",
+                    new=AsyncMock(return_value="owner-handle"),
+                ),
+            ):
+                synced = await ctrl._sync_owner_windows(ws_session)
+            assert synced is True
+            owner_wins = ws_session.terminal_windows["owner-uid"]
+            assert owner_wins[0]["name"] == "default-cmd"
+            assert owner_wins[0]["shared"] is True
+            # Handle cached so the window stays attributable when the
+            # owner is offline.
+            assert ws_session.shared_handles["owner-uid"] == "owner-handle"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+
+    async def test_get_shared_terminals_visible_when_owner_offline(self):
+        """A shared window stays in the list when its owner has logged out,
+        via the session's handle cache (#1114)."""
+        from klangk_backend.wshandler.helpers import _get_shared_terminals
+
+        ws_session = wshandler.state.get_or_create_session("ws-offline")
+        try:
+            ws_session.terminal_windows["owner-uid"] = [
+                {"id": "@1", "index": 1, "name": "default-cmd", "shared": True}
+            ]
+            ws_session.shared_handles["owner-uid"] = "owner-handle"
+            # No active connection for the owner.
+            terminals = _get_shared_terminals(ws_session)
+            assert len(terminals) == 1
+            assert terminals[0]["handle"] == "owner-handle"
+            assert terminals[0]["window_name"] == "default-cmd"
+        finally:
+            wshandler.state.sessions.pop("ws-offline", None)
 
     # --- browser_reattach ---
 
@@ -6796,7 +6889,11 @@ class TestSharedTerminalController:
                 self._sync_terminal_windows = MagicMock()
                 self._terminal_cols = 80
                 self._terminal_rows = 24
-                self.terminal = SimpleNamespace(session=None, task=None)
+                self.terminal = SimpleNamespace(
+                    session=None,
+                    task=None,
+                    _sync_owner_windows=AsyncMock(return_value=False),
+                )
 
             @property
             def terminal_session(self):

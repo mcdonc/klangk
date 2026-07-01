@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING
 
 from fastapi import WebSocketDisconnect
 
-from .. import container, model, podman, terminal
+from .. import container, model, podman, terminal, workspaces
 from ..exceptions import TerminalError
 from ..util import resolve_env_value
 from ..podman import ExecSession
-from ..terminal import TerminalSession, attach_browser
+from ..terminal import TerminalSession, attach_browser, DEFAULT_CMD_WINDOW
 from .safe_websocket import SlowClientError, _WS_ERRORS
 from ._constants import _MAX_INPUT_SIZE
 from .helpers import send_error, _send_event, _get_shared_terminals
@@ -389,6 +389,11 @@ class TerminalController:
         windows = await terminal.list_windows(conn.container_id, sname)
         conn._sync_terminal_windows(windows)
         conn.sock.send_json({"type": "terminal_windows", "windows": windows})
+        # Make the owner's default-cmd window discoverable as shared for
+        # other subscribers (e.g. a visitor connecting after auto-start
+        # created it, before the owner ever connected) (#1114).
+        if ws_session:
+            await self._sync_owner_windows(ws_session)
 
     def _send_shared_terminals(self) -> None:
         """Send the current shared terminal list to the client."""
@@ -415,6 +420,128 @@ class TerminalController:
         if ws is None:
             return "complete"
         return ws.get("setup_state") or "complete"
+
+    async def _owner_default_cmd_target(self) -> tuple[str | None, str | None]:
+        """Resolve the owner's tmux session name + home for default-cmd.
+
+        The default-cmd window lives in the owner's session (#1114).
+        Returns ``(owner_id, owner_home)``; either may be ``None`` if the
+        workspace or owner can't be resolved, in which case
+        ``_ensure_base_session`` falls back to the firing user's session
+        (the historical single-user behaviour).
+        """
+        workspace = self._conn.workspace
+        if not workspace:
+            return None, None
+        owner_id = workspace.get("user_id")
+        if not owner_id:
+            return None, None
+        owner_home = await self._resolve_user_home(owner_id)
+        return owner_id, owner_home
+
+    async def _resolve_user_home(self, user_id: str) -> str | None:
+        """Resolve a user's in-container home path, creating the symlink.
+
+        Mirrors the boot path (``workspaces.eager_start_workspace``): the
+        per-user ``/home/{handle} -> .users/{user_id}`` symlink must exist
+        so the default-cmd window's shell sources the right profile. Used
+        to give the OWNER's session a correct HOME when a visitor's
+        ``terminal_start`` is the one that creates it.
+        """
+        handle = await model.get_user_handle(user_id)
+        if not handle:
+            return None
+        ws_home = workspaces.home_path(user_id, self._conn.workspace_id)
+        owner_home, _ = workspaces.ensure_home_symlink(
+            ws_home, handle, user_id
+        )
+        return owner_home
+
+    async def _on_default_command_started(self) -> None:
+        """Hook fired once the default-cmd window is running (#1114).
+
+        Three effects:
+        1. Tell the firing connection the command is up (stops polling).
+        2. Sync the owner's windows into the session map so the window is
+           marked shared and attributable even if the owner never connects.
+        3. Broadcast ``shared_terminals`` so every subscriber -- including
+           visitors whose snapshot predated the window -- now sees the
+           default-cmd tab as a joinable shared terminal without a reload.
+           This is the #1114 race fix: creation is announced, not just
+           snapshotted at connect time.
+        """
+        try:
+            self._conn.sock.send_json(
+                {
+                    "type": "default_command_started",
+                    "workspaceId": self._conn.workspace_id,
+                    "command": self._conn._default_command,
+                }
+            )
+        except _WS_ERRORS:
+            logger.debug(
+                "default_command_started: socket gone, could not emit"
+            )
+        ws_session = state.get_session(self._conn.workspace_id)
+        if not ws_session:
+            return
+        try:
+            await self._sync_owner_windows(ws_session)
+        except Exception:
+            logger.debug(
+                "default_command_started: owner window sync failed",
+                exc_info=True,
+            )
+        try:
+            self._conn._broadcast_shared_terminals(ws_session)
+        except Exception:
+            logger.debug(
+                "default_command_started: shared broadcast failed",
+                exc_info=True,
+            )
+
+    async def _sync_owner_windows(self, ws_session) -> bool:
+        """Sync the workspace owner's tmux windows into the session map.
+
+        The default-cmd window lives in the owner's session and is shared
+        by definition (#1114). But ``ws_session.terminal_windows`` is only
+        populated when a user connects + syncs; if the owner hasn't
+        connected (auto-start at boot, or still mid-setup) visitors would
+        never see the window in the shared list. This lists the owner's
+        session from tmux and merges the result, marking default-cmd
+        shared and caching the owner's handle.
+
+        Returns ``True`` if the owner's windows were (re)synced from tmux.
+        """
+        workspace = self._conn.workspace
+        if not workspace or not self._conn.container_id:
+            return False
+        owner_id = workspace.get("user_id")
+        if not owner_id:
+            return False
+        try:
+            windows = await terminal.list_windows(
+                self._conn.container_id, owner_id
+            )
+        except (TerminalError, OSError):
+            return False  # owner session doesn't exist yet
+        if not windows:
+            return False
+        handle = await model.get_user_handle(owner_id)
+        if handle:
+            ws_session.shared_handles[owner_id] = handle
+        self._merge_owner_windows(ws_session, owner_id, windows)
+        return True
+
+    @staticmethod
+    def _window_shared(name: str, prev_shared: bool) -> bool:
+        """A window is shared if flagged so before, OR it is default-cmd.
+
+        The default-cmd window is shared by definition (#1114): it is the
+        workspace's singleton service terminal, owned by the workspace
+        owner and joinable by every subscriber.
+        """
+        return name == DEFAULT_CMD_WINDOW or prev_shared
 
     async def start(self, msg: dict) -> None:
 
@@ -458,26 +585,12 @@ class TerminalController:
         self.cols = cols
         self.rows = rows
 
-        # Surface a WS event the moment the default command is
-        # genuinely running in its tmux window, so clients can stop
-        # polling and know the workspace is live. Fired from inside
-        # ``_ensure_base_session`` (terminal.py); the background
-        # auto-start path has no connection and passes no callback.
-        # A closed socket here must NOT abort the terminal (the
-        # command started fine), so swallow WS errors.
-        async def _emit_default_command_started() -> None:
-            try:
-                self._conn.sock.send_json(
-                    {
-                        "type": "default_command_started",
-                        "workspaceId": self._conn.workspace_id,
-                        "command": self._conn._default_command,
-                    }
-                )
-            except _WS_ERRORS:
-                logger.debug(
-                    "default_command_started: socket gone, could not emit"
-                )
+        # The default-cmd window is a per-workspace singleton that lives
+        # in the OWNER's tmux session (#1114), not the firing user's.
+        # Resolve the owner's session name + home so ``_ensure_base_session``
+        # targets the owner's session for the window. The firing user still
+        # gets their own base session + window 0 for an interactive shell.
+        owner_id, owner_home = await self._owner_default_cmd_target()
 
         session = TerminalSession(
             self._conn.container_id,
@@ -494,7 +607,9 @@ class TerminalController:
             # holds 'complete'. A cached value would wrongly block
             # the post-setup fire (#1033).
             setup_state=await self._setup_state_for_workspace(),
-            on_default_command_started=_emit_default_command_started,
+            on_default_command_started=self._on_default_command_started,
+            default_cmd_session_name=owner_id,
+            default_cmd_user_home=owner_home,
         )
 
         browser_id = msg.get("browser_id")
@@ -633,12 +748,13 @@ class TerminalController:
         new_entries = []
         for w in windows:
             prev = old_by_id.get(w["id"]) or old_by_name.get(w["name"])
+            prev_shared = prev.get("shared", False) if prev else False
             new_entries.append(
                 {
                     "id": w["id"],
                     "name": w["name"],
                     "index": w["index"],
-                    "shared": prev.get("shared", False) if prev else False,
+                    "shared": self._window_shared(w["name"], prev_shared),
                 }
             )
         ws_session.terminal_windows[user_id] = new_entries
@@ -654,6 +770,35 @@ class TerminalController:
         if old_shared != new_shared or old_shared_names != new_shared_names:
             self._conn._broadcast_shared_terminals(ws_session)
         self._conn._save_state_snapshot(ws_session)
+
+    def _merge_owner_windows(
+        self, ws_session, owner_id: str, windows: list[dict]
+    ) -> None:
+        """Merge the owner's tmux windows into the session map.
+
+        Unlike ``sync_terminal_windows`` (which serves the firing user and
+        broadcasts/saves), this is a quiet merge used by
+        ``_sync_owner_windows`` to make the owner's default-cmd window
+        discoverable as shared for visitors -- typically when the owner
+        has not connected. It preserves prior ``shared`` flags for
+        non-default-cmd windows and forces default-cmd shared (#1114).
+        """
+        old = ws_session.terminal_windows.get(owner_id, [])
+        old_by_id = {w["id"]: w for w in old if "id" in w}
+        old_by_name = {w["name"]: w for w in old if "name" in w}
+        new_entries = []
+        for w in windows:
+            prev = old_by_id.get(w["id"]) or old_by_name.get(w["name"])
+            prev_shared = prev.get("shared", False) if prev else False
+            new_entries.append(
+                {
+                    "id": w["id"],
+                    "name": w["name"],
+                    "index": w["index"],
+                    "shared": self._window_shared(w["name"], prev_shared),
+                }
+            )
+        ws_session.terminal_windows[owner_id] = new_entries
 
     def notify_user_terminal_windows(self, windows: list[dict]) -> None:
         """Send terminal_windows to all connections for this user."""
@@ -1114,6 +1259,10 @@ class SharedTerminalController:
                 {"type": "shared_terminals", "terminals": []}
             )
             return
+        # Discover the owner's default-cmd window (shared by definition)
+        # in case the owner hasn't connected since it was created -- e.g.
+        # an auto-started workspace a visitor is the first to open (#1114).
+        await self._conn.terminal._sync_owner_windows(ws_session)
         terminals = _get_shared_terminals(ws_session)
         self._conn.sock.send_json(
             {"type": "shared_terminals", "terminals": terminals}
