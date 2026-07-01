@@ -819,6 +819,12 @@ async def add_to_workspace_role(
     target = await model.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if target["id"] == model.AGENT_USER_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="The system agent cannot be added to workspace roles"
+            " (global fixed UUID — granting it cross-workspace blast radius).",
+        )
     await model.add_user_to_group(target["id"], group["id"])
     await _broadcast_workspace_members(workspace_id)
     wshandler.state.notify_user_workspaces_changed(user["id"])
@@ -867,6 +873,13 @@ async def change_workspace_role(
     target = await model.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
+
+    if body.role is not None and target["id"] == model.AGENT_USER_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="The system agent cannot be added to workspace roles"
+            " (global fixed UUID — granting it cross-workspace blast radius).",
+        )
 
     if body.role is not None and body.role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(

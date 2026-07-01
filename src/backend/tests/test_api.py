@@ -2006,6 +2006,78 @@ class TestWorkspaceSharingRoutes:
         notified = {call.args[0] for call in mock_notify.call_args_list}
         assert notified == {user["id"], other["id"]}
 
+    async def test_add_role_rejects_system_agent(self, client, user, db):
+        # Skeleton-key guardrail (#1135): the system agent is a global,
+        # fixed, source-published UUID that must never become an ACL
+        # principal via a role grant.
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "role-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/roles/collaborators",
+            headers=headers,
+            json={"email": agent["email"]},
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+        # Confirm the guard actually blocked the grant.
+        group = await model.get_group_by_name(f"collaborators-{ws_id}")
+        members = await model.get_group_members(group["id"])
+        assert not any(m["id"] == agent["id"] for m in members)
+
+    async def test_change_role_rejects_system_agent_on_grant(
+        self, client, user, db
+    ):
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "role-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/api/v1/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": agent["email"], "role": "collaborators"},
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+
+    async def test_change_role_allows_system_agent_removal(
+        self, client, user, db
+    ):
+        # role=None is removal-from-all-roles — harmless cleanup, so the
+        # guard (which only fires on a grant) must let it through.
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "role-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/api/v1/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": agent["email"], "role": None},
+        )
+        assert resp.status_code == 200
+
     async def test_add_member_not_found(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
