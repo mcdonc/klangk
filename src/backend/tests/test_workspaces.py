@@ -461,24 +461,22 @@ class TestEagerStartWorkspace:
                     return_value=("cid-cmd", "created"),
                 ),
                 patch(
-                    "klangk_backend.terminal._ensure_base_session",
+                    "klangk_backend.terminal.ensure_service_session",
                     new_callable=AsyncMock,
-                ) as mock_session,
-                patch(
-                    "klangk_backend.workspaces.populate_home_skel",
-                    new_callable=AsyncMock,
-                ),
+                ) as mock_service,
                 patch(
                     "klangk_backend.agent.ensure_agent_home",
                     new_callable=AsyncMock,
+                    return_value="/home/clanker",
                 ),
             ):
                 await ws_mod.eager_start_workspace(ws)
-            mock_session.assert_awaited_once_with(
+            # The default command fires in the standalone service session
+            # owned by the agent identity, not the owner's (#1133).
+            mock_service.assert_awaited_once_with(
                 "cid-cmd",
-                user["id"],
-                user_home=mock_session.call_args[1]["user_home"],
-                default_command="openclaw gateway",
+                "/home/clanker",
+                "openclaw gateway",
                 setup_state="complete",
             )
         finally:

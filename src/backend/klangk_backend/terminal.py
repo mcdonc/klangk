@@ -20,7 +20,7 @@ import signal
 import struct
 import termios
 import tty
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 
 from . import podman
 from .exceptions import TerminalError
@@ -96,6 +96,14 @@ _WORKSPACE_STATE_FILE = ".workspace-state.json"
 # Name of the dedicated tmux window that runs a workspace's
 # default_command, leaving the user's interactive window 0 free.
 DEFAULT_CMD_WINDOW = "default-cmd"
+
+# The standalone tmux session that runs the workspace's default command,
+# owned by the agent identity (not the owner). Constant name -- keyed in
+# the session map by AGENT_USER_ID, never the renameable handle -- and
+# decoupled from both the owner's interactive session and the
+# ``pi --mode rpc`` subprocess lifecycle (it survives the agent process
+# dying because it is just a tmux session) (#1133 D6).
+SERVICE_SESSION = "service"
 
 
 async def _has_tmux_session(container_id: str, session_name: str) -> bool:
@@ -206,126 +214,91 @@ async def _ensure_base_session(
     session_name: str,
     user_home: str | None = None,
     ssh_agent_socket: str | None = None,
-    default_command: str | None = None,
-    setup_state: str = SETUP_STATE_COMPLETE,
-    on_default_command_started: Callable[[], Awaitable[None]] | None = None,
-    default_cmd_session_name: str | None = None,
-    default_cmd_user_home: str | None = None,
 ) -> bool:
-    """Ensure the base tmux session exists and maybe fire the default cmd.
+    """Ensure the firing user's base tmux session + window 0 exist.
 
-    Two independent jobs, split out so that an early visitor's
-    ``terminal_start`` no longer swallows the post-setup one (#1033):
-
-    1. *Firing user's base session + window 0* -- created idempotently
-       and ALWAYS. A visitor connecting mid-setup still gets a working
-       interactive shell. This is what every ``terminal_start`` needs
-       regardless of setup state.
-
-    2. *The ``default-cmd`` window* -- a per-workspace singleton that
-       lives in the **owner's** tmux session, regardless of who fired
-       ``terminal_start`` (#1114). It is created only when the firing
-       predicate holds:
-
-           default_command is set  AND  setup_state == complete
-                                 AND  the window doesn't already exist
-
-       ``default_cmd_session_name`` (the owner id) targets the owner's
-       session; when omitted it falls back to *session_name*, which is
-       the historical single-user / boot-path behaviour (the boot path
-       already passes the owner id as ``session_name``). The owner's
-       session is ensured here too, so a visitor whose
-       ``terminal_start`` is the workspace's first can still spawn the
-       service in the owner's session.
-
-       Crucially this runs EVEN IF the firing user's session already
-       existed (created by an earlier visitor). Previously the whole
-       function returned ``False`` the moment the session existed, so
-       once an early visitor made the session, the post-setup
-       ``terminal_start`` was a no-op and the default command never
-       ran (#1033).
-
-    Returns ``True`` if the firing user's base session was freshly
-    created.
+    Idempotent: returns ``True`` if the session was freshly created.
+    The default command no longer lives in any user's session -- it
+    runs in the standalone ``service`` session owned by the agent
+    identity (see :func:`ensure_service_session`), so this is purely
+    the interactive-shell session every ``terminal_start`` needs
+    regardless of setup state (#1133).
     """
-    created = await _ensure_tmux_session(
+    return await _ensure_tmux_session(
         container_id, session_name, user_home, ssh_agent_socket
     )
-    session_existed = not created
 
-    # The default-cmd window targets the owner's session when told to,
-    # otherwise the firing user's (single-user / boot-path fallback).
-    dc_target = default_cmd_session_name or session_name
-    if dc_target != session_name:
-        # The owner's session may not exist yet (owner never connected,
-        # auto-start didn't run). Ensure it so ``new-window`` succeeds.
-        await _ensure_tmux_session(
+
+async def ensure_service_session(
+    container_id: str,
+    agent_home: str,
+    default_command: str,
+    setup_state: str = SETUP_STATE_COMPLETE,
+) -> None:
+    """Ensure the standalone ``service`` session; maybe fire default-cmd.
+
+    The workspace's default command runs in a tmux session with a
+    CONSTANT name ``service`` (not the owner's id), with the
+    ``default-cmd`` window inside it -> ``service:default-cmd``. The
+    session is owned by the agent identity and decoupled from both the
+    owner's interactive session and the ``pi --mode rpc`` subprocess
+    lifecycle -- it survives the agent subprocess dying/restarting
+    because it is just a tmux session (#1133 D6).
+
+    *agent_home* (e.g. ``/home/clanker``) is the session's HOME. The
+    default command fires iff the predicate holds (configured AND setup
+    complete) AND the ``default-cmd`` window doesn't already exist
+    (exactly-once-per-container). Idempotent: safe to call from every
+    ``terminal_start`` (#1033) and the boot path alike -- the
+    window-exists check makes it a no-op after the first fire.
+    """
+    await _ensure_tmux_session(container_id, SERVICE_SESSION, agent_home)
+    if not (
+        _should_fire_default_command(default_command, setup_state)
+    ) or await _default_cmd_window_exists(container_id, SERVICE_SESSION):
+        return
+    try:
+        await podman.exec_container(
             container_id,
-            dc_target,
-            default_cmd_user_home,
-            ssh_agent_socket,
-        )
-
-    # Fire iff the predicate holds AND the window doesn't already exist
-    # (exactly-once-per-container, checked against the target session).
-    # Reached even when the firing user's session pre-existed (#1033).
-    if _should_fire_default_command(
-        default_command, setup_state
-    ) and not await _default_cmd_window_exists(container_id, dc_target):
-        try:
-            await podman.exec_container(
-                container_id,
-                [
-                    "tmux",
-                    "new-window",
-                    "-d",
-                    "-t",
-                    dc_target,
-                    "-n",
-                    DEFAULT_CMD_WINDOW,
-                ],
-                user=CONTAINER_USER,
-                timeout=5,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to create %s window in %s",
+            [
+                "tmux",
+                "new-window",
+                "-d",
+                "-t",
+                SERVICE_SESSION,
+                "-n",
                 DEFAULT_CMD_WINDOW,
-                dc_target,
-            )
-        else:
-            # The new window's shell needs a moment to source
-            # .profile / .bashrc before it can resolve PATH-dependent
-            # commands (nvm, openclaw, ...).  Same race as #1030.
-            await asyncio.sleep(1)
-            try:
-                await podman.exec_container(
-                    container_id,
-                    [
-                        "tmux",
-                        "send-keys",
-                        "-t",
-                        f"{dc_target}:{DEFAULT_CMD_WINDOW}",
-                        default_command,
-                        "Enter",
-                    ],
-                    user=CONTAINER_USER,
-                    timeout=5,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to send default command to %s", dc_target
-                )
-            else:
-                # The command is genuinely running in the default-cmd
-                # window now. Notify the caller (e.g. the WS controller)
-                # so it can surface a ``default_command_started`` event
-                # to interested clients. Skipped on the background
-                # auto-start path, which passes no callback.
-                if on_default_command_started is not None:
-                    await on_default_command_started()
-
-    return not session_existed
+            ],
+            user=CONTAINER_USER,
+            timeout=5,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to create %s window in %s",
+            DEFAULT_CMD_WINDOW,
+            SERVICE_SESSION,
+        )
+        return
+    # The new window's shell needs a moment to source .profile / .bashrc
+    # before it can resolve PATH-dependent commands (nvm, openclaw, ...).
+    # Same race as #1030.
+    await asyncio.sleep(1)
+    try:
+        await podman.exec_container(
+            container_id,
+            [
+                "tmux",
+                "send-keys",
+                "-t",
+                f"{SERVICE_SESSION}:{DEFAULT_CMD_WINDOW}",
+                default_command,
+                "Enter",
+            ],
+            user=CONTAINER_USER,
+            timeout=5,
+        )
+    except Exception:
+        logger.warning("Failed to send default command to %s", SERVICE_SESSION)
 
 
 def _build_shell_command(
@@ -830,12 +803,6 @@ class TerminalSession:
         user_id: str | None = None,
         user_handle: str | None = None,
         ssh_agent_socket: str | None = None,
-        default_command: str | None = None,
-        setup_state: str = SETUP_STATE_COMPLETE,
-        on_default_command_started: Callable[[], Awaitable[None]]
-        | None = None,
-        default_cmd_session_name: str | None = None,
-        default_cmd_user_home: str | None = None,
     ):
         self.container_id = container_id
         self.session_name = session_name
@@ -846,14 +813,6 @@ class TerminalSession:
         self.user_id = user_id
         self.user_handle = user_handle
         self.ssh_agent_socket = ssh_agent_socket
-        self.default_command = default_command
-        self.setup_state = setup_state
-        self.on_default_command_started = on_default_command_started
-        # The default-cmd window is a per-workspace singleton that lives
-        # in the OWNER's session, not the firing user's (#1114). When set,
-        # ``_ensure_base_session`` targets this session for the window.
-        self.default_cmd_session_name = default_cmd_session_name
-        self.default_cmd_user_home = default_cmd_user_home
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -883,11 +842,6 @@ class TerminalSession:
                 self.session_name,
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
-                default_command=self.default_command,
-                setup_state=self.setup_state,
-                on_default_command_started=self.on_default_command_started,
-                default_cmd_session_name=self.default_cmd_session_name,
-                default_cmd_user_home=self.default_cmd_user_home,
             )
         env = _build_environment(
             self.user_home,

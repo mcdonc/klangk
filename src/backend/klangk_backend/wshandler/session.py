@@ -38,14 +38,15 @@ class WorkspaceSession:
         # Per-user terminal window state, keyed by user_id.
         # Each value is a list of {"name": str, "shared": bool}.
         # This is the in-memory authority; snapshots are persisted
-        # to /home/.workspace-state.json for crash recovery.
+        # to /home/.workspace-state.json for crash recovery. The agent's
+        # ``service`` session windows are keyed by AGENT_USER_ID (#1133).
         self.terminal_windows: dict[str, list[dict]] = {}
-        # user_id -> handle cache so shared windows remain attributable
-        # (and thus visible in the shared list) even when their owner has
-        # no active connection -- e.g. the default-cmd window after the
-        # owner logs out, or an auto-started window the owner never saw
-        # (#1114). Populated on sync/owner-reconcile.
-        self.shared_handles: dict[str, str] = {}
+        # Cached agent handle so the ``service:default-cmd`` window stays
+        # attributable (and visible in the shared list) even though the
+        # agent has no active WS connection -- the agent is never
+        # "offline" the way the owner could be under the old model
+        # (#1133). Populated by ``_sync_service_windows``.
+        self.agent_handle: str | None = None
         self._save_lock = asyncio.Lock()
         # Workspace token renewal tracking.
         self.workspace_token_expiry: datetime | None = None
@@ -55,7 +56,7 @@ class WorkspaceSession:
         self.subscribers.clear()
         self.browser_subscribers.clear()
         self.terminal_windows.clear()
-        self.shared_handles.clear()
+        self.agent_handle = None
         # Cancel the token renewal loop so it doesn't keep renewing
         # tokens for a container that has been killed or reset.
         task = self._token_renewal_task

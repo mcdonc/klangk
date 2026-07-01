@@ -444,27 +444,32 @@ async def eager_start_workspace(
     # points at a populated directory for every process (#1157).  The
     # home lives on the persisted bind-mount volume, so only provision
     # for a freshly-created container; on re-attach/restart it already
-    # exists.
+    # exists.  Capture the container path to target the service session.
+    agent_home: str | None = None
     if status == "created":
-        await agent.ensure_agent_home(workspace_id, cid)
+        agent_home = await agent.ensure_agent_home(workspace_id, cid)
 
-    # If the workspace has a default command, create a tmux session
-    # and run it now so it's already running when a user connects.
+    # If the workspace has a default command, fire it in the standalone
+    # ``service`` tmux session owned by the agent identity -- not in the
+    # owner's session (#1133 D5/D6).  The session is decoupled from the
+    # ``pi --mode rpc`` subprocess and keyed by AGENT_USER_ID (constant
+    # name ``service``), so it survives the agent process dying and is
+    # always attributable.  Gated on a freshly-created container (the
+    # persisted service session survives restart) and run_default_command
+    # (fresh creates defer this -- setup.sh hasn't run yet).
     default_command = ws.get("default_command")
-    if default_command and status == "created" and run_default_command:
-        handle = await model.get_user_handle(owner_id)
-        if handle:
-            ws_home = home_path(owner_id, workspace_id)
-            user_home, created = ensure_home_symlink(ws_home, handle, owner_id)
-            if created:
-                await populate_home_skel(cid, owner_id)
-            await terminal._ensure_base_session(
-                cid,
-                owner_id,
-                user_home=user_home,
-                default_command=default_command,
-                setup_state=ws.get("setup_state"),
-            )
+    if (
+        default_command
+        and status == "created"
+        and run_default_command
+        and agent_home is not None
+    ):
+        await terminal.ensure_service_session(
+            cid,
+            agent_home,
+            default_command,
+            setup_state=ws.get("setup_state"),
+        )
 
     return cid, status
 

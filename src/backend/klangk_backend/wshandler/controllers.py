@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import WebSocketDisconnect
 
-from .. import container, model, podman, terminal, workspaces
+from .. import container, model, podman, terminal
 from ..exceptions import TerminalError
 from ..util import resolve_env_value
 from ..podman import ExecSession
@@ -389,11 +389,12 @@ class TerminalController:
         windows = await terminal.list_windows(conn.container_id, sname)
         conn._sync_terminal_windows(windows)
         conn.sock.send_json({"type": "terminal_windows", "windows": windows})
-        # Make the owner's default-cmd window discoverable as shared for
-        # other subscribers (e.g. a visitor connecting after auto-start
-        # created it, before the owner ever connected) (#1114).
+        # Discover the agent's ``service:default-cmd`` window so it shows
+        # up as shared (e.g. a visitor connecting after auto-start fired
+        # it) -- the service session is owned by the agent, not any user
+        # who has connected (#1133).
         if ws_session:
-            await self._sync_owner_windows(ws_session)
+            await self._sync_service_windows(ws_session)
 
     def _send_shared_terminals(self) -> None:
         """Send the current shared terminal list to the client."""
@@ -421,125 +422,78 @@ class TerminalController:
             return "complete"
         return ws.get("setup_state") or "complete"
 
-    async def _owner_default_cmd_target(self) -> tuple[str | None, str | None]:
-        """Resolve the owner's tmux session name + home for default-cmd.
+    async def _fire_service_command(self) -> None:
+        """Fire the default command in the agent's ``service`` session.
 
-        The default-cmd window lives in the owner's session (#1114).
-        Returns ``(owner_id, owner_home)``; either may be ``None`` if the
-        workspace or owner can't be resolved, in which case
-        ``_ensure_base_session`` falls back to the firing user's session
-        (the historical single-user behaviour).
+        The post-setup path (#1033): a non-auto-start workspace's service
+        command first fires here when a ``terminal_start`` lands after
+        setup completes. It runs in the standalone ``service`` session
+        owned by the agent identity, not any user's session (#1133).
+        Idempotent via the window-exists check, so every terminal_start
+        calling it is safe.
         """
-        workspace = self._conn.workspace
-        if not workspace:
-            return None, None
-        owner_id = workspace.get("user_id")
-        if not owner_id:
-            return None, None
-        owner_home = await self._resolve_user_home(owner_id)
-        return owner_id, owner_home
-
-    async def _resolve_user_home(self, user_id: str) -> str | None:
-        """Resolve a user's in-container home path, creating the symlink.
-
-        Mirrors the boot path (``workspaces.eager_start_workspace``): the
-        per-user ``/home/{handle} -> .users/{user_id}`` symlink must exist
-        so the default-cmd window's shell sources the right profile. Used
-        to give the OWNER's session a correct HOME when a visitor's
-        ``terminal_start`` is the one that creates it.
-        """
-        handle = await model.get_user_handle(user_id)
-        if not handle:
-            return None
-        ws_home = workspaces.home_path(user_id, self._conn.workspace_id)
-        owner_home, _ = workspaces.ensure_home_symlink(
-            ws_home, handle, user_id
-        )
-        return owner_home
-
-    async def _on_default_command_started(self) -> None:
-        """Hook fired once the default-cmd window is running (#1114).
-
-        Three effects:
-        1. Tell the firing connection the command is up (stops polling).
-        2. Sync the owner's windows into the session map so the window is
-           marked shared and attributable even if the owner never connects.
-        3. Broadcast ``shared_terminals`` so every subscriber -- including
-           visitors whose snapshot predated the window -- now sees the
-           default-cmd tab as a joinable shared terminal without a reload.
-           This is the #1114 race fix: creation is announced, not just
-           snapshotted at connect time.
-        """
-        try:
-            self._conn.sock.send_json(
-                {
-                    "type": "default_command_started",
-                    "workspaceId": self._conn.workspace_id,
-                    "command": self._conn._default_command,
-                }
-            )
-        except _WS_ERRORS:
-            logger.debug(
-                "default_command_started: socket gone, could not emit"
-            )
-        ws_session = state.get_session(self._conn.workspace_id)
-        if not ws_session:
+        default_command = self._conn._default_command
+        if not default_command or not self._conn.container_id:
             return
-        try:
-            await self._sync_owner_windows(ws_session)
-        except Exception:
-            logger.debug(
-                "default_command_started: owner window sync failed",
-                exc_info=True,
-            )
-        try:
-            self._conn._broadcast_shared_terminals(ws_session)
-        except Exception:
-            logger.debug(
-                "default_command_started: shared broadcast failed",
-                exc_info=True,
-            )
+        # Read setup_state FRESH from the DB -- not a cached connection
+        # field. The setup-owner connection caches 'pending' at connect
+        # time, but by terminal_start (after setup.sh returns) the DB
+        # holds 'complete' (#1033).
+        setup_state = await self._setup_state_for_workspace()
+        # The agent home is eagerly provisioned at container create
+        # (#1157) and persists in the bind-mount volume, so resolving the
+        # path here is cheap and correct -- no provisioning needed.
+        agent_home = f"/home/{await model.agent_handle()}"
+        await terminal.ensure_service_session(
+            self._conn.container_id,
+            agent_home,
+            default_command,
+            setup_state=setup_state,
+        )
 
-    async def _sync_owner_windows(self, ws_session) -> bool:
-        """Sync the workspace owner's tmux windows into the session map.
+    async def _sync_service_windows(self, ws_session) -> bool:
+        """Discover the agent's ``service`` session windows (#1133).
 
-        The default-cmd window lives in the owner's session and is shared
-        by definition (#1114). But ``ws_session.terminal_windows`` is only
-        populated when a user connects + syncs; if the owner hasn't
-        connected (auto-start at boot, or still mid-setup) visitors would
-        never see the window in the shared list. This lists the owner's
-        session from tmux and merges the result, marking default-cmd
-        shared and caching the owner's handle.
+        The default command runs in a standalone ``service`` tmux
+        session owned by the agent identity (``AGENT_USER_ID``), not in
+        any user's session. ``ws_session.terminal_windows`` is only
+        populated when a user connects + syncs, so without this the
+        ``service:default-cmd`` window would never appear in the shared
+        list. This lists the ``service`` session from tmux and merges the
+        result, attributing it to the agent (whose handle is always
+        resolvable via ``model.agent_handle()`` -- the agent is never
+        "offline" the way the owner could be under the old model).
 
-        Returns ``True`` if the owner's windows were (re)synced from tmux.
+        Returns ``True`` if the service windows were (re)synced from tmux.
         """
-        workspace = self._conn.workspace
-        if not workspace or not self._conn.container_id:
-            return False
-        owner_id = workspace.get("user_id")
-        if not owner_id:
+        if not self._conn.container_id:
             return False
         try:
             windows = await terminal.list_windows(
-                self._conn.container_id, owner_id
+                self._conn.container_id, terminal.SERVICE_SESSION
             )
         except (TerminalError, OSError):
-            return False  # owner session doesn't exist yet
+            return False  # service session doesn't exist yet
         if not windows:
             return False
-        handle = await model.get_user_handle(owner_id)
-        if handle:
-            ws_session.shared_handles[owner_id] = handle
-        self._merge_owner_windows(ws_session, owner_id, windows)
+        # Best-effort attribution: if the agent handle can't be resolved
+        # (e.g. a transient DB issue), skip discovery this round -- it
+        # retries on the next connect / list_shared_terminals. Never let
+        # discovery break the terminal-start flow.
+        try:
+            ws_session.agent_handle = await model.agent_handle()
+        except Exception:
+            return False
+        self._merge_service_windows(ws_session, windows)
         return True
 
     @staticmethod
     def _window_shared(name: str, prev_shared: bool) -> bool:
         """A window is shared if flagged so before, OR it is default-cmd.
 
-        The default-cmd window is shared by definition (#1114): it is the
-        workspace's singleton service terminal, owned by the workspace
-        owner and joinable by every subscriber.
+        The default-cmd window is shared by definition (#1114): it is
+        the workspace's singleton service terminal, owned by the agent
+        and joinable by every subscriber.
         """
         return name == DEFAULT_CMD_WINDOW or prev_shared
 
@@ -585,13 +539,12 @@ class TerminalController:
         self.cols = cols
         self.rows = rows
 
-        # The default-cmd window is a per-workspace singleton that lives
-        # in the OWNER's tmux session (#1114), not the firing user's.
-        # Resolve the owner's session name + home so ``_ensure_base_session``
-        # targets the owner's session for the window. The firing user still
-        # gets their own base session + window 0 for an interactive shell.
-        owner_id, owner_home = await self._owner_default_cmd_target()
-
+        # The default command no longer lives in any user's session --
+        # it runs in the standalone ``service`` session owned by the agent
+        # identity (#1133). ``TerminalSession`` is purely the firing user's
+        # interactive shell now; the service command is fired separately
+        # in ``_start_terminal`` (after the shell session is up) so a
+        # post-setup ``terminal_start`` still triggers it (#1033).
         session = TerminalSession(
             self._conn.container_id,
             session_name=self._conn.user["id"],
@@ -599,17 +552,6 @@ class TerminalController:
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
             ssh_agent_socket=self._conn._ssh_agent_socket,
-            default_command=self._conn._default_command,
-            # Read setup_state FRESH from the DB -- not from a cached
-            # connection field. The setup-owner connection caches its
-            # state as 'pending' at connect time, but by the time it
-            # sends terminal_start (after setup.sh returns) the DB
-            # holds 'complete'. A cached value would wrongly block
-            # the post-setup fire (#1033).
-            setup_state=await self._setup_state_for_workspace(),
-            on_default_command_started=self._on_default_command_started,
-            default_cmd_session_name=owner_id,
-            default_cmd_user_home=owner_home,
         )
 
         browser_id = msg.get("browser_id")
@@ -632,6 +574,13 @@ class TerminalController:
                     session.start(cols, rows),
                     timeout=30,
                 )
+                # Fire the default command in the agent's ``service``
+                # session. This handles the post-setup case (#1033): a
+                # non-auto-start workspace's service command first fires
+                # here once setup is complete, not in any user's session.
+                # The window-exists check makes it a no-op after the first
+                # fire. Done before window sync so discovery picks it up.
+                await ctrl._fire_service_command()
                 if browser_id:
                     await attach_browser(conn.container_id, browser_id)
                 if not await conn._activate_session(session, cols, rows):
@@ -771,19 +720,16 @@ class TerminalController:
             self._conn._broadcast_shared_terminals(ws_session)
         self._conn._save_state_snapshot(ws_session)
 
-    def _merge_owner_windows(
-        self, ws_session, owner_id: str, windows: list[dict]
-    ) -> None:
-        """Merge the owner's tmux windows into the session map.
+    def _merge_service_windows(self, ws_session, windows: list[dict]) -> None:
+        """Merge the agent's ``service`` session windows into the map.
 
         Unlike ``sync_terminal_windows`` (which serves the firing user and
         broadcasts/saves), this is a quiet merge used by
-        ``_sync_owner_windows`` to make the owner's default-cmd window
-        discoverable as shared for visitors -- typically when the owner
-        has not connected. It preserves prior ``shared`` flags for
-        non-default-cmd windows and forces default-cmd shared (#1114).
+        ``_sync_service_windows`` to make the ``service:default-cmd`` window
+        discoverable as shared. Windows are attributed to the agent
+        (``AGENT_USER_ID``) and ``default-cmd`` is forced shared (#1133).
         """
-        old = ws_session.terminal_windows.get(owner_id, [])
+        old = ws_session.terminal_windows.get(model.AGENT_USER_ID, [])
         old_by_id = {w["id"]: w for w in old if "id" in w}
         old_by_name = {w["name"]: w for w in old if "name" in w}
         new_entries = []
@@ -798,7 +744,7 @@ class TerminalController:
                     "shared": self._window_shared(w["name"], prev_shared),
                 }
             )
-        ws_session.terminal_windows[owner_id] = new_entries
+        ws_session.terminal_windows[model.AGENT_USER_ID] = new_entries
 
     def notify_user_terminal_windows(self, windows: list[dict]) -> None:
         """Send terminal_windows to all connections for this user."""
@@ -1259,10 +1205,10 @@ class SharedTerminalController:
                 {"type": "shared_terminals", "terminals": []}
             )
             return
-        # Discover the owner's default-cmd window (shared by definition)
-        # in case the owner hasn't connected since it was created -- e.g.
-        # an auto-started workspace a visitor is the first to open (#1114).
-        await self._conn.terminal._sync_owner_windows(ws_session)
+        # Discover the agent's ``service:default-cmd`` window in case it
+        # was fired (e.g. auto-start) before anyone connected to discover
+        # it (#1133).
+        await self._conn.terminal._sync_service_windows(ws_session)
         terminals = _get_shared_terminals(ws_session)
         self._conn.sock.send_json(
             {"type": "shared_terminals", "terminals": terminals}

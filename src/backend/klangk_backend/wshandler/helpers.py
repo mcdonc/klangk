@@ -60,18 +60,19 @@ def _get_shared_terminals(ws_session) -> list[dict]:
 
     terminals = []
     for user_id, windows in ws_session.terminal_windows.items():
-        # Look up the user's handle from any active connection, falling
-        # back to the session's cached handle so shared windows stay
-        # visible when their owner has no active connection (#1114) --
-        # e.g. the default-cmd window after the owner logs out.
+        # Look up the user's handle from any active connection. The
+        # agent (AGENT_USER_ID) has no WS connection, so its handle is
+        # the cached ``agent_handle`` populated by ``_sync_service_windows``
+        # -- the agent is always attributable, never "offline" (#1133).
         handle = None
-        for sock in ws_session.subscribers:
-            conn = state.connections.get(sock)
-            if conn and conn.user.get("id") == user_id:
-                handle = conn.user.get("handle")
-                break
-        if not handle:
-            handle = ws_session.shared_handles.get(user_id)
+        if user_id == model.AGENT_USER_ID:
+            handle = ws_session.agent_handle
+        else:
+            for sock in ws_session.subscribers:
+                conn = state.connections.get(sock)
+                if conn and conn.user.get("id") == user_id:
+                    handle = conn.user.get("handle")
+                    break
         if not handle:
             continue
         for w in windows:

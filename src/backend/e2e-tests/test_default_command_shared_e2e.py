@@ -1,20 +1,25 @@
-"""End-to-end test for the default-command shared singleton (#1114).
+"""End-to-end test for the default-command service session (#1133).
 
 The default command is a per-workspace singleton that runs exactly once,
-in the OWNER's tmux session -- like a global service. A visitor under a
-different account must NOT spawn their own copy; instead they see the
-owner's ``default-cmd`` window as a joinable shared terminal.
+in a standalone ``service`` tmux session owned by the AGENT identity
+(``service:default-cmd``) -- decoupled from both the owner's interactive
+session and the ``pi --mode rpc`` subprocess. A visitor under a different
+account must NOT spawn their own copy; instead they see the
+``default-cmd`` window as a joinable shared terminal attributed to the
+agent.
 
 This reproduces the whole model against a real server + container:
 
-* the owner fires ``terminal_start`` and sees ``default-cmd`` as their
-  own tab;
+* the owner fires ``terminal_start`` and gets their own interactive
+  shell (the ``default-cmd`` window is NOT one of their own tabs -- it
+  lives in the ``service`` session);
+* the owner nonetheless sees ``default-cmd`` in the shared-terminals
+  list (attributed to the agent), so the service is visible;
 * a visitor (granted the ``coders`` role) fires ``terminal_start`` and
   gets their own interactive shell -- with NO ``default-cmd`` tab of
   their own (exactly-once: the command is not re-run for them);
-* the visitor nonetheless sees the owner's ``default-cmd`` window in the
-  shared-terminals list, so the service is visible without the owner
-  having to reshare anything.
+* the visitor sees the ``default-cmd`` window in the shared-terminals
+  list too.
 """
 
 import asyncio
@@ -208,11 +213,18 @@ def _has_default_cmd(windows):
     return any(w.get("name") == "default-cmd" for w in (windows or []))
 
 
+def _shared_has_default_cmd(shared):
+    """True if the shared_terminals payload includes default-cmd."""
+    return any(t.get("window_name") == "default-cmd" for t in (shared or []))
+
+
 class TestDefaultCommandSharedSingleton:
     @pytest.mark.asyncio
-    async def test_visitor_sees_shared_not_own(self, server, owner):
-        """The owner gets default-cmd as their own tab; a visitor gets their
-        own shell only and sees the owner's window as shared (#1114)."""
+    async def test_service_window_shared_not_own(self, server, owner):
+        """The default command runs in the agent's ``service`` session
+        (#1133): neither the owner nor a visitor has ``default-cmd`` as
+        their own tab, but both see it as a shared (agent-attributed)
+        terminal, and it is a singleton (not re-run per user)."""
         url = server["url"]
         visitor = _register(server, "visitor@example.com", "visitorpass")
 
@@ -241,20 +253,37 @@ class TestDefaultCommandSharedSingleton:
             server, owner, workspace_id
         )
         try:
-            # Owner starts the terminal -> default-cmd window created in
-            # the owner's session.
+            # Owner starts the terminal -> service command fires in the
+            # ``service`` session. The owner gets their own shell; the
+            # ``default-cmd`` window is NOT one of their own tabs.
             await _terminal_start(owner_ws)
             loop = asyncio.get_event_loop()
+            # Wait for the owner's own windows, then confirm the service
+            # window surfaces as shared (nudge list_shared_terminals).
             deadline = loop.time() + 45
             while loop.time() < deadline:
-                if _has_default_cmd(_own_windows(owner_rx)):
+                if _own_windows(owner_rx) is not None:
                     break
                 await asyncio.sleep(0.3)
-            else:
-                raise AssertionError(
-                    "owner never saw their own default-cmd tab; msgs: "
-                    f"{[m.get('type') for m in owner_rx]}"
+            await asyncio.sleep(1)  # let the service command fire + settle
+            if not _shared_has_default_cmd(_shared(owner_rx)):
+                await owner_ws.send(
+                    json.dumps({"cmd": "list_shared_terminals"})
                 )
+                deadline = loop.time() + 20
+                while loop.time() < deadline:
+                    if _shared_has_default_cmd(_shared(owner_rx)):
+                        break
+                    await asyncio.sleep(0.3)
+            # The default-cmd window is the agent's, not the owner's own.
+            assert not _has_default_cmd(_own_windows(owner_rx)), (
+                "owner has default-cmd as an OWN tab; it should live in the "
+                f"service session. own windows: {_own_windows(owner_rx)}"
+            )
+            assert _shared_has_default_cmd(_shared(owner_rx)), (
+                "owner never saw the service default-cmd as shared; msgs: "
+                f"{[m.get('type') for m in owner_rx]}"
+            )
 
             # Visitor connects and starts their own terminal.
             vis_ws, vis_rx, vis_reader = await _connect(
@@ -271,13 +300,13 @@ class TestDefaultCommandSharedSingleton:
                 # Give the shared broadcast a moment to land, then
                 # nudge an explicit list if needed.
                 await asyncio.sleep(1)
-                if not _shared(vis_rx):
+                if not _shared_has_default_cmd(_shared(vis_rx)):
                     await vis_ws.send(
                         json.dumps({"cmd": "list_shared_terminals"})
                     )
                     deadline = loop.time() + 20
                     while loop.time() < deadline:
-                        if _shared(vis_rx):
+                        if _shared_has_default_cmd(_shared(vis_rx)):
                             break
                         await asyncio.sleep(0.3)
 
@@ -291,14 +320,14 @@ class TestDefaultCommandSharedSingleton:
                 )
 
                 shared = _shared(vis_rx)
-                # Shared visibility: the owner's default-cmd is joinable.
+                # Shared visibility: the service default-cmd is joinable.
                 assert shared, (
                     "visitor never received shared_terminals; msgs: "
                     f"{[m.get('type') for m in vis_rx]}"
                 )
-                assert any(
-                    t.get("window_name") == "default-cmd" for t in shared
-                ), f"owner's default-cmd not in shared list: {shared}"
+                assert _shared_has_default_cmd(shared), (
+                    f"service default-cmd not in shared list: {shared}"
+                )
             finally:
                 vis_reader.cancel()
                 await vis_ws.close()

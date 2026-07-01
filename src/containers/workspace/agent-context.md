@@ -153,8 +153,11 @@ is per-user is the **session name**.
 
 - A user's interactive terminals are a tmux session **named after the user's
   id** (e.g. `tmux list-sessions` shows one session per user). The workspace's
-  own service runs in a window named **`default-cmd`** inside the **owner's**
-  session.
+  own service runs in a standalone tmux session named **`service`** — owned by
+  the agent identity (you), not any user — with the command in a window named
+  **`default-cmd`** (`service:default-cmd`). It is decoupled from both the
+  owner's interactive session and your `pi --mode rpc` subprocess: it is just
+  a tmux session, so it survives your RPC process dying or restarting.
 - **List** what exists: `tmux list-sessions`, then `tmux list-windows -t
 <session>` and `tmux list-panes -t <session>`.
 - **Observe** a pane: `tmux capture-pane -p -t <session>:<window>.<pane> -S -
