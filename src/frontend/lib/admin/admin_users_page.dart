@@ -125,17 +125,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     }
   }
 
-  void _showSnack(dynamic resp) {
-    String msg;
-    try {
-      msg = jsonDecode(resp.body)['detail'] ?? 'Error';
-    } catch (e) {
-      debugPrint('[AdminUsersPage] parse error detail failed: $e');
-      msg = 'Error: ${resp.statusCode}';
-    }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _addUser() async {
     final result = await showDialog<Map<String, dynamic>>(
       context: context,

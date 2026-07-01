@@ -413,7 +413,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         const SizedBox(height: 16),
         if (widget.allowedImages.isNotEmpty)
           DropdownButtonFormField<String>(
-            value: _selectedImage,
+            initialValue: _selectedImage,
             decoration: InputDecoration(
               labelText: 'Container Image',
               labelStyle: labelStyle,

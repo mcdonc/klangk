@@ -44,9 +44,7 @@ class FileDropZoneState extends State<FileDropZone> {
   List<(String, DropItem)> collectFiles(List<DropItem> items, String prefix) {
     final result = <(String, DropItem)>[];
     for (final item in items) {
-      final path = prefix.isEmpty
-          ? (item.name ?? 'unnamed')
-          : '$prefix/${item.name ?? 'unnamed'}';
+      final path = prefix.isEmpty ? item.name : '$prefix/${item.name}';
       if (item is DropItemDirectory) {
         result.addAll(collectFiles(item.children, path));
       } else {
@@ -62,7 +60,7 @@ class FileDropZoneState extends State<FileDropZone> {
         widget.currentEntries.map((e) => e['name'] as String).toSet();
     final conflicts = <String>[];
     for (final item in details.files) {
-      final name = item.name ?? 'unnamed';
+      final name = item.name;
       if (existingNames.contains(name)) {
         conflicts.add(name);
       }
@@ -101,14 +99,14 @@ class FileDropZoneState extends State<FileDropZone> {
         }
         int statusCode;
         if (testUploadOverride != null) {
-          statusCode = await testUploadOverride!(
-              url, headers, file.name ?? 'unnamed', bytes);
+          statusCode =
+              await testUploadOverride!(url, headers, file.name, bytes);
         } else {
           // coverage:ignore-start
           final request = http.MultipartRequest('POST', Uri.parse(url));
           request.headers.addAll(headers);
-          request.files.add(http.MultipartFile.fromBytes('file', bytes,
-              filename: file.name ?? 'unnamed'));
+          request.files.add(
+              http.MultipartFile.fromBytes('file', bytes, filename: file.name));
           final response = await request.send();
           statusCode = response.statusCode;
           // coverage:ignore-end
@@ -143,7 +141,8 @@ class FileDropZoneState extends State<FileDropZone> {
           widget.child,
           if (_dragging)
             Container(
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+              color:
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
               child: const Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
