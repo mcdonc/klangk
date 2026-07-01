@@ -889,19 +889,19 @@ void main() {
 
       // No stop button initially
       expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
-      expect(find.text('MrBoops is thinking...'), findsNothing);
+      expect(find.text('clanker is thinking...'), findsNothing);
 
       // Send agent_thinking = true
       await tester.runAsync(() async {
         channel.serverSend(
-            {'type': 'agent_thinking', 'thinking': true, 'name': 'MrBoops'});
+            {'type': 'agent_thinking', 'thinking': true, 'name': 'clanker'});
         await Future.delayed(Duration.zero);
         await Future.delayed(Duration.zero);
       });
       await tester.pump();
 
       expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
-      expect(find.text('MrBoops is thinking...'), findsOneWidget);
+      expect(find.text('clanker is thinking...'), findsOneWidget);
 
       // Send agent_thinking = false
       await tester.runAsync(() async {
@@ -912,7 +912,7 @@ void main() {
       await tester.pump();
 
       expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
-      expect(find.text('MrBoops is thinking...'), findsNothing);
+      expect(find.text('clanker is thinking...'), findsNothing);
     });
 
     testWidgets('stop button sends chat_agent_abort', (tester) async {
@@ -920,7 +920,7 @@ void main() {
 
       await tester.runAsync(() async {
         channel.serverSend(
-            {'type': 'agent_thinking', 'thinking': true, 'name': 'MrBoops'});
+            {'type': 'agent_thinking', 'thinking': true, 'name': 'clanker'});
         await Future.delayed(Duration.zero);
         await Future.delayed(Duration.zero);
       });

@@ -51,7 +51,7 @@ async def _seed_agent_db(db):
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (model.AGENT_USER_ID, "MrBoops@example.com", "MrBoops"),
+            (model.AGENT_USER_ID, "clanker@example.com", "clanker"),
         )
     model.clear_agent_cache()
 
@@ -772,7 +772,7 @@ class TestEnsureHome:
             patch.object(
                 workspaces,
                 "ensure_home_symlink",
-                return_value=("/home/MrBoops", True),
+                return_value=("/home/clanker", True),
             ) as mock_symlink,
             patch.object(
                 workspaces,
@@ -786,7 +786,7 @@ class TestEnsureHome:
         ):
             result = await session._ensure_home("cid")
 
-        assert result == "/home/MrBoops"
+        assert result == "/home/clanker"
         assert session._home_ready is True
         mock_symlink.assert_called_once()
         mock_skel.assert_awaited_once_with(
@@ -797,7 +797,7 @@ class TestEnsureHome:
         session = AgentSession("ws-id")
         session._home_ready = True
         result = await session._ensure_home("cid")
-        assert result == "/home/MrBoops"
+        assert result == "/home/clanker"
 
     async def test_ensure_home_workspace_not_in_db(self):
         from klangk_backend import model

@@ -69,7 +69,7 @@ async def agent_user(db):
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (us.AGENT_USER_ID, "MrBoops@example.com", "MrBoops"),
+            (us.AGENT_USER_ID, "clanker@example.com", "clanker"),
         )
     us.clear_agent_cache()
 

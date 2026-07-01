@@ -7,11 +7,11 @@ void main() {
     testWidgets('shows agent name with thinking text', (tester) async {
       await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
-          body: AgentThinkingIndicator(agentName: 'MrBoops'),
+          body: AgentThinkingIndicator(agentName: 'clanker'),
         ),
       ));
 
-      expect(find.text('MrBoops is thinking...'), findsOneWidget);
+      expect(find.text('clanker is thinking...'), findsOneWidget);
     });
 
     testWidgets('shows spinner', (tester) async {

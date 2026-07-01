@@ -70,8 +70,8 @@ class TestSeedAgentUser:
         await main.seed_agent_user()
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
-        assert user["email"] == "MrBoops@example.com"
-        assert user["handle"] == "MrBoops"
+        assert user["email"] == "clanker@example.com"
+        assert user["handle"] == "clanker"
 
     async def test_custom_env_vars(self, db, monkeypatch):
         monkeypatch.setenv("KLANGK_CHAT_AGENT_EMAIL", "bot@test.com")
@@ -97,7 +97,7 @@ class TestSeedAgentUser:
         await main.seed_agent_user()
         # Cache should now reflect DB values
         agent = await model.get_agent_user()
-        assert agent["email"] == "MrBoops@example.com"
+        assert agent["email"] == "clanker@example.com"
 
     async def test_users_handle_has_unique_constraint(self, db):
         """The users.handle UNIQUE constraint is the structural backstop.
@@ -142,7 +142,7 @@ class TestSeedAgentUser:
 
     async def test_seed_rename_to_human_handle_refuses(self, db, monkeypatch):
         """Re-seeding the agent onto a human's handle fails, leaves agent as-is."""
-        await main.seed_agent_user()  # agent handle = MrBoops
+        await main.seed_agent_user()  # agent handle = clanker
         human = await model.create_user(
             "alice@example.com", "hash", verified=True
         )
@@ -151,7 +151,7 @@ class TestSeedAgentUser:
             await main.seed_agent_user()
         # Agent keeps its original handle; human untouched.
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
-        assert agent["handle"] == "MrBoops"
+        assert agent["handle"] == "clanker"
         refreshed = await model.get_user_by_id(human["id"])
         assert refreshed["handle"] == "alice"
 

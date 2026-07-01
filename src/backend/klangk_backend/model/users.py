@@ -44,8 +44,8 @@ async def get_agent_user() -> dict:
         # Fallback before seeding has run (should not happen at runtime).
         return {
             "id": AGENT_USER_ID,
-            "email": "MrBoops@example.com",
-            "handle": "MrBoops",
+            "email": "clanker@example.com",
+            "handle": "clanker",
         }
     _agent_user_cache = user
     return user

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Test the MrBoops agent via the live server's WebSocket + REST API.
+"""Test the clanker agent via the live server's WebSocket + REST API.
 
 Usage:
     python scripts/test-agent-chat.py [--server URL] [--workspace NAME]
 
-Sends a sequence of chat messages including @MrBoops mentions and
+Sends a sequence of chat messages including @clanker mentions and
 follow-ups, then prints the agent's responses. Useful for iterating
 on context assembly and prompt quality.
 """
@@ -145,7 +145,7 @@ async def main():
         print("=" * 60)
 
         # 1. Direct question
-        r1 = await chat("@MrBoops what is 2 + 2?")
+        r1 = await chat("@clanker what is 2 + 2?")
 
         # 2. Follow-up (no @mention — tests conversation continuity)
         r2 = await chat("and what is that times 10?")
@@ -154,7 +154,7 @@ async def main():
         r3 = await chat("can you write a Python function that computes that?")
 
         # 4. New topic with @mention
-        r4 = await chat("@MrBoops what files are in the home directory?")
+        r4 = await chat("@clanker what files are in the home directory?")
 
         # 5. Follow-up about files
         r5 = await chat("create a file called test.txt with 'hello world'")

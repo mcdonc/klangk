@@ -101,7 +101,7 @@ class AgentSession:
         Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount
         and populates it via ``klangk-setup-clankers`` (the same path real
         users take) by running a login shell.  Returns the container
-        path, e.g. ``/home/MrBoops``.
+        path, e.g. ``/home/clanker``.
         """
         if self._home_ready:
             handle = await model.agent_handle()
