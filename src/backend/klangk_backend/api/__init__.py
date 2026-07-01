@@ -188,6 +188,9 @@ async def get_config():
         # boot) is permitted. The web UI gates its "Auto start" checkbox on
         # this so users can't toggle a setting the server will reject (#1115).
         "allow_autostart": resolve_env_bool("KLANGK_ALLOW_AUTOSTART"),
+        # Surfaced so the UI can validate password length inline (matches
+        # the rule enforced server-side by auth.validate_password_length).
+        "min_password_length": auth.MIN_PASSWORD_LENGTH,
     }
     config.update(plugins.frontend_config())
     return config

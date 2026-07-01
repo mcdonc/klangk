@@ -559,4 +559,385 @@ void main() {
       expect(capturedQ, 'needle');
     });
   });
+
+  group('AdminUsersPage user dialogs', () {
+    /// Finder for a TextField whose labelText matches [label]. Robust against
+    /// field reordering (see #1124) — finds by identity, not position.
+    Finder fieldLabeled(String label) => find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField && widget.decoration?.labelText == label,
+        );
+
+    /// The primary [FilledButton] whose text label is [label] ('Add'/'Save').
+    bool isPrimaryEnabled(WidgetTester tester, String label) =>
+        tester
+            .widget<FilledButton>(
+              find.ancestor(
+                of: find.text(label),
+                matching: find.byType(FilledButton),
+              ),
+            )
+            .onPressed !=
+        null;
+
+    /// Serves [usersFor] plus empty invitations/groups, and captures any POST
+    /// (add) or PATCH (edit) body sent to /admin/users into [writes], each
+    /// tagged with '_method'.
+    void serveUsersCaptureWrite(
+      List<Map<String, dynamic>> writes,
+      List<Map<String, dynamic>> Function(
+              int page, int pageSize, String sort, String order, String? q)
+          usersFor, {
+      int total = 0,
+    }) {
+      testAuthHttpClientOverride = _mockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/admin/users') {
+          if (request.method == 'POST') {
+            writes.add({
+              '_method': 'POST',
+              ...jsonDecode(request.body) as Map<String, dynamic>,
+            });
+            return http.Response(
+              jsonEncode({'id': 'u-new', 'email': '', 'status': 'created'}),
+              200,
+            );
+          }
+          final page = int.parse(request.url.queryParameters['page'] ?? '1');
+          final pageSize =
+              int.parse(request.url.queryParameters['page_size'] ?? '10');
+          final sort = request.url.queryParameters['sort'] ?? 'created';
+          final order = request.url.queryParameters['order'] ?? 'desc';
+          final q = request.url.queryParameters['q'];
+          return http.Response(
+            _usersEnvelope(usersFor(page, pageSize, sort, order, q),
+                page: page, pageSize: pageSize, total: total),
+            200,
+          );
+        }
+        if (path.startsWith('/api/v1/admin/users/') &&
+            request.method == 'PATCH') {
+          writes.add({
+            '_method': 'PATCH',
+            ...jsonDecode(request.body) as Map<String, dynamic>,
+          });
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        if (path == '/api/v1/admin/invitations') {
+          return http.Response(emptyInvitationsEnvelope(), 200);
+        }
+        if (path == '/api/v1/admin/groups') {
+          return http.Response(_groupsEnvelope([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+    }
+
+    testWidgets('Add: too-short password shows inline error and disables Add',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+      await tester.enterText(fieldLabeled('Password'), 'short');
+      await tester.pumpAndSettle();
+
+      // Confirm field appears once a password is being typed.
+      expect(fieldLabeled('Confirm Password'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(fieldLabeled('Password'))
+            .decoration
+            ?.errorText,
+        'Password must be at least 8 characters',
+      );
+      expect(isPrimaryEnabled(tester, 'Add'), isFalse);
+      expect(writes, isEmpty);
+    });
+
+    testWidgets('Add: mismatched confirm shows inline error and disables Add',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+      await tester.enterText(fieldLabeled('Password'), 'longenough');
+      await tester.pumpAndSettle();
+      await tester.enterText(fieldLabeled('Confirm Password'), 'different');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(fieldLabeled('Confirm Password'))
+            .decoration
+            ?.errorText,
+        'Passwords do not match',
+      );
+      expect(isPrimaryEnabled(tester, 'Add'), isFalse);
+      expect(writes, isEmpty);
+    });
+
+    testWidgets('Add: Add stays disabled while confirm is blank',
+        (tester) async {
+      serveUsersCaptureWrite([], (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+      await tester.enterText(fieldLabeled('Password'), 'longenough');
+      await tester.pumpAndSettle();
+
+      // Password meets the minimum but the confirmation is still empty —
+      // the two don't match yet, so Add must stay disabled.
+      expect(isPrimaryEnabled(tester, 'Add'), isFalse);
+    });
+
+    testWidgets('Add: sends email + password when valid', (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+      await tester.enterText(fieldLabeled('Password'), 'longenough');
+      await tester.pumpAndSettle();
+      await tester.enterText(fieldLabeled('Confirm Password'), 'longenough');
+      await tester.pumpAndSettle();
+
+      expect(isPrimaryEnabled(tester, 'Add'), isTrue);
+      await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+      await tester.pumpAndSettle();
+
+      expect(writes.single['_method'], 'POST');
+      expect(writes.single['email'], 'new@example.com');
+      expect(writes.single['password'], 'longenough');
+      expect(writes.single.containsKey('send_verification_email'), isFalse);
+    });
+
+    testWidgets(
+        'Add: verification-email path hides password fields and sends flag',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+
+      // Checking "send verification email" removes the password fields.
+      await tester.tap(find.text('Send verification email'));
+      await tester.pumpAndSettle();
+      expect(fieldLabeled('Password'), findsNothing);
+      expect(fieldLabeled('Confirm Password'), findsNothing);
+
+      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+      await tester.pumpAndSettle();
+
+      expect(isPrimaryEnabled(tester, 'Add'), isTrue);
+      await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+      await tester.pumpAndSettle();
+
+      expect(writes.single['_method'], 'POST');
+      expect(writes.single['email'], 'new@example.com');
+      expect(writes.single['send_verification_email'], true);
+      expect(writes.single.containsKey('password'), isFalse);
+    });
+
+    testWidgets('Add: password fields can toggle visibility', (tester) async {
+      serveUsersCaptureWrite([], (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+      await tester.enterText(fieldLabeled('Password'), 'longenough');
+      await tester.pumpAndSettle();
+
+      // Two visibility IconButtons live in the dialog (password + confirm).
+      final toggles = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(IconButton),
+      );
+      expect(toggles, findsNWidgets(2));
+      // Toggle each twice (on -> off) so both states of the flag are covered.
+      await tester.tap(toggles.at(0));
+      await tester.pumpAndSettle();
+      await tester.tap(toggles.at(0));
+      await tester.pumpAndSettle();
+      await tester.tap(toggles.at(1));
+      await tester.pumpAndSettle();
+      await tester.tap(toggles.at(1));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Add: cancel closes the dialog without creating',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(writes, isEmpty);
+    });
+
+    testWidgets('Edit: blank password keeps Save enabled and sends email only',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(
+        writes,
+        (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
+        total: 1,
+      );
+      await pumpPage(tester);
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pumpAndSettle();
+
+      // No new password typed → confirm field absent, Save enabled.
+      expect(fieldLabeled('Confirm New Password'), findsNothing);
+      expect(isPrimaryEnabled(tester, 'Save'), isTrue);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(writes.single['_method'], 'PATCH');
+      expect(writes.single['email'], 'alice@example.com');
+      expect(writes.single.containsKey('password'), isFalse);
+      expect(writes.single.containsKey('handle'), isFalse); // unchanged
+    });
+
+    testWidgets(
+        'Edit: new password requires min length, confirm match, and includes handle when changed',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(
+        writes,
+        (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
+        total: 1,
+      );
+      await pumpPage(tester);
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pumpAndSettle();
+
+      // A too-short new password surfaces an inline error + disables Save.
+      await tester.enterText(fieldLabeled('New Password'), 'short');
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(fieldLabeled('New Password'))
+            .decoration
+            ?.errorText,
+        'Password must be at least 8 characters',
+      );
+      expect(fieldLabeled('Confirm New Password'), findsOneWidget);
+      expect(isPrimaryEnabled(tester, 'Save'), isFalse);
+
+      // Replace with a valid password that matches its confirmation, and set a
+      // new handle so the handle-changed branch is exercised too.
+      await tester.enterText(fieldLabeled('New Password'), 'longenough');
+      await tester.enterText(
+          fieldLabeled('Confirm New Password'), 'longenough');
+      await tester.enterText(fieldLabeled('Handle'), 'alice42');
+      await tester.pumpAndSettle();
+
+      expect(isPrimaryEnabled(tester, 'Save'), isTrue);
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(writes.single['_method'], 'PATCH');
+      expect(writes.single['password'], 'longenough');
+      expect(writes.single['handle'], 'alice42');
+    });
+
+    testWidgets('Edit: mismatched confirm shows error and disables Save',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(
+        writes,
+        (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
+        total: 1,
+      );
+      await pumpPage(tester);
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('New Password'), 'longenough');
+      await tester.pumpAndSettle();
+      await tester.enterText(fieldLabeled('Confirm New Password'), 'different');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(fieldLabeled('Confirm New Password'))
+            .decoration
+            ?.errorText,
+        'Passwords do not match',
+      );
+      expect(isPrimaryEnabled(tester, 'Save'), isFalse);
+      expect(writes, isEmpty);
+    });
+
+    testWidgets('Edit: password visibility toggles', (tester) async {
+      serveUsersCaptureWrite(
+        [],
+        (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
+        total: 1,
+      );
+      await pumpPage(tester);
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('New Password'), 'longenough');
+      await tester.pumpAndSettle();
+
+      final toggles = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(IconButton),
+      );
+      expect(toggles, findsNWidgets(2));
+      await tester.tap(toggles.at(0));
+      await tester.pumpAndSettle();
+      await tester.tap(toggles.at(0));
+      await tester.pumpAndSettle();
+      await tester.tap(toggles.at(1));
+      await tester.pumpAndSettle();
+      await tester.tap(toggles.at(1));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Edit: cancel closes the dialog without updating',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(
+        writes,
+        (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
+        total: 1,
+      );
+      await pumpPage(tester);
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(writes, isEmpty);
+    });
+  });
 }

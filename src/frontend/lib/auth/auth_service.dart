@@ -21,6 +21,7 @@ class AuthService extends ChangeNotifier {
   String _bannerTitle = '';
   String _bannerText = '';
   bool _bannerAccepted = false;
+  int _minPasswordLength = 8;
   String _instanceId = 'default';
   bool _allowAutostart = false;
   Timer? _permissionTimer;
@@ -34,6 +35,11 @@ class AuthService extends ChangeNotifier {
   String get bannerText => _bannerText;
   bool get bannerAccepted => _bannerAccepted;
   bool get bannerRequired => _bannerText.isNotEmpty && !_bannerAccepted;
+
+  /// Minimum password length enforced by the server (from /config). Defaults
+  /// to 8 when the server omits the field so client-side validation still works
+  /// against older backends.
+  int get minPasswordLength => _minPasswordLength;
   String get instanceId => _instanceId;
 
   /// Whether the server permits per-workspace auto-start
@@ -98,6 +104,8 @@ class AuthService extends ChangeNotifier {
         _bannerText = (data['login_banner'] as String?) ?? '';
         _instanceId = (data['instance_id'] as String?) ?? 'default';
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
+        _minPasswordLength =
+            (data['min_password_length'] as num?)?.toInt() ?? 8;
       }
     } catch (e) {
       // coverage:ignore-start
