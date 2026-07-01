@@ -1931,6 +1931,73 @@ class TestWorkspaceSharingRoutes:
         notified = {call.args[0] for call in mock_notify.call_args_list}
         assert notified == {user["id"], other["id"]}
 
+    async def test_add_to_role_notifies_owner_and_target(self, client, user):
+        headers = await _auth_headers(client)
+        other = await self._create_other_user()
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        with patch.object(
+            wshandler.state, "notify_user_workspaces_changed"
+        ) as mock_notify:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/roles/collaborators",
+                headers=headers,
+                json={"email": "other@example.com"},
+            )
+        assert resp.status_code == 200
+        notified = {call.args[0] for call in mock_notify.call_args_list}
+        assert notified == {user["id"], other["id"]}
+
+    async def test_remove_from_role_notifies_owner_and_member(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        other = await self._create_other_user()
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        await client.post(
+            f"/api/v1/workspaces/{ws_id}/roles/collaborators",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        with patch.object(
+            wshandler.state, "notify_user_workspaces_changed"
+        ) as mock_notify:
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}"
+                f"/roles/collaborators/{other['id']}",
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        notified = {call.args[0] for call in mock_notify.call_args_list}
+        assert notified == {user["id"], other["id"]}
+
+    async def test_change_role_notifies_owner_and_target(self, client, user):
+        headers = await _auth_headers(client)
+        other = await self._create_other_user()
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "role-ws"}
+        )
+        ws_id = resp.json()["id"]
+        with patch.object(
+            wshandler.state, "notify_user_workspaces_changed"
+        ) as mock_notify:
+            resp = await client.patch(
+                f"/api/v1/workspaces/{ws_id}/roles",
+                headers=headers,
+                json={
+                    "email": "other@example.com",
+                    "role": "collaborators",
+                },
+            )
+        assert resp.status_code == 200
+        notified = {call.args[0] for call in mock_notify.call_args_list}
+        assert notified == {user["id"], other["id"]}
+
     async def test_add_member_not_found(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
