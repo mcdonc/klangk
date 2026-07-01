@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from ._core import _fetchone, transaction
 from .acl import ACTION_ALLOW, PRINCIPAL_GROUP, PRINCIPAL_USER
-from .users import get_user_group_ids
+from .users import AGENT_USER_ID, AgentPrincipalError, get_user_group_ids
 
 # Must match the DB default and container.DEFAULT_PORTS_PER_WORKSPACE.
 _DEFAULT_PORTS_PER_WORKSPACE = 5
@@ -185,6 +185,12 @@ async def create_workspace_with_acl(
     cleaned up by :func:`delete_workspace`, which removes everything
     this function wrote.
     """
+    if user_id == AGENT_USER_ID:
+        raise AgentPrincipalError(
+            "The system agent cannot own a workspace (seeding it a"
+            " wildcard owner ACE + owners-group membership makes its"
+            " UUID a privileged principal) — system agent"
+        )
     if setup_state not in SETUP_STATES:
         raise ValueError(f"Invalid setup_state: {setup_state!r}")
     async with transaction() as db:

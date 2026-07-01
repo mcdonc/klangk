@@ -1270,6 +1270,37 @@ class TestAddAclEntryAgentGuard:
             )
 
 
+class TestReplaceAclEntriesAgentGuard:
+    async def test_replace_acl_entries_rejects_agent(self, db):
+        # Choke-point guard (#1135): replace_acl_entries is the second
+        # writer into acl_entries (a raw INSERT, fed request-body
+        # user_id by the PUT-acl endpoints) — guarded like add_acl_entry.
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
+            await model.replace_acl_entries(
+                "/workspaces/x",
+                [
+                    {
+                        "position": 0,
+                        "action": model.ACTION_ALLOW,
+                        "principal_type": model.PRINCIPAL_USER,
+                        "permission": "*",
+                        "user_id": model.AGENT_USER_ID,
+                        "group_id": None,
+                        "system_principal": None,
+                    }
+                ],
+            )
+
+
+class TestCreateWorkspaceWithAclAgentGuard:
+    async def test_create_workspace_with_acl_rejects_agent(self, db):
+        # Choke-point guard (#1135): the owner ACE is written by
+        # _seed_workspace_acl via raw SQL (can't call the guarded
+        # add_acl_entry), so the public entry point guards the creator.
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
+            await model.create_workspace_with_acl(model.AGENT_USER_ID, "ws")
+
+
 class TestHashFallbackHandle:
     def test_returns_hash_based_handle(self):
         from klangk_backend.model import _hash_fallback_handle

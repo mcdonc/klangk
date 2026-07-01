@@ -158,7 +158,24 @@ async def get_acl_entries_resolved(resource: str) -> list[dict]:
 
 
 async def replace_acl_entries(resource: str, entries: list[dict]) -> None:
-    """Replace all ACL entries for a resource."""
+    """Replace all ACL entries for a resource.
+
+    Raises ``AgentPrincipalError`` if any entry would make the system
+    agent a user principal. This is the second writer into
+    ``acl_entries`` (a raw INSERT, fed request-body ``user_id`` by the
+    PUT-acl endpoints) and must be guarded alongside :func:`add_acl_entry`
+    so neither writer can make the agent a principal.
+    """
+    for entry in entries:
+        if (
+            entry.get("principal_type") == PRINCIPAL_USER
+            and entry.get("user_id") == AGENT_USER_ID
+        ):
+            raise AgentPrincipalError(
+                "The system agent cannot hold ACL entries"
+                " (global fixed UUID — granting it cross-workspace"
+                " blast radius)."
+            )
     async with transaction() as db:
         await db.execute(
             "DELETE FROM acl_entries WHERE resource = ?", (resource,)
