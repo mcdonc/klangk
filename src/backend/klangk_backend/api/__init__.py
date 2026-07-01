@@ -54,7 +54,7 @@ from .. import (
 # name to the logic module after the submodule imports (see below) so the
 # instance endpoints reference klangk_backend.auth, not the route module.
 from .. import auth as _auth_logic
-from ..util import resolve_env_value
+from ..util import resolve_env_bool, resolve_env_value
 
 # Route submodules, aliased because their names collide with the logic
 # modules imported above (api/auth.py vs klangk_backend.auth, etc.) and we
@@ -184,6 +184,10 @@ async def get_config():
         "oidc_providers": oidc.list_providers(),
         "auth_modes": oidc.auth_modes(),
         "instance_id": container.INSTANCE_ID,
+        # Whether per-workspace auto-start (start the container on server
+        # boot) is permitted. The web UI gates its "Auto start" checkbox on
+        # this so users can't toggle a setting the server will reject (#1115).
+        "allow_autostart": resolve_env_bool("KLANGK_ALLOW_AUTOSTART"),
     }
     config.update(plugins.frontend_config())
     return config
