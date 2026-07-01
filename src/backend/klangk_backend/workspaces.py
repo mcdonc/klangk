@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from . import container, model, podman, terminal
+from . import agent, container, model, podman, terminal
 from .util import resolve_env_bool, resolve_env_value
 
 logger = logging.getLogger(__name__)
@@ -439,6 +439,14 @@ async def eager_start_workspace(
     state = container.registry.states.get(workspace_id)
     if state:
         state.idle_timeout = 0
+
+    # Eagerly provision the agent home at bring-up so $KLANGK_AGENT_HOME
+    # points at a populated directory for every process (#1157).  The
+    # home lives on the persisted bind-mount volume, so only provision
+    # for a freshly-created container; on re-attach/restart it already
+    # exists.
+    if status == "created":
+        await agent.ensure_agent_home(workspace_id, cid)
 
     # If the workspace has a default command, create a tmux session
     # and run it now so it's already running when a user connects.

@@ -889,6 +889,7 @@ class ContainerRegistry:
         hosting_hostname: str,
         hosting_proto: str,
         hosting_base_path: str,
+        agent_home: str,
         extra_env: dict[str, str] | None,
     ) -> list[str]:
         """Build the container environment variable list."""
@@ -912,6 +913,7 @@ class ContainerRegistry:
         ]
         env_vars.append(f"KLANGK_PORT_MAPPINGS={','.join(mappings)}")
         env_vars.append(f"KLANGK_WORKSPACE_ID={workspace_id}")
+        env_vars.append(f"KLANGK_AGENT_HOME={agent_home}")
         env_vars.append(
             f"KLANGK_BRIDGE_URL=http://host.containers.internal:{nginx_port}"
         )
@@ -1145,12 +1147,16 @@ class ContainerRegistry:
 
         # Build environment and mounts.
         t_env = time.monotonic()
+        # Resolve the agent home at this async seam (``_build_env`` is
+        # sync) so every exec process inherits KLANGK_AGENT_HOME (#1157).
+        agent_home = f"/home/{await model.agent_handle()}"
         env_vars = self._build_env(
             workspace_id,
             host_ports,
             hosting_hostname,
             hosting_proto,
             hosting_base_path,
+            agent_home,
             extra_env,
         )
         await self._ensure_volumes(extra_mounts, user_id)

@@ -134,9 +134,10 @@ with your own shell** rather than guessing. Injecting live state here would go
 stale the instant it was written.
 
 - Discover the workspace's environment with `env | grep KLANGK_`. Notable vars:
-  `KLANGK_LLM_PROXY_URL`, `KLANGK_LLM_MODEL`, `KLANGK_PORT_MAPPINGS`, and
-  `KLANGK_WORKSPACE_ID`. (Do not treat this list as exhaustive — re-run the
-  command to see what is actually set.)
+  `KLANGK_LLM_PROXY_URL`, `KLANGK_LLM_MODEL`, `KLANGK_PORT_MAPPINGS`,
+  `KLANGK_WORKSPACE_ID`, and `KLANGK_AGENT_HOME` (your own home directory,
+  `/home/<agent_handle>`, injected at container start). (Do not treat this
+  list as exhaustive — re-run the command to see what is actually set.)
 - Decide **your own mechanism** for a task based on what you observe. For
   example, to restart a service you might send Ctrl-C to a foreground process,
   `pkill` a daemon, `curl` a health endpoint and wait, edit a config and

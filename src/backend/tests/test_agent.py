@@ -11,6 +11,7 @@ from klangk_backend.agent import (
     AgentProcessDied,
     AgentSession,
     any_running,
+    ensure_agent_home,
     get_session,
     is_disabled,
     is_running,
@@ -741,6 +742,90 @@ class TestGetSession:
         s1 = await get_session("ws-1")
         s2 = await get_session("ws-1")
         assert s1 is s2
+
+
+class TestEnsureAgentHome:
+    """Direct tests for the eager-provisioning function (#1157).
+
+    Called from eager_start_workspace at container bring-up (every exec
+    process inherits $KLANGK_AGENT_HOME) and again from chat-start, which
+    caches the result per AgentSession (see TestEnsureHome).
+    """
+
+    async def test_provisions_home_and_runs_setup(self, tmp_path):
+        from klangk_backend import model, workspaces
+
+        fake_ws = {"user_id": "owner1"}
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with (
+            patch.object(model, "get_workspace_by_id", return_value=fake_ws),
+            patch.object(workspaces, "home_path", return_value=fake_home),
+            patch.object(
+                workspaces,
+                "ensure_home_symlink",
+                return_value=("/home/clanker", True),
+            ) as mock_symlink,
+            patch.object(
+                workspaces, "populate_home_skel", new_callable=AsyncMock
+            ) as mock_skel,
+            patch(
+                "asyncio.create_subprocess_exec",
+                return_value=mock_proc,
+            ) as mock_exec,
+        ):
+            result = await ensure_agent_home("ws1", "cid")
+
+        assert result == "/home/clanker"
+        mock_symlink.assert_called_once()
+        # Skeleton files only on first creation (created=True).
+        mock_skel.assert_awaited_once_with(
+            "cid", "00000000-0000-0000-0000-000000000001"
+        )
+        # klangk-setup-pi --force re-writes Pi config each time.
+        argv = mock_exec.call_args.args
+        assert "klangk-setup-pi" in argv
+        assert "--force" in argv
+
+    async def test_skips_skel_when_home_already_exists(self, tmp_path):
+        from klangk_backend import model, workspaces
+
+        # created=False -> home dir already existed, no skel needed.
+        with (
+            patch.object(
+                model, "get_workspace_by_id", return_value={"user_id": "o"}
+            ),
+            patch.object(workspaces, "home_path", return_value=tmp_path),
+            patch.object(
+                workspaces,
+                "ensure_home_symlink",
+                return_value=("/home/clanker", False),
+            ),
+            patch.object(
+                workspaces, "populate_home_skel", new_callable=AsyncMock
+            ) as mock_skel,
+            patch(
+                "asyncio.create_subprocess_exec",
+                return_value=AsyncMock(
+                    communicate=AsyncMock(return_value=(b"", b""))
+                ),
+            ),
+        ):
+            result = await ensure_agent_home("ws1", "cid")
+
+        assert result == "/home/clanker"
+        mock_skel.assert_not_awaited()
+
+    async def test_raises_when_workspace_missing(self):
+        from klangk_backend import model
+        from klangk_backend.agent import AgentSetupError
+
+        with patch.object(model, "get_workspace_by_id", return_value=None):
+            with pytest.raises(AgentSetupError, match="not found in database"):
+                await ensure_agent_home("ws-gone", "cid")
 
 
 class TestEnsureHome:

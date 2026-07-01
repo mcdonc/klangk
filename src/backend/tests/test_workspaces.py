@@ -420,12 +420,18 @@ class TestEagerStartWorkspace:
             ws["id"], "cid-eager"
         )
         try:
-            with patch.object(
-                container.registry,
-                "start_container",
-                new_callable=AsyncMock,
-                return_value=("cid-eager", "created"),
-            ) as mock_start:
+            with (
+                patch.object(
+                    container.registry,
+                    "start_container",
+                    new_callable=AsyncMock,
+                    return_value=("cid-eager", "created"),
+                ) as mock_start,
+                patch(
+                    "klangk_backend.agent.ensure_agent_home",
+                    new_callable=AsyncMock,
+                ),
+            ):
                 cid, status = await ws_mod.eager_start_workspace(ws)
             assert cid == "cid-eager"
             assert status == "created"
@@ -460,6 +466,10 @@ class TestEagerStartWorkspace:
                 ) as mock_session,
                 patch(
                     "klangk_backend.workspaces.populate_home_skel",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "klangk_backend.agent.ensure_agent_home",
                     new_callable=AsyncMock,
                 ),
             ):
