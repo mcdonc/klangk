@@ -8,6 +8,11 @@ from ._core import _fetchone, transaction
 
 # Agent identity
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
+# Unseeded fallback handle/email (before seed_agent_user runs). Single
+# source of truth for the default agent identity used by get_agent_user
+# and the migration-safe handle resolver in _unique_handle (#1160).
+_DEFAULT_AGENT_HANDLE = "clanker"
+_DEFAULT_AGENT_EMAIL = "clanker@example.com"
 
 
 class AgentPrincipalError(ValueError):
@@ -44,8 +49,8 @@ async def get_agent_user() -> dict:
         # Fallback before seeding has run (should not happen at runtime).
         return {
             "id": AGENT_USER_ID,
-            "email": "clanker@example.com",
-            "handle": "clanker",
+            "email": _DEFAULT_AGENT_EMAIL,
+            "handle": _DEFAULT_AGENT_HANDLE,
         }
     _agent_user_cache = user
     return user
@@ -78,7 +83,13 @@ def derive_handle(email: str) -> str:
 
 
 def validate_handle(handle: str) -> str | None:
-    """Return an error message if the handle is invalid, else None."""
+    """Return an error message if the handle is invalid, else None.
+
+    Note: this only checks *static* rules (length, charset, the fixed
+    reserved set). The *dynamic* reserved handle — the live agent's
+    handle — is checked async in :func:`_assert_handle_not_agent` (it
+    can't be in ``_RESERVED_HANDLES`` because it's configurable).
+    """
     if not handle:
         return "Handle cannot be empty"
     if len(handle) > _MAX_HANDLE_LEN:
@@ -95,20 +106,51 @@ def validate_handle(handle: str) -> str | None:
     return None
 
 
+async def _assert_handle_not_agent(handle: str) -> None:
+    """Raise ``ValueError`` if *handle* is the live agent's handle.
+
+    The agent's handle is dynamic (``KLANGK_AGENT_HANDLE``, default
+    ``clanker``), so it can't live in the static :data:`_RESERVED_HANDLES`.
+    A human taking it would collide at ``/home/<handle>`` with the
+    agent's home (#1160). Called from both :func:`set_user_handle` and
+    :func:`create_user`/``_unique_handle`` so the guard holds on every
+    path a human can acquire a handle, independent of seeding.
+    """
+    if handle == await agent_handle():
+        raise ValueError(f"'{handle}' is reserved for the workspace agent")
+
+
 async def _unique_handle(db, base: str) -> str:
-    """Return *base* if available, else append -2, -3, … until unique."""
-    cursor = await db.execute("SELECT 1 FROM users WHERE handle = ?", (base,))
-    if await cursor.fetchone() is None:
-        return base
-    for i in range(2, 10000):
+    """Return *base* if available, else append -2, -3, … until unique.
+
+    The live agent handle is always treated as taken (#1160) — even if
+    the agent row hasn't been seeded yet — so a derived handle never
+    collides with ``/home/<agent_handle>``.
+
+    Resolves the agent handle on the *passed* connection (not via the
+    cached :func:`agent_handle`, which opens a fresh connection): this
+    runs during DB migration where the ``handle`` column's schema change
+    is uncommitted on *db* but invisible to a new connection.
+    """
+    cursor = await db.execute(
+        "SELECT handle FROM users WHERE id = ?", (AGENT_USER_ID,)
+    )
+    row = await cursor.fetchone()
+    agent = row[0] if row and row[0] else _DEFAULT_AGENT_HANDLE
+    # Try base, then base-2, base-3, …; skip the agent handle each time.
+    candidate = base
+    i = 1
+    while i < 10000:
+        if candidate != agent:
+            cursor = await db.execute(
+                "SELECT 1 FROM users WHERE handle = ?", (candidate,)
+            )
+            if await cursor.fetchone() is None:
+                return candidate
+        i += 1
         candidate = f"{base}-{i}"
         if len(candidate) > _MAX_HANDLE_LEN:
             candidate = f"{base[: _MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
-        cursor = await db.execute(
-            "SELECT 1 FROM users WHERE handle = ?", (candidate,)
-        )
-        if await cursor.fetchone() is None:
-            return candidate
     return _hash_fallback_handle(base)
 
 
@@ -181,6 +223,7 @@ async def set_user_handle(user_id: str, handle: str) -> None:
     error = validate_handle(handle)
     if error:
         raise ValueError(error)
+    await _assert_handle_not_agent(handle)
     async with transaction() as db:
         cursor = await db.execute(
             "SELECT id FROM users WHERE handle = ? AND id != ?",
