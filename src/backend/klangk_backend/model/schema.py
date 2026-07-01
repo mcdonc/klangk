@@ -98,15 +98,21 @@ async def init_db() -> None:
         # NOT guarded here -- it is legitimately re-seeded from env at boot
         # (ON CONFLICT DO UPDATE SET email); its policy lives at the fn
         # layer (#1145).
+        _agent_identity_msg = (
+            "Cannot mutate the system agent identity columns"
+            " (provider/external_id are the OIDC-link columns)"
+        )
+        # The message is interpolated as a single quoted SQL literal so
+        # SQLite sees one string token -- SQLite does not concatenate
+        # adjacent literals (unlike Python) and pre-3.x rejects `||` inside
+        # RAISE(), so both ways of splitting it are syntax errors there.
         await db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS agent_user_identity_immutable
             BEFORE UPDATE OF provider, external_id ON users
             FOR EACH ROW
             WHEN OLD.id = '{AGENT_USER_ID}'
             BEGIN
-                SELECT RAISE(ABORT,
-                    'Cannot mutate the system agent identity columns'
-                    || ' (provider/external_id are the OIDC-link columns)');
+                SELECT RAISE(ABORT, '{_agent_identity_msg}');
             END
         """)  # noqa: S608
         await db.execute(f"""
