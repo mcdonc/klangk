@@ -248,7 +248,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             onSendText: _onSendText,
             agentThinking: _agentThinking,
             onAbort: () => widget.wsClient.sendChatAgentAbort(),
-            members: widget.wsClient.workspaceMembers,
+            members: widget.wsClient.mentionCandidates,
           ),
         ],
       ),

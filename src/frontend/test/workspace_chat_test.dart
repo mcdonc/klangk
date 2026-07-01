@@ -642,9 +642,9 @@ void main() {
     });
 
     testWidgets('@autocomplete shows members on @ input', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
-        {'id': 'u2', 'email': 'bob@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
+        {'user_id': 'u2', 'user_email': 'bob@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -658,9 +658,9 @@ void main() {
     });
 
     testWidgets('@autocomplete filters by query', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
-        {'id': 'u2', 'email': 'bob@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
+        {'user_id': 'u2', 'user_email': 'bob@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -676,8 +676,8 @@ void main() {
     });
 
     testWidgets('@autocomplete inserts mention on tap', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -694,8 +694,8 @@ void main() {
     });
 
     testWidgets('@autocomplete hides when no match', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -708,8 +708,8 @@ void main() {
     });
 
     testWidgets('@autocomplete hides on send', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -730,8 +730,8 @@ void main() {
     });
 
     testWidgets('@autocomplete hides when @ followed by space', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -746,8 +746,8 @@ void main() {
     testWidgets('@autocomplete handles invalid cursor position', (
       tester,
     ) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -1042,9 +1042,9 @@ void main() {
     testWidgets('Tab key accepts first autocomplete suggestion', (
       tester,
     ) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
-        {'id': 'u2', 'email': 'bob@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
+        {'user_id': 'u2', 'user_email': 'bob@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -1062,9 +1062,9 @@ void main() {
     });
 
     testWidgets('Arrow keys navigate autocomplete suggestions', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
-        {'id': 'u2', 'email': 'bob@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
+        {'user_id': 'u2', 'user_email': 'bob@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -1085,9 +1085,9 @@ void main() {
     });
 
     testWidgets('Arrow up wraps highlight back', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
-        {'id': 'u2', 'email': 'bob@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
+        {'user_id': 'u2', 'user_email': 'bob@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -1109,8 +1109,8 @@ void main() {
     testWidgets('Enter key accepts autocomplete when overlay is visible', (
       tester,
     ) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -1132,8 +1132,8 @@ void main() {
     });
 
     testWidgets('Escape dismisses autocomplete', (tester) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
@@ -1348,10 +1348,10 @@ void main() {
     testWidgets('autocomplete highlight clamps when list shrinks', (
       tester,
     ) async {
-      client.workspaceMembers = [
-        {'id': 'u1', 'email': 'alice@test.com'},
-        {'id': 'u2', 'email': 'bob@test.com'},
-        {'id': 'u3', 'email': 'abby@test.com'},
+      client.presenceUsers = [
+        {'user_id': 'u1', 'user_email': 'alice@test.com', 'user_handle': ''},
+        {'user_id': 'u2', 'user_email': 'bob@test.com', 'user_handle': ''},
+        {'user_id': 'u3', 'user_email': 'abby@test.com', 'user_handle': ''},
       ];
 
       await tester.pumpWidget(buildChat());
