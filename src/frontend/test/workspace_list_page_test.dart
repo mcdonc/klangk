@@ -15,6 +15,42 @@ import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_frontend/widgets/klangk_logo.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
+/// Identity-based finders for the create-workspace dialog's TextFields,
+/// scoped to the open AlertDialog. Replaces positional TextField indices
+/// (.first / .at(N)) that silently broke whenever the dialog's field order
+/// changed - see #1124.
+Finder _dialogNameField() => find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'Name',
+      ),
+    );
+
+Finder _dialogMountInput() => find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byWidgetPredicate(
+        (w) =>
+            w is TextField &&
+            w.decoration?.hintText == '/host/path:/container/path',
+      ),
+    );
+
+Finder _dialogEnvInput() => find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'KEY=VALUE',
+      ),
+    );
+
+Finder _dialogCmdField() => find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byWidgetPredicate(
+        (w) =>
+            w is TextField &&
+            w.decoration?.labelText == 'Default Shell Command',
+      ),
+    );
+
 /// Wrap a workspace list in the pagination envelope returned by the API.
 dynamic _envelope(dynamic items) => {
       'items': items,
@@ -1151,11 +1187,7 @@ void main() {
 
       // Type workspace name and tap Create
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'New WS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
@@ -1187,11 +1219,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'Duplicate');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
@@ -1400,11 +1428,7 @@ void main() {
 
       // Type and submit via keyboard (onSubmitted)
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'Submitted');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
@@ -1463,11 +1487,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'ImgWS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
@@ -1510,18 +1530,10 @@ void main() {
 
       // Enter name and command
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'CmdWS');
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(3),
+          _dialogCmdField(),
           'klangk-pi');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
@@ -1577,18 +1589,10 @@ void main() {
 
       // Enter name, then focus command field and submit via Enter
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'CmdSubmit');
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(3),
+          _dialogCmdField(),
           'pi');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
@@ -1617,11 +1621,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'Fail WS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
@@ -1886,20 +1886,12 @@ void main() {
 
       // Enter workspace name
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'MountWS');
 
       // Add a mount via the mount text field (last TextField) + add button
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(1),
+          _dialogMountInput(),
           '/host/src:/work/src');
       // Tap the add (+) button next to the mount input
       // The FAB also has an add icon, so find the one inside the dialog
@@ -1913,11 +1905,7 @@ void main() {
 
       // Add a second mount
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(1),
+          _dialogMountInput(),
           'nix-vol:/nix');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -1968,20 +1956,12 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'EnterWS');
 
       // Add mount via Enter key on the mount text field
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(1),
+          _dialogMountInput(),
           '/a:/b');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
@@ -2012,11 +1992,7 @@ void main() {
 
       // Try adding invalid mount (no colon)
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(1),
+          _dialogMountInput(),
           'bad-mount');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2027,11 +2003,7 @@ void main() {
 
       // Try adding mount with relative container path
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(1),
+          _dialogMountInput(),
           '/host:relative');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2040,11 +2012,7 @@ void main() {
 
       // Try adding mount with unknown option
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(1),
+          _dialogMountInput(),
           '/host:/container:bogus');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2053,11 +2021,7 @@ void main() {
 
       // Valid mount clears the error
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(1),
+          _dialogMountInput(),
           '/a:/b');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2096,20 +2060,12 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .first,
+          _dialogNameField(),
           'EnvWS');
 
       // Add env var via the + button (env add is at index 2: FAB=0, mount=1, env=2)
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(2),
+          _dialogEnvInput(),
           'FOO=bar');
       await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
@@ -2118,11 +2074,7 @@ void main() {
 
       // Add a second env var via Enter key
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(2),
+          _dialogEnvInput(),
           'X=1');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
@@ -2161,11 +2113,7 @@ void main() {
 
       // Try adding env var without = sign
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(2),
+          _dialogEnvInput(),
           'NOEQ');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
@@ -2173,11 +2121,7 @@ void main() {
 
       // Try adding env var with empty key
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(2),
+          _dialogEnvInput(),
           '=value');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
@@ -2185,11 +2129,7 @@ void main() {
 
       // Valid env var clears error
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(2),
+          _dialogEnvInput(),
           'A=1');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
@@ -2217,11 +2157,7 @@ void main() {
 
       // Add a mount
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(1),
+          _dialogMountInput(),
           '/src:/work');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
@@ -2251,11 +2187,7 @@ void main() {
 
       // Add an env var
       await tester.enterText(
-          find
-              .descendant(
-                  of: find.byType(AlertDialog),
-                  matching: find.byType(TextField))
-              .at(2),
+          _dialogEnvInput(),
           'FOO=bar');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
