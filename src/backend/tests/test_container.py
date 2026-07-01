@@ -540,6 +540,9 @@ class TestStartContainer:
             "http://host.containers.internal:8995/llm-proxy"
         )
         assert env_dict["KLANGK_LLM_MODEL"] == "gemma4:31b"
+        # The agent's home is injected at container start so every exec
+        # process (terminals, default command, health check) inherits it.
+        assert env_dict["KLANGK_AGENT_HOME"] == "/home/clanker"
         assert (
             env_dict["KLANGK_BRIDGE_URL"]
             == "http://host.containers.internal:8995"

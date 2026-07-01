@@ -66,6 +66,64 @@ def is_disabled() -> bool:
     return util.resolve_env_bool("KLANGK_AGENT_DISABLED")
 
 
+async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
+    """Eagerly provision the agent's home directory with Pi config.
+
+    Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount and
+    populates it via ``klangk-setup-pi`` (the same path real users
+    take).  Returns the container path, e.g. ``/home/clanker``.
+
+    Idempotent: ``ensure_home_symlink`` is a no-op when the symlink
+    already exists (skeleton files only on first creation), and
+    ``klangk-setup-pi --force`` re-writes Pi config to pick up env-var
+    changes.  Called eagerly at container bring-up (so
+    ``$KLANGK_AGENT_HOME`` points at a populated directory for every
+    process) and again from chat-start, which caches the result per
+    ``AgentSession``.
+    """
+    ws = await model.get_workspace_by_id(workspace_id)
+    if not ws:
+        raise AgentSetupError(
+            f"Workspace {workspace_id} not found in database"
+        )
+    owner_id = ws["user_id"]
+    workspace_home = workspaces.home_path(owner_id, workspace_id)
+
+    agent_handle = await model.agent_handle()
+    container_home, created = workspaces.ensure_home_symlink(
+        workspace_home, agent_handle, model.AGENT_USER_ID
+    )
+    if created:
+        await workspaces.populate_home_skel(container_id, model.AGENT_USER_ID)
+
+    # Run klangk-setup-pi to populate ~/.pi/agent/ with models.json,
+    # settings.json, etc.  Unlike real users, the agent has no
+    # personal preferences — --force deletes settings.json first so
+    # it picks up the current KLANGK_LLM_MODEL env var.
+    proc = await asyncio.create_subprocess_exec(
+        podman.PODMAN_BIN,
+        "exec",
+        "-u",
+        "klangk",
+        "-e",
+        f"HOME={container_home}",
+        container_id,
+        "klangk-setup-pi",
+        "--force",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=podman.subprocess_env(),
+    )
+    await asyncio.wait_for(proc.communicate(), timeout=30)
+    logger.info(
+        "Agent home ready at %s for container %s",
+        container_home,
+        container_id,
+    )
+    return container_home
+
+
 class AgentSession:
     """Wraps a ``pi --mode rpc`` subprocess inside a container."""
 
@@ -96,60 +154,19 @@ class AgentSession:
         return cid
 
     async def _ensure_home(self, container_id: str) -> str:
-        """Ensure the agent has a home directory with Pi config.
+        """Ensure the agent has a home directory with Pi config (cached).
 
-        Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount
-        and populates it via ``klangk-setup-pi`` (the same path real
-        users take) by running a login shell.  Returns the container
-        path, e.g. ``/home/clanker``.
+        Thin per-instance cache over :func:`ensure_agent_home`.  The
+        actual provisioning — and the eager bring-up call site — live
+        there.  Returns the container path, e.g. ``/home/clanker``.
         """
         if self._home_ready:
             handle = await model.agent_handle()
             return f"/home/{handle}"
-
-        ws = await model.get_workspace_by_id(self.workspace_id)
-        if not ws:
-            raise AgentSetupError(
-                f"Workspace {self.workspace_id} not found in database"
-            )
-        owner_id = ws["user_id"]
-        workspace_home = workspaces.home_path(owner_id, self.workspace_id)
-
-        agent_handle = await model.agent_handle()
-        container_home, created = workspaces.ensure_home_symlink(
-            workspace_home, agent_handle, model.AGENT_USER_ID
+        container_home = await ensure_agent_home(
+            self.workspace_id, container_id
         )
-        if created:
-            await workspaces.populate_home_skel(
-                container_id, model.AGENT_USER_ID
-            )
-
-        # Run klangk-setup-pi to populate ~/.pi/agent/ with models.json,
-        # settings.json, etc.  Unlike real users, the agent has no
-        # personal preferences — --force deletes settings.json first so
-        # it picks up the current KLANGK_LLM_MODEL env var.
-        proc = await asyncio.create_subprocess_exec(
-            podman.PODMAN_BIN,
-            "exec",
-            "-u",
-            "klangk",
-            "-e",
-            f"HOME={container_home}",
-            container_id,
-            "klangk-setup-pi",
-            "--force",
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=podman.subprocess_env(),
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=30)
         self._home_ready = True
-        logger.info(
-            "Agent home ready at %s for container %s",
-            container_home,
-            container_id,
-        )
         return container_home
 
     async def _ensure_started(self) -> asyncio.subprocess.Process:
