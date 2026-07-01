@@ -1626,5 +1626,111 @@ void main() {
       client.disconnectWorkspace();
       expect(client.presenceUsers, isEmpty);
     });
+
+    test('mentionCandidates uses presence, not the static member roster',
+        () async {
+      // The roster is populated... but must NOT feed autocomplete under the
+      // presence-only model: mentioning is synchronous, offline members can't
+      // receive it, so they aren't suggested.
+      channel.serverSend({
+        'type': 'workspace_members',
+        'members': [
+          {'id': 'u1', 'email': 'alice@test.com', 'handle': 'alice'},
+          {'id': 'u2', 'email': 'bob@test.com', 'handle': 'bob'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          // Only u1 is present; u2 is in the roster but offline.
+          {
+            'user_id': 'u1',
+            'user_email': 'alice@test.com',
+            'user_handle': 'alice'
+          },
+        ],
+      });
+      await Future.delayed(Duration.zero);
+
+      final candidates = client.mentionCandidates;
+      final ids = candidates.map((m) => m['id']).toSet();
+      expect(ids, {'u1'});
+      // Offline roster member must not be suggested.
+      expect(ids.contains('u2'), isFalse);
+      // presence rows (user_* keys) normalized to {id,email,handle}.
+      final alice = candidates.firstWhere((m) => m['id'] == 'u1');
+      expect(alice['email'], 'alice@test.com');
+      expect(alice['handle'], 'alice');
+    });
+
+    test('agent is not mentionable until it joins presence', () async {
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {
+            'user_id': 'u1',
+            'user_email': 'alice@test.com',
+            'user_handle': 'alice'
+          },
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      // Agent subprocess not alive -> not present -> not a candidate.
+      expect(
+        client.mentionCandidates.any((m) => m['id'] == 'agent-uid'),
+        isFalse,
+      );
+
+      channel.serverSend({
+        'type': 'presence_join',
+        'user_id': 'agent-uid',
+        'user_email': 'mrboops@klangk.local',
+        'user_handle': 'MrBoops',
+      });
+      await Future.delayed(Duration.zero);
+      final agent = client.mentionCandidates.firstWhere(
+        (m) => m['id'] == 'agent-uid',
+        orElse: () => {},
+      );
+      expect(agent['email'], 'mrboops@klangk.local');
+      expect(agent['handle'], 'MrBoops');
+    });
+
+    test('mentionCandidates drops agent when presence_leave arrives', () async {
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {
+            'user_id': 'u1',
+            'user_email': 'alice@test.com',
+            'user_handle': 'alice'
+          },
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      channel.serverSend({
+        'type': 'presence_join',
+        'user_id': 'agent-uid',
+        'user_email': 'mrboops@klangk.local',
+        'user_handle': 'MrBoops',
+      });
+      await Future.delayed(Duration.zero);
+      expect(
+        client.mentionCandidates.any((m) => m['id'] == 'agent-uid'),
+        isTrue,
+      );
+
+      // Agent subprocess dies -> presence_leave.
+      channel.serverSend({
+        'type': 'presence_leave',
+        'user_id': 'agent-uid',
+      });
+      await Future.delayed(Duration.zero);
+      expect(
+        client.mentionCandidates.any((m) => m['id'] == 'agent-uid'),
+        isFalse,
+      );
+    });
   });
 }

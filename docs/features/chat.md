@@ -84,12 +84,20 @@ credentials.
 
 Set `KLANGK_AGENT_DISABLED` (`1`/`true`/`yes`) to prevent the chat
 agent's `pi --mode rpc` subprocess from starting. When set, the
-subprocess is never spawned, so the agent never comes online and will
-not appear in presence.
+subprocess is never spawned, so the agent never comes online.
 
 | Variable                | Default | Effect                                                                                                                 |
 | ----------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `KLANGK_AGENT_DISABLED` | (unset) | Set to `1`/`true`/`yes` and the chat agent's `pi --mode rpc` subprocess is not started. Read each time it would start. |
+
+@mention autocomplete suggests only users who are **present** (a
+@mention is a synchronous act delivered to currently-connected sockets;
+there's no async delivery for offline members). Because the agent's
+presence is driven by whether its subprocess is alive, a disabled agent
+is simply never suggested — it disappears from autocomplete with no
+special-case gate. (Manually typing a full-handle `@MrBoops` would still
+route to the agent and surface the refused-to-start error, but the
+autocomplete affordance for it is gone.)
 
 This is a **global** setting that affects every workspace; toggling it
 takes effect on the next subprocess start (no server restart needed for
@@ -97,13 +105,6 @@ the start refusal itself). Per-workspace control is tracked separately
 in [#1142](https://github.com/mcdonc/klangk/issues/1142) (and depends
 on the per-workspace settings infrastructure,
 [#864](https://github.com/mcdonc/klangk/issues/864)).
-
-> **Scope note:** this flag only stops the subprocess from starting. It
-> does not (yet) hide the agent from the workspace member list, suppress
-> its seeded user row, or short-circuit `@MrBoops` routing — so a
-> disabled agent is still listed and `@mention`ing it will surface a
-> start error rather than a reply. Tightening those is follow-up work;
-> see #1138.
 
 ## Message Types
 

@@ -126,6 +126,25 @@ class WsClient extends ChangeNotifier {
   /// Users currently connected to the workspace.
   List<Map<String, dynamic>> presenceUsers = [];
 
+  /// Users mentionable via @autocomplete: whoever is currently present.
+  ///
+  /// A @mention is a synchronous act — it renders bold text delivered only
+  /// to currently-connected sockets; there is no async delivery or
+  /// notification for offline members. So autocomplete suggests exactly the
+  /// users who will actually receive it: present humans plus, iff its
+  /// subprocess is alive, the chat agent. A stopped or admin-disabled agent
+  /// therefore disappears from autocomplete with no special-case gate —
+  /// presence is "physical", keyed off the running process. Normalized to
+  /// {id, email, handle} (the shape [ChatInputBar] reads); presence rows
+  /// arrive with user_* keys.
+  List<Map<String, dynamic>> get mentionCandidates => presenceUsers
+      .map((u) => {
+            'id': u['user_id'] ?? '',
+            'email': u['user_email'] ?? '',
+            'handle': u['user_handle'] ?? '',
+          })
+      .toList();
+
   /// Terminal windows in the current tmux session.
   List<Map<String, dynamic>> terminalWindows = [];
 
