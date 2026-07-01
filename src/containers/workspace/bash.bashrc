@@ -15,7 +15,7 @@
 cd "$HOME" 2>/dev/null
 
 # Per-user Pi agent config (extensions, settings, models, skills).
-python3 /opt/klangk/bin/klangk-setup-clankers
+python3 /opt/klangk/bin/klangk-setup-pi
 
 # Display terminal banner if configured (deployers override via
 # KLANGK_TERMINAL_BANNER env var; empty string disables it).

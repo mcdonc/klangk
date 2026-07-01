@@ -3,7 +3,7 @@
  *
  * Fetches available models from the proxy's /models endpoint (OpenAI
  * compatible) and registers them as the "llm-proxy" provider.  This
- * replaces the static single-model entry that klangk-setup-clankers writes
+ * replaces the static single-model entry that klangk-setup-pi writes
  * to models.json so Pi can see and switch between all models the
  * upstream LLM backend offers.
  *

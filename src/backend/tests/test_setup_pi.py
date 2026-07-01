@@ -1,4 +1,4 @@
-"""Tests for klangk-setup-clankers.py (per-user Pi agent setup)."""
+"""Tests for klangk-setup-pi.py (per-user Pi agent setup)."""
 
 import importlib.util
 import json
@@ -11,9 +11,9 @@ _SCRIPT = (
     Path(__file__).resolve().parents[2]
     / "containers"
     / "workspace"
-    / "klangk-setup-clankers.py"
+    / "klangk-setup-pi.py"
 )
-_spec = importlib.util.spec_from_file_location("setup_clankers", _SCRIPT)
+_spec = importlib.util.spec_from_file_location("setup_pi", _SCRIPT)
 sc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sc)
 
@@ -164,7 +164,7 @@ class TestMain:
     def test_first_run_creates_everything(self, fake_home, monkeypatch):
         monkeypatch.setenv("KLANGK_LLM_MODEL", "m")
         monkeypatch.setenv("KLANGK_LLM_PROXY_URL", "http://x")
-        monkeypatch.setattr("sys.argv", ["setup-clankers"])
+        monkeypatch.setattr("sys.argv", ["setup-pi"])
 
         sc.main()
 
@@ -178,7 +178,7 @@ class TestMain:
     def test_existing_settings_gets_backfill(self, fake_home, monkeypatch):
         monkeypatch.setenv("KLANGK_LLM_MODEL", "m")
         monkeypatch.setenv("KLANGK_LLM_PROXY_URL", "http://x")
-        monkeypatch.setattr("sys.argv", ["setup-clankers"])
+        monkeypatch.setattr("sys.argv", ["setup-pi"])
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)
         # Old settings missing skills/prompts.
@@ -195,7 +195,7 @@ class TestMain:
     def test_force_rewrites_settings(self, fake_home, monkeypatch):
         monkeypatch.setenv("KLANGK_LLM_MODEL", "m")
         monkeypatch.setenv("KLANGK_LLM_PROXY_URL", "http://x")
-        monkeypatch.setattr("sys.argv", ["setup-clankers", "--force"])
+        monkeypatch.setattr("sys.argv", ["setup-pi", "--force"])
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)
         (agent / "settings.json").write_text(json.dumps({"old": True}))
@@ -208,7 +208,7 @@ class TestMain:
 
     def test_skips_system_user(self, fake_home, monkeypatch):
         monkeypatch.setenv("HOME", "/home")
-        monkeypatch.setattr("sys.argv", ["setup-clankers"])
+        monkeypatch.setattr("sys.argv", ["setup-pi"])
 
         sc.main()  # should not raise or create anything
 
