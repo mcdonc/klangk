@@ -37,7 +37,6 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     "spectators": [
         "terminal",
         "spectate-on-shared-terminals",
-        "chat",
     ],
 }
 

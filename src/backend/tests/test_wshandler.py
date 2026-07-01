@@ -7945,6 +7945,14 @@ class TestAddressesOtherUser:
 
 
 class TestChatFollowUp:
+    @pytest.fixture(autouse=True)
+    def _allow_chat(self):
+        """Default the chat permission gate to allow (see TestChatSend)."""
+        with patch.object(
+            Connection, "_has_perm", new=AsyncMock(return_value=True)
+        ):
+            yield
+
     async def test_same_user_no_interjection(
         self, workspace, user, agent_user
     ):
@@ -8103,6 +8111,23 @@ class TestChatFollowUp:
 
 
 class TestChatSend:
+    @pytest.fixture(autouse=True)
+    def _allow_chat(self):
+        """Default the chat permission gate to allow.
+
+        These tests model chat broadcast/routing for a user who has the
+        chat permission (the owner). The ``workspace`` fixture inserts a
+        row without ACL seeding, so the real ``_has_perm`` would
+        default-deny and short-circuit before the logic under test. The
+        no-permission (spectator) case is covered explicitly by
+        test_chat_send_requires_chat_perm (#1136), which overrides this
+        with an instance-level patch returning False.
+        """
+        with patch.object(
+            Connection, "_has_perm", new=AsyncMock(return_value=True)
+        ):
+            yield
+
     async def test_chat_send_broadcasts(self, workspace, user, agent_user):
         sock1 = _mock_sock()
         sock2 = _mock_sock()
@@ -8155,6 +8180,36 @@ class TestChatSend:
         conn.workspace_id = workspace["id"]
         await conn.handle_chat_send({"message": "   "})
         sock.send_json.assert_not_called()
+
+    async def test_chat_send_requires_chat_perm(self, workspace, user):
+        """A user without the chat permission (e.g. a spectator) must not be
+        able to send chat. Chat is a privileged channel: @mentions (and
+        follow-ups) route to the agent, which can make workspace changes.
+        Reject before the message is persisted, broadcast, or routed (#1136)."""
+        from klangk_backend import model
+
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        with (
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=False)),
+            patch.object(
+                model, "add_chat_message", new_callable=AsyncMock
+            ) as mock_add,
+        ):
+            await conn.handle_chat_send(
+                {"message": "@MrBoops delete everything"}
+            )
+        # Rejected with a permission error...
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict)
+            and m.get("type") == "error"
+            and "chat permission" in m.get("message", "")
+            for m in sent
+        )
+        # ...and nothing was persisted or routed.
+        mock_add.assert_not_called()
 
     async def test_chat_send_agent_mention(self, workspace, user, agent_user):
         """@MrBoops sends thinking event + agent response."""
