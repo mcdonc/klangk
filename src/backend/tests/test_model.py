@@ -2,6 +2,7 @@
 
 import aiosqlite
 import pytest
+import sqlalchemy.exc
 
 from klangk_backend import model
 
@@ -1237,14 +1238,161 @@ class TestOIDCUsers:
 
 class TestUpdatePasswordAgentGuard:
     async def test_update_password_rejects_agent_user(self, db):
-        with pytest.raises(ValueError, match="system agent"):
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
             await model.update_password(model.AGENT_USER_ID, "hash")
 
 
 class TestDeleteUserAgentGuard:
     async def test_delete_user_rejects_agent_user(self, db):
-        with pytest.raises(ValueError, match="system agent"):
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
             await model.delete_user(model.AGENT_USER_ID)
+
+
+class TestAddUserToGroupAgentGuard:
+    async def test_add_user_to_group_rejects_agent(self, db):
+        # Choke-point guard (#1135): every add_user_to_group caller
+        # (role grants, group-member add, OIDC sync) is covered here.
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
+            await model.add_user_to_group(model.AGENT_USER_ID, "g")
+
+
+class TestAddAclEntryAgentGuard:
+    async def test_add_acl_entry_rejects_agent(self, db):
+        # Choke-point guard (#1135): direct PRINCIPAL_USER ACE grants
+        # (e.g. add_workspace_member) are covered here.
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
+            await model.add_acl_entry(
+                "/workspaces/x",
+                0,
+                model.ACTION_ALLOW,
+                "*",
+                model.PRINCIPAL_USER,
+                user_id=model.AGENT_USER_ID,
+            )
+
+
+class TestReplaceAclEntriesAgentGuard:
+    async def test_replace_acl_entries_rejects_agent(self, db):
+        # Choke-point guard (#1135): replace_acl_entries is the second
+        # writer into acl_entries (a raw INSERT, fed request-body
+        # user_id by the PUT-acl endpoints) — guarded like add_acl_entry.
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
+            await model.replace_acl_entries(
+                "/workspaces/x",
+                [
+                    {
+                        "position": 0,
+                        "action": model.ACTION_ALLOW,
+                        "principal_type": model.PRINCIPAL_USER,
+                        "permission": "*",
+                        "user_id": model.AGENT_USER_ID,
+                        "group_id": None,
+                        "system_principal": None,
+                    }
+                ],
+            )
+
+
+class TestCreateWorkspaceWithAclAgentGuard:
+    async def test_create_workspace_with_acl_rejects_agent(self, db):
+        # Choke-point guard (#1135): the owner ACE is written by
+        # _seed_workspace_acl via raw SQL (can't call the guarded
+        # add_acl_entry), so the public entry point guards the creator.
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
+            await model.create_workspace_with_acl(model.AGENT_USER_ID, "ws")
+
+
+class TestSchemaAgentBackstops:
+    """Data-model belt-and-suspenders (#1135): the schema constraints that
+    backstop the function-layer AgentPrincipalError guards. Each test writes
+    raw SQL that bypasses the Python guards, proving the DB itself rejects
+    making the agent a principal / mutating its identity / deleting it --
+    the terminal backstop for the raw-SQL-writer bug class the re-audit
+    found (replace_acl_entries, the seed path).
+    """
+
+    async def test_acl_entries_rejects_agent_user_principal(self, agent_user):
+        # (A) CHECK on acl_entries: covers both writers (add_acl_entry and
+        # replace_acl_entries).
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "INSERT INTO acl_entries"
+                    " (resource, position, action, principal_type,"
+                    "  permission, user_id)"
+                    " VALUES ('/x', 0, 1, 1, '*', ?)",
+                    (model.AGENT_USER_ID,),
+                )
+
+    async def test_user_groups_rejects_agent(self, agent_user):
+        # (B) CHECK on user_groups: role grants, member adds, OIDC sync.
+        group = await model.create_group("g")
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "INSERT INTO user_groups (user_id, group_id, source)"
+                    " VALUES (?, ?, 'manual')",
+                    (model.AGENT_USER_ID, group["id"]),
+                )
+
+    async def test_workspaces_rejects_agent_owner(self, agent_user):
+        # (C) CHECK on workspaces.user_id (the owner column).
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "INSERT INTO workspaces (id, user_id, name)"
+                    " VALUES ('ws', ?, 'n')",
+                    (model.AGENT_USER_ID,),
+                )
+
+    async def test_users_rejects_agent_password(self, agent_user):
+        # (D) CHECK: the agent must never carry a password.
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    ("x", model.AGENT_USER_ID),
+                )
+
+    async def test_agent_row_cannot_be_deleted(self, agent_user):
+        # (E) BEFORE DELETE trigger: the agent row is undeletable.
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "DELETE FROM users WHERE id = ?",
+                    (model.AGENT_USER_ID,),
+                )
+
+    async def test_agent_identity_columns_immutable(self, agent_user):
+        # (F) BEFORE UPDATE trigger on provider/external_id: the agent must
+        # stay provider='system' with no linked OIDC identity (the #1145
+        # skeleton-key vector). link_oidc_identity sets exactly these.
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "UPDATE users SET provider = ? WHERE id = ?",
+                    ("oidc", model.AGENT_USER_ID),
+                )
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "UPDATE users SET external_id = ? WHERE id = ?",
+                    ("sub", model.AGENT_USER_ID),
+                )
+
+    async def test_agent_email_remains_mutable(self, agent_user):
+        # F deliberately does NOT guard email: it is legitimately re-seeded
+        # from env at boot (ON CONFLICT DO UPDATE SET email). Email policy
+        # lives at the fn layer (#1145), not the schema. This test pins that
+        # decision so a future "add an email trigger" change can't silently
+        # break boot-time re-seeding.
+        async with model.transaction() as db:
+            await db.execute(
+                "UPDATE users SET email = ? WHERE id = ?",
+                ("new@example.com", model.AGENT_USER_ID),
+            )
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        assert agent["email"] == "new@example.com"
 
 
 class TestHashFallbackHandle:

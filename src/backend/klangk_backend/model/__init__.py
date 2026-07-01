@@ -36,6 +36,7 @@ from ._core import (
 from .schema import init_db
 from .users import (
     AGENT_USER_ID,
+    AgentPrincipalError,
     _ADMIN_USER_SORT_COLUMNS,
     _HANDLE_RE,
     _MAX_HANDLE_LEN,
@@ -178,6 +179,7 @@ __all__ = (
     "init_db",
     # users
     "AGENT_USER_ID",
+    "AgentPrincipalError",
     "_ADMIN_USER_SORT_COLUMNS",
     "_HANDLE_RE",
     "_MAX_HANDLE_LEN",

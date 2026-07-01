@@ -250,11 +250,6 @@ async def delete_user(
 ):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
-    if user_id == model.AGENT_USER_ID:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete the system agent user",
-        )
     user = await model.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -286,11 +281,6 @@ async def update_user(
     if req.email is not None:
         await model.update_email(user_id, req.email)
     if req.password is not None:
-        if user_id == model.AGENT_USER_ID:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot set a password on the system agent user",
-            )
         auth.validate_password_length(req.password)
         password_hash = auth.hash_password(req.password)
         await model.update_password(user_id, password_hash)

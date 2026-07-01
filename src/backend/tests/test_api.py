@@ -30,9 +30,11 @@ async def app(db):
     """Create a minimal FastAPI app with just the API router."""
     app = FastAPI()
     from klangk_backend.util import API_PREFIX
+    from klangk_backend.main import register_exception_handlers
 
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
+    register_exception_handlers(app)
     return app
 
 
@@ -2006,6 +2008,29 @@ class TestWorkspaceSharingRoutes:
         notified = {call.args[0] for call in mock_notify.call_args_list}
         assert notified == {user["id"], other["id"]}
 
+    async def test_change_role_allows_system_agent_removal(
+        self, client, user, db
+    ):
+        # role=None is removal-from-all-roles — harmless cleanup, so the
+        # guard (which only fires on a grant) must let it through.
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "role-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/api/v1/workspaces/{ws_id}/roles",
+            headers=headers,
+            json={"email": agent["email"], "role": None},
+        )
+        assert resp.status_code == 200
+
     async def test_add_member_not_found(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -2033,6 +2058,36 @@ class TestWorkspaceSharingRoutes:
         )
         assert resp.status_code == 400
         assert "yourself" in resp.json()["detail"]
+
+    async def test_add_member_rejects_system_agent(self, client, user, db):
+        # End-to-end smoke for the #1135 refactor: the guard now lives at
+        # the model choke point (model.add_acl_entry), and a global
+        # handler translates AgentPrincipalError to HTTP 400. This is the
+        # one HTTP-level grant test kept to prove the wiring; the choke
+        # points themselves are unit-tested in test_model.py.
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "share-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": agent["email"]},
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+        # Confirm the guard actually blocked the grant: no ACE entry on
+        # this workspace names the agent as the user principal.
+        resource = f"/workspaces/{ws_id}"
+        entries = await model.get_acl_entries(resource)
+        assert not any(e["user_id"] == agent["id"] for e in entries)
 
     async def test_remove_member(self, client, user):
         headers = await _auth_headers(client)
@@ -4447,7 +4502,7 @@ class TestAdminEndpoints:
         headers = await self._admin_headers(client)
         resp = await client.patch(
             f"/api/v1/admin/users/{model.AGENT_USER_ID}",
-            json={"password": "sneaky"},
+            json={"password": "sneaky123"},
             headers=headers,
         )
         assert resp.status_code == 400

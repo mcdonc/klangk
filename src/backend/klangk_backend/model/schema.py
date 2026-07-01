@@ -1,13 +1,14 @@
 """Database schema creation and in-place migrations (``init_db``)."""
 
 from ._core import get_db
-from .users import _backfill_handles
+from .acl import PRINCIPAL_USER
+from .users import AGENT_USER_ID, _backfill_handles
 
 
 async def init_db() -> None:
     db = await get_db()
     try:
-        await db.execute("""
+        await db.execute(f"""
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 email TEXT UNIQUE NOT NULL,
@@ -16,9 +17,11 @@ async def init_db() -> None:
                 provider TEXT NOT NULL DEFAULT 'local',
                 external_id TEXT,
                 handle TEXT UNIQUE,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                -- (D) the system agent must never carry a password.
+                CHECK (id != '{AGENT_USER_ID}' OR password_hash IS NULL)
             )
-        """)
+        """)  # noqa: S608
         # Migration: make password_hash nullable, add OIDC columns, add handle.
         # SQLite can't ALTER COLUMN, so we recreate the table if needed.
         cursor = await db.execute("PRAGMA table_info(users)")
@@ -32,7 +35,7 @@ async def init_db() -> None:
         if "handle" not in columns:
             needs_recreate = True
         if needs_recreate:
-            await db.execute("""
+            await db.execute(f"""
                 CREATE TABLE users_new (
                     id TEXT PRIMARY KEY,
                     email TEXT UNIQUE NOT NULL,
@@ -41,9 +44,10 @@ async def init_db() -> None:
                     provider TEXT NOT NULL DEFAULT 'local',
                     external_id TEXT,
                     handle TEXT UNIQUE,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    CHECK (id != '{AGENT_USER_ID}' OR password_hash IS NULL)
                 )
-            """)
+            """)  # noqa: S608
             # Copy existing data — old tables may lack some columns
             old_cols = list(columns.keys())
             shared = [
@@ -68,7 +72,50 @@ async def init_db() -> None:
             await db.execute("ALTER TABLE users_new RENAME TO users")
         # Backfill handles for existing users that don't have one.
         await _backfill_handles(db)
-        await db.execute("""
+        # --- Data-model belt-and-suspenders for the system agent (#1135) ---
+        # The function-layer AgentPrincipalError guards are the *friendly*
+        # choke point (typed error, HTTP 400). These schema constraints are
+        # the *terminal* backstop: they fire at the DB regardless of which
+        # Python function wrote the row, so a raw-SQL writer (the exact bug
+        # class the re-audit found twice: replace_acl_entries, the seed
+        # path) cannot make the agent an ACL principal, mutate its identity,
+        # or delete it. The agent UUID is a fixed, source-published constant,
+        # so it can be baked in here. (E,F are triggers because CHECK cannot
+        # express "row must exist" or compare OLD vs NEW.)
+        # (E) the agent row must never be deleted.
+        await db.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS agent_user_cannot_be_deleted
+            BEFORE DELETE ON users
+            FOR EACH ROW
+            WHEN OLD.id = '{AGENT_USER_ID}'
+            BEGIN
+                SELECT RAISE(ABORT, 'Cannot delete the system agent user');
+            END
+        """)  # noqa: S608
+        # (F) the agent's identity columns are immutable: it must stay
+        # provider='system' with no linked OIDC identity (external_id),
+        # which is the #1145 skeleton-key vector. email is intentionally
+        # NOT guarded here -- it is legitimately re-seeded from env at boot
+        # (ON CONFLICT DO UPDATE SET email); its policy lives at the fn
+        # layer (#1145).
+        _agent_identity_msg = (
+            "Cannot mutate the system agent identity columns"
+            " (provider/external_id are the OIDC-link columns)"
+        )
+        # The message is interpolated as a single quoted SQL literal so
+        # SQLite sees one string token -- SQLite does not concatenate
+        # adjacent literals (unlike Python) and pre-3.x rejects `||` inside
+        # RAISE(), so both ways of splitting it are syntax errors there.
+        await db.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS agent_user_identity_immutable
+            BEFORE UPDATE OF provider, external_id ON users
+            FOR EACH ROW
+            WHEN OLD.id = '{AGENT_USER_ID}'
+            BEGIN
+                SELECT RAISE(ABORT, '{_agent_identity_msg}');
+            END
+        """)  # noqa: S608
+        await db.execute(f"""
             CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -90,9 +137,11 @@ async def init_db() -> None:
                 mounts TEXT,  -- JSON array of host:container mount specs
                 env TEXT,  -- JSON dict of custom environment variables
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                UNIQUE(user_id, name)
+                UNIQUE(user_id, name),
+                -- (C) the system agent must never own a workspace.
+                CHECK (user_id != '{AGENT_USER_ID}')
             )
-        """)
+        """)  # noqa: S608
         # Migration: add auto_start column to existing workspaces tables
         cursor = await db.execute("PRAGMA table_info(workspaces)")
         ws_cols = {row[1] for row in await cursor.fetchall()}
@@ -129,15 +178,18 @@ async def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
-        await db.execute("""
+        await db.execute(f"""
             CREATE TABLE IF NOT EXISTS user_groups (
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
                 source TEXT NOT NULL DEFAULT 'manual',
-                PRIMARY KEY (user_id, group_id)
+                PRIMARY KEY (user_id, group_id),
+                -- (B) the system agent must never be a group member
+                -- (role grants, group-member adds, OIDC group sync).
+                CHECK (user_id != '{AGENT_USER_ID}')
             )
-        """)
-        await db.execute("""
+        """)  # noqa: S608
+        await db.execute(f"""
             CREATE TABLE IF NOT EXISTS acl_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 resource TEXT NOT NULL,
@@ -148,9 +200,13 @@ async def init_db() -> None:
                 group_id TEXT REFERENCES groups(id) ON DELETE CASCADE,
                 system_principal INTEGER,  -- 0 = Everyone, 1 = Authenticated
                 permission TEXT NOT NULL,
-                UNIQUE(resource, position)
+                UNIQUE(resource, position),
+                -- (A) the system agent must never hold a user-principal ACE
+                -- (covers both writers: add_acl_entry and replace_acl_entries).
+                CHECK (NOT (principal_type = {PRINCIPAL_USER}
+                            AND user_id = '{AGENT_USER_ID}'))
             )
-        """)
+        """)  # noqa: S608
         await db.execute("""
             CREATE TABLE IF NOT EXISTS token_blocklist (
                 jti TEXT PRIMARY KEY,
