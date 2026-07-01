@@ -8427,7 +8427,7 @@ class TestChatSend:
         await session.add_subscriber(sock1, "cid")
         await session.add_subscriber(sock2, "cid")
 
-        async def slow_mention(workspace_id, container_id, text):
+        async def slow_mention(workspace_id, container_id, text, **kwargs):
             await asyncio.sleep(999)
 
         try:
@@ -8528,40 +8528,6 @@ class TestChatSend:
         conn.workspace_id = workspace["id"]
         await conn.handle_chat_load_more({})
         sock.send_json.assert_not_called()
-
-    async def test_workspace_members_on_connect(self, user, agent_user):
-        """Workspace members list is sent on connect."""
-        workspace = await _create_workspace_with_acl(user["id"], "members-ws")
-
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-
-        async def fake_start(wid, ws_obj):
-            conn.container_id = "cid"
-
-        with (
-            patch.object(
-                Connection,
-                "start_workspace_container",
-                side_effect=fake_start,
-            ),
-            patch.object(
-                container.registry,
-                "get_workspace_ports",
-                return_value=[],
-            ),
-        ):
-            await conn.handle_workspace_connect(
-                {"workspaceId": workspace["id"]}
-            )
-
-        calls = [c[0][0] for c in sock.send_json.call_args_list]
-        members_msgs = [
-            c for c in calls if c.get("type") == "workspace_members"
-        ]
-        assert len(members_msgs) == 1
-        member_ids = [m["id"] for m in members_msgs[0]["members"]]
-        assert user["id"] in member_ids
 
 
 class TestPresence:
@@ -9694,6 +9660,77 @@ class TestAgentMentionOtherMsgsContext:
             assert len(captured_prompt) == 1
             assert "user2@example.com" in captured_prompt[0]
             assert "interesting point" in captured_prompt[0]
+        finally:
+            await session.remove_subscriber(sock)
+            state.sessions.pop(ws_id, None)
+            wshandler._agent_tasks.pop(ws_id, None)
+
+
+class TestAgentMentionAskerIdentity:
+    """The asking user's identity is injected so the agent can resolve "my"."""
+
+    def test_header_includes_id_handle_home(self):
+        from klangk_backend.wshandler.agent_mention import (
+            _asker_context_header,
+        )
+
+        header = _asker_context_header("uid-123", "alice", "/home/alice")
+
+        assert "id uid-123" in header
+        assert "handle alice" in header
+        assert "home /home/alice" in header
+        # Points the agent at the asker's own tmux session.
+        assert 'tmux session "uid-123"' in header
+        assert '"my"/"my history"' in header
+
+    def test_header_none_without_user_id(self):
+        from klangk_backend.wshandler.agent_mention import (
+            _asker_context_header,
+        )
+
+        assert _asker_context_header(None, "alice", "/home/alice") is None
+
+    async def test_identity_prepended_to_prompt(self, user, agent_user):
+        """An @mention from a user injects that user's identity header."""
+        from klangk_backend.wshandler import _handle_agent_mention
+
+        workspace = await model.create_workspace(user["id"], "id-ws")
+        ws_id = workspace["id"]
+
+        captured_prompt = []
+        mock_session = AsyncMock()
+
+        async def capture_prompt(prompt):
+            captured_prompt.append(prompt)
+            return "response"
+
+        mock_session.send_prompt = capture_prompt
+
+        sock = _mock_sock()
+        session = state.get_or_create_session(ws_id)
+        await session.add_subscriber(sock, "cid")
+
+        try:
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_session,
+            ):
+                await _handle_agent_mention(
+                    ws_id,
+                    "cid",
+                    "@MrBoops restart my service",
+                    user_id=user["id"],
+                    user_handle=user.get("handle") or "somebody",
+                    user_home="/home/somebody",
+                )
+
+            assert len(captured_prompt) == 1
+            prompt = captured_prompt[0]
+            # The @mention is stripped and the asker header is present.
+            assert "@MrBoops" not in prompt
+            assert "restart my service" in prompt
+            assert user["id"] in prompt
+            assert "/home/somebody" in prompt
         finally:
             await session.remove_subscriber(sock)
             state.sessions.pop(ws_id, None)

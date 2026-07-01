@@ -203,6 +203,23 @@ class TestSendVerificationEmail:
             )
         mock_smtp.assert_awaited_once()
 
+    async def test_uses_configured_product_name(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_SMTP_HOST", raising=False)
+        monkeypatch.setenv("KLANGK_PRODUCT_NAME", "Acme Labs")
+        mock_sendmail = AsyncMock()
+        with patch.object(emailsvc, "send_via_sendmail", mock_sendmail):
+            await emailsvc.send_verification_email(
+                "user@example.com",
+                "https://klangk.example.com/#/verify?token=abc",
+            )
+        msg = mock_sendmail.call_args[0][0]
+        assert msg["Subject"] == "Verify your Acme Labs account"
+        parts = list(msg.iter_parts())
+        assert "Acme Labs" in parts[0].get_content()
+        assert "Acme Labs" in parts[1].get_content()
+        # The default wordmark must not appear when a name is configured.
+        assert "Klangk" not in parts[1].get_content()
+
 
 class TestSendPasswordResetEmail:
     async def test_sends_reset_email(self, monkeypatch):

@@ -1506,7 +1506,7 @@ test.describe("Klangk E2E", () => {
     });
   });
 
-  test("workspace_members broadcast on member add and chat @mention", async ({
+  test("workspace roster via REST after member add; chat @mention carries mentions", async ({
     browser,
     request,
   }) => {
@@ -1530,6 +1530,18 @@ test.describe("Klangk E2E", () => {
       data: { email: memberEmail },
     });
 
+    // The workspace member roster is served by the REST endpoint, not (since
+    // #1148) pushed over the WebSocket. Assert it reflects the membership.
+    const initialRosterResp = await request.get(
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/members`,
+      { headers: ownerHeaders },
+    );
+    expect(initialRosterResp.ok()).toBeTruthy();
+    const initialEmails = (await initialRosterResp.json()).map(
+      (m: { email: string }) => m.email,
+    );
+    expect(initialEmails).toContain(memberEmail);
+
     // Capture WS on owner page to send commands
     const wsCaptureScript = `(() => {
       const Orig = window.WebSocket;
@@ -1549,15 +1561,11 @@ test.describe("Klangk E2E", () => {
     await ctx1.addInitScript(wsCaptureScript);
     const page1 = await ctx1.newPage();
 
-    // Collect workspace_members and chat_message on owner page
-    const ownerWsMessages: string[] = [];
+    // Collect chat_message on owner page
     const ownerChatMessages: string[] = [];
     page1.on("websocket", (ws) => {
       ws.on("framereceived", (frame: { payload: string | Buffer }) => {
         const text = frame.payload.toString();
-        if (text.includes("workspace_members")) {
-          ownerWsMessages.push(text);
-        }
         if (text.includes("chat_message")) {
           ownerChatMessages.push(text);
         }
@@ -1568,28 +1576,16 @@ test.describe("Klangk E2E", () => {
       waitForTerminal: true,
     });
 
-    // Initial workspace_members should have been received on connect
-    expect(ownerWsMessages.length).toBeGreaterThan(0);
-    const initial = JSON.parse(ownerWsMessages[ownerWsMessages.length - 1]);
-    expect(initial.type).toBe("workspace_members");
-    const initialEmails = initial.members.map(
-      (m: { email: string }) => m.email,
-    );
-    expect(initialEmails).toContain(memberEmail);
-    expect(initialEmails).toContain(ownerEmail);
-
-    // Now add a late member while owner is connected
-    const countBefore = ownerWsMessages.length;
+    // Add a late member and confirm the REST roster reflects it.
     await request.post(`${API_BASE}/api/v1/workspaces/${workspaceId}/members`, {
       headers: ownerHeaders,
       data: { email: lateEmail },
     });
-
-    // Wait for the broadcast
-    await page1.waitForTimeout(2000);
-    expect(ownerWsMessages.length).toBeGreaterThan(countBefore);
-    const updated = JSON.parse(ownerWsMessages[ownerWsMessages.length - 1]);
-    const updatedEmails = updated.members.map(
+    const updatedRosterResp = await request.get(
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/members`,
+      { headers: ownerHeaders },
+    );
+    const updatedEmails = (await updatedRosterResp.json()).map(
       (m: { email: string }) => m.email,
     );
     expect(updatedEmails).toContain(lateEmail);

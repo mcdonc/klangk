@@ -679,20 +679,6 @@ async def _check_workspace_share(request: Request, user: dict) -> str:
     return f"/workspaces/{workspace_id}"
 
 
-async def _broadcast_workspace_members(workspace_id: str) -> None:
-    """Push updated workspace members to all connected subscribers."""
-    session = wshandler.state.get_session(workspace_id)
-    if not session:
-        return
-    members = await model.get_workspace_members(workspace_id)
-    workspace = await model.get_workspace(workspace_id)
-    if workspace:
-        owner = await model.get_user_by_id(workspace.get("user_id", ""))
-        if owner and not any(m["id"] == owner["id"] for m in members):
-            members.append({"id": owner["id"], "email": owner["email"]})
-    session.broadcast({"type": "workspace_members", "members": members})
-
-
 @router.get("/workspaces/{workspace_id}/members")
 async def get_workspace_members(
     workspace_id: str,
@@ -733,7 +719,6 @@ async def add_workspace_member(
             user_id=target["id"],
         )
         next_pos += 1
-    await _broadcast_workspace_members(workspace_id)
     wshandler.state.notify_user_workspaces_changed(user["id"])
     wshandler.state.notify_user_workspaces_changed(target["id"])
     return {
@@ -763,7 +748,6 @@ async def remove_workspace_member(
     for i, entry in enumerate(remaining):
         entry["position"] = i
     await model.replace_acl_entries(resource, remaining)
-    await _broadcast_workspace_members(workspace_id)
     wshandler.state.notify_user_workspaces_changed(user["id"])
     wshandler.state.notify_user_workspaces_changed(member_id)
     return {"status": "removed"}
@@ -820,7 +804,6 @@ async def add_to_workspace_role(
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     await model.add_user_to_group(target["id"], group["id"])
-    await _broadcast_workspace_members(workspace_id)
     wshandler.state.notify_user_workspaces_changed(user["id"])
     wshandler.state.notify_user_workspaces_changed(target["id"])
     return {"ok": True}
@@ -841,7 +824,6 @@ async def remove_from_workspace_role(
     if group is None:
         raise HTTPException(status_code=404, detail="Role group not found")
     await model.remove_user_from_group(member_id, group["id"])
-    await _broadcast_workspace_members(workspace_id)
     wshandler.state.notify_user_workspaces_changed(user["id"])
     wshandler.state.notify_user_workspaces_changed(member_id)
     return {"ok": True}
@@ -889,7 +871,6 @@ async def change_workspace_role(
             raise HTTPException(status_code=404, detail="Role group not found")
         await model.add_user_to_group(target["id"], group["id"])
 
-    await _broadcast_workspace_members(workspace_id)
     wshandler.state.notify_user_workspaces_changed(user["id"])
     wshandler.state.notify_user_workspaces_changed(target["id"])
     return {"ok": True, "email": body.email, "role": body.role}

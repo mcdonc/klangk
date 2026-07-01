@@ -369,30 +369,6 @@ class Connection:
                 {"type": "chat_history", "messages": chat_history}
             )
 
-    async def _send_workspace_members(
-        self, workspace_id: str, workspace: dict
-    ) -> None:
-        """Send workspace members (including agent) for @mention autocomplete."""
-        members = await model.get_workspace_members(workspace_id)
-        owner = await model.get_user_by_id(workspace.get("user_id", ""))
-        if owner and not any(m["id"] == owner["id"] for m in members):
-            members.append(
-                {
-                    "id": owner["id"],
-                    "email": owner["email"],
-                    "handle": owner.get("handle", ""),
-                }
-            )
-        agent_user = await model.get_agent_user()
-        members.append(
-            {
-                "id": model.AGENT_USER_ID,
-                "email": agent_user["email"],
-                "handle": agent_user.get("handle", ""),
-            }
-        )
-        self.sock.send_json({"type": "workspace_members", "members": members})
-
     async def _broadcast_join(
         self, workspace_id: str, rejoining: bool
     ) -> None:
@@ -484,7 +460,6 @@ class Connection:
         )
 
         await self._send_chat_history(workspace_id)
-        await self._send_workspace_members(workspace_id, workspace)
 
         if self.container_id:
             asyncio.create_task(self._start_agent_if_needed())
@@ -776,9 +751,18 @@ class Connection:
         if should_route and self.container_id:
             # One agent-run slot per workspace: cancel any in-flight run
             # so concurrent @mentions don't orphan the earlier task.
+            # Pass the asking user's identity so the agent can resolve
+            # "my" (its process has no user identity of its own).
             _cancel_agent_task(workspace_id)
             _agent_tasks[workspace_id] = asyncio.create_task(
-                _handle_agent_mention(workspace_id, self.container_id, text)
+                _handle_agent_mention(
+                    workspace_id,
+                    self.container_id,
+                    text,
+                    user_id=self.user.get("id"),
+                    user_handle=self.user.get("handle"),
+                    user_home=self._user_home,
+                )
             )
 
     async def handle_chat_delete(self, msg: dict) -> None:

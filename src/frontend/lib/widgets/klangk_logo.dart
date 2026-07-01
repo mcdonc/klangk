@@ -54,7 +54,7 @@ class KlangkLogo extends StatelessWidget {
             Icon(Icons.smart_toy_outlined,
                 color: KColors.textPrimary, size: iconSize),
             Text(
-              'klangk',
+              Branding.name,
               style: TextStyle(
                 fontSize: fontSize,
                 fontWeight: FontWeight.w400,

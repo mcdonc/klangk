@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
-
 import '../branding.dart';
 
 /// Override for testing — set to intercept all HTTP calls in AuthService.
@@ -107,7 +106,11 @@ class AuthService extends ChangeNotifier {
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
         _minPasswordLength =
             (data['min_password_length'] as num?)?.toInt() ?? 8;
-        Branding.logoUrl = (data['logo_url'] as String?) ?? '';
+        // White-label values — mirrored into the Branding helper so widgets
+        // that don't have an AuthService context (e.g. the app-bar logo,
+        // page title) can read them synchronously. Covers the product name
+        // (#1149) and the logo URL override (#1152).
+        Branding.applyConfig(data);
       }
     } catch (e) {
       // coverage:ignore-start

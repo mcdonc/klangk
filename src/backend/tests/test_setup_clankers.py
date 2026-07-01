@@ -133,25 +133,31 @@ class TestWriteModels:
         assert models["providers"]["llm-proxy"]["models"] == []
 
 
-class TestBuildSystemPrompt:
+class TestBuildAgentContext:
     def test_copies_prompt(self, fake_home, monkeypatch):
-        prompt_src = sc.IMAGE_DIR.parent / "system-prompt.md"
-        prompt_src.write_text("# System Prompt")
-        monkeypatch.setattr(sc, "SYSTEM_PROMPT_SRC", prompt_src)
+        prompt_src = sc.IMAGE_DIR.parent / "agent-context.md"
+        prompt_src.write_text("# Agent Context")
+        monkeypatch.setattr(sc, "AGENT_CONTEXT_SRC", prompt_src)
 
-        sc.build_system_prompt()
+        sc.build_agent_context()
 
-        assert (fake_home / "AGENTS.md").read_text() == "# System Prompt"
+        # Lands in Pi's global context-file slot, not home root.
+        assert (
+            fake_home / ".pi" / "agent" / "AGENTS.md"
+        ).read_text() == "# Agent Context"
+        assert not (fake_home / "AGENTS.md").exists()  # home-root copy is gone
 
     def test_does_not_overwrite_existing(self, fake_home, monkeypatch):
-        prompt_src = sc.IMAGE_DIR.parent / "system-prompt.md"
+        prompt_src = sc.IMAGE_DIR.parent / "agent-context.md"
         prompt_src.write_text("# New")
-        monkeypatch.setattr(sc, "SYSTEM_PROMPT_SRC", prompt_src)
-        (fake_home / "AGENTS.md").write_text("# User Custom")
+        monkeypatch.setattr(sc, "AGENT_CONTEXT_SRC", prompt_src)
+        agents_md = fake_home / ".pi" / "agent"
+        agents_md.mkdir(parents=True)
+        (agents_md / "AGENTS.md").write_text("# User Custom")
 
-        sc.build_system_prompt()
+        sc.build_agent_context()
 
-        assert (fake_home / "AGENTS.md").read_text() == "# User Custom"
+        assert (agents_md / "AGENTS.md").read_text() == "# User Custom"
 
 
 class TestMain:

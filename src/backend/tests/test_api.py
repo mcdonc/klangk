@@ -329,6 +329,21 @@ class TestConfig:
         resp = await client.get("/api/v1/config")
         assert resp.json()["logo_url"] == "https://from.secret/l.png"
 
+    async def test_get_config_includes_product_name_default(self, client):
+        # White-label product name; defaults to "Klangk" so existing
+        # deployments are unchanged when the var is unset (#1149).
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["product_name"] == "Klangk"
+
+    async def test_get_config_reflects_product_name(self, client, monkeypatch):
+        monkeypatch.setattr(api, "PRODUCT_NAME", "Acme Labs")
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["product_name"] == "Acme Labs"
+
 
 # --- Auth routes ---
 
@@ -2170,40 +2185,6 @@ class TestWorkspaceSharingRoutes:
             headers=other_headers,
         )
         assert resp.status_code == 403
-
-    async def test_add_member_broadcasts_workspace_members(self, client, user):
-        """Adding a member broadcasts updated workspace_members to WS."""
-        from klangk_backend.wshandler import WorkspaceSession
-
-        headers = await _auth_headers(client)
-        await self._create_other_user()
-        resp = await client.post(
-            "/api/v1/workspaces",
-            headers=headers,
-            json={"name": "broadcast-ws"},
-        )
-        ws_id = resp.json()["id"]
-        mock_sock = MagicMock()
-        mock_sock.send_json = MagicMock()
-        session = WorkspaceSession(ws_id)
-        session.subscribers.add(mock_sock)
-        wshandler.state.sessions[ws_id] = session
-        try:
-            resp = await client.post(
-                f"/api/v1/workspaces/{ws_id}/members",
-                headers=headers,
-                json={"email": "other@example.com"},
-            )
-            assert resp.status_code == 200
-            calls = [c[0][0] for c in mock_sock.send_json.call_args_list]
-            members_msgs = [
-                c for c in calls if c.get("type") == "workspace_members"
-            ]
-            assert len(members_msgs) == 1
-            emails = [m["email"] for m in members_msgs[0]["members"]]
-            assert "other@example.com" in emails
-        finally:
-            wshandler.state.sessions.pop(ws_id, None)
 
     async def test_members_no_permission(self, client, user):
         """User without share permission gets 403 on nonexistent workspace."""
