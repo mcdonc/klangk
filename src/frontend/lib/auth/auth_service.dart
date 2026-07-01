@@ -106,9 +106,10 @@ class AuthService extends ChangeNotifier {
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
         _minPasswordLength =
             (data['min_password_length'] as num?)?.toInt() ?? 8;
-        // White-label product name — mirrored into the Branding helper so
-        // widgets that don't have an AuthService context (e.g. the app-bar
-        // logo, page title) can read it synchronously (#1149).
+        // White-label values — mirrored into the Branding helper so widgets
+        // that don't have an AuthService context (e.g. the app-bar logo,
+        // page title) can read them synchronously. Covers the product name
+        // (#1149) and the logo URL override (#1152).
         Branding.applyConfig(data);
       }
     } catch (e) {

@@ -12,6 +12,11 @@ void main() {
     );
   }
 
+  // Branding.logoUrl is process-global; isolate every test so an override
+  // set in one can't leak into another. See #1152.
+  setUp(Branding.reset);
+  tearDown(Branding.reset);
+
   group('KlangkLogo', () {
     // Branding.name is a static that other tests may mutate; reset it so each
     // logo test starts from the default product name.
@@ -119,6 +124,39 @@ void main() {
       );
       expect(container.constraints?.maxWidth, 150);
       expect(container.constraints?.maxHeight, 150);
+    });
+  });
+
+  group('KlangkLogo logo override', () {
+    testWidgets('renders the default widget when no override', (tester) async {
+      await tester.pumpWidget(buildLogo());
+      // Default branch: robot icon + wordmark, no Image widget.
+      expect(find.byIcon(Icons.smart_toy_outlined), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+    });
+
+    testWidgets('renders an Image when Branding.logoUrl is set',
+        (tester) async {
+      Branding.logoUrl = 'https://no.such.invalid/logo.png';
+      // The override branch builds an Image (with a NetworkImage). We assert
+      // the branch was taken, not that the image loaded, and stop before the
+      // (offline) load can fail, so the default content is not rendered.
+      await tester.pumpWidget(buildLogo());
+      expect(find.byType(Image), findsOneWidget);
+    });
+
+    testWidgets('falls back to default when the image fails to load',
+        (tester) async {
+      // `.invalid` is reserved (RFC 2606) and never resolves, so the
+      // NetworkImage errors fast and offline. Mirror the image_renderer
+      // error-test convention: settle, drain the expected exception, settle
+      // again, then assert the errorBuilder fallback rendered the default.
+      Branding.logoUrl = 'https://no.such.invalid/logo.png';
+      await tester.pumpWidget(buildLogo());
+      await tester.pumpAndSettle();
+      tester.takeException();
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.smart_toy_outlined), findsOneWidget);
     });
   });
 }

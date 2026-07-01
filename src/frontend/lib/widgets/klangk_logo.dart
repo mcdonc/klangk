@@ -10,6 +10,25 @@ class KlangkLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final override = Branding.logoUrl;
+    if (override.isNotEmpty) {
+      // Deployer logo override (KLANGK_LOGO_URL via /config). Render the
+      // image sized to [height]; fall back to the default widget on load
+      // error so a broken/removed logo never leaves a blank square. #1152.
+      return SizedBox(
+        width: height,
+        height: height,
+        child: Image.network(
+          override,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) => _defaultLogo(),
+        ),
+      );
+    }
+    return _defaultLogo();
+  }
+
+  Widget _defaultLogo() {
     final iconSize = height * 0.5;
     final fontSize = height * 0.2;
     final radius = height * 0.18;

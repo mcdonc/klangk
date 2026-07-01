@@ -25,6 +25,27 @@ This example custom build layers your changes on top of the standard Klangk host
 - **Login hooks** — Custom Python hooks for OIDC login validation (e.g., require invitation)
 - **Logo** — A placeholder `logo.png` demonstrates branding customization
 
+## Runtime logo override (no rebuild)
+
+The build-time `customize/logo.png` path requires rebuilding the host image.
+For a no-rebuild rebrand, klangk also overrides the logo at runtime via the
+`KLANGK_LOGO_URL` env var:
+
+- **Set `KLANGK_LOGO_URL`** to an absolute image URL (e.g.
+  `https://example.com/logo.png`). The value is published to the UI through the
+  unauthenticated `/api/v1/config` endpoint (`logo_url`), so it renders on the
+  login page before login. It supports `file:`/`cmd:` secret resolution like
+  other env vars (e.g. `file:/run/secrets/logo_url` whose contents is the URL).
+- **Serve a local file without a CDN:** drop your logo into
+  `$KLANGK_DATA_DIR/branding/` (created at startup) and set
+  `KLANGK_LOGO_URL=/branding/logo.png`. klangk serves that directory at
+  `/branding/` — no rebuild, no external host.
+- When unset — or if the image fails to load — the default `KlangkLogo` widget
+  is rendered, so existing deployments are unchanged.
+
+This overrides only the **image**. Product-name text (`KLANGK_PRODUCT_NAME`)
+and logos in emails are tracked under separate items.
+
 ## Prerequisites
 
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/)
