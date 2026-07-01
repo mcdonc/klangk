@@ -2,55 +2,50 @@
 
 Covers three invariants:
 
-- #1039 (ordering) + #1087 (location): ``setup.sh`` writes every env
-  export the default_command depends on to ``~/.profile`` up front,
+- #1039 (ordering): ``setup.sh`` writes every env export the
+  default_command depends on into the AGENT's ``~/.profile`` up front,
   before the slow ``npm install``.
+- #1039 (shared mount): a second workspace reusing the populated
+  ``/openclaw`` mount SKIPS the install yet still writes a complete
+  agent ``~/.profile``.
 - #1089: the ``health-check: /openclaw/bin/healthcheck.sh`` config
   reaches the workspace, the health monitor runs it as a non-login
   bash shell (``bash -c``) so it sources nothing, and the status
   endpoint reports ``healthy`` once the gateway (launched by
   ``default-command``) is up.
 
-``sandboxes/openclaw/setup.sh`` persists every env export the
-default_command depends on (``NVM_DIR`` + nvm source, ``/openclaw/bin``
-on ``PATH``, ``OPENCLAW_HOME``) to ``~/.profile`` in one block at the
-very top of setup, before the long ``npm install -g openclaw``. It also
-writes ``/openclaw/bin/healthcheck.sh`` (and symlinks
-``/openclaw/bin/openclaw`` at the nvm-installed binary) so the health
-check can invoke openclaw by absolute path -- the non-login ``bash -c``
-probe does not source ``~/.profile``, so it cannot rely on nvm PATH.
+Under the agent-owns-the-service model (#1133/#1158) the default command
+runs in the agent's standalone ``service`` tmux session, whose login shell
+sources the AGENT's ``~/.profile``. So ``setup.sh`` repoints ``HOME`` at
+``$KLANGK_AGENT_HOME`` and writes its exports there (``NVM_DIR`` + nvm
+source, ``/openclaw/bin`` on ``PATH``, ``OPENCLAW_HOME``); the owner
+manages openclaw through the Service terminal tab, not their own shell, so
+nothing openclaw-related lives in the owner's home (#1171). The health
+check is unaffected: it runs as a non-login ``bash -c`` and uses an
+absolute-path wrapper that bakes in ``OPENCLAW_HOME``.
 
 Why ``~/.profile`` and not ``~/.bashrc`` (#1087): ``~/.profile`` is the
-POSIX file sourced by login shells -- interactive terminals (the
-default-cmd tmux pane is an interactive login shell) and
-``klangkc exec`` (``bash -lc``). ``~/.bashrc`` has an interactivity guard
-that hides its body from non-interactive shells, so exports the health
-check needs cannot live there. ``~/.profile`` is the one file BOTH the
-default_command and the health check reliably source.
+POSIX file sourced by login shells. ``~/.bashrc`` has an interactivity
+guard that hides its body from non-interactive shells.
 
-Previously ``OPENCLAW_HOME`` was appended near the end of setup (and to
-``~/.bashrc``), so a shell spawned mid-setup (e.g. the ``default-cmd``
-pane from an early ``terminal_start`` -- the #1033 race) inherited
-``PATH`` but not ``OPENCLAW_HOME``; with ``OPENCLAW_HOME`` unset,
-``openclaw gateway`` looked for config at ``$HOME/.openclaw`` instead of
-``/openclaw/.openclaw`` and reported "Missing config".
+Previously the exports went to the OWNER's ``~/.profile`` (pre-#1158 the
+default command ran in the owner's session); that left the autostarted
+gateway env-less under the new model -- the service session sourced the
+agent's empty ``~/.profile`` and ``openclaw gateway`` reported "Missing
+config" (#1171).
 
-How the test exercises this deterministically: ``setup.sh`` blocks while
-a sentinel file (``/openclaw/.klangk-test-pause``, i.e. on the bind
+How the test exercises ordering deterministically: ``setup.sh`` blocks
+while a sentinel file (``/openclaw/.klangk-test-pause``, i.e. on the bind
 mount) exists. The sentinel is placed right after the consolidated export
-block and before the slow install, so while setup is parked there the
-test reads ``~/.profile`` straight off the host filesystem and asserts
-the export is already present. On a regression that moves the
-``OPENCLAW_HOME`` append back to the end of setup, ``~/.profile`` lacks it
-at this point and the test fails. Releasing the sentinel lets the real
-``npm install -g openclaw`` run, and the test confirms the binary lands
-on the mount.
+block and before the slow install, so while setup is parked there the test
+reads the agent's ``~/.profile`` straight off the host filesystem and
+asserts the export is already present. Releasing the sentinel lets the
+real ``npm install -g openclaw`` run, and the test confirms the binary
+lands on the mount.
 
 This reads files directly from the host (the per-user home and the
 ``/openclaw`` mount both live under the server data dir / the sandbox
-dir). It deliberately avoids ``klangkc exec``: exec runs a raw command
-with no login shell (#1041), so it would not source ``~/.profile`` and
-would give a false negative.
+dir).
 
 Run locally (the workspace image must be built first):
 
@@ -62,11 +57,8 @@ sandbox, so it never slows the regular CLI/backend e2e suites. Requires
 network (real ``npm install``).
 """
 
-import asyncio
 import glob
-import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -74,7 +66,6 @@ import time
 
 import httpx
 import pytest
-import websockets
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SANDBOX_DIR = os.path.join(REPO_ROOT, "sandboxes", "openclaw")
@@ -85,34 +76,27 @@ SENTINEL = os.path.join(SANDBOX_DIR, ".klangk-test-pause")
 WS = "e2e-openclaw-setup"
 # Second workspace pointed at the SAME /openclaw mount. openclaw is
 # already installed there after WS's setup ran, so WS2's setup SKIPS the
-# install but must still write a complete per-workspace ~/.profile. This
-# is the shared-mount + per-workspace-~/.profile interaction at the heart
-# of #1039 -- a regression that moves an export inside the install-skip
+# install but must still write a complete agent ~/.profile. This is the
+# shared-mount + per-workspace-~/.profile interaction at the heart of
+# #1039 -- a regression that moves an export inside the install-skip
 # guard breaks WS2 permanently (not just a race) while WS may still pass.
 WS2 = "e2e-openclaw-setup-2"
-# Third workspace at the same mount, used by the #1033 visitor test.
-# Like WS2 its setup skips the install (mount already populated) and
-# pauses at the sentinel, so the test can drive a VISITOR terminal_start
-# while setup is genuinely mid-flight -- the exact #1033 race.
+# Third workspace at the same mount, used by the #1089 health-check test.
+# Like WS2 its setup skips the install (mount already populated) so it
+# comes up fast; the point is to exercise the end-to-end health-check
+# path (config -> monitor -> status endpoint) against a real gateway, not
+# to re-run the install.
 WS3 = "e2e-openclaw-setup-3"
-# Fourth workspace at the same mount, used by the #1089 health-check
-# test. Like WS2/WS3 its setup skips the install (mount already
-# populated) so it comes up fast; the point is to exercise the
-# end-to-end health-check path (config -> monitor -> status endpoint)
-# against a real gateway, not to re-run the install.
-WS4 = "e2e-openclaw-setup-4"
-# Fifth workspace at the same mount, used by the #1041 klangkc-exec
-# test. setup skips the install (mount populated) so it's fast; the
-# point is to prove `klangkc exec` runs as a login shell so a
-# PATH-only binary (nvm-installed `openclaw`) resolves -- the exact
-# repro in the issue.
-WS5 = "e2e-openclaw-setup-5"
 # Own port + instance id so it never collides with other e2e suites
 # (cli-e2e 18995, autostart 18996/18997).
 PORT = "18998"
 INSTANCE = "openclaw-setup-e2e"
 EMAIL = "test@example.com"
 PASSWORD = "testpass"
+# The agent's user id (klangk_backend.model.AGENT_USER_ID). setup.sh
+# repoints HOME at the agent's home (#1171) so the ~/.profile exports
+# land in the agent's home, not the owner's; the tests read that profile.
+AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
 # Real npm install of openclaw (nvm + node + global package) can take a
 # while, especially on CI.
 SETUP_TIMEOUT = 900
@@ -302,132 +286,24 @@ def _health_status(base_url, token, ws_id):
     return body.get("health"), body.get("health_checked_at")
 
 
-def _owning_profile(data_dir, user_id, ws_id):
-    """Path to the owning user's ~/.profile on the host for *ws_id*.
+def _agent_profile(data_dir, owner_user_id, ws_id):
+    """Path to the AGENT's ~/.profile on the host for *ws_id*.
 
-    The per-workspace home is bind-mounted at /home; the owning user's
-    real home is ``<data>/workspaces/<uid>/home/<ws_id>/.users/<uid>/``
+    setup.sh repoints HOME at the agent's home (#1171), so the
+    OPENCLAW_HOME / PATH / NVM_DIR exports it writes land in the agent's
+    home (``.users/<AGENT_USER_ID>``), not the owner's. The per-workspace
+    home tree is ``<data>/workspaces/<owner_uid>/home/<ws_id>/.users/``
     (home_path is keyed by workspace id, so this resolves directly).
     """
     return os.path.join(
         data_dir,
         "workspaces",
-        user_id,
+        owner_user_id,
         "home",
         ws_id,
         ".users",
-        user_id,
+        AGENT_USER_ID,
         ".profile",
-    )
-
-
-async def _visitor_two_phase_terminal_env(
-    base_url, token, ws_id, var, between_phases, timeout=25.0
-):
-    """Two-phase visitor probe for the #1033/#1051/#1039 invariants.
-
-    Phase 1 -- mid-setup: fire ``terminal_start`` while setup is parked
-    at the sentinel.  Only the ``bash`` window (window 0) is created;
-    ``default-cmd`` is gated on ``setup_state == complete`` (#1051).
-    The spawned shell sources ``~/.profile`` at that instant; under the
-    #1039 fix the exports are already present, so ``$var`` is set.
-
-    Then ``await between_phases()`` runs -- the caller releases the
-    sentinel and waits for setup to finish (the setup connection's own
-    post-setup ``terminal_start`` creates the ``default-cmd`` window).
-
-    Phase 2 -- post-setup: fire ``terminal_start`` again.  The
-    ``default-cmd`` window now exists; the visitor observes it via the
-    window sync.  (The visitor does not itself receive
-    ``default_command_started`` here -- the setup connection won the
-    race to create the window.  That event is covered by unit tests.)
-
-    Returns ``(mid_windows, post_windows, value)``.
-    """
-    ws_url = base_url.replace("http://", "ws://") + "/ws"
-    async with websockets.connect(f"{ws_url}?token={token}", max_size=2**24) as ws:
-        await ws.send(json.dumps({"cmd": "workspace_connect", "workspaceId": ws_id}))
-        # Drain until container_ready.
-        deadline = asyncio.get_event_loop().time() + timeout
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                raise asyncio.TimeoutError("visitor: no container_ready")
-            msg = json.loads(await asyncio.wait_for(ws.recv(), remaining))
-            if msg.get("type") == "container_ready":
-                break
-            if msg.get("type") == "error":
-                raise ConnectionError(f"visitor connect failed: {msg}")
-
-        # ---- Phase 1: terminal_start mid-setup ----
-        mid_windows = await _visitor_fire_terminal_start(ws, timeout)
-        value = await _visitor_probe_env(ws, var, timeout)
-
-        # Let setup finish (caller releases sentinel + waits).
-        await between_phases()
-
-        # ---- Phase 2: terminal_start post-setup ----
-        post_windows = await _visitor_fire_terminal_start(ws, timeout)
-
-        return mid_windows, post_windows, value
-
-
-async def _visitor_fire_terminal_start(ws, timeout):
-    """Send terminal_start, drain to terminal_windows, return windows."""
-    await ws.send(
-        json.dumps(
-            {
-                "cmd": "terminal_start",
-                "cols": 80,
-                "rows": 24,
-                "browser_id": "e2e-visitor",
-            }
-        )
-    )
-    deadline = asyncio.get_event_loop().time() + timeout
-    windows = []
-    while True:
-        remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:
-            raise asyncio.TimeoutError("visitor: no terminal_started")
-        msg = json.loads(await asyncio.wait_for(ws.recv(), remaining))
-        if msg.get("type") == "terminal_started":
-            continue
-        if msg.get("type") == "terminal_windows":
-            windows = msg.get("windows", [])
-            break
-        if msg.get("type") == "error":
-            raise ConnectionError(f"visitor terminal_start: {msg}")
-    return windows
-
-
-async def _visitor_probe_env(ws, var, timeout):
-    """Probe window 0's live ``$var`` via a marker, retrying until ready."""
-    left, right = "MKOPEN", "MKCLOSE"
-    cmd = f"printf '{left}%s{right}\\n' \"${var}\"\r"
-    pattern = re.compile(re.escape(left) + r"(.*?)" + re.escape(right))
-    deadline = asyncio.get_event_loop().time() + timeout
-    buf = ""
-    sent = False
-    while asyncio.get_event_loop().time() < deadline:
-        if not sent:
-            await ws.send(json.dumps({"cmd": "terminal_input", "data": cmd}))
-            sent = True
-        try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
-        except asyncio.TimeoutError:
-            sent = False
-            continue
-        msg = json.loads(raw)
-        if msg.get("type") == "terminal_output":
-            buf += msg.get("data", "")
-            for m in pattern.finditer(buf):
-                val = m.group(1)
-                if val != "%s":
-                    return val
-    raise AssertionError(
-        f"visitor probe for ${var} never returned a marker within "
-        f"{timeout}s. Output:\n{buf!r}"
     )
 
 
@@ -608,10 +484,10 @@ class TestOpenclawSetupProfileExports:
                 "regressed.\n" + out
             )
 
-            # WS2's container is up; read ITS own per-workspace ~/.profile
+            # WS2's container is up; read ITS agent ~/.profile
             # (a different ws_id from WS).
             ws2_id = self._await_container(name=WS2)
-            profile_path = _owning_profile(self._data_dir, self._user_id, ws2_id)
+            profile_path = _agent_profile(self._data_dir, self._user_id, ws2_id)
             with open(profile_path) as f:
                 profile = f.read()
 
@@ -625,105 +501,6 @@ class TestOpenclawSetupProfileExports:
             )
             assert 'export PATH="/openclaw/bin:$PATH"' in profile
         finally:
-            if sandbox_proc.poll() is None:
-                sandbox_proc.kill()
-
-    def test_visitor_terminal_start_mid_setup_has_openclaw_home(self):
-        """A VISITOR terminal_start fired while setup is still running
-        spawns a shell whose live environment has OPENCLAW_HOME set.
-
-        Two-phase assertion reflecting #1051's gating of the default
-        command on ``setup_state == complete``:
-
-        Phase 1 (mid-setup): the visitor's ``terminal_start`` creates
-        the ``bash`` window (window 0) but NOT ``default-cmd`` -- #1051
-        gates it.  The spawned shell sources ``~/.profile`` at that
-        instant; under the #1039 fix the exports are already there
-        (written before the slow install), so ``OPENCLAW_HOME`` is set.
-        This is the "Missing config" window that #1039 closes.
-
-        Phase 2 (post-setup): after setup completes, the ``default-cmd``
-        window appears (created by the setup connection's own
-        post-setup ``terminal_start``).  The visitor observes it via a
-        window sync on its second ``terminal_start``.
-        """
-        # WS3 reuses the populated mount, so its setup SKIPS the install
-        # (fast) and pauses at the sentinel -- setup is genuinely
-        # mid-flight when the visitor connects.
-        if os.path.exists(SENTINEL):
-            os.remove(SENTINEL)
-        with open(SENTINEL, "w") as f:
-            f.write("1\n")
-
-        sandbox_proc = subprocess.Popen(
-            ["klangkc", "sandbox", WS3, SANDBOX_DIR],
-            env=self._env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        try:
-            ws3_id = self._await_container(name=WS3)
-            # setup.sh is now parked at the sentinel, AFTER writing the
-            # consolidated ~/.profile exports.
-            self._await_setup_exports(ws3_id)
-
-            async def _release_and_wait_setup():
-                """Release sentinel, wait for sandbox proc to finish."""
-
-                def _wait():
-                    os.remove(SENTINEL)
-                    deadline = time.monotonic() + SETUP_TIMEOUT
-                    while time.monotonic() < deadline:
-                        if sandbox_proc.poll() is not None:
-                            return sandbox_proc.returncode
-                        time.sleep(0.5)
-                    return None
-
-                rc = await asyncio.to_thread(_wait)
-                assert rc == 0, "klangkc sandbox (WS3) failed:\n" + (
-                    sandbox_proc.stdout.read() or ""
-                )
-
-            mid_windows, post_windows, value = asyncio.run(
-                _visitor_two_phase_terminal_env(
-                    self._base_url,
-                    self._token,
-                    ws3_id,
-                    "OPENCLAW_HOME",
-                    _release_and_wait_setup,
-                )
-            )
-
-            # Phase 1 -- mid-setup: default-cmd is gated (#1051).
-            mid_names = [w.get("name") for w in mid_windows]
-            assert "default-cmd" not in mid_names, (
-                "visitor terminal_start mid-setup created the "
-                "default-cmd window, but #1051 should gate it on "
-                "setup_state == complete. Windows seen: " + repr(mid_names)
-            )
-
-            # The shell spawned mid-setup sourced a ~/.profile that
-            # already has OPENCLAW_HOME (the #1039 fix).
-            assert value == "/openclaw", (
-                "a shell spawned by a visitor terminal_start mid-setup "
-                "did NOT have OPENCLAW_HOME set -- the #1033 race bit: "
-                "the mid-setup ~/.profile lacked the export, so the spawned "
-                f"shell's $OPENCLAW_HOME was {value!r} (expected "
-                "'/openclaw'). This is the 'Missing config' window."
-            )
-
-            # Phase 2 -- post-setup: default-cmd now exists (created by
-            # the setup connection's own post-setup terminal_start).
-            post_names = [w.get("name") for w in post_windows]
-            assert "default-cmd" in post_names, (
-                "default-cmd window absent post-setup; the #1051 gate "
-                "should open once setup_state == complete. Windows seen: "
-                + repr(post_names)
-            )
-        finally:
-            if os.path.exists(SENTINEL):
-                os.remove(SENTINEL)
             if sandbox_proc.poll() is None:
                 sandbox_proc.kill()
 
@@ -766,10 +543,10 @@ class TestOpenclawSetupProfileExports:
             "full install"
         )
 
-        # WS4 reuses the populated mount, so its setup SKIPS the install
+        # WS3 reuses the populated mount, so its setup SKIPS the install
         # (fast) -- the point here is the health-check path, not install.
         sandbox_proc = subprocess.Popen(
-            ["klangkc", "sandbox", WS4, SANDBOX_DIR],
+            ["klangkc", "sandbox", WS3, SANDBOX_DIR],
             env=self._env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -778,96 +555,21 @@ class TestOpenclawSetupProfileExports:
         try:
             rc = sandbox_proc.wait(timeout=SETUP_TIMEOUT)
             out = sandbox_proc.stdout.read() or ""
-            assert rc == 0, f"klangkc sandbox (WS4) failed:\n{out}"
+            assert rc == 0, f"klangkc sandbox (WS3) failed:\n{out}"
             # The install was genuinely skipped, proving the fast path.
             assert "openclaw already installed, skipping." in out, (
                 "expected setup to SKIP the install (mount already "
                 "populated); it didn't.\n" + out
             )
 
-            ws4_id = self._await_container(name=WS4)
+            ws3_id = self._await_container(name=WS3)
 
             # Wait for the gateway to come up AND the monitor (polling
             # every KLANGK_HEALTH_CHECK_INTERVAL=3s in this fixture) to
             # report healthy. Generous timeout: the gateway binds a few
             # seconds after setup, then the first poll lands within one
             # interval.
-            self._await_health(ws4_id, expected="healthy", timeout=180)
-        finally:
-            if sandbox_proc.poll() is None:
-                sandbox_proc.kill()
-
-    def test_klangkc_exec_resolves_path_only_binary(self):
-        """`klangkc exec` runs as a bash login shell so a PATH-only
-        binary (the nvm-installed `openclaw`) resolves -- the exact #1041
-        repro.
-
-        Before #1041, exec passed raw argv to `podman exec` with no
-        shell, so `~/.profile` was never sourced and `openclaw` (only on
-        PATH via `~/.profile`'s nvm source + `/openclaw/bin`) was not
-        found: `klangkc exec ws openclaw --version` failed with
-        'command not found'. Now exec wraps the command in
-        `bash -lc shlex.join(argv)`, sourcing `~/.profile` exactly like
-        an interactive terminal, so the binary resolves.
-
-        Uses `--raw` as a control: the same command under `--raw` (no
-        shell) must still fail to resolve, proving the login shell is
-        what fixes it and that `--raw` preserves the old raw behavior.
-        """
-        # Precondition: openclaw on the shared mount (full-install test
-        # ran first).
-        assert glob.glob(
-            os.path.join(
-                SANDBOX_DIR, ".nvm", "versions", "node", "v*", "bin", "openclaw"
-            )
-        ), "openclaw not on the shared mount -- run the full-install test first"
-
-        # WS5 reuses the populated mount (setup skips the install --
-        # fast), so we can exercise the exec path without a full setup.
-        sandbox_proc = subprocess.Popen(
-            ["klangkc", "sandbox", WS5, SANDBOX_DIR],
-            env=self._env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        try:
-            rc = sandbox_proc.wait(timeout=SETUP_TIMEOUT)
-            out = sandbox_proc.stdout.read() or ""
-            assert rc == 0, f"klangkc sandbox (WS5) failed:\n{out}"
-            assert "openclaw already installed, skipping." in out
-            self._await_container(name=WS5)
-
-            # The fix: default `klangkc exec` sources ~/.profile (login
-            # shell), so the nvm-installed openclaw resolves.
-            res = _run(
-                ["klangkc", "exec", WS5, "openclaw", "--version"],
-                env=self._env,
-                timeout=120,
-            )
-            assert res.returncode == 0, (
-                "klangkc exec openclaw --version failed under the login "
-                f"shell (should resolve via ~/.profile):\n{res.stderr}"
-            )
-            assert res.stdout.strip(), (
-                "openclaw --version produced no output:\n" + res.stdout
-            )
-
-            # The control: `--raw` skips the login shell, so openclaw is
-            # NOT on PATH (it lives behind the nvm source in ~/.profile)
-            # and the command must fail. This proves the login wrap is
-            # what fixes resolution and that --raw preserves raw argv.
-            res_raw = _run(
-                ["klangkc", "exec", "--raw", WS5, "openclaw", "--version"],
-                env=self._env,
-                timeout=120,
-            )
-            assert res_raw.returncode != 0, (
-                "klangkc exec --raw openclaw --version unexpectedly "
-                "succeeded -- under --raw no shell runs, so ~/.profile "
-                "is not sourced and openclaw should not be on PATH. "
-                f"Output:\n{res_raw.stdout}"
-            )
+            self._await_health(ws3_id, expected="healthy", timeout=180)
         finally:
             if sandbox_proc.poll() is None:
                 sandbox_proc.kill()
@@ -918,21 +620,22 @@ class TestOpenclawSetupProfileExports:
         )
 
     def _await_setup_exports(self, ws_id, timeout=120):
-        """Poll ~/.profile until setup has appended its first export.
+        """Poll the agent's ~/.profile until setup has appended its first export.
 
         setup.sh writes the consolidated export block then blocks on the
         sentinel, so once ``export NVM_DIR`` appears setup is parked.
-        Returns the path to the owning user's .profile.
+        Returns the path to the agent's .profile.
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            path = _owning_profile(self._data_dir, self._user_id, ws_id)
+            path = _agent_profile(self._data_dir, self._user_id, ws_id)
             if path and os.path.exists(path):
                 with open(path) as f:
                     if "export NVM_DIR" in f.read():
                         return path
             time.sleep(1)
         raise AssertionError(
-            "setup never wrote ~/.profile exports (sentinel not reached); "
+            "setup never wrote the agent's ~/.profile exports "
+            "(sentinel not reached); "
             f"user_id={self._user_id} data_dir={self._data_dir}"
         )

@@ -61,6 +61,10 @@ PORT = "18999"
 INSTANCE = "hermes-setup-e2e"
 EMAIL = "test@example.com"
 PASSWORD = "testpass"
+# The agent's user id (klangk_backend.model.AGENT_USER_ID). setup.sh
+# repoints HOME at the agent's home (#1171) so the ~/.profile exports
+# land in the agent's home, not the owner's; the test reads that profile.
+AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
 # Real install (clone NousResearch/hermes-agent + uv sync .[all] + managed
 # Node) can take several minutes, especially on CI. The installer's own
 # estimate is 1-5 min for deps; the clone + Node add to that.
@@ -240,16 +244,22 @@ def _health_status(base_url, token, ws_id):
     return body.get("health"), body.get("health_checked_at")
 
 
-def _owning_profile(data_dir, user_id, ws_id):
-    """Path to the owning user's ~/.profile on the host for *ws_id*."""
+def _agent_profile(data_dir, owner_user_id, ws_id):
+    """Path to the AGENT's ~/.profile on the host for *ws_id*.
+
+    setup.sh repoints HOME at the agent's home (#1171), so the
+    HERMES_HOME / PATH exports it writes land in the agent's home
+    (``.users/<AGENT_USER_ID>``), not the owner's. The per-workspace
+    home tree is ``<data>/workspaces/<owner_uid>/home/<ws_id>/.users/``.
+    """
     return os.path.join(
         data_dir,
         "workspaces",
-        user_id,
+        owner_user_id,
         "home",
         ws_id,
         ".users",
-        user_id,
+        AGENT_USER_ID,
         ".profile",
     )
 
@@ -390,17 +400,20 @@ class TestHermesSetup:
             assert os.path.exists(os.path.join(SANDBOX_DIR, "config.yaml")), (
                 "setup.sh did not write /hermes/config.yaml (llm-proxy config)"
             )
-            # setup.sh wrote ~/.profile exports up front.
-            profile_path = _owning_profile(self._data_dir, self._user_id, ws_id)
+            # setup.sh wrote ~/.profile exports up front (into the AGENT's
+            # home: it repoints HOME at $KLANGK_AGENT_HOME, #1171).
+            profile_path = _agent_profile(self._data_dir, self._user_id, ws_id)
             assert os.path.exists(profile_path), (
-                f"~/.profile not found at {profile_path}"
+                f"agent ~/.profile not found at {profile_path}"
             )
             with open(profile_path) as f:
                 profile = f.read()
             assert 'export HERMES_HOME="/hermes"' in profile, (
-                "HERMES_HOME missing from ~/.profile -- the gateway wrapper "
-                "and health check need it to locate hermes config/PID "
-                "files.\n~/.profile:\n" + profile
+                "HERMES_HOME missing from the agent's ~/.profile -- the "
+                "gateway runs in the agent's service session which sources "
+                "this file, so without it the autostarted gateway cannot "
+                "locate hermes config/PID files (#1171).\n"
+                "~/.profile:\n" + profile
             )
 
             # The gateway (started by default-command) is up and the health

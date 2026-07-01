@@ -23,9 +23,11 @@ klangkc sandbox hermes
 
 First run fetches and runs the upstream Hermes installer, writes a config
 pointing at the Klangk LLM proxy, and installs the gateway wrapper. The
-gateway starts automatically in the first terminal window.
+gateway starts automatically in the Service terminal tab (it runs as the
+workspace's agent identity in a dedicated `service` tmux session, not in
+your own shell).
 
-To configure messaging platforms after setup:
+To configure messaging platforms after setup, run this in the Service tab:
 
 ```bash
 hermes setup
