@@ -35,7 +35,7 @@ the person can do:
 | **Owner**        | yes      | yes   | yes  | yes             | yes            | yes           |
 | **Coder**        | yes      | yes   | yes  | watch only      |                |               |
 | **Collaborator** | yes      | yes   | yes  | watch + type    | yes            |               |
-| **Spectator**    |          |       | yes  | watch only      |                |               |
+| **Spectator**    |          |       |      | watch only      |                |               |
 
 See [Terminal - Role Permissions](terminal.md#role-permissions) for
 the full permission breakdown.
