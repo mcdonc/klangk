@@ -14,7 +14,7 @@ import 'package:flutter/foundation.dart';
 /// rebuild — there may be a brief flash of [defaultName] on cold start,
 /// consistent with how the login banner fields behave.
 class Branding {
-  Branding._();
+  Branding._(); // coverage:ignore-line
 
   /// Product name shown in the browser tab title, app-bar logo, and emails.
   static const String defaultName = 'Klangk';
