@@ -1,12 +1,14 @@
 """Tests for main.py: lifespan, seed user, static files, logfire."""
 
 import os
+import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from klangk_backend import main, model
 
@@ -96,6 +98,94 @@ class TestSeedAgentUser:
         # Cache should now reflect DB values
         agent = await model.get_agent_user()
         assert agent["email"] == "MrBoops@example.com"
+
+    async def test_users_handle_has_unique_constraint(self, db):
+        """The users.handle UNIQUE constraint is the structural backstop.
+
+        Confirms a duplicate handle raises IntegrityError at the DB layer,
+        independent of seed_agent_user's pre-check.  See #1137.
+        """
+        async with model.transaction() as db_conn:
+            await db_conn.execute(
+                "INSERT INTO users (id, email, handle)"
+                " VALUES ('uid-a', 'a@x.com', 'alice')"
+            )
+            with pytest.raises(SAIntegrityError) as exc_info:
+                await db_conn.execute(
+                    "INSERT INTO users (id, email, handle)"
+                    " VALUES ('uid-b', 'b@x.com', 'alice')"
+                )
+        # The underlying driver-level cause is the sqlite UNIQUE violation.
+        assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
+
+    async def test_seed_refuses_handle_collision_with_human(
+        self, db, monkeypatch
+    ):
+        """Seeding the agent with a live user's handle fails cleanly.
+
+        The destructive path is ensure_home_symlink migrating that user's
+        files into the agent's tree; the guard must abort before any such
+        work.  See #1137.
+        """
+        human = await model.create_user(
+            "alice@example.com", "hash", verified=True
+        )
+        assert human["handle"] == "alice"
+        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "alice")
+        with pytest.raises(RuntimeError, match="alice"):
+            await main.seed_agent_user()
+        # Human user is untouched.
+        refreshed = await model.get_user_by_id(human["id"])
+        assert refreshed["handle"] == "alice"
+        # Agent was not created with the colliding handle.
+        assert await model.get_user_by_id(model.AGENT_USER_ID) is None
+
+    async def test_seed_rename_to_human_handle_refuses(self, db, monkeypatch):
+        """Re-seeding the agent onto a human's handle fails, leaves agent as-is."""
+        await main.seed_agent_user()  # agent handle = MrBoops
+        human = await model.create_user(
+            "alice@example.com", "hash", verified=True
+        )
+        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "alice")
+        with pytest.raises(RuntimeError, match="already used by another user"):
+            await main.seed_agent_user()
+        # Agent keeps its original handle; human untouched.
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        assert agent["handle"] == "MrBoops"
+        refreshed = await model.get_user_by_id(human["id"])
+        assert refreshed["handle"] == "alice"
+
+    async def test_collision_leaves_human_files_untouched(
+        self, db, monkeypatch, tmp_path
+    ):
+        """A handle collision never reaches ensure_home_symlink's adoption.
+
+        Builds the on-disk layout that the destructive branch would migrate
+        (a /home/<handle> symlink -> .users/<human-uid> with files) and
+        confirms a colliding agent seed aborts before any file moves.  See
+        #1137.
+        """
+        human = await model.create_user(
+            "alice@example.com", "hash", verified=True
+        )
+        # Stand up the destructive-branch precondition directly on disk.
+        home = tmp_path / "home"
+        users_dir = home / ".users"
+        users_dir.mkdir(parents=True)
+        human_dir = users_dir / human["id"]
+        human_dir.mkdir()
+        (human_dir / "secret.txt").write_text("alice's secrets")
+        (home / "alice").symlink_to(f".users/{human['id']}")
+
+        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "alice")
+        with pytest.raises(RuntimeError):
+            await main.seed_agent_user()
+
+        # Human's files are exactly where they were — nothing migrated.
+        assert (human_dir / "secret.txt").read_text() == "alice's secrets"
+        assert os.readlink(home / "alice") == f".users/{human['id']}"
+        # No agent user directory was created.
+        assert not (users_dir / model.AGENT_USER_ID).exists()
 
 
 # --- Lifespan ---
