@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block content %}<p>Click the link below to verify your email address and activate your {{ product_name }} account:</p>
+<p><a href="{{ link }}">Verify my account</a></p>
+<p>This link expires in {{ expiry_hours }} hour{{ '' if expiry_hours == 1 else 's' }}.</p>
+{% endblock %}

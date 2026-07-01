@@ -1,0 +1,7 @@
+Click the link below to verify your email address and activate your {{ product_name }} account:
+
+<{{ link }}>
+
+This link expires in {{ expiry_hours }} hour{{ '' if expiry_hours == 1 else 's' }}.
+
+If you did not request this, you can ignore this email.
