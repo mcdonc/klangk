@@ -304,6 +304,31 @@ class TestConfig:
         data = resp.json()
         assert data["min_password_length"] == auth.MIN_PASSWORD_LENGTH
 
+    async def test_get_config_logo_url_defaults_empty(
+        self, client, monkeypatch
+    ):
+        # No KLANGK_LOGO_URL set -> empty string (UI renders default widget).
+        monkeypatch.delenv("KLANGK_LOGO_URL", raising=False)
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert resp.json()["logo_url"] == ""
+
+    async def test_get_config_logo_url_reflects_env(self, client, monkeypatch):
+        monkeypatch.setenv("KLANGK_LOGO_URL", "https://example.com/l.png")
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert resp.json()["logo_url"] == "https://example.com/l.png"
+
+    async def test_get_config_logo_url_resolves_file_secret(
+        self, client, tmp_path, monkeypatch
+    ):
+        # file:/cmd: resolution works like other secrets (#1152).
+        secret = tmp_path / "logo_url"
+        secret.write_text("https://from.secret/l.png")
+        monkeypatch.setenv("KLANGK_LOGO_URL", f"file:{secret}")
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["logo_url"] == "https://from.secret/l.png"
+
 
 # --- Auth routes ---
 

@@ -393,8 +393,31 @@ async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
 
 
 def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
-    """Mount Flutter Web static files and add no-cache middleware."""
+    """Mount Flutter Web static files and add no-cache middleware.
+
+    Also mounts a deployer-writable branding directory at ``/branding``
+    (under ``KLANGK_DATA_DIR/branding``) so a custom logo / assets can be
+    served without a Flutter rebuild. Created if missing so a deployer can
+    just drop files in. Mounted before the catch-all ``/`` frontend mount
+    so it takes priority, and without ``html=True`` (no directory listing).
+    See #1152.
+    """
     static_app = StaticFiles(directory=str(frontend_dir), html=True)
+
+    branding_dir = (
+        Path(
+            resolve_env_value(
+                "KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data")
+            )
+        )
+        / "branding"
+    )
+    branding_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/branding",
+        StaticFiles(directory=str(branding_dir)),
+        name="branding",
+    )
 
     @app.middleware("http")
     async def add_no_cache_headers(request, call_next):

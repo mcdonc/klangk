@@ -191,6 +191,10 @@ async def get_config():
         # Surfaced so the UI can validate password length inline (matches
         # the rule enforced server-side by auth.validate_password_length).
         "min_password_length": auth.MIN_PASSWORD_LENGTH,
+        # Deployer logo override (KLANGK_LOGO_URL). Empty when unset, in
+        # which case the frontend renders the default KlangkLogo widget.
+        # Supports file:/cmd: resolution like other secrets. See #1152.
+        "logo_url": resolve_env_value("KLANGK_LOGO_URL") or "",
     }
     config.update(plugins.frontend_config())
     return config

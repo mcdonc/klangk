@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
+import '../branding.dart';
+
 /// Override for testing — set to intercept all HTTP calls in AuthService.
 http.Client? testAuthHttpClientOverride;
 
@@ -105,6 +107,7 @@ class AuthService extends ChangeNotifier {
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
         _minPasswordLength =
             (data['min_password_length'] as num?)?.toInt() ?? 8;
+        Branding.logoUrl = (data['logo_url'] as String?) ?? '';
       }
     } catch (e) {
       // coverage:ignore-start
