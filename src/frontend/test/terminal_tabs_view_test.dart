@@ -496,6 +496,176 @@ void main() {
       expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
     });
 
+    // ── Service window tab (#1159) ──────────────────────────────────
+    // The agent's ``service`` window surfaces as a distinct, clearly-labeled
+    // operable tab rather than an opaque handle:win shared entry.
+    testWidgets('service window renders as a distinct Service tab',
+        (tester) async {
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [];
+      client._shared = [
+        {
+          'user_id': 'agent-user',
+          'window_id': '@0',
+          'handle': 'clanker',
+          'window_name': 'default-cmd',
+          'is_service': true,
+          'viewers': <Map<String, dynamic>>[],
+        },
+      ];
+      await tester.pumpWidget(_build(
+        client,
+        hasPerm: (p) => p != 'code-in-isolation',
+      ));
+
+      // Distinct "Service" label, not the opaque handle:win form.
+      expect(find.text('Service'), findsOneWidget);
+      expect(find.textContaining('clanker'), findsNothing);
+    });
+
+    testWidgets('service tab join fires onJoinShared with agent ids',
+        (tester) async {
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [];
+      client._shared = [
+        {
+          'user_id': 'agent-user',
+          'window_id': '@0',
+          'handle': 'clanker',
+          'window_name': 'default-cmd',
+          'is_service': true,
+          'viewers': <Map<String, dynamic>>[],
+        },
+      ];
+      String? joinedUser;
+      String? joinedWindow;
+      await tester.pumpWidget(_build(
+        client,
+        hasPerm: (p) => p != 'code-in-isolation',
+        onJoinShared: (_, userId, windowId) {
+          joinedUser = userId;
+          joinedWindow = windowId;
+        },
+      ));
+
+      await tester.tap(find.text('Service'));
+      expect(joinedUser, 'agent-user');
+      expect(joinedWindow, '@0');
+    });
+
+    testWidgets('service tab is writable (terminal icon) for operators',
+        (tester) async {
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [];
+      client._shared = [
+        {
+          'user_id': 'agent-user',
+          'window_id': '@0',
+          'handle': 'clanker',
+          'window_name': 'default-cmd',
+          'is_service': true,
+          'viewers': <Map<String, dynamic>>[],
+        },
+      ];
+      await tester.pumpWidget(_build(
+        client,
+        hasPerm: (p) =>
+            p == 'code-in-shared-terminals' || p == 'share-terminals',
+      ));
+
+      // Operators (code-in-shared-terminals / share-terminals) operate.
+      expect(find.byIcon(Icons.terminal), findsOneWidget);
+      expect(find.byIcon(Icons.lock_outlined), findsNothing);
+    });
+
+    testWidgets('service tab is read-only (lock icon) for spectators',
+        (tester) async {
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [];
+      client._shared = [
+        {
+          'user_id': 'agent-user',
+          'window_id': '@0',
+          'handle': 'clanker',
+          'window_name': 'default-cmd',
+          'is_service': true,
+          'viewers': <Map<String, dynamic>>[],
+        },
+      ];
+      await tester.pumpWidget(_build(
+        client,
+        hasPerm: (p) => false, // spectators: no perms
+      ));
+
+      // Spectators (no code-in-shared-terminals) get read-only.
+      expect(find.byIcon(Icons.lock_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.terminal), findsNothing);
+    });
+
+    testWidgets('service window is separated from regular shared tabs',
+        (tester) async {
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [];
+      client._shared = [
+        {
+          'user_id': 'agent-user',
+          'window_id': '@0',
+          'handle': 'clanker',
+          'window_name': 'default-cmd',
+          'is_service': true,
+          'viewers': <Map<String, dynamic>>[],
+        },
+        {
+          'user_id': 'user-2',
+          'window_id': 'w-other',
+          'handle': 'alice',
+          'window_name': 'main',
+          'viewers': <Map<String, dynamic>>[],
+        },
+      ];
+      await tester.pumpWidget(_build(
+        client,
+        hasPerm: (p) => p != 'code-in-isolation',
+      ));
+
+      // Both tabs render: the service tab with its distinct label and the
+      // regular shared tab with the handle:win form.
+      expect(find.text('Service'), findsOneWidget);
+      expect(find.text('alice:mai…'), findsOneWidget);
+    });
+
+    testWidgets('service tab is highlighted when active', (tester) async {
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [];
+      client._shared = [
+        {
+          'user_id': 'agent-user',
+          'window_id': '@0',
+          'handle': 'clanker',
+          'window_name': 'default-cmd',
+          'is_service': true,
+          'viewers': <Map<String, dynamic>>[],
+        },
+      ];
+      await tester.pumpWidget(_build(
+        client,
+        hasPerm: (p) => p != 'code-in-isolation',
+        activeSharedTerminal: {
+          'user_id': 'agent-user',
+          'window_id': '@0',
+        },
+      ));
+
+      // The service tab renders and is the active (selected) tab.
+      expect(find.text('Service'), findsOneWidget);
+    });
+
     testWidgets('active shared tab is highlighted', (tester) async {
       final client = _MockWsClient();
       client._userId = 'user-1';

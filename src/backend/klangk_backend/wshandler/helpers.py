@@ -86,6 +86,10 @@ def _get_shared_terminals(ws_session) -> list[dict]:
                         "window_name": w["name"],
                         "window_id": wid,
                         "viewers": viewers,
+                        # The agent's shared windows live in the standalone
+                        # ``service`` tmux session (#1158); flag them so the
+                        # UI can present the service tab distinctly (#1159).
+                        "is_service": user_id == model.AGENT_USER_ID,
                     }
                 )
     return terminals
