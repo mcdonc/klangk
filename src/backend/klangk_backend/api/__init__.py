@@ -172,6 +172,7 @@ if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
 
 LOGIN_BANNER_TITLE = resolve_env_value("KLANGK_LOGIN_BANNER_TITLE", "")
 LOGIN_BANNER = resolve_env_value("KLANGK_LOGIN_BANNER", "")
+PRODUCT_NAME = resolve_env_value("KLANGK_PRODUCT_NAME", "Klangk") or "Klangk"
 
 
 @router.get("/config")
@@ -179,6 +180,10 @@ async def get_config():
     config = {
         "registration_enabled": auth.registration_enabled(),
         "invitations_enabled": auth.invitations_enabled(),
+        # White-label product name (KLANGK_PRODUCT_NAME). Surfaced so the
+        # frontend can rename the product (tab title, app-bar logo) without
+        # a rebuild; defaults to "Klangk" for back-compat (#1149).
+        "product_name": PRODUCT_NAME,
         "login_banner_title": LOGIN_BANNER_TITLE,
         "login_banner": LOGIN_BANNER,
         "oidc_providers": oidc.list_providers(),

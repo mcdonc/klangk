@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import '../branding.dart';
 
 /// Override for testing — set to intercept all HTTP calls in AuthService.
 http.Client? testAuthHttpClientOverride;
@@ -105,6 +106,10 @@ class AuthService extends ChangeNotifier {
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
         _minPasswordLength =
             (data['min_password_length'] as num?)?.toInt() ?? 8;
+        // White-label product name — mirrored into the Branding helper so
+        // widgets that don't have an AuthService context (e.g. the app-bar
+        // logo, page title) can read it synchronously (#1149).
+        Branding.applyConfig(data);
       }
     } catch (e) {
       // coverage:ignore-start

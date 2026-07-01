@@ -19,6 +19,16 @@ def _resolve_password() -> str | None:
     return resolve_env_value("KLANGK_SMTP_PASSWORD")
 
 
+def product_name() -> str:
+    """Configured product name (KLANGK_PRODUCT_NAME), default 'Klangk'.
+
+    Used to white-label emails so deployments can rename the product
+    without editing source. Resolved at call time via resolve_env_value so
+    file:/cmd: prefixes work and value changes take effect per send.
+    """
+    return resolve_env_value("KLANGK_PRODUCT_NAME", "Klangk") or "Klangk"
+
+
 def smtp_config() -> dict:
     """Read SMTP configuration from environment at call time."""
     return {
@@ -115,9 +125,10 @@ async def send_verification_email(to: str, verification_url: str) -> None:
     Sends as multipart/alternative with both plain text and HTML
     so the link is clickable regardless of mail client.
     """
+    name = product_name()
     text_body = (
         "Click the link below to verify your email address and "
-        "activate your Klangk account:\n\n"
+        f"activate your {name} account:\n\n"
         f"<{verification_url}>\n\n"
         "This link expires in 72 hours.\n\n"
         "If you did not request this, you can ignore this email."
@@ -128,10 +139,10 @@ async def send_verification_email(to: str, verification_url: str) -> None:
         '<span style="display:inline-block;background:#E65100;'
         "color:#fff;border-radius:50%;width:48px;height:48px;"
         'line-height:48px;font-size:24px">&#128062;</span>'
-        '<h2 style="margin:8px 0 0">Klangk</h2>'
+        f'<h2 style="margin:8px 0 0">{name}</h2>'
         "</div>"
         "<p>Click the link below to verify your email address and "
-        "activate your Klangk account:</p>"
+        f"activate your {name} account:</p>"
         f'<p><a href="{verification_url}">Verify my account</a></p>'
         "<p>This link expires in 72 hours.</p>"
         "<p><small>If you did not request this, you can "
@@ -140,7 +151,7 @@ async def send_verification_email(to: str, verification_url: str) -> None:
     )
     cfg = smtp_config()
     msg = EmailMessage()
-    msg["Subject"] = "Verify your Klangk account"
+    msg["Subject"] = f"Verify your {name} account"
     msg["From"] = cfg["from_addr"] or cfg["user"] or "noreply@localhost"
     msg["To"] = to
     msg.set_content(text_body)
@@ -155,8 +166,9 @@ async def send_verification_email(to: str, verification_url: str) -> None:
 
 async def send_password_reset_email(to: str, reset_url: str) -> None:
     """Send a password reset email with the given callback URL."""
+    name = product_name()
     text_body = (
-        "Click the link below to reset your Klangk password:\n\n"
+        f"Click the link below to reset your {name} password:\n\n"
         f"<{reset_url}>\n\n"
         "This link expires in 1 hour.\n\n"
         "If you did not request this, you can ignore this email."
@@ -168,7 +180,7 @@ async def send_password_reset_email(to: str, reset_url: str) -> None:
         '<span style="display:inline-block;background:#E65100;'
         "color:#fff;border-radius:50%;width:48px;height:48px;"
         'line-height:48px;font-size:24px">&#128062;</span>'
-        '<h2 style="margin:8px 0 0">Klangk</h2>'
+        f'<h2 style="margin:8px 0 0">{name}</h2>'
         "</div>"
         "<p>Click the link below to reset your password:</p>"
         f'<p><a href="{reset_url}">Reset my password</a></p>'
@@ -179,7 +191,7 @@ async def send_password_reset_email(to: str, reset_url: str) -> None:
     )
     cfg = smtp_config()
     msg = EmailMessage()
-    msg["Subject"] = "Reset your Klangk password"
+    msg["Subject"] = f"Reset your {name} password"
     msg["From"] = cfg["from_addr"] or cfg["user"] or "noreply@localhost"
     msg["To"] = to
     msg.set_content(text_body)
@@ -201,8 +213,9 @@ async def send_invitation_email(
     # '"' in the local part, so an unescaped value could be used to inject
     # markup/script into invitation emails sent to other users.
     invited_by_html = html.escape(invited_by_email)
+    name = product_name()
     text_body = (
-        f"{invited_by_email} has invited you to join Klangk.\n\n"
+        f"{invited_by_email} has invited you to join {name}.\n\n"
         "Click the link below to set your password and activate "
         "your account:\n\n"
         f"<{invite_url}>\n\n"
@@ -215,10 +228,10 @@ async def send_invitation_email(
         '<span style="display:inline-block;background:#E65100;'
         "color:#fff;border-radius:50%;width:48px;height:48px;"
         'line-height:48px;font-size:24px">&#128062;</span>'
-        '<h2 style="margin:8px 0 0">Klangk</h2>'
+        f'<h2 style="margin:8px 0 0">{name}</h2>'
         "</div>"
         f"<p><strong>{invited_by_html}</strong> has invited you to "
-        "join Klangk.</p>"
+        f"join {name}.</p>"
         "<p>Click the link below to set your password and activate "
         "your account:</p>"
         f'<p><a href="{invite_url}">Accept invitation</a></p>'
@@ -229,7 +242,7 @@ async def send_invitation_email(
     )
     cfg = smtp_config()
     msg = EmailMessage()
-    msg["Subject"] = "You've been invited to Klangk"
+    msg["Subject"] = f"You've been invited to {name}"
     msg["From"] = cfg["from_addr"] or cfg["user"] or "noreply@localhost"
     msg["To"] = to
     msg.set_content(text_body)

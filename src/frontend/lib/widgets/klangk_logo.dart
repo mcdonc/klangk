@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../branding.dart';
 import '../theme/colors.dart';
 
 /// Klangk logo widget — dark rounded square with robot icon and "klangk" text.
@@ -34,7 +35,7 @@ class KlangkLogo extends StatelessWidget {
             Icon(Icons.smart_toy_outlined,
                 color: KColors.textPrimary, size: iconSize),
             Text(
-              'klangk',
+              Branding.name,
               style: TextStyle(
                 fontSize: fontSize,
                 fontWeight: FontWeight.w400,

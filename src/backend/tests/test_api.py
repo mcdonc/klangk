@@ -304,6 +304,21 @@ class TestConfig:
         data = resp.json()
         assert data["min_password_length"] == auth.MIN_PASSWORD_LENGTH
 
+    async def test_get_config_includes_product_name_default(self, client):
+        # White-label product name; defaults to "Klangk" so existing
+        # deployments are unchanged when the var is unset (#1149).
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["product_name"] == "Klangk"
+
+    async def test_get_config_reflects_product_name(self, client, monkeypatch):
+        monkeypatch.setattr(api, "PRODUCT_NAME", "Acme Labs")
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["product_name"] == "Acme Labs"
+
 
 # --- Auth routes ---
 
