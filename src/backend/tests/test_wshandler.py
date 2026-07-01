@@ -8427,7 +8427,7 @@ class TestChatSend:
         await session.add_subscriber(sock1, "cid")
         await session.add_subscriber(sock2, "cid")
 
-        async def slow_mention(workspace_id, container_id, text):
+        async def slow_mention(workspace_id, container_id, text, **kwargs):
             await asyncio.sleep(999)
 
         try:
@@ -9694,6 +9694,77 @@ class TestAgentMentionOtherMsgsContext:
             assert len(captured_prompt) == 1
             assert "user2@example.com" in captured_prompt[0]
             assert "interesting point" in captured_prompt[0]
+        finally:
+            await session.remove_subscriber(sock)
+            state.sessions.pop(ws_id, None)
+            wshandler._agent_tasks.pop(ws_id, None)
+
+
+class TestAgentMentionAskerIdentity:
+    """The asking user's identity is injected so the agent can resolve "my"."""
+
+    def test_header_includes_id_handle_home(self):
+        from klangk_backend.wshandler.agent_mention import (
+            _asker_context_header,
+        )
+
+        header = _asker_context_header("uid-123", "alice", "/home/alice")
+
+        assert "id uid-123" in header
+        assert "handle alice" in header
+        assert "home /home/alice" in header
+        # Points the agent at the asker's own tmux session.
+        assert 'tmux session "uid-123"' in header
+        assert '"my"/"my history"' in header
+
+    def test_header_none_without_user_id(self):
+        from klangk_backend.wshandler.agent_mention import (
+            _asker_context_header,
+        )
+
+        assert _asker_context_header(None, "alice", "/home/alice") is None
+
+    async def test_identity_prepended_to_prompt(self, user, agent_user):
+        """An @mention from a user injects that user's identity header."""
+        from klangk_backend.wshandler import _handle_agent_mention
+
+        workspace = await model.create_workspace(user["id"], "id-ws")
+        ws_id = workspace["id"]
+
+        captured_prompt = []
+        mock_session = AsyncMock()
+
+        async def capture_prompt(prompt):
+            captured_prompt.append(prompt)
+            return "response"
+
+        mock_session.send_prompt = capture_prompt
+
+        sock = _mock_sock()
+        session = state.get_or_create_session(ws_id)
+        await session.add_subscriber(sock, "cid")
+
+        try:
+            with patch(
+                "klangk_backend.agent.get_session",
+                return_value=mock_session,
+            ):
+                await _handle_agent_mention(
+                    ws_id,
+                    "cid",
+                    "@MrBoops restart my service",
+                    user_id=user["id"],
+                    user_handle=user.get("handle") or "somebody",
+                    user_home="/home/somebody",
+                )
+
+            assert len(captured_prompt) == 1
+            prompt = captured_prompt[0]
+            # The @mention is stripped and the asker header is present.
+            assert "@MrBoops" not in prompt
+            assert "restart my service" in prompt
+            assert user["id"] in prompt
+            assert "/home/somebody" in prompt
         finally:
             await session.remove_subscriber(sock)
             state.sessions.pop(ws_id, None)

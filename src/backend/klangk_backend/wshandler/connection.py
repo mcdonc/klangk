@@ -776,9 +776,18 @@ class Connection:
         if should_route and self.container_id:
             # One agent-run slot per workspace: cancel any in-flight run
             # so concurrent @mentions don't orphan the earlier task.
+            # Pass the asking user's identity so the agent can resolve
+            # "my" (its process has no user identity of its own).
             _cancel_agent_task(workspace_id)
             _agent_tasks[workspace_id] = asyncio.create_task(
-                _handle_agent_mention(workspace_id, self.container_id, text)
+                _handle_agent_mention(
+                    workspace_id,
+                    self.container_id,
+                    text,
+                    user_id=self.user.get("id"),
+                    user_handle=self.user.get("handle"),
+                    user_home=self._user_home,
+                )
             )
 
     async def handle_chat_delete(self, msg: dict) -> None:

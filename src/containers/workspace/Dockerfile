@@ -39,8 +39,8 @@ RUN curl -LsSf https://astral.sh/uv/0.11.23/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
-# Entrypoint, system prompt, bash defaults (change frequently during dev)
-COPY system-prompt.md /opt/klangk/system-prompt.md
+# Entrypoint, agent context file, bash defaults (change frequently during dev)
+COPY agent-context.md /opt/klangk/agent-context.md
 COPY entrypoint.sh /opt/klangk/entrypoint.sh
 COPY klangk-otel.sh /opt/klangk/bin/klangk-otel.sh
 COPY klangk-setup-clankers.py /opt/klangk/bin/klangk-setup-clankers

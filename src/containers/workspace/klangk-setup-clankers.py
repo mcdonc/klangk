@@ -16,7 +16,7 @@ import traceback
 from pathlib import Path
 
 IMAGE_DIR = Path("/opt/klangk/pi-agent")
-SYSTEM_PROMPT_SRC = Path("/opt/klangk/system-prompt.md")
+AGENT_CONTEXT_SRC = Path("/opt/klangk/agent-context.md")
 ERROR_LOG = Path("/tmp/klangk-setup-clankers-errors.log")
 
 
@@ -112,12 +112,21 @@ def write_models():
     (agent / "models.json").write_text(json.dumps(models, indent=2))
 
 
-def build_system_prompt():
-    """Write AGENTS.md to $HOME if not present."""
-    home = Path(os.environ.get("HOME", ""))
-    prompt_path = home / "AGENTS.md"
-    if not prompt_path.exists() and SYSTEM_PROMPT_SRC.is_file():
-        prompt_path.write_text(SYSTEM_PROMPT_SRC.read_text())
+def build_agent_context():
+    """Write AGENTS.md to ~/.pi/agent/ (Pi's global context-file slot).
+
+    Pi loads ``~/.pi/agent/AGENTS.md`` as a *context file* on every run,
+    regardless of cwd (its always-loaded global slot). The prior behavior wrote
+    ``$HOME/AGENTS.md`` (home root) to interop with Claude, which is no longer
+    shipped in the base image; Pi reads the global context file from
+    ``~/.pi/agent/`` instead. This serves both the chat agent (``pi --mode rpc``)
+    and any human running ``pi`` directly.
+    """
+    agent = _agent_dir()
+    agent.mkdir(parents=True, exist_ok=True)
+    prompt_path = agent / "AGENTS.md"
+    if not prompt_path.exists() and AGENT_CONTEXT_SRC.is_file():
+        prompt_path.write_text(AGENT_CONTEXT_SRC.read_text())
 
 
 def _run_step(name, fn):
@@ -155,7 +164,7 @@ def main():
     _run_step("sync_image_packages", sync_image_packages)
     _run_step("write_settings", write_settings)
     _run_step("write_models", write_models)
-    _run_step("build_system_prompt", build_system_prompt)
+    _run_step("build_agent_context", build_agent_context)
 
     if ERROR_LOG.exists():
         print(f"klangk-setup-clankers: some steps failed, see {ERROR_LOG}")
