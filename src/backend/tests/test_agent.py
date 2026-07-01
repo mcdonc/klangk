@@ -760,6 +760,7 @@ class TestEnsureAgentHome:
         fake_home.mkdir()
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
 
         with (
             patch.object(model, "get_workspace_by_id", return_value=fake_ws),
@@ -785,10 +786,50 @@ class TestEnsureAgentHome:
         mock_skel.assert_awaited_once_with(
             "cid", "00000000-0000-0000-0000-000000000001"
         )
-        # klangk-setup-pi --force re-writes Pi config each time.
+        # klangk-setup-pi --force re-writes Pi config each time.  It's
+        # invoked by its full install path (bare-name resolution isn't
+        # reliable across podman/OCI runtimes) -- matching the existing
+        # klangk-setup-home pattern.
         argv = mock_exec.call_args.args
-        assert "klangk-setup-pi" in argv
+        assert "/opt/klangk/bin/klangk-setup-pi" in argv
         assert "--force" in argv
+
+    async def test_setup_failure_does_not_abort_but_logs(self, tmp_path):
+        """klangk-setup-pi failure logs a warning but doesn't raise.
+
+        Provisioning is best-effort: the workspace stays usable, and
+        the lazy chat-start path retries on first mention (#1162).
+        The return value (container home) is unaffected by the rc.
+        """
+        from klangk_backend import agent, model, workspaces
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(
+            return_value=(b"setup out", b"setup err")
+        )
+        mock_proc.returncode = 127  # script missing / crashed
+
+        with (
+            patch.object(
+                model, "get_workspace_by_id", return_value={"user_id": "o"}
+            ),
+            patch.object(workspaces, "home_path", return_value=fake_home),
+            patch.object(
+                workspaces,
+                "ensure_home_symlink",
+                return_value=("/home/clanker", True),
+            ),
+            patch.object(
+                workspaces, "populate_home_skel", new_callable=AsyncMock
+            ),
+            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+        ):
+            # Must NOT raise -- provisioning is best-effort.
+            result = await agent.ensure_agent_home("ws1", "cid")
+
+        assert result == "/home/clanker"
 
     async def test_skips_skel_when_home_already_exists(self, tmp_path):
         from klangk_backend import model, workspaces
@@ -842,6 +883,7 @@ class TestEnsureHome:
 
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
 
         with (
             patch.object(
