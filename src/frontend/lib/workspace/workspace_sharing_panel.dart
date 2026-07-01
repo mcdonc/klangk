@@ -30,7 +30,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
         'Use isolated terminals, spectate on shared terminals, files, chat',
     'collaborators':
         'Use isolated and shared terminals, share terminals, files, chat',
-    'spectators': 'Watch shared terminals, chat',
+    'spectators': 'Watch shared terminals',
   };
 
   static const _roleIcons = {

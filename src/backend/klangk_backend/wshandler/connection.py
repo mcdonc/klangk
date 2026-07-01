@@ -710,6 +710,21 @@ class Connection:
         if not workspace_id:
             send_error(self.sock, "Not connected to a workspace")
             return
+        # Defense in depth: chat is reachable here by anyone connected,
+        # but it can drive the agent -- an @mention (or follow-up) routes to
+        # a subprocess that can make workspace changes -- so it is a
+        # privileged channel, not a passive one. Require the ``chat``
+        # permission at the send path rather than merely assuming it from
+        # role membership (#1136). Spectators no longer receive ``chat``
+        # (see _ROLE_GROUP_PERMISSIONS). NOTE: this reads the materialized
+        # ACL, so it does not by itself repair workspaces seeded before
+        # that change (their stale spectators ``chat`` ACE still passes);
+        # no migration is shipped -- no production deployments yet -- so
+        # the role change covers new workspaces and this gate enforces the
+        # model going forward.
+        if not await self._has_perm("chat"):
+            send_error(self.sock, "chat_send requires chat permission")
+            return
         text = msg.get("message", "").strip()
         if not text:
             return
