@@ -55,16 +55,65 @@ async def _addresses_other_user(text: str) -> bool:
     return mention != handle.lower()
 
 
+def _asker_context_header(
+    user_id: str | None,
+    user_handle: str | None,
+    user_home: str | None,
+) -> str | None:
+    """Build the ``[Asking user: ...]`` header that resolves "my".
+
+    The chat agent has no user identity of its own (it runs as the
+    ``klangk`` service user, with no ``KLANGK_USER_ID``), so "my
+    history" / "my terminal" is ambiguous in a multi-collaborator
+    workspace. Injecting the asking user's identity lets the agent
+    target the right per-user tmux session (named after ``user_id``)
+    and home directory. Returns ``None`` when no identity was provided
+    (the caller then omits the header).
+    """
+    if not user_id:
+        return None
+    parts = [f"id {user_id}"]
+    if user_handle:
+        parts.append(f"handle {user_handle}")
+    if user_home:
+        parts.append(f"home {user_home}")
+    return (
+        "[Asking user: "
+        + ", ".join(parts)
+        + '. Their interactive terminals are tmux session "'
+        + user_id
+        + '"; "my"/"my history" refers to that session.]'
+    )
+
+
 async def _handle_agent_mention(
-    workspace_id: str, container_id: str, user_text: str
+    workspace_id: str,
+    container_id: str,
+    user_text: str,
+    *,
+    user_id: str | None = None,
+    user_handle: str | None = None,
+    user_home: str | None = None,
 ) -> None:
-    """Handle an @agent mention by sending the prompt to Pi RPC."""
+    """Handle an @agent mention by sending the prompt to Pi RPC.
+
+    *user_id* / *user_handle* / *user_home* identify the asking user so
+    the agent can resolve "my" (its own process has no user identity).
+    Omitted when ``None`` (e.g. from older call sites); the header is
+    then not injected and "my" is left for the agent to disambiguate.
+    """
 
     agent_handle = await model.agent_handle()
     agent_re = _get_agent_mention_re(agent_handle)
     prompt = agent_re.sub("", user_text).strip()
     if not prompt:
         prompt = "Hello!"
+
+    # Inject the asking user's identity so the agent can target the
+    # asker's own tmux session / home when they say "my".
+    asker_header = _asker_context_header(user_id, user_handle, user_home)
+    if asker_header:
+        prompt = f"{asker_header}\n\n{prompt}"
 
     # Include messages from OTHER users since the agent's last response
     # as context.  The current user's message is already the prompt;
