@@ -153,10 +153,31 @@ async def seed_agent_user() -> None:
 
     Reads email/handle from env vars (with defaults) and upserts the
     agent row.  This is the ONLY place the env vars are consulted.
+
+    Refuses to seed the agent with a handle already owned by another user.
+    A colliding agent handle is destructive: ``ensure_home_symlink`` would
+    later migrate that user's home files into the agent's tree via its
+    workspace-import adoption branch.  The ``users.handle`` UNIQUE
+    constraint is the structural backstop, but we fail loudly here with an
+    actionable message instead of letting a bare ``IntegrityError`` abort
+    startup mid-sequence.  See #1137.
     """
     email = resolve_env_value("KLANGK_CHAT_AGENT_EMAIL", "MrBoops@example.com")
     handle = resolve_env_value("KLANGK_CHAT_AGENT_HANDLE", "MrBoops")
     async with model.transaction() as db:
+        # Pre-check: refuse a handle already claimed by a non-agent user.
+        # Runs in the same transaction as the upsert so there is no
+        # check-then-act window.
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE handle = ? AND id != ?",
+            (handle, AGENT_USER_ID),
+        )
+        if await cursor.fetchone() is not None:
+            raise RuntimeError(
+                f"Cannot seed chat agent: handle {handle!r} is already used"
+                " by another user. Set KLANGK_CHAT_AGENT_HANDLE to a"
+                " unique value."
+            )
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified,"
             " provider, handle)"
