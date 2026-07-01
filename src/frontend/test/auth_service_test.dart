@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
+import 'package:klangk_frontend/branding.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 void main() {
@@ -12,6 +13,9 @@ void main() {
     testBaseUrlOverride = 'http://localhost:8997';
     SharedPreferences.setMockInitialValues({});
     testAuthHttpClientOverride = null;
+    // Branding.name is static; reset so a test that sets a custom product
+    // name doesn't leak into sibling tests.
+    Branding.reset();
   });
 
   tearDown(() {
@@ -84,6 +88,7 @@ void main() {
       String instanceId = 'default',
       bool allowAutostart = false,
       int? minPasswordLength,
+      String? productName,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -95,6 +100,7 @@ void main() {
               'allow_autostart': allowAutostart,
               if (minPasswordLength != null)
                 'min_password_length': minPasswordLength,
+              if (productName != null) 'product_name': productName,
             }),
             200,
           );
@@ -157,6 +163,26 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(service.minPasswordLength, 8);
+    });
+
+    test('product_name is applied to Branding from /api/config', () async {
+      testAuthHttpClientOverride = _bannerClient(productName: 'Acme Labs');
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(Branding.name, 'Acme Labs');
+    });
+
+    test('product_name defaults to Klangk when absent', () async {
+      // Simulate an older backend that omits the field.
+      Branding.name = 'Stale';
+      testAuthHttpClientOverride = _bannerClient();
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(Branding.name, 'Klangk');
     });
 
     test('bannerRequired is false when no banner text', () async {

@@ -1186,9 +1186,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Type workspace name and tap Create
-      await tester.enterText(
-          _dialogNameField(),
-          'New WS');
+      await tester.enterText(_dialogNameField(), 'New WS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1218,9 +1216,7 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-          _dialogNameField(),
-          'Duplicate');
+      await tester.enterText(_dialogNameField(), 'Duplicate');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1427,9 +1423,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Type and submit via keyboard (onSubmitted)
-      await tester.enterText(
-          _dialogNameField(),
-          'Submitted');
+      await tester.enterText(_dialogNameField(), 'Submitted');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 
@@ -1475,8 +1469,9 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      // Dropdown should show the default image (logo also contains 'klangk')
-      expect(find.text('klangk'), findsWidgets);
+      // Dropdown should show the default image (logo also contains the
+      // product name, which defaults to 'Klangk').
+      expect(find.text('Klangk'), findsWidgets);
 
       // Select non-default image (dropdown is near the dialog's bottom
       // after the field reorder, so scroll it into view first).
@@ -1486,9 +1481,7 @@ void main() {
       await tester.tap(find.text('klangk-custom').last);
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-          _dialogNameField(),
-          'ImgWS');
+      await tester.enterText(_dialogNameField(), 'ImgWS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1529,12 +1522,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // Enter name and command
-      await tester.enterText(
-          _dialogNameField(),
-          'CmdWS');
-      await tester.enterText(
-          _dialogCmdField(),
-          'klangk-pi');
+      await tester.enterText(_dialogNameField(), 'CmdWS');
+      await tester.enterText(_dialogCmdField(), 'klangk-pi');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1588,12 +1577,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // Enter name, then focus command field and submit via Enter
-      await tester.enterText(
-          _dialogNameField(),
-          'CmdSubmit');
-      await tester.enterText(
-          _dialogCmdField(),
-          'pi');
+      await tester.enterText(_dialogNameField(), 'CmdSubmit');
+      await tester.enterText(_dialogCmdField(), 'pi');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 
@@ -1620,9 +1605,7 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-          _dialogNameField(),
-          'Fail WS');
+      await tester.enterText(_dialogNameField(), 'Fail WS');
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
@@ -1885,14 +1868,10 @@ void main() {
       await tester.pumpAndSettle();
 
       // Enter workspace name
-      await tester.enterText(
-          _dialogNameField(),
-          'MountWS');
+      await tester.enterText(_dialogNameField(), 'MountWS');
 
       // Add a mount via the mount text field (last TextField) + add button
-      await tester.enterText(
-          _dialogMountInput(),
-          '/host/src:/work/src');
+      await tester.enterText(_dialogMountInput(), '/host/src:/work/src');
       // Tap the add (+) button next to the mount input
       // The FAB also has an add icon, so find the one inside the dialog
       final addIcons = find.byIcon(Icons.add);
@@ -1904,9 +1883,7 @@ void main() {
       expect(find.text('/host/src:/work/src'), findsOneWidget);
 
       // Add a second mount
-      await tester.enterText(
-          _dialogMountInput(),
-          'nix-vol:/nix');
+      await tester.enterText(_dialogMountInput(), 'nix-vol:/nix');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.text('nix-vol:/nix'), findsOneWidget);
@@ -1955,14 +1932,10 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-          _dialogNameField(),
-          'EnterWS');
+      await tester.enterText(_dialogNameField(), 'EnterWS');
 
       // Add mount via Enter key on the mount text field
-      await tester.enterText(
-          _dialogMountInput(),
-          '/a:/b');
+      await tester.enterText(_dialogMountInput(), '/a:/b');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
       expect(find.text('/a:/b'), findsOneWidget);
@@ -1991,9 +1964,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Try adding invalid mount (no colon)
-      await tester.enterText(
-          _dialogMountInput(),
-          'bad-mount');
+      await tester.enterText(_dialogMountInput(), 'bad-mount');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
@@ -2002,27 +1973,21 @@ void main() {
       expect(find.text('bad-mount'), findsOneWidget); // still in text field
 
       // Try adding mount with relative container path
-      await tester.enterText(
-          _dialogMountInput(),
-          '/host:relative');
+      await tester.enterText(_dialogMountInput(), '/host:relative');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('absolute'), findsOneWidget);
 
       // Try adding mount with unknown option
-      await tester.enterText(
-          _dialogMountInput(),
-          '/host:/container:bogus');
+      await tester.enterText(_dialogMountInput(), '/host:/container:bogus');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Unknown option'), findsOneWidget);
 
       // Valid mount clears the error
-      await tester.enterText(
-          _dialogMountInput(),
-          '/a:/b');
+      await tester.enterText(_dialogMountInput(), '/a:/b');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
@@ -2059,23 +2024,17 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-          _dialogNameField(),
-          'EnvWS');
+      await tester.enterText(_dialogNameField(), 'EnvWS');
 
       // Add env var via the + button (env add is at index 2: FAB=0, mount=1, env=2)
-      await tester.enterText(
-          _dialogEnvInput(),
-          'FOO=bar');
+      await tester.enterText(_dialogEnvInput(), 'FOO=bar');
       await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.text('FOO=bar'), findsOneWidget);
 
       // Add a second env var via Enter key
-      await tester.enterText(
-          _dialogEnvInput(),
-          'X=1');
+      await tester.enterText(_dialogEnvInput(), 'X=1');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
       expect(find.text('X=1'), findsOneWidget);
@@ -2112,25 +2071,19 @@ void main() {
       await tester.pumpAndSettle();
 
       // Try adding env var without = sign
-      await tester.enterText(
-          _dialogEnvInput(),
-          'NOEQ');
+      await tester.enterText(_dialogEnvInput(), 'NOEQ');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Expected KEY=VALUE'), findsOneWidget);
 
       // Try adding env var with empty key
-      await tester.enterText(
-          _dialogEnvInput(),
-          '=value');
+      await tester.enterText(_dialogEnvInput(), '=value');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Key cannot be empty'), findsOneWidget);
 
       // Valid env var clears error
-      await tester.enterText(
-          _dialogEnvInput(),
-          'A=1');
+      await tester.enterText(_dialogEnvInput(), 'A=1');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Key cannot'), findsNothing);
@@ -2156,9 +2109,7 @@ void main() {
       expect(find.byTooltip('Copy'), findsNothing);
 
       // Add a mount
-      await tester.enterText(
-          _dialogMountInput(),
-          '/src:/work');
+      await tester.enterText(_dialogMountInput(), '/src:/work');
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
@@ -2186,9 +2137,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Add an env var
-      await tester.enterText(
-          _dialogEnvInput(),
-          'FOO=bar');
+      await tester.enterText(_dialogEnvInput(), 'FOO=bar');
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
 

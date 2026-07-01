@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'auth_service.dart';
 import 'pending_redirect.dart';
+import '../branding.dart';
 import '../utils/page_title.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
@@ -50,6 +51,13 @@ class _LoginPageState extends State<LoginPage> {
       final response = await client.get(Uri.parse('${baseUrl}/api/v1/config'));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        // Mirror the white-label product name into Branding as early as
+        // possible (the login page is the cold-start entry point) so the
+        // logo/tab title reflect it without waiting for AuthService.
+        Branding.applyConfig(data);
+        // The tab title was set from initState before config resolved; reapply
+        // now that Branding.name is known.
+        setPageTitle('Login');
         if (mounted) {
           setState(() {
             _registrationEnabled = data['registration_enabled'] ?? true;

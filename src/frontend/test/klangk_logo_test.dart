@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:klangk_frontend/branding.dart';
 import 'package:klangk_frontend/widgets/klangk_logo.dart';
 import 'package:klangk_frontend/theme/colors.dart';
 
@@ -12,6 +13,10 @@ void main() {
   }
 
   group('KlangkLogo', () {
+    // Branding.name is a static that other tests may mutate; reset it so each
+    // logo test starts from the default product name.
+    setUp(Branding.reset);
+
     test('default height is 40', () {
       const logo = KlangkLogo();
       expect(logo.height, 40);
@@ -27,9 +32,15 @@ void main() {
       expect(find.byIcon(Icons.smart_toy_outlined), findsOneWidget);
     });
 
-    testWidgets('renders klangk text', (tester) async {
+    testWidgets('renders product name text by default', (tester) async {
       await tester.pumpWidget(buildLogo());
-      expect(find.text('klangk'), findsOneWidget);
+      expect(find.text('Klangk'), findsOneWidget);
+    });
+
+    testWidgets('renders configured Branding.name', (tester) async {
+      Branding.name = 'Acme Labs';
+      await tester.pumpWidget(buildLogo());
+      expect(find.text('Acme Labs'), findsOneWidget);
     });
 
     testWidgets('icon uses accent cyan color', (tester) async {
@@ -40,7 +51,7 @@ void main() {
 
     testWidgets('text uses primary color and thin weight', (tester) async {
       await tester.pumpWidget(buildLogo());
-      final text = tester.widget<Text>(find.text('klangk'));
+      final text = tester.widget<Text>(find.text('Klangk'));
       expect(text.style?.color, KColors.textPrimary);
       expect(text.style?.fontWeight, FontWeight.w400);
     });

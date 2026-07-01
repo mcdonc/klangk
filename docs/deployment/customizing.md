@@ -2,6 +2,20 @@
 
 Klangk is deployed as a Docker container (the "[host container](https://github.com/mcdonc/klangk/pkgs/container/klangk%2Fklangk-host)") that packages the backend, nginx, Flutter web UI, and workspace image into a single image. The [`customize/`](https://github.com/mcdonc/klangk/tree/main/customize) directory in the Klangk repo is an example of how to build a custom version of this deployment container with plugins, custom CA certificates, and OIDC login hooks baked in. It is meant to be copied out of the repo and adapted to your own needs — edit the scripts, swap out the plugins, add your own login hooks, replace the placeholder logo, etc. Nothing in `customize/` is required to run Klangk; it's a starting point for organizations that want a tailored deployment.
 
+## Product Name
+
+The simplest white-labeling is renaming the product. Set `KLANGK_PRODUCT_NAME` and the browser tab title, the app-bar logo wordmark, and all outgoing emails (registration verification, password reset, invitation) use the configured name — with **no image rebuild required**. Defaults to `Klangk`. Like other `KLANGK_*` vars it supports the `file:`/`cmd:` prefix.
+
+```bash
+docker run -d \
+  -e KLANGK_PRODUCT_NAME="Acme Labs" \
+  ...
+```
+
+The value is published to the frontend through the `GET /api/v1/config` endpoint (`product_name` field) and interpolated into email subjects and bodies server-side. The frontend reads it at startup (via the `/config` fetch), so the tab title and logo update without a rebuild.
+
+> The logo _icon_ (the robot glyph) is a separate, build-time customization — see the `logo.png` placeholder below. `KLANGK_PRODUCT_NAME` only controls the textual wordmark.
+
 ## What Gets Customized
 
 This example custom build layers your changes on top of the standard Klangk host image:

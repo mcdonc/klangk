@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:provider/provider.dart';
 import 'auth/auth_service.dart';
+import 'branding.dart';
 import 'utils/web_helpers_stub.dart'
     if (dart.library.js_interop) 'utils/web_helpers_web.dart';
 import 'theme/colors.dart';
@@ -50,7 +51,7 @@ class _KlangkAppState extends State<KlangkApp> {
         _router ??= _createRouter(auth, widget.initialLocation);
 
         return MaterialApp.router(
-          title: 'Klangk',
+          title: Branding.name,
           debugShowCheckedModeBanner: false,
           theme: _theme,
           routerConfig: _router!,
