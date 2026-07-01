@@ -1,0 +1,11 @@
+{# Shared wrapper for all auth emails (verify / reset / invite).
+
+   Editing this one file re-brands every email at once: each child does
+   {% extends "base.html" %} and the ChoiceLoader resolves your override
+   (KLANGK_EMAIL_TEMPLATES_DIR) before the built-in. Filenames must stay
+   .html (not .html.j2) or Jinja's autoescape is silently disabled for
+   that file -- the worst place to lose escaping. See #1165. #}
+<div style="font-family:sans-serif;max-width:480px;margin:0 auto"><div style="text-align:center;padding:24px 0">{% if logo_url %}<img src="{{ logo_url }}" alt="{{ product_name }}" style="max-height:48px;max-width:200px;">{% else %}<span style="display:inline-block;background:{{ brand_color }};color:#fff;border-radius:50%;width:48px;height:48px;line-height:48px;font-size:24px">&#128062;</span><h2 style="margin:8px 0 0">{{ product_name }}</h2>{% endif %}</div>
+{% block content %}{% endblock %}
+<p><small>{% block footer_note %}If you did not request this, you can ignore this email.{% endblock %}</small></p>{% block legal %}{% endblock %}
+</div>

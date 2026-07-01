@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}<p><strong>{{ invited_by }}</strong> has invited you to join {{ product_name }}.</p>
+<p>Click the link below to set your password and activate your account:</p>
+<p><a href="{{ link }}">Accept invitation</a></p>
+<p>This link expires in {{ expiry_hours }} hour{{ '' if expiry_hours == 1 else 's' }}.</p>
+{% endblock %}
+{% block footer_note %}If you did not expect this invitation, you can ignore this email.{% endblock %}

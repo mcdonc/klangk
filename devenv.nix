@@ -348,6 +348,9 @@ in
         "node_modules/"
         "src/frontend/build/"
         "\\.devenv/"
+        # Jinja2 email templates: prettier doesn't understand {% %}/{{ }} and
+        # corrupts them (breaks expressions across lines). See #1165.
+        "email_templates/"
       ];
     };
     # Nix
@@ -424,6 +427,8 @@ in
     src/frontend/build/
     .devenv/
     *.lock
+    # Jinja2 email templates — prettier corrupts {% %}/{{ }} syntax. See #1165.
+    email_templates/
     PRETTIER
 
     # Generate yamllint config (not committed)

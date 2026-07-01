@@ -43,8 +43,82 @@ For a no-rebuild rebrand, klangk also overrides the logo at runtime via the
 - When unset — or if the image fails to load — the default `KlangkLogo` widget
   is rendered, so existing deployments are unchanged.
 
-This overrides only the **image**. Product-name text (`KLANGK_PRODUCT_NAME`)
-and logos in emails are tracked under separate items.
+This overrides only the **image** in the UI. It also flows into email headers
+when emails are rendered through the templating system (see below).
+
+## Email templating (`KLANGK_EMAIL_TEMPLATES_DIR`)
+
+Outgoing auth emails — registration verification, password reset, and
+invitation — are rendered from Jinja2 templates shipped inside the backend
+package at `klangk_backend/email_templates/`. There is no separate hardcoded
+fallback: the built-in templates _are_ the defaults. Each email is three
+files under a per-event folder (`verify/`, `reset/`, `invite/`): a
+`subject.txt`, a plain-text `body.txt`, and an HTML `body.html` that
+`{% extends "base.html" %}`. Editing `base.html` alone re-brands every
+email at once.
+
+### Customizing emails
+
+Point `KLANGK_EMAIL_TEMPLATES_DIR` at a directory of your own templates.
+Two equivalent approaches (they produce identical output):
+
+- **Copy the whole `email_templates/` tree, then edit what you want.** This
+  is the usual path. The built-in templates live at
+  `src/backend/klangk_backend/email_templates/` in the Klangk source
+  checkout; copy that directory out, delete the copied `__init__.py`
+  (packaging only), edit, and point the env var at it. By copying the whole
+  tree you **own it**: on upgrade, re-diff against the current built-ins and
+  bring forward whatever you want — normal maintenance for a forked config.
+- **Drop only the files you change.** Anything absent from your directory
+  falls through to the built-ins, so unchanged files keep inheriting upstream
+  fixes automatically. Use this for a few surgical changes when you don't
+  want to maintain a full copy.
+
+Overrides resolve per-file: a deployer file shadows the built-in of the same
+path, and `{% extends %}`/`{% include %}` resolve your overrides first. So
+you can re-brand all emails by overriding just `base.html`, change a single
+subject by overriding just `invite/subject.txt`, or wholesale replace one
+email by overriding its three files.
+
+> **Keep the `.html` extension** on HTML templates (not `.html.j2`). klangk
+> enables Jinja autoescaping by filename, and a `.j2` suffix silently disables
+> it — the worst place to lose escaping is the shared `base.html`.
+
+### Variables
+
+**Global** (every email): `product_name` (`KLANGK_PRODUCT_NAME`), `logo_url`
+(`KLANGK_LOGO_URL` — when set, the email header shows your logo instead of the
+default badge), `brand_color` (`KLANGK_BRAND_COLOR`, default `#E65100`).
+
+**Per-email**: `link` (the verification / reset / invite URL), `expiry_hours`
+(the real token TTL — interpolated, not hardcoded, so it always matches your
+`KLANGK_INVITE_EXPIRE_HOURS` / token settings), and `invited_by` (invitation
+only).
+
+> **Tokens never appear in the subject line** — subjects receive only the
+> global branding variables, never the link, so tokens can't leak into
+> mail-server subject logs.
+
+### Other email knobs
+
+- **`KLANGK_SMTP_REPLY_TO`** — when set, every outgoing message carries a
+  `Reply-To` header pointing at a monitored address (compliance /
+  deliverability). Unset → no header.
+- **Footer / legal line** — the base template exposes an empty
+  `{% block legal %}` you can fill in your override to add a compliance
+  footer in one place.
+
+### Example: rebrand + monitored reply address
+
+```bash
+docker run -d \
+  -e KLANGK_PRODUCT_NAME="Acme Labs" \
+  -e KLANGK_LOGO_URL="/branding/logo.png" \
+  -e KLANGK_SMTP_REPLY_TO="support@acme.example.com" \
+  -e KLANGK_EMAIL_TEMPLATES_DIR=/etc/klangk/email-templates \
+  -v /etc/klangk/email-templates:/etc/klangk/email-templates:ro \
+  ...
+```
 
 ## Prerequisites
 

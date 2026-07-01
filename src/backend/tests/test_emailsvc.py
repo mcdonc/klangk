@@ -9,6 +9,17 @@ from klangk_backend import emailsvc
 from klangk_backend.exceptions import SendmailError
 
 
+# The Jinja environment is built once and cached at module level, so a
+# KLANGK_EMAIL_TEMPLATES_DIR set in one test would leak into the next.
+# Rebuild it fresh for every case (env-var state itself is handled by
+# monkeypatch). See #1165.
+@pytest.fixture(autouse=True)
+def _reset_email_template_env():
+    emailsvc.reset_template_env()
+    yield
+    emailsvc.reset_template_env()
+
+
 class TestBuildMessage:
     def test_builds_message(self):
         msg = emailsvc.build_message("to@example.com", "Subject", "Body")
@@ -312,8 +323,147 @@ class TestSendInvitationEmail:
         html_part = parts[1].get_content()
         # The crafted payload must not form a live HTML element; angle
         # brackets and quotes must be escaped so the email renders as
-        # inert text rather than injecting markup/script.
+        # inert text rather than injecting markup/script. Autoescape now
+        # runs through Jinja/markupsafe (numeric entities &#34;/&#39;)
+        # rather than the old html.escape named forms (&quot;/&#x27;), so
+        # assert the security property, not a specific entity spelling.
         assert "<img" not in html_part
         assert "&lt;img" in html_part
-        assert 'admin"&gt;' not in html_part
-        assert "admin&quot;&gt;" in html_part
+        assert 'admin"><img' not in html_part
+        # the quote and '>' are escaped (named or numeric form)
+        assert "&gt;" in html_part
+        assert ("&quot;" in html_part) or ("&#34;" in html_part)
+
+
+class TestRenderEmail:
+    def test_verify_event_renders_all_three_parts(self):
+        r = emailsvc.render_email(
+            "verify", link="https://x/v?t=1", expiry_hours=72
+        )
+        assert r.subject == "Verify your Klangk account"
+        assert "https://x/v?t=1" in r.text
+        assert "expires in 72 hours" in r.text
+        assert 'href="https://x/v?t=1"' in r.html
+
+    def test_unknown_event_raises(self):
+        # Guards against a typo in a caller wiring up a new event.
+        with pytest.raises(ValueError, match="unknown email event"):
+            emailsvc.render_email("bogus", link="https://x", expiry_hours=1)
+
+    def test_expiry_hours_interpolated_not_hardcoded(self):
+        # Proves the drift fix (#1165): a non-default TTL is reflected
+        # in BOTH text and html, instead of the old hardcoded "72 hours".
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=48)
+        assert "expires in 48 hours" in r.text
+        assert "expires in 48 hours" in r.html
+
+    def test_singular_hour_when_expiry_is_one(self):
+        r = emailsvc.render_email("reset", link="https://x", expiry_hours=1)
+        assert "expires in 1 hour." in r.text
+        assert "1 hours" not in r.text
+
+    def test_brand_color_in_badge(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_BRAND_COLOR", "#abcdef")
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        assert "#abcdef" in r.html
+
+    def test_logo_url_replaces_badge(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_LOGO_URL", "https://logo/test.png")
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        assert '<img src="https://logo/test.png"' in r.html
+        # The paw badge is hidden when a logo override is set.
+        assert "&#128062;" not in r.html
+
+    def test_product_name_flows_through(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_PRODUCT_NAME", "Acme Labs")
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        assert r.subject == "Verify your Acme Labs account"
+        assert "Acme Labs" in r.html
+        assert "Klangk" not in r.html
+
+
+class TestTemplateOverlay:
+    def test_user_dir_shadows_builtin_per_file(self, tmp_path, monkeypatch):
+        # A deployer dir with only an overriding subject shadows that one
+        # file; everything else falls through to the built-ins.
+        d = tmp_path / "templates"
+        (d / "verify").mkdir(parents=True)
+        (d / "verify" / "subject.txt").write_text("CUSTOM VERIFY SUBJECT\n")
+        monkeypatch.setenv("KLANGK_EMAIL_TEMPLATES_DIR", str(d))
+        r = emailsvc.render_email(
+            "verify", link="https://x/v?t=1", expiry_hours=72
+        )
+        assert r.subject == "CUSTOM VERIFY SUBJECT"
+        # The body was NOT overridden -> built-in still used.
+        assert "verify your email address" in r.text
+        # A different event (not overridden) keeps its built-in subject.
+        rr = emailsvc.render_email(
+            "reset", link="https://x/r?t=1", expiry_hours=1
+        )
+        assert rr.subject == "Reset your Klangk password"
+
+    def test_overriding_base_rebrands_all_events(self, tmp_path, monkeypatch):
+        # Editing base.html alone re-brands every email, because each
+        # child does {% extends "base.html" %} and the ChoiceLoader
+        # resolves the override first.
+        d = tmp_path / "templates"
+        d.mkdir()
+        (d / "base.html").write_text(
+            "<div>BRANDED {{ product_name }}</div>"
+            "{% block content %}{% endblock %}"
+        )
+        monkeypatch.setenv("KLANGK_EMAIL_TEMPLATES_DIR", str(d))
+        rv = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        ri = emailsvc.render_email(
+            "invite", link="https://x", expiry_hours=72, invited_by="a@b.com"
+        )
+        assert "BRANDED Klangk" in rv.html
+        assert "BRANDED Klangk" in ri.html
+
+    def test_nonexistent_user_dir_is_ignored(self, tmp_path, monkeypatch):
+        # A bad path doesn't crash; built-ins are used.
+        monkeypatch.setenv(
+            "KLANGK_EMAIL_TEMPLATES_DIR", str(tmp_path / "does-not-exist")
+        )
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        assert r.subject == "Verify your Klangk account"
+
+    def test_html_autoescape_on_html_off_text(self, monkeypatch):
+        # .html is autoescaped (closes the str.format XSS gap); .txt is not.
+        r = emailsvc.render_email(
+            "invite",
+            link="https://x",
+            expiry_hours=72,
+            invited_by="<script>@e.com",
+        )
+        assert "<script>@e.com" in r.text  # literal in plain text
+        assert "<script>@e.com" not in r.html  # escaped in HTML
+        assert "&lt;script&gt;@e.com" in r.html
+
+
+class TestReplyTo:
+    def test_reply_to_none_when_unset(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_SMTP_REPLY_TO", raising=False)
+        assert emailsvc.reply_to() is None
+
+    def test_reply_to_resolved_when_set(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_SMTP_REPLY_TO", "support@example.com")
+        assert emailsvc.reply_to() == "support@example.com"
+
+    def test_build_message_adds_reply_to_when_set(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_SMTP_REPLY_TO", "support@example.com")
+        msg = emailsvc.build_message("to@e.com", "S", "B")
+        assert msg["Reply-To"] == "support@example.com"
+
+    def test_build_message_no_reply_to_when_unset(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_SMTP_REPLY_TO", raising=False)
+        msg = emailsvc.build_message("to@e.com", "S", "B")
+        assert msg["Reply-To"] is None
+
+    async def test_multipart_carries_reply_to(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_SMTP_REPLY_TO", "support@example.com")
+        rendered = emailsvc.render_email(
+            "verify", link="https://x", expiry_hours=72
+        )
+        msg = emailsvc._build_multipart("to@e.com", rendered)
+        assert msg["Reply-To"] == "support@example.com"
