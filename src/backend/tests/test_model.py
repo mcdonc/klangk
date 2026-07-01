@@ -2,6 +2,7 @@
 
 import aiosqlite
 import pytest
+import sqlalchemy.exc
 
 from klangk_backend import model
 
@@ -1299,6 +1300,99 @@ class TestCreateWorkspaceWithAclAgentGuard:
         # add_acl_entry), so the public entry point guards the creator.
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
             await model.create_workspace_with_acl(model.AGENT_USER_ID, "ws")
+
+
+class TestSchemaAgentBackstops:
+    """Data-model belt-and-suspenders (#1135): the schema constraints that
+    backstop the function-layer AgentPrincipalError guards. Each test writes
+    raw SQL that bypasses the Python guards, proving the DB itself rejects
+    making the agent a principal / mutating its identity / deleting it --
+    the terminal backstop for the raw-SQL-writer bug class the re-audit
+    found (replace_acl_entries, the seed path).
+    """
+
+    async def test_acl_entries_rejects_agent_user_principal(self, agent_user):
+        # (A) CHECK on acl_entries: covers both writers (add_acl_entry and
+        # replace_acl_entries).
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "INSERT INTO acl_entries"
+                    " (resource, position, action, principal_type,"
+                    "  permission, user_id)"
+                    " VALUES ('/x', 0, 1, 1, '*', ?)",
+                    (model.AGENT_USER_ID,),
+                )
+
+    async def test_user_groups_rejects_agent(self, agent_user):
+        # (B) CHECK on user_groups: role grants, member adds, OIDC sync.
+        group = await model.create_group("g")
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "INSERT INTO user_groups (user_id, group_id, source)"
+                    " VALUES (?, ?, 'manual')",
+                    (model.AGENT_USER_ID, group["id"]),
+                )
+
+    async def test_workspaces_rejects_agent_owner(self, agent_user):
+        # (C) CHECK on workspaces.user_id (the owner column).
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "INSERT INTO workspaces (id, user_id, name)"
+                    " VALUES ('ws', ?, 'n')",
+                    (model.AGENT_USER_ID,),
+                )
+
+    async def test_users_rejects_agent_password(self, agent_user):
+        # (D) CHECK: the agent must never carry a password.
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    ("x", model.AGENT_USER_ID),
+                )
+
+    async def test_agent_row_cannot_be_deleted(self, agent_user):
+        # (E) BEFORE DELETE trigger: the agent row is undeletable.
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "DELETE FROM users WHERE id = ?",
+                    (model.AGENT_USER_ID,),
+                )
+
+    async def test_agent_identity_columns_immutable(self, agent_user):
+        # (F) BEFORE UPDATE trigger on provider/external_id: the agent must
+        # stay provider='system' with no linked OIDC identity (the #1145
+        # skeleton-key vector). link_oidc_identity sets exactly these.
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "UPDATE users SET provider = ? WHERE id = ?",
+                    ("oidc", model.AGENT_USER_ID),
+                )
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            async with model.transaction() as db:
+                await db.execute(
+                    "UPDATE users SET external_id = ? WHERE id = ?",
+                    ("sub", model.AGENT_USER_ID),
+                )
+
+    async def test_agent_email_remains_mutable(self, agent_user):
+        # F deliberately does NOT guard email: it is legitimately re-seeded
+        # from env at boot (ON CONFLICT DO UPDATE SET email). Email policy
+        # lives at the fn layer (#1145), not the schema. This test pins that
+        # decision so a future "add an email trigger" change can't silently
+        # break boot-time re-seeding.
+        async with model.transaction() as db:
+            await db.execute(
+                "UPDATE users SET email = ? WHERE id = ?",
+                ("new@example.com", model.AGENT_USER_ID),
+            )
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        assert agent["email"] == "new@example.com"
 
 
 class TestHashFallbackHandle:
