@@ -14,18 +14,32 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="/hermes"
 
+# Repoint HOME at the agent's home for the rest of this script so every
+# home-relative path -- the ~/.profile exports below, the ~/.local/bin
+# hermes binary link, and the ~/.pi config (klangk-setup-pi at the end) --
+# resolves into the AGENT's home, the identity that runs the default
+# command (#1133/#1158: the gateway runs in the agent's standalone
+# `service` tmux session). The owner manages hermes through the Service
+# terminal tab, not their own shell, so nothing hermes-related belongs in
+# the owner's home (#1171). $KLANGK_AGENT_HOME is injected into the
+# container env at bring-up and inherited by every podman exec (including
+# the WS exec that runs this script); the `:-` fallback defends against an
+# unset var. With HOME repointed, the existing ~/.profile appends below
+# land in the agent's ~/.profile unchanged.
+export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
+
 # Hermes release branch -- single source of truth for the installed version.
 # The human version (e.g. 0.17.x) tracks this but isn't asserted here.
 HERMES_VERSION=v2026.6.19
 
 # --- Persist env exports to ~/.profile UP FRONT, before the slow install. ---
-# Why ~/.profile: it's the POSIX file sourced by login shells -- the
-# default-command pane (an interactive login shell) and `klangkc exec`
-# (bash -lc). Those need HERMES_HOME + the hermes bin on PATH to launch
-# / inspect the gateway. ~/.bashrc has an interactivity guard that hides
-# its body from non-interactive shells, so these exports cannot live
-# there. Written before the install so a shell spawned mid-setup already
-# sees a complete PATH/HERMES_HOME.
+# Why ~/.profile: it's the POSIX file sourced by login shells -- here,
+# the agent's `service` tmux session that runs the default command (HOME
+# was repointed above to the agent's home). That session needs
+# HERMES_HOME + the hermes bin on PATH to launch the gateway. ~/.bashrc
+# has an interactivity guard that hides its body from non-interactive
+# shells, so these exports cannot live there. Written before the install
+# so a shell spawned mid-setup already sees a complete PATH/HERMES_HOME.
 #
 # NOTE: the workspace health check is NOT a reason to put these in
 # ~/.profile. The check runs as a NON-login shell (`bash -c`) and

@@ -25,9 +25,11 @@ First run installs Node.js 24 (via nvm), openclaw, writes a config
 pointing at the Klangk LLM proxy, and runs a non-interactive onboard.
 The setup script prints the hosted app URL at the end.
 
-The gateway starts automatically in the first terminal window. To
-add messaging channels (i.e. to configure the authentication the WARNING above
-refers to):
+The gateway starts automatically in the Service terminal tab (it runs as
+the workspace's agent identity in a dedicated `service` tmux session, not
+in your own shell). To add messaging channels (i.e. to configure the
+authentication the WARNING above refers to), run this in the Service
+tab:
 
 ```bash
 openclaw onboard

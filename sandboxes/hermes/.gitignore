@@ -9,3 +9,7 @@ gateway.pid
 gateway.lock
 gateway_state.json
 logs/
+# Installer markers: --no-skills opt-out flag and the default SOUL.md
+# persona. Written by the upstream installer under $HERMES_HOME.
+.no-bundled-skills
+SOUL.md

@@ -4,29 +4,43 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="/openclaw"
 
+# Repoint HOME at the agent's home for the rest of this script so every
+# home-relative path -- the ~/.profile exports below, the nvm/node install
+# under NVM_DIR (which is $INSTALL_DIR/.nvm, unaffected), and any tool link
+# -- resolves into the AGENT's home, the identity that runs the default
+# command (#1133/#1158: the gateway runs in the agent's standalone
+# `service` tmux session). The owner manages openclaw through the Service
+# terminal tab, not their own shell, so nothing openclaw-related belongs in
+# the owner's home (#1171). $KLANGK_AGENT_HOME is injected into the
+# container env at bring-up and inherited by every podman exec (including
+# the WS exec that runs this script); the `:-` fallback defends against an
+# unset var. With HOME repointed, the existing ~/.profile appends below
+# land in the agent's ~/.profile unchanged.
+export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
+
 # Persist every env export the default_command depends on to ~/.profile
 # UP FRONT, before any long-running install step.
 #
-# Why ~/.profile: it's the POSIX file sourced by login shells --
-# interactive terminals (the default-cmd tmux pane is an interactive
-# login shell) and `klangkc exec` (bash -lc). ~/.bashrc has an
+# Why ~/.profile: it's the POSIX file sourced by login shells -- here,
+# the agent's `service` tmux session that runs the default command (HOME
+# was repointed above to the agent's home). ~/.bashrc has an
 # interactivity guard near its top (`case $- in *i*) ;; *) return`)
 # that hides anything appended below it from non-interactive shells, so
-# exports those commands need cannot live there.
+# exports the default command needs cannot live there.
 #
 # NOTE: the workspace health check is NOT a reason to put these in
 # ~/.profile. The check runs as a NON-login shell (`bash -c`) and
 # sources nothing -- it uses the absolute-path /openclaw/bin/healthcheck.sh
 # wrapper instead. Don't add exports here "for the health check".
 #
-# Why UP FRONT (#1039): a shell that sources ~/.profile while setup is
-# still running (e.g. the default-cmd pane created by an early
+# Why UP FRONT (#1039): a shell that sources the agent's ~/.profile while
+# setup is still running (e.g. the service session created by an early
 # terminal_start during setup -- see #1033) must see the complete
 # pointer set from its very first spawn:
 #   - NVM_DIR + nvm.sh source (so nvm/node load in new shells)
 #   - /openclaw/bin on PATH (so the `openclaw` binary is found)
-#   - OPENCLAW_HOME (so openclaw locates its config; the owning user's
-#     $HOME is /home/<handle>, not /openclaw, so without this openclaw
+#   - OPENCLAW_HOME (so openclaw locates its config; the agent's
+#     $HOME is /home/clanker, not /openclaw, so without this openclaw
 #     looks in the wrong place and reports "Missing config" -- #1039)
 # These used to be appended at three separate points in setup, so a
 # mid-setup pane inherited PATH but not OPENCLAW_HOME. Each line is
