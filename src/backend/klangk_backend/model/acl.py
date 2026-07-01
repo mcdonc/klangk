@@ -1,6 +1,7 @@
 """ACL entries (access-control list rows) and principal/action constants."""
 
 from ._core import transaction
+from .users import AGENT_USER_ID, AgentPrincipalError
 
 # ACL constants
 ACTION_DENY = 0
@@ -24,7 +25,17 @@ async def add_acl_entry(
     group_id: str | None = None,
     system_principal: int | None = None,
 ) -> int:
-    """Add an ACL entry. Returns the entry ID."""
+    """Add an ACL entry. Returns the entry ID.
+
+    Raises ``AgentPrincipalError`` if the entry would make the system
+    agent a user principal.
+    """
+    if user_id == AGENT_USER_ID:
+        raise AgentPrincipalError(
+            "The system agent cannot hold ACL entries"
+            " (global fixed UUID — granting it cross-workspace"
+            " blast radius)."
+        )
     async with transaction() as db:
         cursor = await db.execute(
             "INSERT INTO acl_entries"

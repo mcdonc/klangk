@@ -1237,14 +1237,37 @@ class TestOIDCUsers:
 
 class TestUpdatePasswordAgentGuard:
     async def test_update_password_rejects_agent_user(self, db):
-        with pytest.raises(ValueError, match="system agent"):
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
             await model.update_password(model.AGENT_USER_ID, "hash")
 
 
 class TestDeleteUserAgentGuard:
     async def test_delete_user_rejects_agent_user(self, db):
-        with pytest.raises(ValueError, match="system agent"):
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
             await model.delete_user(model.AGENT_USER_ID)
+
+
+class TestAddUserToGroupAgentGuard:
+    async def test_add_user_to_group_rejects_agent(self, db):
+        # Choke-point guard (#1135): every add_user_to_group caller
+        # (role grants, group-member add, OIDC sync) is covered here.
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
+            await model.add_user_to_group(model.AGENT_USER_ID, "g")
+
+
+class TestAddAclEntryAgentGuard:
+    async def test_add_acl_entry_rejects_agent(self, db):
+        # Choke-point guard (#1135): direct PRINCIPAL_USER ACE grants
+        # (e.g. add_workspace_member) are covered here.
+        with pytest.raises(model.AgentPrincipalError, match="system agent"):
+            await model.add_acl_entry(
+                "/workspaces/x",
+                0,
+                model.ACTION_ALLOW,
+                "*",
+                model.PRINCIPAL_USER,
+                user_id=model.AGENT_USER_ID,
+            )
 
 
 class TestHashFallbackHandle:

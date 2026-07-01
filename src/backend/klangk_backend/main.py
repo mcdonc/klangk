@@ -10,6 +10,7 @@ from pathlib import Path
 import bcrypt
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth, container, model, oidc, plugins, workspaces, wshandler
@@ -332,6 +333,30 @@ app.add_middleware(
 
 app.include_router(root_router)
 app.include_router(router, prefix=API_PREFIX)
+
+
+async def _agent_principal_error_handler(request, exc):  # noqa: ARG001
+    """Reject any operation that would make the agent an ACL principal.
+
+    Raised at the model choke points (``add_user_to_group``,
+    ``add_acl_entry``, ``delete_user``, ``update_password``); translated
+    to HTTP 400 here so route handlers carry no per-endpoint guard code.
+    """
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+def register_exception_handlers(application: FastAPI) -> None:
+    """Register global exception handlers on a FastAPI application.
+
+    Called for the production app below and by the test app fixture so
+    both surface the same handler wiring without duplicating the handler.
+    """
+    application.add_exception_handler(
+        model.AgentPrincipalError, _agent_principal_error_handler
+    )
+
+
+register_exception_handlers(app)
 
 
 # --- WebSocket ---

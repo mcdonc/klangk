@@ -9,6 +9,21 @@ from ._core import _fetchone, transaction
 # Agent identity
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
 
+
+class AgentPrincipalError(ValueError):
+    """Raised when an operation would make the agent an ACL principal.
+
+    The system agent realizes its capabilities through in-container
+    physical access, never ACL principalship (the "physical not
+    principal" rule). Granting it a role, group membership, or ACE entry
+    makes its global fixed UUID a privileged principal — a skeleton key
+    if ever forgeable. Guarded at the model choke points
+    (``add_user_to_group``, ``add_acl_entry``, ``delete_user``,
+    ``update_password``); a global handler translates this to HTTP 400.
+    Subclasses ``ValueError`` for compatibility with existing handlers.
+    """
+
+
 # Cached agent user dict (populated after seeding).
 _agent_user_cache: dict | None = None
 
@@ -383,7 +398,16 @@ async def update_group(
 async def add_user_to_group(
     user_id: str, group_id: str, source: str = "manual"
 ) -> None:
-    """Add a user to a group (idempotent)."""
+    """Add a user to a group (idempotent).
+
+    Raises ``AgentPrincipalError`` if the target is the system agent.
+    """
+    if user_id == AGENT_USER_ID:
+        raise AgentPrincipalError(
+            "The system agent cannot be added to groups"
+            " (global fixed UUID — granting it cross-workspace"
+            " blast radius)."
+        )
     async with transaction() as db:
         await db.execute(
             "INSERT OR IGNORE INTO user_groups (user_id, group_id, source)"
@@ -549,10 +573,10 @@ async def list_users(
 async def delete_user(user_id: str) -> bool:
     """Delete a user. Returns True if deleted, False if not found.
 
-    Raises ``ValueError`` if the target is the system agent user.
+    Raises ``AgentPrincipalError`` if the target is the system agent.
     """
     if user_id == AGENT_USER_ID:
-        raise ValueError("Cannot delete the system agent user")
+        raise AgentPrincipalError("Cannot delete the system agent user")
     async with transaction() as db:
         cursor = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
         return cursor.rowcount > 0
@@ -569,11 +593,13 @@ async def update_email(user_id: str, email: str) -> None:
 async def update_password(user_id: str, password_hash: str) -> None:
     """Update a user's password hash.
 
-    Raises ``ValueError`` if the target is the system agent user
+    Raises ``AgentPrincipalError`` if the target is the system agent
     (the agent must never have a password).
     """
     if user_id == AGENT_USER_ID:
-        raise ValueError("Cannot set a password on the system agent user")
+        raise AgentPrincipalError(
+            "Cannot set a password on the system agent user"
+        )
     async with transaction() as db:
         await db.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
