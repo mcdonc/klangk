@@ -11,7 +11,7 @@ import logging
 import re
 import time
 
-from . import container, model, podman, workspaces
+from . import container, model, podman, util, workspaces
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
@@ -53,6 +53,17 @@ _agents: dict[str, "AgentSession"] = {}
 # Callback to get a workspace session for broadcasting.
 # Set by wshandler at import time to break the circular dependency.
 _get_workspace_session = None
+
+
+def is_disabled() -> bool:
+    """True if the chat agent has been disabled by an admin.
+
+    When disabled, the ``pi --mode rpc`` subprocess is never spawned —
+    see ``_ensure_started``, which consults this before creating the
+    process.  Resolved at call time so tests can toggle it via
+    ``monkeypatch.setenv``.
+    """
+    return util.resolve_env_bool("KLANGK_AGENT_DISABLED")
 
 
 class AgentSession:
@@ -144,6 +155,15 @@ class AgentSession:
     async def _ensure_started(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:
             return self._proc
+        if is_disabled():
+            # Admin kill switch: refuse to spawn the subprocess.  This is
+            # the single place the env var is enforced — if it's set, the
+            # agent never runs for any workspace.
+            logger.info(
+                "Agent disabled by admin; not spawning for workspace %s",
+                self.workspace_id,
+            )
+            raise AgentError("chat agent is disabled by admin")
         if self._gave_up:
             raise AgentError(
                 "Agent gave up restarting for workspace %s" % self.workspace_id

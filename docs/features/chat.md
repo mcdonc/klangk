@@ -80,6 +80,31 @@ these env vars and restarting will update the agent's record in the
 database. The agent user cannot have a password and cannot log in via
 credentials.
 
+### Disabling the agent
+
+Set `KLANGK_AGENT_DISABLED` (`1`/`true`/`yes`) to prevent the chat
+agent's `pi --mode rpc` subprocess from starting. When set, the
+subprocess is never spawned, so the agent never comes online and will
+not appear in presence.
+
+| Variable                | Default | Effect                                                                                                                 |
+| ----------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `KLANGK_AGENT_DISABLED` | (unset) | Set to `1`/`true`/`yes` and the chat agent's `pi --mode rpc` subprocess is not started. Read each time it would start. |
+
+This is a **global** setting that affects every workspace; toggling it
+takes effect on the next subprocess start (no server restart needed for
+the start refusal itself). Per-workspace control is tracked separately
+in [#1142](https://github.com/mcdonc/klangk/issues/1142) (and depends
+on the per-workspace settings infrastructure,
+[#864](https://github.com/mcdonc/klangk/issues/864)).
+
+> **Scope note:** this flag only stops the subprocess from starting. It
+> does not (yet) hide the agent from the workspace member list, suppress
+> its seeded user row, or short-circuit `@MrBoops` routing — so a
+> disabled agent is still listed and `@mention`ing it will surface a
+> start error rather than a reply. Tightening those is follow-up work;
+> see #1138.
+
 ## Message Types
 
 - **User messages** — sent by workspace members, shown with email and timestamp

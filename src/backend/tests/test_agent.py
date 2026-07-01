@@ -12,6 +12,7 @@ from klangk_backend.agent import (
     AgentSession,
     any_running,
     get_session,
+    is_disabled,
     is_running,
     stop_session,
     _agents,
@@ -64,6 +65,46 @@ def _make_session(workspace_id="ws-id"):
 
 
 _ACK = {"type": "response", "command": "prompt", "success": True}
+
+
+class TestAgentDisabled:
+    """The agent can be turned off entirely by an admin (#1138)."""
+
+    async def test_is_disabled_defaults_false(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_AGENT_DISABLED", raising=False)
+        assert is_disabled() is False
+
+    async def test_is_disabled_true_when_set(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AGENT_DISABLED", "1")
+        assert is_disabled() is True
+
+    async def test_is_disabled_truthy_variants(self, monkeypatch):
+        for val in ("1", "true", "YES", "True"):
+            monkeypatch.setenv("KLANGK_AGENT_DISABLED", val)
+            assert is_disabled() is True, val
+
+    async def test_is_disabled_falsy_variants(self, monkeypatch):
+        for val in ("0", "false", "no", ""):
+            monkeypatch.setenv("KLANGK_AGENT_DISABLED", val)
+            assert is_disabled() is False, val
+
+    async def test_ensure_started_refuses_when_disabled(self, monkeypatch):
+        """The subprocess is never spawned when disabled."""
+        monkeypatch.setenv("KLANGK_AGENT_DISABLED", "1")
+        session = _make_session("ws-disabled")
+        with patch("asyncio.create_subprocess_exec") as mock_spawn:
+            with pytest.raises(AgentError, match="disabled"):
+                await session._ensure_started()
+            mock_spawn.assert_not_called()
+
+    async def test_send_prompt_raises_when_disabled(self, monkeypatch):
+        """send_prompt surfaces the disabled state, never spawns."""
+        monkeypatch.setenv("KLANGK_AGENT_DISABLED", "1")
+        session = _make_session("ws-disabled")
+        with patch("asyncio.create_subprocess_exec") as mock_spawn:
+            with pytest.raises(AgentError, match="disabled"):
+                await session.send_prompt("hello")
+            mock_spawn.assert_not_called()
 
 
 class TestAgentSession:
