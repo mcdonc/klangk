@@ -8529,40 +8529,6 @@ class TestChatSend:
         await conn.handle_chat_load_more({})
         sock.send_json.assert_not_called()
 
-    async def test_workspace_members_on_connect(self, user, agent_user):
-        """Workspace members list is sent on connect."""
-        workspace = await _create_workspace_with_acl(user["id"], "members-ws")
-
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-
-        async def fake_start(wid, ws_obj):
-            conn.container_id = "cid"
-
-        with (
-            patch.object(
-                Connection,
-                "start_workspace_container",
-                side_effect=fake_start,
-            ),
-            patch.object(
-                container.registry,
-                "get_workspace_ports",
-                return_value=[],
-            ),
-        ):
-            await conn.handle_workspace_connect(
-                {"workspaceId": workspace["id"]}
-            )
-
-        calls = [c[0][0] for c in sock.send_json.call_args_list]
-        members_msgs = [
-            c for c in calls if c.get("type") == "workspace_members"
-        ]
-        assert len(members_msgs) == 1
-        member_ids = [m["id"] for m in members_msgs[0]["members"]]
-        assert user["id"] in member_ids
-
 
 class TestPresence:
     async def test_presence_list_on_connect(self, user, agent_user):

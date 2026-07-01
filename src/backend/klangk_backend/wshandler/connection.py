@@ -369,30 +369,6 @@ class Connection:
                 {"type": "chat_history", "messages": chat_history}
             )
 
-    async def _send_workspace_members(
-        self, workspace_id: str, workspace: dict
-    ) -> None:
-        """Send workspace members (including agent) for @mention autocomplete."""
-        members = await model.get_workspace_members(workspace_id)
-        owner = await model.get_user_by_id(workspace.get("user_id", ""))
-        if owner and not any(m["id"] == owner["id"] for m in members):
-            members.append(
-                {
-                    "id": owner["id"],
-                    "email": owner["email"],
-                    "handle": owner.get("handle", ""),
-                }
-            )
-        agent_user = await model.get_agent_user()
-        members.append(
-            {
-                "id": model.AGENT_USER_ID,
-                "email": agent_user["email"],
-                "handle": agent_user.get("handle", ""),
-            }
-        )
-        self.sock.send_json({"type": "workspace_members", "members": members})
-
     async def _broadcast_join(
         self, workspace_id: str, rejoining: bool
     ) -> None:
@@ -484,7 +460,6 @@ class Connection:
         )
 
         await self._send_chat_history(workspace_id)
-        await self._send_workspace_members(workspace_id, workspace)
 
         if self.container_id:
             asyncio.create_task(self._start_agent_if_needed())
