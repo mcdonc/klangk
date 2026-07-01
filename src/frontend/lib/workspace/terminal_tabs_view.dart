@@ -70,7 +70,14 @@ class TerminalTabsView extends StatelessWidget {
     final shared = wsClient.sharedTerminals;
     final myUserId = wsClient.currentUserId;
     final othersShared = shared.where((s) => s['user_id'] != myUserId).toList();
-    final hasContent = windows.isNotEmpty || othersShared.isNotEmpty;
+    // The agent's ``service`` window is surfaced as its own distinct tab
+    // rather than an opaque ``handle:win`` shared entry (#1159).
+    final serviceTerminals =
+        othersShared.where((s) => s['is_service'] == true).toList();
+    final regularShared =
+        othersShared.where((s) => s['is_service'] != true).toList();
+    final hasContent =
+        windows.isNotEmpty || serviceTerminals.isNotEmpty || regularShared.isNotEmpty;
 
     return Column(
       children: [
@@ -138,8 +145,34 @@ class TerminalTabsView extends StatelessWidget {
                           tooltip: 'New terminal',
                           onTap: () => wsClient.sendTerminalNewWindow(),
                         ),
+                      // The agent's ``service`` window (default-cmd) as a
+                      // distinct, clearly-labeled operable tab (#1159).
+                      for (final s in serviceTerminals)
+                        _TerminalTab(
+                          name: 'Service',
+                          tooltip:
+                              'Service session — ${s['handle'] ?? '?'}:${s['window_name'] ?? '?'}',
+                          active: activeSharedTerminal != null &&
+                              activeSharedTerminal!['user_id'] ==
+                                  s['user_id'] &&
+                              activeSharedTerminal!['window_id'] ==
+                                  s['window_id'],
+                          shared: true,
+                          isService: true,
+                          readOnly: !hasPerm('code-in-shared-terminals') &&
+                              !hasPerm('share-terminals'),
+                          viewers: _getViewers(
+                            s['user_id'] as String? ?? '',
+                            s['window_id'] as String? ?? '',
+                          ),
+                          onTap: () => onJoinShared(
+                            wsClient,
+                            s['user_id'] as String,
+                            s['window_id'] as String,
+                          ),
+                        ),
                       // Shared terminals from OTHER users
-                      for (final s in othersShared)
+                      for (final s in regularShared)
                         _TerminalTab(
                           name: () {
                             final h = s['handle'] as String? ?? '?';
@@ -197,6 +230,7 @@ class _TerminalTab extends StatefulWidget {
   final bool shared;
   final bool readOnly;
   final bool isShared;
+  final bool isService;
   final List<Map<String, dynamic>> viewers;
   final VoidCallback onTap;
   final VoidCallback? onClose;
@@ -211,6 +245,7 @@ class _TerminalTab extends StatefulWidget {
     this.shared = false,
     this.readOnly = false,
     this.isShared = false,
+    this.isService = false,
     this.viewers = const [],
     this.onClose,
     this.onToggleShare,
@@ -328,8 +363,21 @@ class _TerminalTabState extends State<_TerminalTab> {
                 ),
                 child: Row(
                   children: [
-                    // Icon for other users' shared tabs (left of name)
-                    if (widget.shared) ...[
+                    // Icon for the agent's service tab (distinct from
+                    // regular shared windows) (#1159).
+                    if (widget.shared && widget.isService) ...[
+                      Icon(
+                        widget.readOnly
+                            ? Icons.lock_outlined
+                            : Icons.terminal,
+                        size: 12,
+                        color: widget.active
+                            ? KColors.accentCyan
+                            : KColors.accentCyan.withValues(alpha: 0.6),
+                      ),
+                      const SizedBox(width: 4),
+                    ] else if (widget.shared) ...[
+                      // Icon for other users' shared tabs (left of name)
                       Icon(
                         widget.readOnly
                             ? Icons.lock_outlined

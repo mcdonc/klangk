@@ -14,7 +14,12 @@ from .. import container, model, podman, terminal
 from ..exceptions import TerminalError
 from ..util import resolve_env_value
 from ..podman import ExecSession
-from ..terminal import TerminalSession, attach_browser, DEFAULT_CMD_WINDOW
+from ..terminal import (
+    TerminalSession,
+    attach_browser,
+    DEFAULT_CMD_WINDOW,
+    SERVICE_SESSION,
+)
 from .safe_websocket import SlowClientError, _WS_ERRORS
 from ._constants import _MAX_INPUT_SIZE
 from .helpers import send_error, _send_event, _get_shared_terminals
@@ -1142,11 +1147,21 @@ class SharedTerminalController:
             "user_id": owner_user_id,
             "window_id": window_id,
         }
+        # The service window (default-cmd) lives in the standalone
+        # ``service`` tmux session (#1158), not a session named after the
+        # agent's user_id. Route agent-owned joins to that session so the
+        # grouped attach actually finds a target. Other windows keep joining
+        # the owner's user-named session as before (#1159).
+        join_target = (
+            SERVICE_SESSION
+            if owner_user_id == model.AGENT_USER_ID
+            else owner_user_id
+        )
         session = TerminalSession(
             self._conn.container_id,
             session_name=self._conn.user["id"],
             user_home=self._conn._user_home,
-            join_session=owner_user_id,
+            join_session=join_target,
             read_only=read_only,
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
@@ -1163,7 +1178,7 @@ class SharedTerminalController:
                 await self._select_shared_window(
                     conn.container_id,
                     session,
-                    owner_user_id,
+                    join_target,
                     window_id,
                 )
                 if not await conn._activate_session(session, cols, rows):

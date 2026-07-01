@@ -5849,6 +5849,9 @@ class TestTerminalController:
             assert len(terminals) == 1
             assert terminals[0]["handle"] == "clanker"
             assert terminals[0]["window_name"] == "default-cmd"
+            # Agent-owned windows are flagged so the UI can present the
+            # service tab distinctly (#1159).
+            assert terminals[0]["is_service"] is True
         finally:
             wshandler.state.sessions.pop("ws-offline", None)
 
@@ -6382,6 +6385,62 @@ class TestShareWindowHandlers:
             assert len(started) == 1
             assert started[0]["shared_user_id"] == owner["id"]
             assert started[0]["shared_window"] == "build"
+        finally:
+            wshandler.state.sessions.pop("ws-1", None)
+            container.registry.states.pop("ws-1", None)
+
+    async def test_join_service_terminal_routes_to_service_session(
+        self, user, temp_data_dir
+    ):
+        """Joining the agent's service window targets the standalone
+        ``service`` tmux session, not a session named after the agent's
+        user_id (which doesn't exist) -- #1158/#1159."""
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/joiner"
+        session = wshandler.state.get_or_create_session("ws-1")
+        session.terminal_windows[model.AGENT_USER_ID] = [
+            {"name": "default-cmd", "index": 0, "id": "@0", "shared": True},
+        ]
+        session.agent_handle = "clanker"
+        container.registry.track_activity("cid", "ws-1")
+        try:
+            with (
+                patch(
+                    "klangk_backend.acl.check_permission", return_value=True
+                ),
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
+                patch("klangk_backend.terminal.select_window"),
+                patch("klangk_backend.terminal.tmux_command", return_value=""),
+            ):
+                mock_sess = _mock_terminal()
+                MockTS.return_value = mock_sess
+
+                async def fake_output():
+                    return
+                    yield
+
+                mock_sess.output = fake_output
+
+                await conn.handle_join_shared_terminal(
+                    {"user_id": model.AGENT_USER_ID, "window_id": "@0"}
+                )
+                await asyncio.sleep(0)
+
+            MockTS.assert_called_once()
+            call_kwargs = MockTS.call_args[1]
+            # The join targets the constant ``service`` session, NOT the
+            # agent's user_id (there is no tmux session named after it).
+            assert call_kwargs["join_session"] == "service"
+            started = [
+                c[0][0]
+                for c in sock.send_json.call_args_list
+                if c[0][0].get("type") == "terminal_started"
+            ]
+            assert len(started) == 1
+            assert started[0]["shared_user_id"] == model.AGENT_USER_ID
         finally:
             wshandler.state.sessions.pop("ws-1", None)
             container.registry.states.pop("ws-1", None)
