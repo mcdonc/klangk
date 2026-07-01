@@ -74,8 +74,8 @@ class TestSeedAgentUser:
         assert user["handle"] == "clanker"
 
     async def test_custom_env_vars(self, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_CHAT_AGENT_EMAIL", "bot@test.com")
-        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "TestBot")
+        monkeypatch.setenv("KLANGK_AGENT_EMAIL", "bot@test.com")
+        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "TestBot")
         await main.seed_agent_user()
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
@@ -84,8 +84,8 @@ class TestSeedAgentUser:
 
     async def test_upserts_existing(self, db, monkeypatch):
         await main.seed_agent_user()
-        monkeypatch.setenv("KLANGK_CHAT_AGENT_EMAIL", "new@test.com")
-        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "NewBot")
+        monkeypatch.setenv("KLANGK_AGENT_EMAIL", "new@test.com")
+        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "NewBot")
         await main.seed_agent_user()
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user["email"] == "new@test.com"
@@ -131,7 +131,7 @@ class TestSeedAgentUser:
             "alice@example.com", "hash", verified=True
         )
         assert human["handle"] == "alice"
-        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "alice")
+        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError, match="alice"):
             await main.seed_agent_user()
         # Human user is untouched.
@@ -146,7 +146,7 @@ class TestSeedAgentUser:
         human = await model.create_user(
             "alice@example.com", "hash", verified=True
         )
-        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "alice")
+        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError, match="already used by another user"):
             await main.seed_agent_user()
         # Agent keeps its original handle; human untouched.
@@ -177,7 +177,7 @@ class TestSeedAgentUser:
         (human_dir / "secret.txt").write_text("alice's secrets")
         (home / "alice").symlink_to(f".users/{human['id']}")
 
-        monkeypatch.setenv("KLANGK_CHAT_AGENT_HANDLE", "alice")
+        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError):
             await main.seed_agent_user()
 

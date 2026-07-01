@@ -70,10 +70,10 @@ Without these, the agent is unavailable and @clanker mentions are ignored.
 The agent's handle and email are configured via environment variables and
 seeded into the database on first startup:
 
-| Variable                   | Default               |
-| -------------------------- | --------------------- |
-| `KLANGK_CHAT_AGENT_HANDLE` | `clanker`             |
-| `KLANGK_CHAT_AGENT_EMAIL`  | `clanker@example.com` |
+| Variable              | Default               |
+| --------------------- | --------------------- |
+| `KLANGK_AGENT_HANDLE` | `clanker`             |
+| `KLANGK_AGENT_EMAIL`  | `clanker@example.com` |
 
 After seeding, the agent identity is read from the database. Changing
 these env vars and restarting will update the agent's record in the

@@ -52,10 +52,10 @@ The agent handle and email are set via environment variables and seeded
 into the database on startup. After initial seeding, the agent identity
 is read from the DB; changing the env vars updates the DB on next restart.
 
-| Variable                   | Default               |
-| -------------------------- | --------------------- |
-| `KLANGK_CHAT_AGENT_HANDLE` | `clanker`             |
-| `KLANGK_CHAT_AGENT_EMAIL`  | `clanker@example.com` |
+| Variable              | Default               |
+| --------------------- | --------------------- |
+| `KLANGK_AGENT_HANDLE` | `clanker`             |
+| `KLANGK_AGENT_EMAIL`  | `clanker@example.com` |
 
 The agent user cannot have a password and cannot log in via credentials.
 
