@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 import '../ws/ws_client.dart';
 import '../auth/auth_service.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
-import 'package:klangk_plugins/klangk_plugins.dart';
 import '../utils/page_title.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';

@@ -150,7 +150,7 @@ class AclEditorState extends State<AclEditor> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<int>(
-                  value: selectedAction,
+                  initialValue: selectedAction,
                   decoration: const InputDecoration(
                     labelText: 'Action',
                     border: OutlineInputBorder(),
@@ -164,7 +164,7 @@ class AclEditorState extends State<AclEditor> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
-                  value: principalType,
+                  initialValue: principalType,
                   decoration: const InputDecoration(
                     labelText: 'Principal Type',
                     border: OutlineInputBorder(),
@@ -182,7 +182,7 @@ class AclEditorState extends State<AclEditor> {
                 const SizedBox(height: 12),
                 if (principalType == 1 && users.isNotEmpty)
                   DropdownButtonFormField<String>(
-                    value: selectedUserId,
+                    initialValue: selectedUserId,
                     decoration: const InputDecoration(
                       labelText: 'User',
                       border: OutlineInputBorder(),
@@ -196,7 +196,7 @@ class AclEditorState extends State<AclEditor> {
                   ),
                 if (principalType == 2 && groups.isNotEmpty)
                   DropdownButtonFormField<String>(
-                    value: selectedGroupId,
+                    initialValue: selectedGroupId,
                     decoration: const InputDecoration(
                       labelText: 'Group',
                       border: OutlineInputBorder(),
@@ -210,7 +210,7 @@ class AclEditorState extends State<AclEditor> {
                   ),
                 if (principalType == 0) ...[
                   DropdownButtonFormField<int>(
-                    value: selectedSystemPrincipal,
+                    initialValue: selectedSystemPrincipal,
                     decoration: const InputDecoration(
                       labelText: 'System Principal',
                       border: OutlineInputBorder(),
@@ -225,7 +225,7 @@ class AclEditorState extends State<AclEditor> {
                 ],
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  value: selectedPermission,
+                  initialValue: selectedPermission,
                   decoration: const InputDecoration(
                     labelText: 'Permission',
                     border: OutlineInputBorder(),

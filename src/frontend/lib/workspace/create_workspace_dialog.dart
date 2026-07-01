@@ -206,7 +206,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: _selectedImage,
+                initialValue: _selectedImage,
                 decoration: InputDecoration(
                   labelText: 'Container Image',
                   labelStyle: _labelStyle,

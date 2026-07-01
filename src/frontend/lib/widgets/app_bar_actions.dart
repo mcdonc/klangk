@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../theme/colors.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../auth/auth_service.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
