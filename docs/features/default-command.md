@@ -3,27 +3,42 @@
 # Default Command
 
 A workspace can have a **default command** — a shell command that
-runs automatically in the first terminal window when the terminal
-session starts. This is useful for workspaces that serve a
-long-running process like a dev server, AI gateway, or any daemon
-that should be running whenever the workspace is in use.
+runs automatically in a dedicated terminal window when the workspace
+is opened. This is useful for workspaces that serve a long-running
+process like a dev server, AI gateway, or any daemon that should be
+running whenever the workspace is in use.
 
 ## How it works
 
-When a workspace has a default command configured, the server sends
-it as keystrokes into the first tmux window immediately after
-creating the terminal session. The command runs as a normal
-foreground process inside a bash login shell.
+The default command runs as a **per-workspace singleton** — like a
+global service. It starts exactly once, in a dedicated `default-cmd`
+tmux window that lives in the **workspace owner's** terminal session,
+and is **never** re-run for other users who open the workspace.
 
-This means:
+The command is sent as keystrokes into a bash login shell, so:
 
-- **Ctrl+C** stops the process and returns you to the bash prompt
+- **Ctrl+C** stops the process and returns to the bash prompt
 - **Up-arrow + Enter** restarts it
 - The terminal scrollback shows the process output
 - The experience is identical to typing the command yourself
 
-If no default command is set, the terminal starts with a plain bash
-prompt as usual.
+If no default command is set, no `default-cmd` window is created.
+
+### Who can see and control it
+
+Because the command is a shared workspace service:
+
+- The **owner** sees `default-cmd` as one of their own terminal tabs.
+- Other users granted a workspace role (**coders** / **collaborators**)
+  see it as a **shared terminal** they can open and join.
+  [Read-only spectators](terminal.md#shared-terminals) can view it.
+- The window is **shared by definition**: the owner never has to reshare
+  it manually, and it remains visible even after the owner disconnects.
+
+Anyone who can write to the shared window (the owner, plus users with
+the `code-in-shared-terminals` permission) can stop or restart the
+service via Ctrl+C / up-arrow / Enter — everyone joined sees the same
+output.
 
 ## Setting the default command
 
@@ -69,7 +84,8 @@ If the workspace has [auto-start](workspaces.md#auto-start) enabled,
 the container starts when the Klangk server starts and the default
 command begins running immediately — before any user connects. When
 you later run `klangkc shell`, you walk up to the service already
-running in tmux window 0.
+running in the `default-cmd` tab. Visitors who open the workspace see
+it as a shared terminal without any action from the owner.
 
 ## Shell features
 

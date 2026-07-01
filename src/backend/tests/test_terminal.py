@@ -1531,3 +1531,92 @@ class TestEnsureBaseSession:
         ):
             result = await _has_tmux_session("cid", "my-session")
         assert result is False
+
+    # --- #1114: default-cmd is a per-workspace singleton in the OWNER's session ---
+
+    async def test_default_command_targets_owner_session(self):
+        """A visitor's terminal_start fires the default command in the
+        OWNER's session, not the visitor's (#1114).
+
+        The firing user ("visitor") still gets their own base session for
+        an interactive shell, but the default-cmd window is created in
+        the owner's session ("owner"), which is ensured first.
+        """
+        from klangk_backend.terminal import _ensure_base_session
+
+        with (
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (1, "", ""),  # has-session visitor: fails
+                    (0, "", ""),  # new-session visitor: ok
+                    (1, "", ""),  # has-session owner: fails (not yet)
+                    (0, "", ""),  # new-session owner: ok
+                    (0, "", ""),  # list-windows owner: default-cmd absent
+                    (0, "", ""),  # new-window owner: ok
+                    (0, "", ""),  # send-keys owner: ok
+                ],
+            ) as mock_exec,
+            patch(
+                "klangk_backend.terminal.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
+        ):
+            created = await _ensure_base_session(
+                "cid",
+                "visitor",
+                default_command="openclaw gateway",
+                setup_state="complete",
+                default_cmd_session_name="owner",
+                default_cmd_user_home="/home/owner",
+            )
+        # Visitor's base session was freshly created.
+        assert created is True
+        # The default-cmd window targets the OWNER's session.
+        new_window_cmd = mock_exec.call_args_list[5].args[1]
+        assert "new-window" in new_window_cmd
+        assert "owner" in new_window_cmd
+        send_cmd = mock_exec.call_args_list[6].args[1]
+        assert "owner:default-cmd" in send_cmd
+        # The owner's session was created with the owner's HOME.
+        owner_new_session = mock_exec.call_args_list[3].args[1]
+        assert "new-session" in owner_new_session
+        assert "owner" in owner_new_session
+
+    async def test_default_command_skipped_when_owner_has_window(self):
+        """Exactly-once: a visitor's terminal_start is a no-op for the
+        default command once the owner's session already has the window.
+
+        The existence check is scoped to the owner's session, so no
+        matter how many users fire terminal_start, the singleton command
+        is started only once (#1114).
+        """
+        from klangk_backend.terminal import _ensure_base_session
+
+        with patch(
+            "klangk_backend.terminal.podman.exec_container",
+            new_callable=AsyncMock,
+            side_effect=[
+                (1, "", ""),  # has-session visitor: fails
+                (0, "", ""),  # new-session visitor: ok
+                (0, "", ""),  # has-session owner: succeeds (exists)
+                (0, "bash\ndefault-cmd\n", ""),  # list-windows owner: present
+            ],
+        ) as mock_exec:
+            created = await _ensure_base_session(
+                "cid",
+                "visitor",
+                default_command="openclaw gateway",
+                setup_state="complete",
+                default_cmd_session_name="owner",
+                default_cmd_user_home="/home/owner",
+            )
+        assert created is True  # visitor session created
+        # No new-window / send-keys: the owner already has the window.
+        assert all(
+            "new-window" not in c.args[1] for c in mock_exec.call_args_list
+        )
+        assert all(
+            "send-keys" not in c.args[1] for c in mock_exec.call_args_list
+        )

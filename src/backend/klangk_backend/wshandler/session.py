@@ -40,6 +40,12 @@ class WorkspaceSession:
         # This is the in-memory authority; snapshots are persisted
         # to /home/.workspace-state.json for crash recovery.
         self.terminal_windows: dict[str, list[dict]] = {}
+        # user_id -> handle cache so shared windows remain attributable
+        # (and thus visible in the shared list) even when their owner has
+        # no active connection -- e.g. the default-cmd window after the
+        # owner logs out, or an auto-started window the owner never saw
+        # (#1114). Populated on sync/owner-reconcile.
+        self.shared_handles: dict[str, str] = {}
         self._save_lock = asyncio.Lock()
         # Workspace token renewal tracking.
         self.workspace_token_expiry: datetime | None = None
@@ -49,6 +55,7 @@ class WorkspaceSession:
         self.subscribers.clear()
         self.browser_subscribers.clear()
         self.terminal_windows.clear()
+        self.shared_handles.clear()
         # Cancel the token renewal loop so it doesn't keep renewing
         # tokens for a container that has been killed or reset.
         task = self._token_renewal_task
