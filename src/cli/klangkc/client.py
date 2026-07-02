@@ -808,13 +808,18 @@ async def _ws_shell(
             )
         )
 
-        # 3. Drain messages until we have terminal_windows (needed for
-        # window selection).  terminal_output may arrive before
-        # terminal_windows due to async output forwarding, so we buffer
-        # early output and don't stop until the window list is in.
+        # 3. Drain messages until we have what window selection needs.
+        # terminal_output may arrive before terminal_windows due to async
+        # output forwarding, so we buffer early output and don't stop until
+        # the window list is in. When joining a shared terminal
+        # (``handle:window_name``) we must ALSO wait for shared_terminals,
+        # which the server sends AFTER terminal_windows (see #1208):
+        # breaking on terminal_windows alone leaves shared_terminals empty
+        # and the join fails with "Shared terminal not found".
         own_windows: list[dict] = []
         shared_terminals: list[dict] = []
         buffered_output: list[str] = []
+        needs_shared = window is not None and ":" in window
         try:
             deadline = asyncio.get_event_loop().time() + 30
             while True:
@@ -825,9 +830,12 @@ async def _ws_shell(
                 msg = json.loads(raw)
                 if msg.get("type") == "terminal_windows":
                     own_windows = msg.get("windows", [])
-                    break
+                    if not needs_shared:
+                        break
                 elif msg.get("type") == "shared_terminals":
                     shared_terminals = msg.get("terminals", [])
+                    if needs_shared:
+                        break
                 elif msg.get("type") == "terminal_output":
                     buffered_output.append(msg.get("data", ""))
                 elif msg.get("type") == "error":  # pragma: no cover

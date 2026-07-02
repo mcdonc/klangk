@@ -1860,6 +1860,144 @@ class TestRunShell:
             assert "Connection failed" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_ws_shell_joins_shared_terminal_after_terminal_windows(
+        self,
+    ):
+        """A shared join must wait for shared_terminals, which the server
+        sends AFTER terminal_windows (#1208).
+
+        Scripts the real on-the-wire order (chat, terminal_started,
+        terminal_output, terminal_windows, THEN shared_terminals) and
+        asserts the join resolves the match and sends
+        join_shared_terminal rather than raising "not found".
+        """
+        from klangkc.client import _ws_shell
+
+        # Message sequence matches a live connect (see #1208 trace):
+        # the service-cmd window arrives only in shared_terminals, which
+        # lands AFTER terminal_windows.
+        msgs = [
+            {"type": "container_ready"},
+            {"type": "terminal_started"},
+            {"type": "terminal_output", "data": "boot..."},
+            {"type": "terminal_windows", "windows": []},
+            {
+                "type": "shared_terminals",
+                "terminals": [
+                    {
+                        "user_id": "agent-uid",
+                        "handle": "clanker",
+                        "window_name": "service-cmd",
+                        "window_id": "win-1",
+                        "is_service": True,
+                    }
+                ],
+            },
+            # join confirmation
+            {"type": "terminal_started"},
+        ]
+        idx = {"i": 0}
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+
+        async def fake_recv(*a, **kw):
+            i = idx["i"]
+            idx["i"] += 1
+            if i < len(msgs):
+                return json.dumps(msgs[i])
+            # After the scripted messages, signal the stdin loop to end.
+            import websockets
+
+            raise websockets.ConnectionClosed(None, None)
+
+        ws_mock.recv = fake_recv
+        ws_mock.send = AsyncMock()
+        ws_mock.close = AsyncMock()
+
+        sent_cmds = []
+
+        async def capture_send(payload, *a, **kw):
+            sent_cmds.append(json.loads(payload))
+
+        ws_mock.send = capture_send
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with patch("klangkc.client._run_shell", new=AsyncMock()):
+                # Should NOT raise "Shared terminal not found".
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    raw_mode=False,
+                    window="clanker:service-cmd",
+                )
+
+        # The join command was sent with the resolved ids.
+        join = next(
+            (c for c in sent_cmds if c.get("cmd") == "join_shared_terminal"),
+            None,
+        )
+        assert join is not None, "join_shared_terminal was never sent"
+        assert join["user_id"] == "agent-uid"
+        assert join["window_id"] == "win-1"
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_shared_terminal_not_found_when_absent(self):
+        """Sanity: if the window truly isn't shared, we still raise."""
+        from klangkc.client import _ws_shell
+
+        msgs = [
+            {"type": "container_ready"},
+            {"type": "terminal_started"},
+            {"type": "terminal_windows", "windows": []},
+            {"type": "shared_terminals", "terminals": []},
+        ]
+        idx = {"i": 0}
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+
+        async def fake_recv(*a, **kw):
+            i = idx["i"]
+            idx["i"] += 1
+            if i < len(msgs):
+                return json.dumps(msgs[i])
+            import websockets
+
+            raise websockets.ConnectionClosed(None, None)
+
+        ws_mock.recv = fake_recv
+        ws_mock.send = AsyncMock()
+
+        with patch("websockets.connect", return_value=ws_mock):
+            with pytest.raises(ConnectionError) as exc_info:
+                await _ws_shell(
+                    "ws://localhost/ws",
+                    "token",
+                    "ws1",
+                    raw_mode=False,
+                    window="clanker:service-cmd",
+                )
+            assert "not found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_tilde_dot_disconnects(self):
         """Enter then ~ then . cleanly exits the shell."""
         from klangkc.client import _run_shell
