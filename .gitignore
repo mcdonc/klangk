@@ -59,6 +59,11 @@ src/frontend/coverage/
 # E2E test artifacts
 src/frontend/e2e-tests/logs/
 
+# Playwright demo recording artifacts (mp4/webm captures + screenshot PNGs).
+# Demo scenes write here; never commit. (The demo subdir's own .gitignore
+# also ignores demo-videos/recordings/test-results under itself.)
+test-results/
+
 # Generated config (created by devenv enterShell)
 .prettierignore
 .yamllint.yml
