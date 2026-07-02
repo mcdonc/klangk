@@ -28,6 +28,46 @@ class Branding {
   /// widget. Read by [KlangkLogo] at build time. See #1152.
   static String logoUrl = '';
 
+  // --- Configurable legal & support links (#1177) ---
+  // All empty by default; the UI hides whichever aren't configured. Read
+  // synchronously in `build` like [name]/[logoUrl]. Surfaced via /config
+  // as plain env values (no file:/cmd: resolution -- they are public,
+  // shown pre-auth), so these are passed through verbatim.
+
+  /// Terms of Service URL, or `''` when unset.
+  static String termsUrl = '';
+
+  /// Privacy Policy URL, or `''` when unset.
+  static String privacyUrl = '';
+
+  /// Acceptable Use Policy URL, or `''` when unset.
+  static String aupUrl = '';
+
+  /// Support/help URL, or `''` when unset.
+  static String supportUrl = '';
+
+  /// Support email address, or `''` when unset.
+  static String supportEmail = '';
+
+  /// The set legal links (Terms / Privacy / AUP), most-prominent first.
+  /// Empty when none are configured. Used by the auth screens' footer.
+  static List<MapEntry<String, String>> get legalLinks => [
+        if (termsUrl.isNotEmpty)
+          MapEntry('Terms', termsUrl),
+        if (privacyUrl.isNotEmpty)
+          MapEntry('Privacy', privacyUrl),
+        if (aupUrl.isNotEmpty)
+          MapEntry('Acceptable Use', aupUrl),
+      ];
+
+  /// The configured support link target, or `''` when none. Prefers the
+  /// URL; falls back to a mailto: of [supportEmail] when only that is set.
+  static String get supportHref {
+    if (supportUrl.isNotEmpty) return supportUrl;
+    if (supportEmail.isNotEmpty) return 'mailto:$supportEmail';
+    return '';
+  }
+
   /// Apply branding fields from the raw `/api/v1/config` response.
   ///
   /// Accepts the decoded JSON value (usually a `Map`). Non-map or missing
@@ -43,17 +83,32 @@ class Branding {
         name = defaultName;
       }
       logoUrl = (data['logo_url'] as String?)?.trim() ?? '';
+      termsUrl = (data['terms_url'] as String?)?.trim() ?? '';
+      privacyUrl = (data['privacy_url'] as String?)?.trim() ?? '';
+      aupUrl = (data['aup_url'] as String?)?.trim() ?? '';
+      supportUrl = (data['support_url'] as String?)?.trim() ?? '';
+      supportEmail = (data['support_email'] as String?)?.trim() ?? '';
       return;
     }
     name = defaultName;
     logoUrl = '';
+    termsUrl = '';
+    privacyUrl = '';
+    aupUrl = '';
+    supportUrl = '';
+    supportEmail = '';
   }
 
   /// Reset to defaults. Only for tests, so static state doesn't leak between
-  /// test cases that mutate [name] / [logoUrl].
+  /// test cases that mutate the branding fields.
   @visibleForTesting
   static void reset() {
     name = defaultName;
     logoUrl = '';
+    termsUrl = '';
+    privacyUrl = '';
+    aupUrl = '';
+    supportUrl = '';
+    supportEmail = '';
   }
 }

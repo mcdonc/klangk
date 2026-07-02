@@ -3,6 +3,7 @@ import '../theme/colors.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
+import '../branding.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 
@@ -60,6 +61,18 @@ class AppBarActions extends StatelessWidget {
                 const Icon(Icons.manage_accounts, color: KColors.textSecondary),
             tooltip: 'Admin',
             onPressed: onAdminPressed ?? () => context.go('/admin/users'),
+          ),
+        // Deployer-configured support link (#1177). Shown only when set
+        // (URL or support email); opens in a new tab. Useful everywhere,
+        // unlike the legal links which live on the auth screens.
+        if (Branding.supportHref.isNotEmpty)
+          IconButton(
+            icon: const Icon(Icons.help_outline,
+                color: KColors.textSecondary),
+            tooltip: Branding.supportUrl.isNotEmpty
+                ? 'Support'
+                : Branding.supportEmail,
+            onPressed: () => openUrl(Branding.supportHref),
           ),
         IconButton(
           icon: const Icon(Icons.logout, color: KColors.textSecondary),
