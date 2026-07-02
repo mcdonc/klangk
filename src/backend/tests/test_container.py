@@ -43,6 +43,52 @@ class TestParseIdleTimeout:
         assert interval == 60  # clamped to max 60
 
 
+class TestSslCertDir:
+    """Runtime SSL/CA certificate injection (#1181): ssl_cert_dir() resolver."""
+
+    def test_unset_returns_none(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
+        assert container.ssl_cert_dir() is None
+
+    def test_missing_dir_returns_none(self, monkeypatch, tmp_path):
+        gone = tmp_path / "does-not-exist"
+        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(gone))
+        assert container.ssl_cert_dir() is None
+
+    def test_empty_dir_returns_none(self, monkeypatch, tmp_path):
+        # Dir exists but contains no .pem/.crt.
+        (tmp_path / "readme.txt").write_text("no certs here")
+        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
+        assert container.ssl_cert_dir() is None
+
+    def test_dir_with_pem_returns_path(self, monkeypatch, tmp_path):
+        (tmp_path / "ca.pem").write_text("-----BEGIN CERTIFICATE-----")
+        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
+        assert container.ssl_cert_dir() == str(tmp_path.resolve())
+
+    def test_dir_with_crt_returns_path(self, monkeypatch, tmp_path):
+        (tmp_path / "my-ca.crt").write_text("-----BEGIN CERTIFICATE-----")
+        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
+        assert container.ssl_cert_dir() == str(tmp_path.resolve())
+
+    def test_extension_case_insensitive(self, monkeypatch, tmp_path):
+        (tmp_path / "CA.PEM").write_text("-----BEGIN CERTIFICATE-----")
+        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
+        assert container.ssl_cert_dir() == str(tmp_path.resolve())
+
+    def test_ssl_env_vars_empty_without_dir(self):
+        assert container.ssl_env_vars(None) == []
+
+    def test_ssl_env_vars_point_at_bundle(self):
+        vars_ = container.ssl_env_vars("/some/dir")
+        assert vars_ == [
+            "SSL_CERT_FILE=/tmp/klangk/ca-bundle.crt",
+            "REQUESTS_CA_BUNDLE=/tmp/klangk/ca-bundle.crt",
+            "CURL_CA_BUNDLE=/tmp/klangk/ca-bundle.crt",
+            "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt",
+        ]
+
+
 class TestImagePullPolicy:
     def test_default_is_never(self, monkeypatch):
         monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
@@ -658,6 +704,63 @@ class TestStartContainer:
             )
         env = p.create_container.call_args.kwargs["env"]
         assert "KLANGK_TERMINAL_BANNER=Custom warning" in env
+
+    async def test_ssl_trust_mounted_when_cert_dir_configured(
+        self, workspace, monkeypatch, tmp_path
+    ):
+        """A configured KLANGK_SSL_CERT_DIR is bind-mounted ro and env set (#1181)."""
+        ssl_dir = tmp_path / "ssl"
+        ssl_dir.mkdir()
+        (ssl_dir / "corp-ca.pem").write_text("-----BEGIN CERTIFICATE-----")
+        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(ssl_dir))
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        binds = p.create_container.call_args.kwargs["binds"]
+        assert f"{ssl_dir.resolve()}:/opt/klangk/ssl:ro" in binds
+        env = p.create_container.call_args.kwargs["env"]
+        assert "SSL_CERT_FILE=/tmp/klangk/ca-bundle.crt" in env
+        assert "REQUESTS_CA_BUNDLE=/tmp/klangk/ca-bundle.crt" in env
+        assert "CURL_CA_BUNDLE=/tmp/klangk/ca-bundle.crt" in env
+        assert "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt" in env
+
+    async def test_no_ssl_trust_when_cert_dir_unset(
+        self, workspace, monkeypatch
+    ):
+        """Without KLANGK_SSL_CERT_DIR there is no mount and no trust env."""
+        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        binds = p.create_container.call_args.kwargs["binds"]
+        assert not any("/opt/klangk/ssl" in b for b in binds)
+        env = p.create_container.call_args.kwargs["env"]
+        assert not any(e.startswith("SSL_CERT_FILE=") for e in env)
+
+    async def test_no_ssl_trust_when_dir_has_no_certs(
+        self, workspace, monkeypatch, tmp_path
+    ):
+        """A cert dir with no .pem/.crt is not mounted (#1181)."""
+        ssl_dir = tmp_path / "ssl"
+        ssl_dir.mkdir()
+        (ssl_dir / "notes.txt").write_text("not a cert")
+        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(ssl_dir))
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        binds = p.create_container.call_args.kwargs["binds"]
+        assert not any("/opt/klangk/ssl" in b for b in binds)
+        env = p.create_container.call_args.kwargs["env"]
+        assert not any(e.startswith("SSL_CERT_FILE=") for e in env)
 
     async def test_port_allocation_on_create(self, workspace):
         with patch_podman():

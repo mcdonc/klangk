@@ -174,6 +174,17 @@ def parse_idle_timeout() -> tuple[int, int]:
 
 IDLE_TIMEOUT_SECONDS, CHECK_INTERVAL_SECONDS = parse_idle_timeout()
 
+
+# --- Runtime SSL/CA certificate injection (#1181) -------------------------
+# The detection (ssl_cert_dir), container env vars (ssl_env_vars) and the
+# in-container mount/bundle paths live in :mod:`ssl_trust`, which also owns
+# the backend-process trust path.  See that module for the full design.
+from .ssl_trust import (  # noqa: E402
+    SSL_MOUNT_DEST as _SSL_MOUNT_DEST,
+    ssl_cert_dir,
+    ssl_env_vars,
+)
+
 PORT_RANGE_START = int(
     util.resolve_env_value("KLANGK_PORT_RANGE_START") or "9000"
 )
@@ -891,6 +902,7 @@ class ContainerRegistry:
         hosting_base_path: str,
         agent_home: str,
         extra_env: dict[str, str] | None,
+        ssl_dir: str | None = None,
     ) -> list[str]:
         """Build the container environment variable list."""
         env_vars: list[str] = []
@@ -922,6 +934,12 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
         if TERMINAL_BANNER:
             env_vars.append(f"KLANGK_TERMINAL_BANNER={TERMINAL_BANNER}")
+
+        # Runtime SSL/CA trust (#1181): point OpenSSL/Python/curl/Node
+        # at the bundle the entrypoint builds from the mounted certs.
+        # Appended before plugin/extra env so a deployer can override if
+        # ever needed. Emitted only when a trustable cert dir is present.
+        env_vars.extend(ssl_env_vars(ssl_dir))
 
         for k, v in plugins.container_env().items():
             env_vars.append(f"{k}={v}")
@@ -972,11 +990,15 @@ class ContainerRegistry:
         home_path: str,
         config_path: str | None,
         extra_mounts: list[str] | None,
+        ssl_dir: str | None = None,
     ) -> list[str]:
         """Build the bind-mount list for the container."""
         binds = [f"{home_path}:/home"]
         if config_path:
             binds.append(f"{config_path}:/opt/klangk/config:ro")
+        if ssl_dir:
+            # Read-only mount of deployer CA certs (#1181).
+            binds.append(f"{ssl_dir}:{_SSL_MOUNT_DEST}:ro")
         binds += extra_mounts or []
         return binds
 
@@ -1150,6 +1172,13 @@ class ContainerRegistry:
         # Resolve the agent home at this async seam (``_build_env`` is
         # sync) so every exec process inherits KLANGK_AGENT_HOME (#1157).
         agent_home = f"/home/{await model.agent_handle()}"
+        ssl_dir = ssl_cert_dir()
+        if ssl_dir:
+            logger.info(
+                "Runtime SSL trust enabled: mounting %s at %s",
+                ssl_dir,
+                _SSL_MOUNT_DEST,
+            )
         env_vars = self._build_env(
             workspace_id,
             host_ports,
@@ -1158,9 +1187,12 @@ class ContainerRegistry:
             hosting_base_path,
             agent_home,
             extra_env,
+            ssl_dir,
         )
         await self._ensure_volumes(extra_mounts, user_id)
-        binds = self._build_mounts(home_path, config_path, extra_mounts)
+        binds = self._build_mounts(
+            home_path, config_path, extra_mounts, ssl_dir
+        )
 
         publish = [
             (host_port, CONTAINER_PORT_START + i)

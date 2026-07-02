@@ -186,13 +186,13 @@ Extends `klangk-host:latest` and replaces four things:
 
 ## Build Options
 
-| Variable              | Default                                    | Description                                                            |
-| --------------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
-| `KLANGK_REF`          | `main`                                     | Klangk branch, tag, or commit SHA to build against                     |
-| `KLANGK_REPO`         | `https://github.com/mcdonc/klangk.git`     | Klangk repo URL                                                        |
-| `KLANGK_HOST_IMAGE`   | `ghcr.io/mcdonc/klangk/klangk-host-custom` | Output image name                                                      |
-| `KLANGK_PLATFORM`     | `linux/amd64`                              | Target platform                                                        |
-| `KLANGK_SSL_CERT_DIR` | `./ssl`                                    | Directory containing `.pem`/`.crt` CA certs to inject into both images |
+| Variable              | Default                                    | Description                                                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `KLANGK_REF`          | `main`                                     | Klangk branch, tag, or commit SHA to build against                                                                                                                                                                                   |
+| `KLANGK_REPO`         | `https://github.com/mcdonc/klangk.git`     | Klangk repo URL                                                                                                                                                                                                                      |
+| `KLANGK_HOST_IMAGE`   | `ghcr.io/mcdonc/klangk/klangk-host-custom` | Output image name                                                                                                                                                                                                                    |
+| `KLANGK_PLATFORM`     | `linux/amd64`                              | Target platform                                                                                                                                                                                                                      |
+| `KLANGK_SSL_CERT_DIR` | `./ssl`                                    | Directory containing `.pem`/`.crt` CA certs to inject into both images (build-time). The same variable is also honored **at runtime** to trust private CAs without a rebuild — see [Custom CA Certificates](#custom-ca-certificates) |
 
 ## Plugins
 
@@ -211,7 +211,32 @@ See the [Creating Plugins](../development/creating-plugins.md) reference for plu
 
 ## Custom CA Certificates
 
-Place `.pem` or `.crt` files in the `ssl/` directory (or set `KLANGK_SSL_CERT_DIR`). They are installed into the system CA store of both the host and workspace images. This is needed when services (e.g., Logfire, OIDC providers) use certificates signed by a private CA. The `ssl/` directory is gitignored — certs must be provided at build time.
+Klangk supports custom CA certificates in two complementary ways: a **build-time** path that bakes the certs into the images (requires a rebuild to rotate), and a **runtime** path that mounts the certs and points each toolchain at them (rotate by restarting containers, no rebuild).
+
+Both honor the same directory: place `.pem` or `.crt` files there. This is needed when services (e.g., Logfire, OIDC providers, internal package mirrors, SMTP relays) use certificates signed by a private CA — common behind corporate MITM proxies or in air-gapped/offline deployments.
+
+### Build-time (baked into the images)
+
+Place `.pem` or `.crt` files in the `ssl/` directory (or set `KLANGK_SSL_CERT_DIR`). They are installed into the system CA store of both the host and workspace images. The `ssl/` directory is gitignored — certs must be provided at build time.
+
+### Runtime (mounted, no rebuild) — `KLANGK_SSL_CERT_DIR`
+
+Point `KLANGK_SSL_CERT_DIR` at a directory of `.pem`/`.crt` files on the host and **restart** workspaces (or the backend). Klangk makes those CAs trusted at startup **without rebuilding any image**, in **two scopes**:
+
+- **Workspace containers** — the directory is bind-mounted read-only into each container, and the container entrypoint builds a merged CA bundle (the container's system CAs **plus** your custom certs) on the writable `/tmp` tmpfs. The toolchain trust env vars (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`) are set to point at it, so OpenSSL, Python (`requests`/`certifi`), `curl`, and Node all honor your CAs. Because the bundle is **merged with the system CAs**, public-internet TLS (e.g. `npm install`, `pip install`, `git clone https://...`) keeps working. This applies to shells, `podman exec`, and the agent subprocess alike.
+- **Backend process** — at startup the backend concatenates your certs with its own system bundle and sets the same trust env vars, so its own outbound TLS (OIDC discovery, SMTP relay, the LLM-proxy upstream) trusts your private CAs too.
+
+```bash
+docker run -d \
+  ...
+  -e KLANGK_SSL_CERT_DIR=/certs \
+  -v ./my-corporate-cas:/certs:ro \
+  ghcr.io/mcdonc/klangk/klangk-host-custom
+```
+
+Rotating a cert is just a file change plus a workspace/backend restart — no image rebuild. The build-time path remains available; the runtime path is additive.
+
+> **Why a merged bundle?** The `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` variables _replace_ the default trust store rather than add to it, so a custom-only bundle would break public-internet TLS. Klangk therefore prepends the system CAs before your custom certs. (`NODE_EXTRA_CA_CERTS` is additive, but pointing it at the same merged bundle is harmless.)
 
 ## OIDC Authentication
 

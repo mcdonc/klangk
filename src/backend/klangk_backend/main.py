@@ -13,7 +13,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, container, model, oidc, plugins, workspaces, wshandler
+from . import (
+    auth,
+    container,
+    model,
+    oidc,
+    plugins,
+    ssl_trust,
+    workspaces,
+    wshandler,
+)
 from .api import root_router, router
 from .util import API_PREFIX
 from .model import (
@@ -275,6 +284,11 @@ async def lifespan(app: FastAPI):
         )
         raise SystemExit(1)
     write_pid_file()
+
+    # Make the backend process itself trust deployer-supplied CAs (#1181)
+    # before any outbound TLS happens (OIDC discovery, SMTP relay, LLM-proxy
+    # upstream). No-op when KLANGK_SSL_CERT_DIR is unset or empty of certs.
+    ssl_trust.apply_backend_ssl_trust()
 
     auth.require_secure_jwt_secret()
     plugins.load()
