@@ -125,13 +125,19 @@ The gateway here is also exposed as a **hosted app** — once we switch to the b
 
 So the same sandbox idea — one config file, one command — scales from "my dev environment" up to "a service that's always on."
 
-## The Web UI — Workspaces and Terminal (1 minute)
+## The Web UI — Workspaces, Terminal, and Hosted Apps (1 minute)
 
 _[Screen: switch to browser, Klangk web UI]_
 
-Now let me continue in the browser. When you open Klangk on the web, you see the same workspaces you saw from the CLI — including the ones we just made. There's `openclaw` still showing its green health icon, and here's `demo`, the workspace we created a moment ago. Let me open it.
+Now let me continue in the browser. When you open Klangk on the web, you see the same workspaces you saw from the CLI — including the ones we just made. There's `openclaw` still showing its green health icon, and here's `demo`, the workspace we created a moment ago.
 
-_[Click the demo workspace card on the "Owned by Me" tab]_
+First, that hosted app I teased a moment ago. Let me click into `openclaw` and open its Service tab.
+
+_[Click the openclaw workspace, then the Service tab, then the "Open hosted app" button — openclaw's own web UI loads]_
+
+There — openclaw's own web UI, proxied through Klangk's single port. No separate port to open, no extra auth to wire up. Let me go back and open `demo`.
+
+_[Return to the workspace list, click the demo workspace card on the "Owned by Me" tab]_
 
 This is a continuation of exactly what we were doing. The terminal here is the same tmux session I had from `klangkc shell` — the repo I cloned and the Pi session I ran from the command line are all still here. That's the whole point: the CLI and the web UI are two windows into the same container.
 
