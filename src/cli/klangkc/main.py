@@ -197,6 +197,47 @@ def status(
     console.print(table)
 
 
+def _workspace_status(ws) -> tuple[str, str]:
+    """Return ``(label, rich_markup)`` describing a workspace's runtime state.
+
+    The label is terminal-safe plain text; the markup is the colorized form
+    for the rich table. Collapses two independent backend fields --
+    ``running`` (container process up?) and ``health`` (the health-check
+    probe result, if any) -- into one readable word:
+
+    - not running                       -> stopped   (dim)
+    - running, no health-check configured-> running   (green)
+    - running + health=healthy          -> healthy   (green)
+    - running + health=unhealthy        -> unhealthy (red)
+    - running, health-check set, no
+      probe completed yet              -> starting  (yellow)
+
+    A workspace with no ``health_check`` never gets probed, so ``health``
+    stays None forever -- ``starting`` would be a lie. ``running`` is the
+    honest label: the container is up, and we make no health claim.
+    """
+    if not ws.running:
+        return "stopped", "[dim]stopped[/dim]"
+    if not ws.health_check:
+        return "running", "[green]running[/green]"
+    if ws.health == "healthy":
+        return "healthy", "[green]healthy[/green]"
+    if ws.health == "unhealthy":
+        return "unhealthy", "[red]unhealthy[/red]"
+    return "starting", "[yellow]starting[/yellow]"
+
+
+def _short_id(ws_id: str) -> str:
+    """Shorten a workspace id to ``abc…xyz`` (first 3 + ellipsis + last 3).
+
+    Long ids crowd the table; this keeps the column narrow while still
+    distinguishing workspaces at a glance. Short ids are returned as-is.
+    """
+    if len(ws_id) <= 7:
+        return ws_id
+    return f"{ws_id[:3]}…{ws_id[-3:]}"
+
+
 @app.command("ls")
 def list_workspaces(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
@@ -256,31 +297,45 @@ def list_workspaces(
         return
     if plain:
         for ws in workspaces:
-            typer.echo(f"  {ws.name}  ({ws.id[:12]})  {ws.created_at[:10]}")
+            status, _ = _workspace_status(ws)
+            typer.echo(
+                f"  {ws.name}  ({_short_id(ws.id)})  "
+                f"{status}  {ws.created_at[:10]}"
+            )
         if shared_workspaces:
             typer.echo("Shared with me:")
             for ws in shared_workspaces:
+                status, _ = _workspace_status(ws)
                 owner = f"  by {ws.owner_email}" if ws.owner_email else ""
                 typer.echo(
-                    f"  {ws.name}  ({ws.id[:12]})  {ws.created_at[:10]}{owner}"
+                    f"  {ws.name}  ({_short_id(ws.id)})  "
+                    f"{status}  {ws.created_at[:10]}{owner}"
                 )
         return
     console = Console()
     table = Table(box=None, pad_edge=False)
     table.add_column("Name", style="bold")
     table.add_column("ID")
+    table.add_column("Status")
     table.add_column("Created")
     if shared:
         table.add_column("Owner")
     for ws in workspaces:
-        row = [ws.name, ws.id[:12], ws.created_at[:10]]
+        _, markup = _workspace_status(ws)
+        row = [ws.name, _short_id(ws.id), markup, ws.created_at[:10]]
         if shared:
             row.append("")
         table.add_row(*row)
     for ws in shared_workspaces:
-        table.add_row(
-            ws.name, ws.id[:12], ws.created_at[:10], ws.owner_email or ""
-        )
+        _, markup = _workspace_status(ws)
+        row = [
+            ws.name,
+            _short_id(ws.id),
+            markup,
+            ws.created_at[:10],
+            ws.owner_email or "",
+        ]
+        table.add_row(*row)
     console.print(table)
 
 

@@ -156,6 +156,9 @@ class Workspace:
     env: dict[str, str] | None = None
     health_check: str | None = None
     owner_email: str | None = None
+    running: bool = False
+    health: str | None = None
+    health_message: str | None = None
 
 
 def _get_terminal_size() -> tuple[int, int]:
@@ -377,6 +380,9 @@ class KlangkClient:
             env=w.get("env"),
             health_check=w.get("health_check"),
             owner_email=w.get("owner_email") if shared else None,
+            running=bool(w.get("running", False)),
+            health=w.get("health"),
+            health_message=w.get("health_message"),
         )
 
     def create_workspace(

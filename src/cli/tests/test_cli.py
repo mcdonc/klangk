@@ -1035,6 +1035,51 @@ class TestKlangkClient:
         assert workspaces[0].name == "alpha"
         assert workspaces[1].id == "ws2"
 
+    def test_list_workspaces_parses_health_status(self):
+        client = KlangkClient("http://test:8995", "valid-token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "alpha",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "running": True,
+                    "health": "unhealthy",
+                    "health_message": "curl failed",
+                },
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
+        with patch.object(client, "get", return_value=mock_resp):
+            workspaces = client.list_workspaces()
+        assert workspaces[0].running is True
+        assert workspaces[0].health == "unhealthy"
+        assert workspaces[0].health_message == "curl failed"
+
+    def test_list_workspaces_health_defaults_when_absent(self):
+        client = KlangkClient("http://test:8995", "valid-token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "alpha",
+                    "created_at": "2025-01-01T00:00:00Z",
+                },
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
+        with patch.object(client, "get", return_value=mock_resp):
+            workspaces = client.list_workspaces()
+        assert workspaces[0].running is False
+        assert workspaces[0].health is None
+        assert workspaces[0].health_message is None
+
     def test_list_shared_workspaces_parses_response(self):
         client = KlangkClient("http://test:8995", "valid-token")
         mock_resp = MagicMock()

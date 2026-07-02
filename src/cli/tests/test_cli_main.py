@@ -360,6 +360,92 @@ class TestMainCLI:
         assert "my-workspace" in output
         assert "2025-01-01" in output
 
+    def test_list_workspaces_plain_shows_status_and_short_id(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangkc import main
+
+        ws = Workspace(
+            id="abc" + "0" * 40 + "xyz",
+            name="demo",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+            health_check="/path/to/check.sh",
+            health="healthy",
+        )
+        client = MagicMock()
+        client.list_workspaces.return_value = [ws]
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with patch("typer.echo") as mock_echo:
+            main.list_workspaces(plain=True)
+        line = next(
+            str(c) for c in mock_echo.call_args_list if "demo" in str(c)
+        )
+        assert "healthy" in line  # plain status label
+        assert "\x1b" not in line  # no ANSI color in --plain
+        assert "abc…xyz" in line  # shortened id
+
+    def test_list_workspaces_rich_shows_status_column(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from klangkc import main
+
+        ws = Workspace(
+            id="abc" + "0" * 40 + "xyz",
+            name="demo",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+            health_check="/path/to/check.sh",
+            health="unhealthy",
+        )
+        client = MagicMock()
+        client.list_workspaces.return_value = [ws]
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        buf = StringIO()
+        with patch.object(
+            main,
+            "Console",
+            return_value=Console(file=buf, force_terminal=True),
+        ):
+            main.list_workspaces(plain=False)
+        output = buf.getvalue()
+        assert "Status" in output  # column header
+        assert "unhealthy" in output  # status label text renders
+        assert "abc…xyz" in output  # shortened id
+
+    def test_list_shared_workspaces_plain_shows_status(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangkc import main
+
+        shared_ws = Workspace(
+            id="abc" + "0" * 40 + "xyz",
+            name="shared-ws",
+            created_at="2025-01-01T00:00:00Z",
+            owner_email="owner@example.com",
+            running=True,
+            health_check="/path/to/check.sh",
+            health="healthy",
+        )
+        client = MagicMock()
+        client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = [shared_ws]
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with patch("typer.echo") as mock_echo:
+            main.list_workspaces(plain=True, shared=True)
+        line = next(
+            str(c) for c in mock_echo.call_args_list if "shared-ws" in str(c)
+        )
+        assert "healthy" in line
+        assert "\x1b" not in line
+
     def test_list_workspaces_all_passes_pagination_flag(
         self, logged_in_cfg, monkeypatch
     ):
@@ -2730,6 +2816,89 @@ class TestBuildWsUrl:
         from klangkc.main import _build_ws_url
 
         assert _build_ws_url("example.com") == "ws://example.com/ws"
+
+
+class TestWorkspaceStatus:
+    def test_stopped_when_not_running(self):
+        from klangkc.main import _workspace_status
+
+        ws = Workspace(id="x", name="n", created_at="2025-01-01T00:00:00Z")
+        label, markup = _workspace_status(ws)
+        assert label == "stopped"
+        assert "dim" in markup
+
+    def test_running_when_no_health_check_configured(self):
+        from klangkc.main import _workspace_status
+
+        ws = Workspace(
+            id="x", name="n", created_at="2025-01-01T00:00:00Z", running=True
+        )
+        # No health_check configured -> never probed -> must not show
+        # "starting" (which would imply a pending poll that never comes).
+        label, markup = _workspace_status(ws)
+        assert label == "running"
+        assert "green" in markup
+
+    def test_healthy(self):
+        from klangkc.main import _workspace_status
+
+        ws = Workspace(
+            id="x",
+            name="n",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+            health_check="/path/to/check.sh",
+            health="healthy",
+        )
+        label, markup = _workspace_status(ws)
+        assert label == "healthy"
+        assert "green" in markup
+
+    def test_unhealthy(self):
+        from klangkc.main import _workspace_status
+
+        ws = Workspace(
+            id="x",
+            name="n",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+            health_check="/path/to/check.sh",
+            health="unhealthy",
+        )
+        label, markup = _workspace_status(ws)
+        assert label == "unhealthy"
+        assert "red" in markup
+
+    def test_starting_when_running_but_no_health(self):
+        from klangkc.main import _workspace_status
+
+        ws = Workspace(
+            id="x",
+            name="n",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+            health_check="/path/to/check.sh",
+        )
+        label, markup = _workspace_status(ws)
+        assert label == "starting"
+        assert "yellow" in markup
+
+
+class TestShortId:
+    def test_long_id_is_truncated(self):
+        from klangkc.main import _short_id
+
+        assert _short_id("abcdefgh") == "abc…fgh"
+
+    def test_seven_char_id_returned_unchanged(self):
+        from klangkc.main import _short_id
+
+        assert _short_id("abcdefg") == "abcdefg"
+
+    def test_short_id_returned_unchanged(self):
+        from klangkc.main import _short_id
+
+        assert _short_id("abc") == "abc"
 
 
 class TestResolveForwardAgent:
