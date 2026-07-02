@@ -17,12 +17,11 @@ left in the pacing for narration later.
 This video is **one continuous story across a single evolving workspace**,
 not a series of independent demos. State accumulates shot to shot:
 
-| Workspace           | Born in                                    | Owner             | Role in the video                                                                                                                                                                                                                                                |
-| ------------------- | ------------------------------------------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`demo`**          | Scene 2 (`klangkc create demo`, on camera) | `admin@plope.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → clanker's Flask app `app.py`/`requirements.txt` (Sc 6) → debugged, running app (Sc 6b) → browsed files + Pyramid PDF (Sc 7) → shared with the team (Sc 8). |
-| `myproject`         | Scene 3 (`klangkc sandbox myproject`)      | `admin@plope.com` | Self-contained sandbox feature demo. Stays in the list.                                                                                                                                                                                                          |
-| `openclaw`          | Scene 4 (`klangkc sandbox openclaw`)       | `admin@plope.com` | Self-contained service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 4.                                                                                                                                      |
-| Potemkin workspaces | Pre-seeded (see Accounts below)            | various           | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                             |
+| Workspace           | Born in                                    | Owner               | Role in the video                                                                                                                                                                                                                                                |
+| ------------------- | ------------------------------------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`demo`**          | Scene 2 (`klangkc create demo`, on camera) | `admin@example.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → clanker's Flask app `app.py`/`requirements.txt` (Sc 5) → debugged, running app (Sc 5b) → browsed files + Pyramid PDF (Sc 6) → shared with the team (Sc 7). |
+| `openclaw`          | Scene 3 (`klangkc sandbox openclaw`)       | `admin@example.com` | Self-contained sandbox + service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 3.                                                                                                                            |
+| Potemkin workspaces | Pre-seeded (see Accounts below)            | various             | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                             |
 
 **Rules:**
 
@@ -30,7 +29,7 @@ not a series of independent demos. State accumulates shot to shot:
 - **Do not `klangkc rm demo` during the run** — it must survive into the next
   scene. `rm` is mentioned verbally in Sc 2 as the eventual cleanup, not
   executed on `demo`.
-- Record the browser arc (Sc 5→6→6b→7→8) **in order**, against the same live
+- Record the browser arc (Sc 4→5→5b→6→7) **in order**, against the same live
   `demo` container, so clanker's files / chat history / running app carry
   forward.
 - **Implementation note (code):** the Playwright scenes currently each spin up
@@ -61,11 +60,11 @@ KLANGK_DEMO_ADMIN_EMAIL=admin@plope.com \
 devenv shell -- node --experimental-strip-types \
     src/frontend/e2e-tests/demo/demo-seed.ts
 `
-      This creates `teammate@`, `designer@`, `reviewer@` (used live in Sc 8) and
+      This creates `teammate@`, `designer@`, `reviewer@` (used live in Sc 7) and
       five **Potemkin** workspaces (`Shared Workspace`, `Team Project`,
       `Design Review`, `Teammate Sandbox`, `Design Lab`) spread across the
       accounts. Idempotent — re-run safely.
-- [ ] For Sc 8, log `teammate@` into a **second browser session** (incognito /
+- [ ] For Sc 7, log `teammate@` into a **second browser session** (incognito /
       separate profile) so two users are live at once. `designer@`/`reviewer@`
       join via WS only (no second window needed).
 
@@ -77,9 +76,11 @@ devenv shell -- node --experimental-strip-types \
 - [ ] **openclaw sandbox:** run `klangkc sandbox openclaw` once off-camera so the
       nvm + Node 24 + openclaw download is done. For the on-camera take you then
       either re-run with `--force` (re-applies config, fast) or just keep the
-      workspace and `klangkc restart openclaw` (see Scene 4 reset).
+      workspace and `klangkc restart openclaw` (see Scene 3 reset).
 - [ ] **Sandbox scene project:** build a real `.klangk-sandbox.yaml` in a demo
       project dir and run it once off-camera (setup script + mounts verified).
+      (openclaw now serves double duty — it's both the sandbox AND the service
+      demo in Scene 3.)
 - [ ] **A repo to clone** in the CLI scene: clone Klangk itself —
       `git@github.com:mcdonc/klangk.git`. Verify `ssh-add -l` shows your key
       so `-A` works.
@@ -101,14 +102,13 @@ devenv shell -- node --experimental-strip-types \
 
 ```bash
 klangkc rm demo            # hero workspace — wipes the accumulated state
-klangkc rm myproject       # the sandbox-scene workspace
-klangkc rm openclaw        # only if you want a truly fresh Service scene
-# then re-run the CLI scenes (2,3,4) to rebuild demo/myproject/openclaw on camera
+klangkc rm openclaw        # only if you want a truly fresh sandbox/service scene
+# then re-run the CLI scenes (2,3) to rebuild demo/openclaw on camera
 ```
 
 > Because `demo` carries state across scenes, a **mid-arc re-take** (e.g. just
-> Sc 7) does NOT need a full reset — re-run from the earliest scene whose state
-> it depends on (Sc 6 rebuilds the Flask app) or re-seed just the missing piece
+> Sc 6) does NOT need a full reset — re-run from the earliest scene whose state
+> it depends on (Sc 5 rebuilds the Flask app) or re-seed just the missing piece
 > (e.g. drop the Pyramid PDF back in via `seedDemoFile`). Only full re-runs wipe
 > `demo`.
 
@@ -134,18 +134,26 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
   `git@github.com:mcdonc/klangk.git`; have `pi` functional inside a workspace
   (test the agent prompt once off-camera).
 - **Action (in order):**
-  1. `klangkc login admin@plope.com`
+  1. `klangkc login admin@example.com`
   2. `klangkc create demo`
   3. `klangkc shell demo` → show real bash; mention tmux persistence
   4. disconnect → reconnect to prove persistence
   5. `klangkc shell demo -A` (explain `-A` = forward SSH agent, no key copied in)
   6. `git clone git@github.com:mcdonc/klangk.git`
   7. run `pi`, ask it a **simple, reliable** task (see gotcha) → show it work
-  8. disconnect with **Enter ~ .** (practice this — it's fiddly on camera)
-  9. **do NOT `rm demo`** — narrate `klangkc rm` as the eventual cleanup, but
-     keep `demo` alive; every later browser scene depends on it
+  8. **split the host tmux pane side-by-side** → in the new pane run
+     `klangkc shell demo logs` (a **named window** — connects to a separate
+     terminal, "logs", not the active one) → `ls` to show it's the same
+     workspace (the cloned repo is visible). Narrate: two CLI terminals, one
+     workspace, each its own independent shell.
+  9. disconnect **both** panes with **Enter ~ .** (second pane first, then the
+     first) — practice the escape, it's fiddly on camera
+  10. `klangkc ls` — back at the host prompt, show the workspace list (`demo`
+      is there; narrate this is how you see everything at a glance)
+  11. **do NOT `rm demo`** — narrate `klangkc rm` as the eventual cleanup, but
+      keep `demo` alive; every later browser scene depends on it
 - **Reset:** `klangkc rm demo && klangkc create demo` — but only for a full
-  re-run of the whole arc, since `demo` must survive into Scenes 5–8.
+  re-run of the whole arc, since `demo` must survive into Scenes 4–7.
 - **Gotchas:**
   - The `pi` interaction is **live and nondeterministic** — re-takes won't match.
     Use a short, predictable prompt; do this scene as one long take; leave dead
@@ -153,29 +161,17 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
   - `-A` must actually work — test SSH agent forwarding before recording.
   - The `Enter ~ .` escape only triggers right after a newline; fumble it and you
     waste the take. Rehearse.
+  - The split-pane beat connects to a **named** window (`logs`) — the driver
+    splits the recorder's tmux session and runs `klangkc shell demo logs` in the
+    new pane. The split itself is a tmux control call, so it never appears as
+    typed text in the recording. Both panes share one workspace; disconnect each
+    independently.
 
-### Scene 3 — klangkc sandbox: One Command (~1.5 min)
+### Scene 3 — klangkc sandbox: one command, dev env to always-on service (~3 min)
 
-- **On screen:** terminal, `cd`'d into a demo project dir.
-- **Pre-roll:** a real `.klangk-sandbox.yaml` in that project (mount project at
-  `~/myproject`, bind `.ssh` + `.claude`, a named volume, a setup script). Run it
-  once off-camera so the setup script is proven.
-- **Action:**
-  1. `cat .klangk-sandbox.yaml` — narrate the config
-  2. `klangkc sandbox myproject -A` → first run: create + mount + setup + shell
-  3. show the project mounted inside; show the second run reconnects instantly
-  4. mention: commit the config → any teammate/clone gets the same env
-- **Reset:** `klangkc rm myproject` then `klangkc sandbox myproject -A` again.
-- **Gotchas:**
-  - **Filename is `.klangk-sandbox.yaml` at the project root** — the current
-    script text says `.klangk/sandbox.yaml`, which is **wrong**. Fix the script
-    (see "Open script-fix" at the bottom) and show the real file on camera.
-  - If your setup script is slow/network-y, pre-warm it; show re-connect (2nd
-    run) to avoid re-watching the install.
-
-### Scene 4 — Service Workspaces: service-command + auto-start + health (~2 min)
-
-> The showcase scene. Demo via the **openclaw** sandbox (visual: hosted app URL).
+> The showcase scene. Demo the sandbox concept AND the service features
+> (service-command, auto-start, health) in one continuous flow via the
+> **openclaw** sandbox (visual: hosted app URL).
 
 - **On screen:** terminal in `sandboxes/openclaw`, then browser, then terminal
   again for `monitor`.
@@ -183,25 +179,33 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
   `KLANGK_ALLOW_AUTOSTART=1` on; `jq` installed; LLM proxy working (so the
   gateway comes up healthy, not red).
 - **Action:**
-  1. `cd sandboxes/openclaw && cat .klangk-sandbox.yaml` — point at the 3 lines:
-     `service-command`, `auto-start: true`, `health-check`
+  1. `cd sandboxes/openclaw && cat .klangk-sandbox.yaml` — narrate the config:
+     mounts the project at a fixed path and runs a setup script. Then
+     point at the 3 service lines: `service-command`, `auto-start: true`,
+     `health-check`.
   2. `klangkc sandbox openclaw` (fast if pre-warmed; gateway auto-starts in the
      **Service** tab — that's service-command at work)
-  3. browser → workspace → **Service** tab, gateway running
-  4. narrate singleton semantics: Ctrl+C stops, up-arrow+Enter restarts, shared
+  3. `klangkc shell openclaw` — connect, show the project mounted inside
+  4. narrate the sandbox idea: commit the config → any teammate/clone gets the
+     same env (Dockerfile for your dev environment, lifecycle managed for you)
+  5. browser → open the **openclaw** workspace → **Service** tab → gateway process + startup log visible
+  6. narrate singleton semantics: Ctrl+C stops, up-arrow+Enter restarts, shared
      with everyone who has access
-  5. **auto-start:** restart the **whole Klangk server**, show openclaw's
-     container booting on its own and the gateway up _before anyone connects_
-  6. **health check:** point at the green status icon in the workspace list;
-     narrate "exit 0 = healthy, else unhealthy, and you see _why_ (stderr tail)"
-  7. terminal: `klangkc monitor --type service_health | jq .` — show live events;
+  7. **auto-start:** in the host terminal run `devenv processes restart backend`;
+     then browser → refresh the workspace list → openclaw's container is already
+     up; open its Service tab → the gateway is running _before anyone connects_
+  8. **health check:** browser → workspace list → hover openclaw's green status
+     dot ("healthy"); narrate "exit 0 = healthy, else unhealthy, and you see
+     _why_ (stderr tail)"
+  9. terminal: `klangkc monitor --type service_health | jq .` — show live events;
      mention the `-- sh -c '...'` form fires a command (e.g. Slack alert) on change
-  8. browser → click the **hosted app** link → land in openclaw's own web UI
+  10. browser → openclaw workspace → **Service** tab → click the "Open hosted
+      app" button → land in openclaw's own web UI
 - **Reset:**
   - Cleanest re-take that avoids the slow install: **keep** the openclaw workspace
     and `klangkc restart openclaw` (restarts container + gateway). Only
     `klangkc rm openclaw && klangkc sandbox openclaw` if you need truly fresh.
-  - The server-restart beat (step 5) is its own clip — restart, trim in edit.
+  - The server-restart beat (step 7) is its own clip — restart, trim in edit.
 - **Gotchas:**
   - **Never record the first-run install live** — it downloads nvm + Node + the
     app and can stall. Pre-warm, or `--force`/restart.
@@ -213,50 +217,51 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
   - Showing the _unhealthy → why_ path requires breaking the service on camera;
     consider skipping it live (the narration covers it) or pre-recording it.
 
-### Scene 5 — Web UI: Workspaces and Terminal (~1 min)
+### Scene 4 — Web UI: Workspaces and Terminal (~1 min)
 
 - **On screen:** browser — the workspace list, then **the `demo` workspace**.
 - **Pre-roll:** `demo` exists and was created on camera in Scene 2, with the
-  cloned klangk repo + a Pi session still in its tmux. `myproject` (Sc 3) and
-  `openclaw` (Sc 4, green health icon) are also in the list, plus the Potemkin
-  workspaces. This scene is a **continuation** of the CLI — open `demo`, don't
-  create anything new.
+  cloned klangk repo + a Pi session still in its tmux. `openclaw` (Sc 3, green
+  health icon) is also in the list, plus the Potemkin workspaces. This scene is
+  a **continuation** of the CLI — open `demo`, don't create anything new.
 - **Action:**
   1. land on the workspace list → **open the `demo` workspace** (the hero;
-     narrate the others are visible too — `myproject`, `openclaw` still healthy)
+     narrate the others are visible too — `openclaw` still healthy)
   2. show the terminal is the same tmux session from `klangkc shell` — the
      cloned repo / Pi scrollback from Sc 2 are still here (the continuity payoff)
-  3. click `+` → create a new terminal tab → rename it
+  3. click `+` next to the terminal tab bar → a new tab opens → double-click
+     its name → rename it "scratch"
   4. narrate the correction: tabs created here **can be connected to from the
      CLI** with `klangkc shell` — they do NOT auto-"show up" in the CLI; the web
      UI and CLI are two ways into the same sessions
 - **Reset:** none (pure navigation).
 - **Gotchas:**
-  - Open **`demo`**, not openclaw — continuity into Sc 6/6b/7/8 depends on it.
-    (openclaw's Service tab was already showcased in Sc 4; here it's just a list
+  - Open **`demo`**, not openclaw — continuity into Sc 5/5b/6/7 depends on it.
+    (openclaw's Service tab was already showcased in Sc 3; here it's just a list
     entry with its health icon.)
-  - The Sc 2→5 continuity beat lands hardest if the cloned repo / Pi session are
-    genuinely still in `demo`'s terminal — record Sc 5 right after Sc 2's state
+  - The Sc 2→4 continuity beat lands hardest if the cloned repo / Pi session are
+    genuinely still in `demo`'s terminal — record Sc 4 right after Sc 2's state
     is in place.
   - Get the CLI-connectivity wording right: **"can be connected to from the
     CLI"**, not "shows up in the CLI".
 
-### Scene 6 — AI Agent: clanker (~1.5 min)
+### Scene 5 — AI Agent: clanker (~1.5 min)
 
-- **On screen:** browser → Chat tab, **still in the `demo` workspace** (Sc 5).
-- **Pre-roll:** the `demo` workspace from Sc 5, agent **functional** — LLM key
+- **On screen:** browser → Chat tab, **still in the `demo` workspace** (Sc 4).
+- **Pre-roll:** the `demo` workspace from Sc 4, agent **functional** — LLM key
   working, `pi` set up. Test the exact prompt off-camera. clanker's output here
-  (`app.py`, `requirements.txt`) must persist for Sc 6b/7 — don't wipe `demo`.
+  (`app.py`, `requirements.txt`) must persist for Sc 5b/6 — don't wipe `demo`.
 - **Action:**
   1. Chat tab → `@clanker create a simple Flask web app on port 8000 that shows
 "Hello from Klangk"` (narrate that clanker is the **built-in agent,
      available only through chat** — you talk to it by @mentioning, not by
-     running it yourself. This sets up 6b, where you run Pi directly in the
+     running it yourself. This sets up 5b, where you run Pi directly in the
      terminal because clanker isn't available that way.)
-  2. watch clanker create files
+  2. wait ~10s → clanker's reply + tool-call lines appear as it creates
+     `app.py` / `requirements.txt`
   3. narrate the security model: the LLM key **never enters the container** —
      nginx proxy on the host injects it; inside, pi talks to a local proxy URL
-  4. **switch to the Terminal tab, type `env`** → show the container's full
+  4. **click the Terminal tab in the left rail, type `env`** → show the container's full
      environment with **no API keys / no secrets** (proves the claim in step 3;
      narrate: "the key only exists on the host, in the proxy")
   5. narrate: after the @mention, follow-ups auto-route to clanker until someone
@@ -273,9 +278,9 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
     **no secrets** before recording — check nothing in the image or startup
     script exports a token/key. The whole point is a clean `env` output.
 
-### Scene 6b — Debugging with Pi (~1.5–2 min)
+### Scene 5b — Debugging with Pi (~1.5–2 min)
 
-> The payoff for the agentic model: clanker's app from Scene 6 doesn't run, so
+> The payoff for the agentic model: clanker's app from Scene 5 doesn't run, so
 > we hand it to Pi **in the terminal** and debug alongside it. Invents a
 > realistic agent failure (missing dependency) and shows Pi + manual inspection
 > coexisting in the same workspace.
@@ -284,34 +289,35 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
   one tab and a plain bash tab open alongside it. (Mention in VO that this works
   with any harness — Pi is what's installed, but you can bring Claude Code,
   Codex, or anything else the same way.)
-- **Pre-roll:** the Scene 6 workspace, where clanker has already produced an
+- **Pre-roll:** the Scene 5 workspace, where clanker has already produced an
   `app.py` **plus** a `requirements.txt` that lists `flask` but was never
   installed. Verify **off camera** that `python app.py` fails with
   `ModuleNotFoundError: No module named 'flask'` — that IS the bug we exploit.
   Have `pi` functional in the container and rehearse the exact prompt once.
 - **Action (in order):**
-  1. Terminal tab → `python app.py` → show the `ModuleNotFoundError` traceback
-     (establish the problem clanker left behind)
-  2. open a **new tab**, launch `pi`, ask it: _"clanker's Flask app in app.py
-     won't run — figure out why and fix it"_
-  3. show Pi reading `app.py`, spotting the missing dep, running
-     `pip install -r requirements.txt` (or `pip install flask`), and retrying
-  4. **open a second bash tab next to the Pi tab** → `ls`, `cat app.py`,
-     `cat requirements.txt` — inspect what the LLM produced (the
-     "alongside-the-agent" beat; narrate that you can verify its work yourself)
-  5. **success criterion:** open the **hosted-app URL in a new browser tab** →
-     the page renders `Hello from Klangk` (Pi's goal was to get clanker's app
-     into a state where it opens as a page; the hosted-app URL is proxied
-     through Klangk's single port, same as Scene 4). Fall back to
-     `curl localhost:8000` only if the hosted URL isn't configured.
+  1. Terminal tab (or `klangkc shell demo`) → type `python app.py` → show the
+     `ModuleNotFoundError` traceback (establish the problem clanker left behind)
+  2. click `+` to open a **new terminal tab** → launch `pi`, ask it: _"clanker's
+     Flask app in app.py won't run — figure out why and fix it"_
+  3. watch Pi: reads `app.py`, spots the missing dep, runs
+     `pip install -r requirements.txt` (or `pip install flask`), retries the app
+  4. **click `+` for a second terminal tab next to the Pi tab** → type, one at
+     a time: `ls`, `cat app.py`, `cat requirements.txt` — inspect what the LLM
+     produced (the "alongside-the-agent" beat; narrate that you can verify its
+     work yourself)
+  5. **success criterion:** browser → open the `demo` workspace → click the
+     hosted-app button (or paste the URL from `klangk-hosted-url 8000`:
+     `http://localhost:8995/hosted/<workspace_id>/<host_port>/`) → the page
+     renders `Hello from Klangk`. Fall back to `curl localhost:8000` only if the
+     hosted URL isn't configured.
 - **Reset:** `pip uninstall -y flask` to re-break for another take, or re-run
-  Sc 6 (into the same `demo` workspace) so clanker regenerates a known-broken
-  `app.py` + `requirements.txt`. Don't spin up a fresh workspace — Sc 7 depends
+  Sc 5 (into the same `demo` workspace) so clanker regenerates a known-broken
+  `app.py` + `requirements.txt`. Don't spin up a fresh workspace — Sc 6 depends
   on these files living in `demo`.
 - **Gotchas:**
   - **Live/nondeterministic** — Pi's exact steps vary take to take. One long
     take, leave dead air while it works, narrate over later. Same discipline as
-    Scenes 2 and 6.
+    Scenes 2 and 5.
   - If typing into the **browser** terminal is flaky (FocusNode focus), drive
     this scene via `klangkc shell` / a real tmux session instead — far more
     reliable for live agent interaction than the web terminal.
@@ -330,18 +336,20 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
     would. Treat its takes as live/nondeterministic; do one long take and
     narrate over the dead air later.
 
-### Scene 7 — File Browser (~30s)
+### Scene 6 — File Browser (~30s)
 
 - **On screen:** browser → Files tab.
-- **Pre-roll:** files exist (continuity from Scene 6/6b — the Flask app clanker
-  made: `app.py`, `requirements.txt`). Best scene to record right after 6/6b.
+- **Pre-roll:** files exist (continuity from Scene 5/5b — the Flask app clanker
+  made: `app.py`, `requirements.txt`). Best scene to record right after 5/5b.
   **Also preseed a PDF** into the workspace home before recording so we can show
   inline rendering (see seeding note below).
 - **Action:**
-  1. browse the home → click a code/text file for a highlighted preview
-  2. **click the preseeded PDF → it renders inline** (the `PdfRenderer`; payoff
-     beat — Klangk previews rich formats, not just text)
-  3. mention drag-drop upload, right-click download/rename/delete
+  1. browse the home → click `app.py` (or `requirements.txt`) for a
+     syntax-highlighted preview
+  2. **click `pyramid-docs.pdf` in the file tree → it renders inline** (the
+     `PdfRenderer`; payoff beat — Klangk previews rich formats, not just text)
+  3. narrate drag-drop upload (drag a file onto the tree), right-click a file →
+     Download / Rename / Delete
 - **Reset:** none (pure navigation). Re-seed the PDF if it was deleted.
 - **Seeding the PDF (pre-roll):** the Pyramid web framework docs PDF is shipped
   in the demo dir at **`assets/pyramid-docs.pdf`** (5.4 MB, a real, richly
@@ -370,29 +378,31 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
   `waitForTerminal: true`).
 
 - **Gotchas:**
-  - Record immediately after Scene 6/6b so the Flask app files are present too.
+  - Record immediately after Scene 5/5b so the Flask app files are present too.
   - Verify the PDF **renders** off-camera before the take (the `PdfRenderer` must
     handle it; a corrupt/minimal PDF may fail to render).
   - The PDF must be seeded **after** the container boots — `seedDemoFile` hits the
     running container via the upload API, so call it post-`openWorkspaceDemo`.
 
-### Scene 8 — Multi-User Collaboration (~1.5 min)
+### Scene 7 — Multi-User Collaboration (~1.5 min)
 
 - **On screen:** browser, two sessions side by side (owner + teammate), **in the
-  `demo` workspace** (Sc 5–7).
+  `demo` workspace** (Sc 4–6).
 - **Pre-roll:** `teammate@` logged into an incognito/profile window (seeded via
   `demo-seed.ts`); `demo` is shared with them as **Collaborator**. Continuity:
-  the Flask app from Sc 6 and the chat history from Sc 6/6b are already in
+  the Flask app from Sc 5 and the chat history from Sc 5/5b are already in
   `demo` — the team is joining work in progress, not a blank workspace.
 - **Action:**
-  1. Sharing tab → add teammate as Collaborator (on `demo`)
+  1. click the **Sharing** tab in the left rail → type `teammate@example.com`
+     in the add-user field → pick the **Collaborator** role (people icon) →
+     click **Add**
   2. narrate the four roles (note: **Spectators are read-only now** — can watch
      shared terminals, can't type in them or chat)
-  3. right-click a terminal tab → **Share**
+  3. right-click a terminal tab → click **Share** — a share badge appears
   4. teammate's window: the shared tab appears; both see the same output; type
      in one, watch it appear in the other (real pair-programming, not screen
      share)
-  5. show presence indicators / viewer count
+  5. hover the top **presence bar** and the shared-tab **viewer count**
   6. chat is shared — humans + clanker in the same space
 - **Reset:** unshare / re-share, or just redo the clicks.
 - **Gotchas:**
@@ -401,26 +411,36 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
   - "Both type" solo is awkward — type in one window, cut to the other reacting.
   - Keep the spectator description consistent with the (fixed) script: read-only.
 
-### Scene 9 — Plugins (~45s)
+### Scene 8 — Plugins (~45s)
 
 - **On screen:** plugins config + browser.
 - **Pre-roll:** image built with a visual plugin — **celebrate** (confetti) is
-  the easy payoff. Optionally mention `git-credential`, `claude-code`.
-- **Action:** show the plugins declaration → trigger celebrate (confetti).
+  the easy payoff. `customize/plugins.yaml` is already declared with `celebrate`
+  (plus `beep`, `pig-latin`, `word-count`, `browser-fetch`, `bobdobbs`); confirm
+  the image was rebuilt so `celebrate`'s Pi tool is live. Optionally mention
+  `git-credential` (browser Git auth dialog).
+- **Action:**
+  1. terminal: `cat customize/plugins.yaml` — narrate the declaration format
+     (one entry per plugin: `name`, `git`, `path`, `ref`); point at the
+     `celebrate` entry
+  2. browser → `demo` workspace → **Chat** tab → type `@clanker celebrate!` →
+     confetti animates over the UI (clanker called the `celebrate` tool the
+     plugin registered with Pi)
 - **Reset:** re-trigger confetti.
 - **Gotchas:** plugins are **compile-time** (image rebuild) — you can't add one
   live. Build it in ahead of time. Confirm the confetti trigger works.
 
-### Scene 10 — Administration (~30s)
+### Scene 9 — Administration (~30s)
 
 - **On screen:** browser → admin panel.
 - **Pre-roll:** admin logged in; a couple seeded users/groups so it looks lived-in.
-- **Action:** users & groups → invitations → mention OIDC SSO (Google/GitHub/IdP)
-  → note everything is one port (8995) behind nginx.
+- **Action:** click the **admin** link → click through the **Users**, **Groups**,
+  **Invitations**, and **ACL** tabs → narrate OIDC SSO (Google / GitHub / IdP)
+  → note everything is proxied through the single nginx port (8995).
 - **Reset:** none.
 - **Gotchas:** avoid showing real emails/PII — use seeded demo accounts.
 
-### Scene 11 — Closing (~30s)
+### Scene 10 — Closing (~30s)
 
 - **On screen:** title card / logo / GitHub link.
 - **Action:** VO-only.
@@ -434,7 +454,7 @@ klangkc rm openclaw        # only if you want a truly fresh Service scene
    aim for perfect narration while recording — you'll VO later.
 2. **Leave headroom/tails** on each clip (a beat of nothing before and after) so
    editing and VO alignment have slack. Leave _dead air while the agent works_
-   (Scenes 2, 6, 6b) — you'll narrate over it.
+   (Scenes 2, 5, 5b) — you'll narrate over it.
 3. **Re-take discipline:** if a scene flubs, reset per the block and re-record
    just that clip; don't restart the whole video.
 4. **Rough cut** the clips to the ~14-min structure, then **record voiceover**
