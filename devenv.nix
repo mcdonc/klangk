@@ -46,6 +46,7 @@ in
       git # "error: Failed to find git" during devenv:git-hooks:install
       gzip
       gnutar
+      matchbox # kiosk WM for the demo video recorder (record-demo.sh)
       nginx
       podman
       ruff

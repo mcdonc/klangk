@@ -87,6 +87,118 @@ export async function slowType(
 }
 
 // ---------------------------------------------------------------------------
+// Visible-cursor overlay (the "frozen cursor" fix)
+// ---------------------------------------------------------------------------
+//
+// `page.mouse.move/click` dispatch synthetic CDP pointer events that Flutter
+// handles fine, but they move NO real OS cursor — so in the Xvfb recording the
+// pointer appears frozen even though the clicks land. The proven, framework-
+// agnostic fix (used by vercel-labs/open-agents, pagecast, amux, Assrt) is a
+// DOM overlay: a high-z-index, pointer-events:none SVG arrow that repositions
+// on every DOM `mousemove` (which synthetic CDP events DO fire) plus a ripple
+// on `mousedown`. Because it is a real DOM node it renders above Flutter's
+// <canvas> and is captured by ffmpeg natively — no CDP screencast needed.
+const CURSOR_INJECT_SCRIPT = `
+(function () {
+  if (window.__klangkCursor) return;
+  window.__klangkCursor = true;
+
+  // Paint the page background the app's own dark charcoal (#1e1e1e ≈ Y30) so any
+  // area Flutter doesn't fill (a viewport/crop height mismatch under Xvfb) shows
+  // the app color instead of the browser's default WHITE canvas — invisible,
+  // not a glaring white bar. NOTE: this MUST be deferred (called from watchBody
+  // below, never synchronously at init) — at init-script time documentElement
+  // may be null, and touching it then throws and aborts the whole IIFE, killing
+  // the cursor overlay too. Same deferral pattern as the SVG mount() below.
+  function paintBg() {
+    var de = document.documentElement;
+    if (de) de.style.background = "#1e1e1e";
+    if (document.body) document.body.style.background = "#1e1e1e";
+  }
+  (function watchBody() {
+    if (!document.body) { setTimeout(watchBody, 20); return; }
+    paintBg();
+  })();
+  var NS = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(NS, "svg");
+  // Classic arrow pointer, tip at the SVG origin so translate(clientX,Y)
+  // lands the tip on the actual pointer location.
+  svg.setAttribute("viewBox", "0 0 14 22");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "31");
+  svg.style.cssText =
+    "position:fixed;left:0;top:0;margin:0;padding:0;" +
+    "pointer-events:none;z-index:2147483647;opacity:0;" +
+    "transition:opacity .15s ease;will-change:transform;" +
+    "filter:drop-shadow(0 1px 2px rgba(0,0,0,.55));";
+  var path = document.createElementNS(NS, "path");
+  path.setAttribute(
+    "d",
+    "M0,0 L0,17 L4.5,13 L7.5,19 L9.5,18 L6.5,12 L11,12 Z",
+  );
+  path.setAttribute("fill", "#ffffff");
+  path.setAttribute("stroke", "#111111");
+  path.setAttribute("stroke-width", "1.4");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(path);
+
+  function ensureRoot() {
+    // Append (or re-append if Flutter swapped the body) so the cursor is
+    // never lost after a late render. Called from mount + every move.
+    if (!svg.isConnected && document.body) document.body.appendChild(svg);
+  }
+  (function mount() {
+    if (document.body) ensureRoot();
+    else setTimeout(mount, 30);
+  })();
+
+  window.addEventListener(
+    "mousemove",
+    function (e) {
+      ensureRoot();
+      svg.style.transform =
+        "translate(" + e.clientX + "px," + e.clientY + "px)";
+      svg.style.opacity = "1";
+    },
+    { passive: true },
+  );
+
+  // Click ripple — injected style is created once on first click.
+  window.addEventListener(
+    "mousedown",
+    function (e) {
+      ensureRoot();
+      if (!document.getElementById("klangk-ripple-kf")) {
+        var st = document.createElement("style");
+        st.id = "klangk-ripple-kf";
+        st.textContent =
+          "@keyframes klangkRipple{0%{transform:scale(.5);opacity:.9}" +
+          "100%{transform:scale(2.4);opacity:0}}";
+        (document.head || document.documentElement).appendChild(st);
+      }
+      var r = document.createElement("div");
+      r.style.cssText =
+        "position:fixed;left:" + e.clientX + "px;top:" + e.clientY +
+        "px;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;" +
+        "border:2px solid rgba(86,156,214,.95);pointer-events:none;" +
+        "z-index:2147483646;animation:klangkRipple .5s ease-out forwards";
+      document.body.appendChild(r);
+      setTimeout(function () { r.remove(); }, 520);
+    },
+    { passive: true },
+  );
+})();
+`;
+
+/** Install the fake-cursor overlay on the next (and every) navigation.
+ *  Idempotent (the script self-guards). No-op when KLANGK_DEMO_CURSOR=0 (e.g.
+ *  a quick headless dry check where the overlay is unwanted). */
+export async function installDemoCursor(page: Page) {
+  if (process.env.KLANGK_DEMO_CURSOR === "0") return;
+  await page.addInitScript(CURSOR_INJECT_SCRIPT);
+}
+
+// ---------------------------------------------------------------------------
 // Auth (against the real demo server)
 // ---------------------------------------------------------------------------
 
@@ -297,6 +409,9 @@ export async function demoLogin(
   email: string,
   password = DEMO_PASSWORD,
 ) {
+  // Inject the fake cursor BEFORE the first navigation so it is in place
+  // when the Flutter app renders. See installDemoCursor().
+  await installDemoCursor(page);
   await page.goto("/");
   await waitForFlutter(page);
   // Dismiss the "Enable accessibility" overlay if visible — it can cover the
@@ -416,16 +531,29 @@ export async function openWorkspaceDemo(
 // We keep Flutter accessibility OFF (it breaks terminal typing — see the
 // mouseClick/demoLogin docs), so navigation can't use the semantics DOM.
 // Instead we click measured viewport-fraction coordinates with the visible
-// mouse cursor. Measured from the semantics DOM at 1920×1080 (and matching
-// the e2e suite's `openFilesTab` formula), these are resolution-safe:
-//   - nav tabs (Terminal…Settings): fracY≈0.0704, fracX=(index+0.5)/5
-//   - "New terminal" "+" button:     fracX≈0.0755, fracY≈0.1069
+// mouse cursor.
+//
+// Tab positions are VIEWPORT-HEIGHT-DEPENDENT (the header/tab strip doesn't
+// scale linearly), so fractions are picked per height — same approach as
+// demoLogin. Measured by pixel analysis of the rendered workspace at each size:
+//   1080-tall: tab strip fracY ≈ 0.0704   (was the original, all-1080 value)
+//    540-tall: tab strip fracY ≈ 0.139    (tabs sit much lower proportionally)
+// Tabs are evenly spaced horizontally: fracX = (index + 0.5) / 5 (verified at
+// both sizes). The "+" (new-terminal) button sits at the far left of the tab
+// strip: fracX ≈ 0.05, fracY = the tab fracY.
+function tabFracY(height: number): number {
+  return height <= 600 ? 0.139 : 0.0704;
+}
 
 /** Click a workspace nav tab by 0-based index (0=Terminal … 4=Settings) using
  *  the visible mouse cursor. */
 export async function openTab(page: Page, index: number) {
   const { width, height } = vp(page);
-  await mouseClick(page, width * ((index + 0.5) / 5), height * 0.0704);
+  await mouseClick(
+    page,
+    width * ((index + 0.5) / 5),
+    height * tabFracY(height),
+  );
   await pace(350);
 }
 
@@ -461,7 +589,7 @@ export async function seedDemoFile(
  *  terminal tab strip with the visible mouse cursor. */
 export const addTerminalTab = (page: Page) => {
   const { width, height } = vp(page);
-  return mouseClick(page, width * 0.0755, height * 0.1069);
+  return mouseClick(page, width * 0.05, height * tabFracY(height));
 };
 
 /** Wait until the workspace terminal is interactive. Semantics-independent:

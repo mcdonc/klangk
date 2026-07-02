@@ -24,8 +24,8 @@ const BROWSERS = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
 // and have record-demo.sh upscale the 960x540 capture to 1920x1080.
 // (We cannot use devicePixelRatio>1 to get crisp-AND-2x: it breaks Flutter
 // Web button hit-testing. See the viewport comment below.)
-const VW = Number(process.env.KLANGK_DEMO_VW || 1920);
-const VH = Number(process.env.KLANGK_DEMO_VH || 1080);
+const VW = Number(process.env.KLANGK_DEMO_VW || 960);
+const VH = Number(process.env.KLANGK_DEMO_VH || 540);
 
 // Videos are written under test-results/ alongside each scene; the README maps
 // scene name -> .webm file and how to convert/import to DaVinci.
@@ -74,12 +74,14 @@ export default defineConfig({
       executablePath:
         process.env.CHROME_PATH ||
         `${BROWSERS}/chromium-1223/chrome-linux64/chrome`,
-      // --start-maximized so the window fills the Xvfb canvas (the recorder
-      // crops the ~100px browser chrome off the top for a clean frame).
-      // --enable-unsafe-swiftshader for WebGL in Xvfb. (No --kiosk — Playwright
-      // ignores it and always shows chrome; cropping in record-demo.sh is the
-      // reliable path. No DPR/zoom flags — see the viewport comment: DPR>1
-      // breaks Flutter Web button hit-testing.)
+      // The recorder runs matchbox-window-manager under Xvfb, which force-
+      // fullscreens the single app window to the exact screen size with no
+      // decoration. --start-maximized hints matchbox to treat the browser as
+      // the fullscreen app; the window then fills the canvas flush on all four
+      // sides with zero manual positioning math (and no WM there to add chrome).
+      // --enable-unsafe-swiftshader for WebGL in Xvfb. No --kiosk (Playwright
+      // ignores it) and no DPR/zoom flags (DPR>1 breaks Flutter Web taps; see
+      // the viewport comment above).
       args: ["--enable-unsafe-swiftshader", "--start-maximized"],
     },
   },
