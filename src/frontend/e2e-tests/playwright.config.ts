@@ -35,6 +35,16 @@ const firefoxUse = {
 
 const webkitUse = {
   browserName: "webkit" as const,
+  launchOptions: {
+    // The nix playwright-driver bundles webkit build 2287, but @playwright/test
+    // 1.59.1 looks for build 2272 by default ("Executable doesn't exist at
+    // .../webkit-2272/pw_run.sh"). Like chromium/firefox above, pin the path to
+    // the nix-provided build so Playwright uses it directly instead of its
+    // npm-version-derived revision. WEBKIT_PATH mirrors CHROME/FIREFOX_PATH
+    // for local overrides. See #1193.
+    executablePath:
+      process.env.WEBKIT_PATH || `${BROWSERS}/webkit-2287/pw_run.sh`,
+  },
 };
 
 // Test projects:
