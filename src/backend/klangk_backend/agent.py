@@ -564,6 +564,17 @@ async def stop_session(workspace_id: str) -> None:
         await session.stop()
 
 
+async def stop_all_sessions() -> None:
+    """Stop and remove every active agent session.
+
+    Used by the SIGHUP runtime-restart path: each agent session is a
+    Pi RPC subprocess attached to a container that is about to be
+    stopped, so they must be torn down before the containers go.
+    """
+    for ws_id in list(_agents.keys()):
+        await stop_session(ws_id)
+
+
 def _ephemeral_system_message(
     workspace_id: str,
     agent_email: str,

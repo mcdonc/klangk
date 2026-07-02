@@ -100,6 +100,16 @@ async def reset_workspace_state(workspace_id: str) -> None:
     await state.reset_workspace(workspace_id)
 
 
+async def disconnect_all_websockets() -> None:
+    """Drop every WebSocket connection and clear all session state.
+
+    Used by the SIGHUP runtime-restart path (see ``main._runtime_shutdown``).
+    Connected clients are closed with code 1012 so they reconnect and
+    rebuild state against the freshly-started containers.
+    """
+    await state.disconnect_all()
+
+
 async def refresh_user_handle(user_id: str, new_handle: str) -> None:
     """Update the cached handle on all active connections for a user,
     re-broadcast presence, and post a system chat message to each
