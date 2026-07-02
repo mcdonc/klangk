@@ -82,17 +82,6 @@ def _set_headers(msg: EmailMessage) -> None:
         msg["Reply-To"] = rt
 
 
-def build_message(to: str, subject: str, body: str) -> EmailMessage:
-    cfg = smtp_config()
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = cfg["from_addr"] or cfg["user"] or "noreply@localhost"
-    msg["To"] = to
-    msg.set_content(body)
-    _set_headers(msg)
-    return msg
-
-
 async def send_via_smtp(msg: EmailMessage) -> None:
     cfg = smtp_config()
     logger.debug(
@@ -133,26 +122,6 @@ async def send_via_sendmail(msg: EmailMessage) -> None:
             f"sendmail ({sendmail}) exited with code {proc.returncode}: {stderr.decode()}"
         )
     logger.info("Email sent via sendmail to %s", msg["To"])
-
-
-async def send_email(to: str, subject: str, body: str) -> None:
-    """Send an email via SMTP (if configured) or local sendmail."""
-    msg = build_message(to, subject, body)
-    logger.info(
-        "From: %s, To: %s, Subject: %s", msg["From"], to, msg["Subject"]
-    )
-    if use_smtp():
-        logger.info(
-            "Sending email to %s via SMTP (%s)",
-            to,
-            resolve_env_value("KLANGK_SMTP_HOST"),
-        )
-        await send_via_smtp(msg)
-    else:
-        logger.info(
-            "Sending email to %s via sendmail (no KLANGK_SMTP_HOST set)", to
-        )
-        await send_via_sendmail(msg)
 
 
 def reset_template_env() -> None:
