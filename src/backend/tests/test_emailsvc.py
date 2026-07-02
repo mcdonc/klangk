@@ -344,6 +344,40 @@ class TestRenderEmail:
         assert "Acme Labs" in r.html
         assert "Klangk" not in r.html
 
+    def test_legal_links_in_footer_when_set(self, monkeypatch):
+        # The legal footer renders only the configured links, joined.
+        monkeypatch.setenv("KLANGK_TERMS_URL", "https://corp/t")
+        monkeypatch.setenv("KLANGK_PRIVACY_URL", "https://corp/p")
+        monkeypatch.setenv("KLANGK_AUP_URL", "https://corp/a")
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        assert 'href="https://corp/t">Terms' in r.html
+        assert 'href="https://corp/p">Privacy' in r.html
+        assert 'href="https://corp/a">Acceptable Use' in r.html
+        # Joined by a middot separator, not run together.
+        assert "Terms</a> &middot; <a" in r.html
+
+    def test_support_link_and_email_in_footer(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_SUPPORT_URL", "https://help")
+        monkeypatch.setenv("KLANGK_SUPPORT_EMAIL", "help@corp")
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        assert 'href="https://help">Support' in r.html
+        assert 'href="mailto:help@corp">help@corp' in r.html
+
+    def test_no_legal_footer_when_none_set(self, monkeypatch):
+        # When no legal/support vars are set, the footer block is hidden.
+        for k in (
+            "KLANGK_TERMS_URL",
+            "KLANGK_PRIVACY_URL",
+            "KLANGK_AUP_URL",
+            "KLANGK_SUPPORT_URL",
+            "KLANGK_SUPPORT_EMAIL",
+        ):
+            monkeypatch.delenv(k, raising=False)
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        assert ">Terms<" not in r.html
+        assert ">Privacy<" not in r.html
+        assert "mailto:" not in r.html
+
 
 class TestTemplateOverlay:
     def test_user_dir_shadows_builtin_per_file(self, tmp_path, monkeypatch):

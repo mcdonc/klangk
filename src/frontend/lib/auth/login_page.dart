@@ -12,6 +12,7 @@ import '../utils/page_title.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../widgets/klangk_logo.dart';
+import '../widgets/legal_links.dart';
 
 /// Override for testing — set to intercept HTTP calls in _loadConfig.
 http.Client? testConfigHttpClientOverride;
@@ -305,6 +306,15 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     if (_oidcProviders.isNotEmpty) ..._buildOidcButtons(),
                     if (_showPasswordForm) ..._buildPasswordForm(context, auth),
+                    // Deployer-configured legal/support links (#1177).
+                    // Legal links (Terms/Privacy/AUP) are most prominent on
+                    // the auth screens; the support link is included too so a
+                    // pre-auth user can reach help. All hidden when unset.
+                    if (Branding.legalLinks.isNotEmpty ||
+                        Branding.supportHref.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      const LegalLinks(dense: true),
+                    ],
                   ],
                 ),
               ),

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import shutil
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -146,6 +147,15 @@ def _brand_ctx() -> dict:
         "logo_url": resolve_env_value("KLANGK_LOGO_URL", "") or "",
         "brand_color": resolve_env_value("KLANGK_BRAND_COLOR", "#E65100")
         or "#E65100",
+        # Configurable legal & support links (#1177). Plain env values, no
+        # file:/cmd: resolution -- they are public and shown in the email
+        # footer to all recipients. Mirrors what /config exposes to the
+        # frontend; the base template renders whatever is set.
+        "terms_url": os.environ.get("KLANGK_TERMS_URL", ""),
+        "privacy_url": os.environ.get("KLANGK_PRIVACY_URL", ""),
+        "aup_url": os.environ.get("KLANGK_AUP_URL", ""),
+        "support_url": os.environ.get("KLANGK_SUPPORT_URL", ""),
+        "support_email": os.environ.get("KLANGK_SUPPORT_EMAIL", ""),
     }
 
 

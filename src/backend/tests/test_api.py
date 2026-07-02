@@ -319,6 +319,55 @@ class TestConfig:
         assert resp.status_code == 200
         assert resp.json()["logo_url"] == "https://example.com/l.png"
 
+    async def test_get_config_legal_links_default_empty(self, client):
+        # No legal/support env vars set -> all empty strings, so the
+        # frontend hides them entirely (#1177).
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        for key in (
+            "terms_url",
+            "privacy_url",
+            "aup_url",
+            "support_url",
+            "support_email",
+        ):
+            assert data[key] == ""
+
+    async def test_get_config_legal_links_reflect_env(
+        self, client, monkeypatch
+    ):
+        # Each link is surfaced verbatim from its module constant (resolved
+        # from env at import time, like PRODUCT_NAME / LOGIN_BANNER).
+        monkeypatch.setattr(api, "TERMS_URL", "https://corp.example.com/terms")
+        monkeypatch.setattr(
+            api, "PRIVACY_URL", "https://corp.example.com/privacy"
+        )
+        monkeypatch.setattr(api, "AUP_URL", "https://corp.example.com/aup")
+        monkeypatch.setattr(api, "SUPPORT_URL", "https://help.example.com")
+        monkeypatch.setattr(api, "SUPPORT_EMAIL", "help@example.com")
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["terms_url"] == "https://corp.example.com/terms"
+        assert data["privacy_url"] == "https://corp.example.com/privacy"
+        assert data["aup_url"] == "https://corp.example.com/aup"
+        assert data["support_url"] == "https://help.example.com"
+        assert data["support_email"] == "help@example.com"
+
+    async def test_get_config_legal_links_are_plain_env_not_resolved(
+        self, client, monkeypatch, tmp_path
+    ):
+        # Legal/support links are PUBLIC URLs shown to unauthenticated
+        # users, so they must NOT get file:/cmd: secret resolution -- a
+        # deployer pointing them at a file: path would be exposing secret
+        # resolution to the world. The raw value is surfaced verbatim
+        # (were it resolved, file:///etc/shadow would yield empty/None).
+        monkeypatch.setattr(api, "TERMS_URL", "file:///etc/shadow")
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert resp.json()["terms_url"] == "file:///etc/shadow"
+
     async def test_get_config_logo_url_resolves_file_secret(
         self, client, tmp_path, monkeypatch
     ):

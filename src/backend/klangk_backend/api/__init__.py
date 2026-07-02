@@ -174,6 +174,19 @@ LOGIN_BANNER_TITLE = resolve_env_value("KLANGK_LOGIN_BANNER_TITLE", "")
 LOGIN_BANNER = resolve_env_value("KLANGK_LOGIN_BANNER", "")
 PRODUCT_NAME = resolve_env_value("KLANGK_PRODUCT_NAME", "Klangk") or "Klangk"
 
+# Configurable legal & support links (#1177). These are PUBLIC URLs shown
+# to unauthenticated users on the login/registration screens, in the app
+# chrome, and in email footers -- so they deliberately use plain env values
+# and do NOT go through resolve_env_value() (no file:/cmd: secret
+# resolution). A deployer pointing these at sensitive internal resources
+# would be exposing them to the world. Empty string when unset, matching the
+# logo_url convention the frontend already falls back from.
+TERMS_URL = os.environ.get("KLANGK_TERMS_URL", "")
+PRIVACY_URL = os.environ.get("KLANGK_PRIVACY_URL", "")
+AUP_URL = os.environ.get("KLANGK_AUP_URL", "")
+SUPPORT_URL = os.environ.get("KLANGK_SUPPORT_URL", "")
+SUPPORT_EMAIL = os.environ.get("KLANGK_SUPPORT_EMAIL", "")
+
 
 @router.get("/config")
 async def get_config():
@@ -200,6 +213,14 @@ async def get_config():
         # which case the frontend renders the default KlangkLogo widget.
         # Supports file:/cmd: resolution like other secrets. See #1152.
         "logo_url": resolve_env_value("KLANGK_LOGO_URL") or "",
+        # Configurable legal & support links (#1177). Plain env values (no
+        # file:/cmd: resolution -- they are public, shown pre-auth). Empty
+        # string when unset; the frontend hides whatever isn't configured.
+        "terms_url": TERMS_URL,
+        "privacy_url": PRIVACY_URL,
+        "aup_url": AUP_URL,
+        "support_url": SUPPORT_URL,
+        "support_email": SUPPORT_EMAIL,
     }
     config.update(plugins.frontend_config())
     return config
