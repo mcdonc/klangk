@@ -4223,6 +4223,117 @@ class TestNotifyServiceHealth:
             wshandler.state.connections.pop(sock, None)
 
 
+class TestServiceHealthSnapshot:
+    """send_service_health_snapshot replays current health to one socket
+    on connect, closing the steady-state-unhealthy hole (#1175 item 1)."""
+
+    def _state(self, ws_id, *, health_check, health_status, message=None):
+        cs = container.ContainerState(ws_id, f"cid-{ws_id}")
+        cs.health_check = health_check
+        cs.health_status = health_status
+        cs.health_message = message
+        return cs
+
+    def test_replays_only_checked_workspaces(self):
+        """Healthy + unhealthy are sent; unchecked and no-check skipped."""
+        saved = dict(container.registry.states)
+        sock = _mock_sock()
+        try:
+            container.registry.states.clear()
+            container.registry.states["ws-healthy"] = self._state(
+                "ws-healthy",
+                health_check="true",
+                health_status="healthy",
+            )
+            container.registry.states["ws-sick"] = self._state(
+                "ws-sick",
+                health_check="curl localhost",
+                health_status="unhealthy",
+                message="conn refused",
+            )
+            # health check configured but never polled yet
+            container.registry.states["ws-unchecked"] = self._state(
+                "ws-unchecked",
+                health_check="true",
+                health_status=None,
+            )
+            # no health check at all (plain dev workspace)
+            container.registry.states["ws-nocheck"] = self._state(
+                "ws-nocheck",
+                health_check=None,
+                health_status=None,
+            )
+            wshandler.state.send_service_health_snapshot(sock)
+        finally:
+            container.registry.states.clear()
+            container.registry.states.update(saved)
+
+        frames = [c[0][0] for c in sock.send_json.call_args_list]
+        assert len(frames) == 2
+        by_ws = {f["workspace_id"]: f for f in frames}
+        assert by_ws["ws-healthy"]["healthy"] is True
+        assert by_ws["ws-healthy"]["health_message"] is None
+        assert by_ws["ws-sick"]["healthy"] is False
+        assert by_ws["ws-sick"]["health_message"] == "conn refused"
+        assert "ws-unchecked" not in by_ws
+        assert "ws-nocheck" not in by_ws
+        for f in frames:
+            assert f["type"] == "service_health"
+
+    def test_targets_only_the_given_socket(self):
+        saved = dict(container.registry.states)
+        sock = _mock_sock()
+        other = _mock_sock()
+        try:
+            container.registry.states.clear()
+            container.registry.states["ws-1"] = self._state(
+                "ws-1",
+                health_check="true",
+                health_status="healthy",
+            )
+            wshandler.state.send_service_health_snapshot(sock)
+        finally:
+            container.registry.states.clear()
+            container.registry.states.update(saved)
+        sock.send_json.assert_called_once()
+        other.send_json.assert_not_called()
+
+    def test_dead_socket_breaks_cleanly(self):
+        from klangk_backend.wshandler import _WS_ERRORS
+
+        saved = dict(container.registry.states)
+        sock = _mock_sock()
+        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        try:
+            container.registry.states.clear()
+            container.registry.states["ws-1"] = self._state(
+                "ws-1",
+                health_check="true",
+                health_status="healthy",
+            )
+            container.registry.states["ws-2"] = self._state(
+                "ws-2",
+                health_check="true",
+                health_status="unhealthy",
+            )
+            # Must not raise; the dead socket ends the snapshot early.
+            wshandler.state.send_service_health_snapshot(sock)
+        finally:
+            container.registry.states.clear()
+            container.registry.states.update(saved)
+
+    def test_empty_registry_sends_nothing(self):
+        saved = dict(container.registry.states)
+        sock = _mock_sock()
+        try:
+            container.registry.states.clear()
+            wshandler.state.send_service_health_snapshot(sock)
+        finally:
+            container.registry.states.clear()
+            container.registry.states.update(saved)
+        sock.send_json.assert_not_called()
+
+
 class TestRemoveSessionLocked:
     async def test_removes_session(self):
         session = wshandler.state.get_or_create_session("ws-locked-rm")

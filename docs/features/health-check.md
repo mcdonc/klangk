@@ -44,7 +44,13 @@ For each workspace with a health check configured:
 2. **Exit code 0 = healthy.** Any non-zero exit code, a timeout, or an
    error counts as **unhealthy**.
 3. When the status changes, every connected client gets a
-   `service_health` event so the UI can update in real time.
+   `service_health` event so the UI can update in real time. Because the
+   stream is deltas-only (it fires on transitions, not every poll), a
+   client that connects to an _already_-unhealthy workspace also
+   receives a one-time **snapshot** of every health-checked
+   workspace's current status immediately on connect -- so a pure-WS
+   consumer like `klangkc monitor` sees steady-state failures right
+   away instead of being blind until the next transition (#1175).
 4. The current status, the **reason** it's unhealthy (a tail of the
    check's stderr/stdout), and the time of the last check are exposed
    via `GET /api/v1/workspaces/{id}/status`.

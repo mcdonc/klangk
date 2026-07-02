@@ -89,6 +89,11 @@ async def handle_websocket(websocket: WebSocket) -> None:
     safe_ws.start_sender()
     conn = Connection(safe_ws, user)
     state.connections[safe_ws] = conn
+    # Replay current health of every health-checked workspace so a
+    # pure-WS consumer (e.g. ``klangkc monitor``) sees steady-state
+    # status immediately instead of being blind until the next
+    # transition (#1175 item 1).
+    state.send_service_health_snapshot(safe_ws)
 
     try:
         while True:
