@@ -241,15 +241,12 @@ class ChatMessageList extends StatelessWidget {
         MarkdownBody(
           data: highlightMentions(text),
           selectable: true,
-          extensionSet: md.ExtensionSet(
-            md.ExtensionSet.gitHubWeb.blockSyntaxes,
-            [
-              ...md.ExtensionSet.gitHubWeb.inlineSyntaxes.where(
-                (s) =>
-                    s is! md.AutolinkSyntax && s is! md.AutolinkExtensionSyntax,
-              ),
-            ],
-          ),
+          // Use the full GitHub Web extension set so bare URLs (including
+          // hosted-app URLs) auto-link via AutolinkExtensionSyntax, routing
+          // taps through the onTapLink handler below. Previously the
+          // autolink syntaxes were filtered out, which left URLs as plain
+          // text. See #1200.
+          extensionSet: md.ExtensionSet.gitHubWeb,
           styleSheet: chatMarkdownStyle(context),
           // coverage:ignore-start
           onTapLink: (text, href, title) {
