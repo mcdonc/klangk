@@ -47,7 +47,7 @@
 #   KLANGK_DEMO_DISPLAY      default 97      Xvfb display number to use
 #   KLANGK_DEMO_TMUX_SESSION default klangk-demo
 #   KLANGK_DEMO_OUTPUT       default src/frontend/e2e-tests/demo/recordings/recording-<ts>.mp4
-#   KLANGK_DEMO_PROMPT       default "\e[36mklangk\e[0m \e[2m$\e[0m "
+#   KLANGK_DEMO_PROMPT       default "host $ "
 #                            (PS1 for the session shell; supports ANSI escapes)
 
 set -uo pipefail
@@ -64,7 +64,7 @@ CRF="${KLANGK_DEMO_CRF:-20}"
 PRESET="${KLANGK_DEMO_X264_PRESET:-medium}"
 DISPLAY_NUM="${KLANGK_DEMO_DISPLAY:-97}"
 SESSION="${KLANGK_DEMO_TMUX_SESSION:-klangk-demo}"
-PROMPT="${KLANGK_DEMO_PROMPT:-$'\\e[36mklangk\\e[0m \\e[2m$\\e[0m '}"
+PROMPT="${KLANGK_DEMO_PROMPT:-host $ }"
 export DISPLAY=":${DISPLAY_NUM}"
 
 OUT="${KLANGK_DEMO_OUTPUT:-src/frontend/e2e-tests/demo/recordings/recording-$(date +%Y%m%d-%H%M%S).mp4}"
@@ -98,6 +98,7 @@ cleanup_display() {
   if [ -n "${XTerm_PID:-}" ]; then kill "$XTerm_PID" 2>/dev/null || true; fi
   tmux kill-session -t "$SESSION" 2>/dev/null || true
   rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}"
+  rm -f "${RCFILE:-}"
 }
 
 # --- 1. clean slate + start Xvfb -------------------------------------------
@@ -130,15 +131,38 @@ fi
 sleep 0.3 # let the server settle into "accepting connections"
 echo "  Xvfb up (pid $XVFB_PID)"
 
-# --- 2. tmux session (clean bash + demo prompt) + xterm client -------------
-# A clean, host-dotfile-free shell with a legible demo prompt. The session is
-# the single source of truth: xterm displays it, the driver scripts it.
-tmux new-session -d -s "$SESSION" -x "${WIDTH}" -y "${HEIGHT}" \
-  "bash --noprofile --norc -i"
+# --- 2. tmux session (shared rc-file shell) + xterm ----------------------
+# Every pane — the session shell AND any `split-window` the driver creates —
+# runs `bash --rcfile` against one generated file, so they share an identical
+# setup: the klangk venv on PATH (so `klangkc` resolves), the clean `host $ `
+# prompt (NOT devenv shell, so no powerline/starship banner to hide), the
+# forwarded SSH agent socket (so `klangkc shell -A` works), and a steady
+# non-blinking cursor. Writing it once — instead of typing the exports into
+# the session via send-keys — keeps startup reliable and lets split panes
+# inherit the same environment with no extra typing on camera.
+VENV_BIN="$WORKTREE_ROOT/.devenv/state/venv/bin"
+SSH_SOCK="${SSH_AUTH_SOCK:-/run/user/$(id -u)/ssh-agent}"
+RCFILE="${KLANGK_DEMO_RCFILE:-$(mktemp -t klangk-demo-pane-rc.XXXXXX)}"
+export KLANGK_DEMO_RCFILE="$RCFILE"
+cat >"$RCFILE" <<RC
+# klangk demo recorder — per-pane shell setup (auto-generated; do not edit).
+# Sourced by every pane via 'bash --rcfile'.
+export PATH="$VENV_BIN:\$PATH"
+export SSH_AUTH_SOCK="$SSH_SOCK"
+PS1='$PROMPT'
+# Steady (non-blinking) block cursor; re-emit before each prompt so a TUI app
+# that changes cursor style on exit never leaves it blinking.
+PROMPT_COMMAND='printf "\033[2 q"'
+printf '\033[2 q'
+clear
+RC
 
-# Set the prompt inside the session.
-tmux send-keys -t "$SESSION" "PS1=${PROMPT}" Enter
-tmux send-keys -t "$SESSION" "clear" Enter
+tmux new-session -d -s "$SESSION" -x "${WIDTH}" -y "${HEIGHT}" \
+  "bash --rcfile '$RCFILE' -i"
+
+# Hide ALL tmux chrome so none of it appears on camera: no status bar, no pane
+# borders, no message line. (The default status bar would show at the bottom.)
+tmux set -t "$SESSION" status off
 
 # xterm attaches to the session and renders it to the virtual display.
 # NOTE: `tmux attach -t`, NOT `attach-client -t` — the latter's -t names a
@@ -149,7 +173,7 @@ xterm -display "$DISPLAY" \
   -fs "$FONT_SIZE" -fa "$FONT" \
   -bg black -fg white -uc -bc \
   -xrm 'xterm*scrollBar:false' \
-  -xrm 'xterm*cursorBlink:true' \
+  -xrm 'xterm*cursorBlink:false' \
   -e tmux attach -t "$SESSION" &
 XTerm_PID=$!
 
