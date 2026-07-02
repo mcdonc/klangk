@@ -370,6 +370,7 @@ class TestMainCLI:
             name="demo",
             created_at="2025-01-01T00:00:00Z",
             running=True,
+            health_check="/path/to/check.sh",
             health="healthy",
         )
         client = MagicMock()
@@ -399,6 +400,7 @@ class TestMainCLI:
             name="demo",
             created_at="2025-01-01T00:00:00Z",
             running=True,
+            health_check="/path/to/check.sh",
             health="unhealthy",
         )
         client = MagicMock()
@@ -428,6 +430,7 @@ class TestMainCLI:
             created_at="2025-01-01T00:00:00Z",
             owner_email="owner@example.com",
             running=True,
+            health_check="/path/to/check.sh",
             health="healthy",
         )
         client = MagicMock()
@@ -2824,6 +2827,18 @@ class TestWorkspaceStatus:
         assert label == "stopped"
         assert "dim" in markup
 
+    def test_running_when_no_health_check_configured(self):
+        from klangkc.main import _workspace_status
+
+        ws = Workspace(
+            id="x", name="n", created_at="2025-01-01T00:00:00Z", running=True
+        )
+        # No health_check configured -> never probed -> must not show
+        # "starting" (which would imply a pending poll that never comes).
+        label, markup = _workspace_status(ws)
+        assert label == "running"
+        assert "green" in markup
+
     def test_healthy(self):
         from klangkc.main import _workspace_status
 
@@ -2832,6 +2847,7 @@ class TestWorkspaceStatus:
             name="n",
             created_at="2025-01-01T00:00:00Z",
             running=True,
+            health_check="/path/to/check.sh",
             health="healthy",
         )
         label, markup = _workspace_status(ws)
@@ -2846,6 +2862,7 @@ class TestWorkspaceStatus:
             name="n",
             created_at="2025-01-01T00:00:00Z",
             running=True,
+            health_check="/path/to/check.sh",
             health="unhealthy",
         )
         label, markup = _workspace_status(ws)
@@ -2856,7 +2873,11 @@ class TestWorkspaceStatus:
         from klangkc.main import _workspace_status
 
         ws = Workspace(
-            id="x", name="n", created_at="2025-01-01T00:00:00Z", running=True
+            id="x",
+            name="n",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+            health_check="/path/to/check.sh",
         )
         label, markup = _workspace_status(ws)
         assert label == "starting"

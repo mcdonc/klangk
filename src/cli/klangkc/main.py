@@ -200,17 +200,26 @@ def status(
 def _workspace_status(ws) -> tuple[str, str]:
     """Return ``(label, rich_markup)`` describing a workspace's runtime state.
 
-    The label is terminal-safe plain text (``healthy`` / ``unhealthy`` /
-    ``starting`` / ``stopped``); the markup is the colorized form for the rich
-    table. Color mirrors the web UI's health dot:
+    The label is terminal-safe plain text; the markup is the colorized form
+    for the rich table. Collapses two independent backend fields --
+    ``running`` (container process up?) and ``health`` (the health-check
+    probe result, if any) -- into one readable word:
 
-    - running + healthy   -> green
-    - running + unhealthy -> red
-    - running, no health  -> yellow (container up, first poll pending)
-    - not running         -> dim (stopped)
+    - not running                       -> stopped   (dim)
+    - running, no health-check configured-> running   (green)
+    - running + health=healthy          -> healthy   (green)
+    - running + health=unhealthy        -> unhealthy (red)
+    - running, health-check set, no
+      probe completed yet              -> starting  (yellow)
+
+    A workspace with no ``health_check`` never gets probed, so ``health``
+    stays None forever -- ``starting`` would be a lie. ``running`` is the
+    honest label: the container is up, and we make no health claim.
     """
     if not ws.running:
         return "stopped", "[dim]stopped[/dim]"
+    if not ws.health_check:
+        return "running", "[green]running[/green]"
     if ws.health == "healthy":
         return "healthy", "[green]healthy[/green]"
     if ws.health == "unhealthy":
