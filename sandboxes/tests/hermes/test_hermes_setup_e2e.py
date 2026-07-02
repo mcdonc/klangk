@@ -10,7 +10,7 @@ Covers two invariants (#1109):
   ``health-check: /hermes/bin/healthcheck.sh`` config reaches the
   workspace, the health monitor runs it as a non-login bash shell
   (``bash -c``) so it sources nothing, and the status endpoint reports
-  ``healthy`` once the gateway (launched by ``default-command``) is up.
+  ``healthy`` once the gateway (launched by ``service-command``) is up.
   ``setup.sh`` writes the wrapper to ``/hermes/bin/healthcheck.sh``; it
   sets ``HERMES_HOME`` and calls the venv binary by absolute path,
   grepping its output for the running marker.
@@ -356,19 +356,19 @@ class TestHermesSetup:
 
     def test_hermes_installs_and_health_check_reports_healthy(self):
         """The hermes sandbox installs at runtime and its health-check
-        reports healthy once the gateway (started by ``default-command``)
+        reports healthy once the gateway (started by ``service-command``)
         is up.
 
         This is the #1109 end-to-end validation. The whole chain must work:
 
         1. ``klangkc sandbox hermes`` creates the workspace carrying
-           ``default_command``, ``health_check``, and ``auto_start`` from
+           ``service_command``, ``health_check``, and ``auto_start`` from
            the sandbox config.
         2. ``setup.sh`` writes ``~/.profile`` exports up front, fetches +
            runs the upstream installer (non-root, so the ``bash -i`` PATH
            probe is never taken), writes the llm-proxy config, and copies
            the gateway wrapper.
-        3. setup completes -> ``default-command`` (``klangk-hermes-gateway``)
+        3. setup completes -> ``service-command`` (``klangk-hermes-gateway``)
            fires; the wrapper refreshes the token then runs
            ``hermes gateway run``.
         4. the monitor runs ``bash -c /hermes/bin/healthcheck.sh``; the
@@ -416,7 +416,7 @@ class TestHermesSetup:
                 "~/.profile:\n" + profile
             )
 
-            # The gateway (started by default-command) is up and the health
+            # The gateway (started by service-command) is up and the health
             # monitor (polling every 3s in this fixture) reports healthy.
             self._await_health(ws_id, expected="healthy", timeout=240)
         finally:

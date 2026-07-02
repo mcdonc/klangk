@@ -7,7 +7,7 @@ Pre-configured to use the Klangk LLM proxy so openclaw can use any
 model the server makes available. The workspace JWT is fetched
 dynamically via an openclaw SecretRef exec provider.
 
-The gateway starts automatically via `default-command` and the
+The gateway starts automatically via `service-command` and the
 container auto-starts with the server.
 
 ## Usage

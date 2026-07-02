@@ -6,7 +6,7 @@ import '../theme/colors.dart';
 import 'workspace_list_page.dart' show validateMountSpec;
 
 /// Dialog for creating a new workspace. Fields, top to bottom:
-/// Name, Mounts, Environment Variables, Default shell command, Health
+/// Name, Mounts, Environment Variables, Service shell command, Health
 /// check command, Container Image, and (when the server permits
 /// auto-start) an Auto start checkbox. The same field set and order is
 /// used by the Workspace Configuration card in the settings panel.
@@ -111,7 +111,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     final command = _cmdController.text.trim();
     final healthCheck = _healthCheckController.text.trim();
     final body = <String, dynamic>{'name': name};
-    if (command.isNotEmpty) body['default_command'] = command;
+    if (command.isNotEmpty) body['service_command'] = command;
     if (_selectedImage != widget.defaultImage) {
       body['image'] = _selectedImage;
     }
@@ -182,7 +182,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
               TextField(
                 controller: _cmdController,
                 decoration: InputDecoration(
-                  labelText: 'Default Shell Command',
+                  labelText: 'Service Shell Command',
                   labelStyle: _labelStyle,
                   floatingLabelStyle: _labelStyle,
                   floatingLabelBehavior: FloatingLabelBehavior.always,

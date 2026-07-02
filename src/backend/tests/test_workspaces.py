@@ -440,12 +440,12 @@ class TestEagerStartWorkspace:
         finally:
             container.registry.states.pop(ws["id"], None)
 
-    async def test_runs_default_command_on_create(self, user):
+    async def test_runs_service_command_on_create(self, user):
         ws = await ws_mod.create_workspace(
             user["id"],
             "eager-cmd-ws",
             auto_start=True,
-            default_command="openclaw gateway",
+            service_command="openclaw gateway",
         )
         from klangk_backend.container import ContainerState
 
@@ -471,7 +471,7 @@ class TestEagerStartWorkspace:
                 ),
             ):
                 await ws_mod.eager_start_workspace(ws)
-            # The default command fires in the standalone service session
+            # The service command fires in the standalone service session
             # owned by the agent identity, not the owner's (#1133).
             mock_service.assert_awaited_once_with(
                 "cid-cmd",
@@ -482,12 +482,12 @@ class TestEagerStartWorkspace:
         finally:
             container.registry.states.pop(ws["id"], None)
 
-    async def test_skips_default_command_on_reconnect(self, user):
+    async def test_skips_service_command_on_reconnect(self, user):
         ws = await ws_mod.create_workspace(
             user["id"],
             "eager-recon-ws",
             auto_start=True,
-            default_command="openclaw gateway",
+            service_command="openclaw gateway",
         )
         from klangk_backend.container import ContainerState
 
@@ -509,7 +509,7 @@ class TestEagerStartWorkspace:
             ):
                 await ws_mod.eager_start_workspace(ws)
             # "connected" means container was already running —
-            # don't re-run the default command.
+            # don't re-run the service command.
             mock_session.assert_not_awaited()
         finally:
             container.registry.states.pop(ws["id"], None)

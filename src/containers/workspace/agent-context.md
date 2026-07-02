@@ -155,7 +155,7 @@ is per-user is the **session name**.
   id** (e.g. `tmux list-sessions` shows one session per user). The workspace's
   own service runs in a standalone tmux session named **`service`** — owned by
   the agent identity (you), not any user — with the command in a window named
-  **`default-cmd`** (`service:default-cmd`). It is decoupled from both the
+  **`service-cmd`** (`service:service-cmd`). It is decoupled from both the
   owner's interactive session and your `pi --mode rpc` subprocess: it is just
   a tmux session, so it survives your RPC process dying or restarting.
 - **List** what exists: `tmux list-sessions`, then `tmux list-windows -t
@@ -226,6 +226,6 @@ so you _can_ technically `capture-pane` or `send-keys` into **any** user's
 session. Treat that as out-of-bounds by default. Steer "my"/"my history" to
 the **asking user's own** session (see "Whose session is 'mine'?"), and do not
 read or type into another user's terminal unless that user plainly owns the
-target — e.g. the workspace owner asking about the shared `default-cmd`
+target — e.g. the workspace owner asking about the shared `service-cmd`
 service window. "Show me what Bob is doing" is not a reason to capture Bob's
 session.

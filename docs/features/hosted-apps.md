@@ -54,7 +54,7 @@ http://localhost:8995/hosted/abc123/9000/
 Pass the **container port** (8000-8004); it resolves the mapped host port via
 `KLANGK_PORT_MAPPINGS` and combines it with the `KLANGK_HOSTING_*` and
 `KLANGK_WORKSPACE_ID` env vars to print the full URL. Use it from `setup.sh`,
-your `default_command`, a `health_check`, or interactively. Pi's
+your `service_command`, a `health_check`, or interactively. Pi's
 `get_hosted_url` tool delegates to this same script, so the URL logic lives in
 one place.
 

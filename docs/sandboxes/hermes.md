@@ -9,7 +9,7 @@ use any model the server makes available. The workspace JWT is refreshed into
 `~/.hermes/.env` before every gateway start (the token rotates on each
 container restart).
 
-The gateway starts automatically via `default-command` and the container
+The gateway starts automatically via `service-command` and the container
 auto-starts with the server. With no messaging platforms configured the
 gateway idles for cron job execution rather than exiting, so the health check
 still reports healthy.
@@ -43,7 +43,7 @@ Everything installs to `/hermes` (the sandbox mount point):
 - **`/hermes/config.yaml`** — routes inference through the Klangk LLM proxy
 - **`/hermes/.env`** — `OPENAI_BASE_URL` / `OPENAI_API_KEY` for the proxy
   (token refreshed on every gateway start by the wrapper)
-- **`/hermes/bin/klangk-hermes-gateway`** — `default-command` wrapper that
+- **`/hermes/bin/klangk-hermes-gateway`** — `service-command` wrapper that
   refreshes the token then runs `hermes gateway run`
 
 ## Health check
@@ -63,7 +63,7 @@ See [Health check](../features/health-check.md).
 Unlike the openclaw sandbox (see its README warning), the hermes gateway is
 **not** exposed through Klangk's hosted-app mechanism — there is no port
 mapping and no hosted app URL is printed. The gateway (`hermes gateway run`,
-launched by `default-command`) makes only **outbound** connections: to the
+launched by `service-command`) makes only **outbound** connections: to the
 configured messaging platforms (Telegram/Discord/etc. via polling) and to the
 Klangk LLM proxy. Nothing inside the container accepts inbound HTTP, so the
 gateway is **not** contactable by someone who can reach your Klangk server.

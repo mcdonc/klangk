@@ -1020,8 +1020,8 @@ class TestAdminResourceACL:
         assert resp.status_code == 403
 
 
-class TestAutoStartWithDefaultCommand:
-    """Verify auto_start + default_command workspace creation via API.
+class TestAutoStartWithServiceCommand:
+    """Verify auto_start + service_command workspace creation via API.
 
     Uses a separate server with KLANGK_ALLOW_AUTOSTART=1.
     """
@@ -1090,22 +1090,22 @@ class TestAutoStartWithDefaultCommand:
     def admin(self, api):
         return _login(api, "admin@example.com", "adminpass")
 
-    def test_create_with_auto_start_and_default_command(self, api, admin):
-        """Create a workspace with auto_start + default_command."""
+    def test_create_with_auto_start_and_service_command(self, api, admin):
+        """Create a workspace with auto_start + service_command."""
         ws_name = _ws_name("autostart-cmd")
         resp = api.post(
             "/api/v1/workspaces",
             json={
                 "name": ws_name,
                 "auto_start": True,
-                "default_command": "echo hello",
+                "service_command": "echo hello",
             },
             headers=admin,
         )
         assert resp.status_code == 200
         ws = resp.json()
         assert ws["auto_start"] is True
-        assert ws["default_command"] == "echo hello"
+        assert ws["service_command"] == "echo hello"
 
         # Verify via list (bare list without pagination params)
         resp = api.get("/api/v1/workspaces", headers=admin)
@@ -1114,7 +1114,7 @@ class TestAutoStartWithDefaultCommand:
         match = [w for w in items if w["name"] == ws_name]
         assert len(match) == 1
         assert match[0]["auto_start"] is True
-        assert match[0]["default_command"] == "echo hello"
+        assert match[0]["service_command"] == "echo hello"
 
         # Clean up
         api.delete(f"/api/v1/workspaces/{ws['id']}", headers=admin)

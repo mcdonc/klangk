@@ -3,7 +3,7 @@
 Klangk ships ready-to-use sandbox configurations that install and configure a
 specific AI agent when the workspace is created. Each runs a setup script,
 pre-configures the Klangk LLM proxy, and (for long-running agents) wires a
-`default-command` and `health-check` so the agent starts with the workspace and
+`service-command` and `health-check` so the agent starts with the workspace and
 reports healthy.
 
 For the **mechanism** — the `.klangk-sandbox.yaml` format, mounts, environment

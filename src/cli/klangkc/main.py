@@ -575,7 +575,7 @@ def edit(
     name: str | None = typer.Option(None, "--name", help="New name"),
     image: str | None = typer.Option(None, "--image", help="Container image"),
     command: str | None = typer.Option(
-        None, "--command", "-c", help="Default shell command (use '' to clear)"
+        None, "--command", "-c", help="Service shell command (use '' to clear)"
     ),
     auto_start: bool | None = typer.Option(
         None,
@@ -627,7 +627,7 @@ def edit(
         # Interactive mode
         new_name = _prompt("Name", ws.name)
         new_image = _prompt("Container Image", ws.image)
-        new_command = _prompt("Default shell command", ws.default_command)
+        new_command = _prompt("Service shell command", ws.service_command)
         new_health_check = _prompt("Health check command", ws.health_check)
 
         # Interactive mount editing loop
@@ -725,7 +725,7 @@ def edit(
         if new_image is not _SENTINEL:
             body["image"] = new_image or None
         if new_command is not _SENTINEL:
-            body["default_command"] = new_command or None
+            body["service_command"] = new_command or None
         if new_health_check is not _SENTINEL:
             body["health_check"] = new_health_check or None
         if mounts_changed:
@@ -740,7 +740,7 @@ def edit(
         if image is not None:
             body["image"] = image or None
         if command is not None:
-            body["default_command"] = command or None
+            body["service_command"] = command or None
         if auto_start is not None:
             body["auto_start"] = auto_start
         if health_check is not None:
@@ -1279,7 +1279,7 @@ def sandbox(
         ws = client.create_workspace(
             workspace,
             image=config.image,
-            default_command=config.default_command,
+            service_command=config.service_command,
             auto_start=config.auto_start,
             mounts=all_mounts,
             setup_state="pending"
@@ -1339,12 +1339,12 @@ async def _sandbox_setup_only(
 
     After setup.sh returns, marks the workspace's ``setup_state``
     (#1033): ``complete`` on success (or when no setup command is
-    configured), ``failed`` otherwise. Only fires the default command
+    configured), ``failed`` otherwise. Only fires the service command
     via ``terminal_start`` on success -- a failed setup must not
-    auto-run the default command (that is the failure-masquerade the
+    auto-run the service command (that is the failure-masquerade the
     issue objects to). The state is marked BEFORE ``terminal_start``
     is sent, so the server reads ``complete`` from the DB when it
-    decides whether to create the default-cmd window.
+    decides whether to create the service-cmd window.
     """
     kwargs = {}
     if max_size is not None:
@@ -1355,7 +1355,7 @@ async def _sandbox_setup_only(
         # create the workspace is already 'pending', but on --force
         # re-setup it may be 'complete'/'failed'; either way this is
         # idempotent and ensures a visitor during (re-)setup is blocked
-        # from firing the default command prematurely.
+        # from firing the service command prematurely.
         if client is not None:
             try:
                 await asyncio.to_thread(
@@ -1384,12 +1384,12 @@ async def _sandbox_setup_only(
                     f" = {new_state}: {e}[/yellow]"
                 )
 
-        # After setup, start a terminal so the default command runs
-        # in a dedicated "default-cmd" tmux window (visible as a tab
+        # After setup, start a terminal so the service command runs
+        # in a dedicated "service-cmd" tmux window (visible as a tab
         # but not occupying the user's interactive window 0). Skipped
-        # on setup failure -- the default command's prerequisites are
+        # on setup failure -- the service command's prerequisites are
         # not met.
-        if config.default_command and setup_ok:
+        if config.service_command and setup_ok:
             await ws.send(
                 json.dumps({"cmd": "terminal_start", "cols": 80, "rows": 24})
             )

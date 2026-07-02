@@ -76,8 +76,9 @@ class TerminalTabsView extends StatelessWidget {
         othersShared.where((s) => s['is_service'] == true).toList();
     final regularShared =
         othersShared.where((s) => s['is_service'] != true).toList();
-    final hasContent =
-        windows.isNotEmpty || serviceTerminals.isNotEmpty || regularShared.isNotEmpty;
+    final hasContent = windows.isNotEmpty ||
+        serviceTerminals.isNotEmpty ||
+        regularShared.isNotEmpty;
 
     return Column(
       children: [
@@ -145,7 +146,7 @@ class TerminalTabsView extends StatelessWidget {
                           tooltip: 'New terminal',
                           onTap: () => wsClient.sendTerminalNewWindow(),
                         ),
-                      // The agent's ``service`` window (default-cmd) as a
+                      // The agent's ``service`` window (service-cmd) as a
                       // distinct, clearly-labeled operable tab (#1159).
                       for (final s in serviceTerminals)
                         _TerminalTab(
@@ -367,9 +368,7 @@ class _TerminalTabState extends State<_TerminalTab> {
                     // regular shared windows) (#1159).
                     if (widget.shared && widget.isService) ...[
                       Icon(
-                        widget.readOnly
-                            ? Icons.lock_outlined
-                            : Icons.terminal,
+                        widget.readOnly ? Icons.lock_outlined : Icons.terminal,
                         size: 12,
                         color: widget.active
                             ? KColors.accentCyan

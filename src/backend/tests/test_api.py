@@ -1595,15 +1595,15 @@ class TestWorkspaceRoutes:
         resp = await client.get("/api/v1/workspaces")
         assert resp.status_code == 401
 
-    async def test_create_with_default_command(self, client, user):
+    async def test_create_with_service_command(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/workspaces",
-            json={"name": "cmd-ws", "default_command": "pi"},
+            json={"name": "cmd-ws", "service_command": "pi"},
             headers=headers,
         )
         assert resp.status_code == 200
-        assert resp.json()["default_command"] == "pi"
+        assert resp.json()["service_command"] == "pi"
 
     async def test_update_workspace(self, client, user):
         headers = await _auth_headers(client)
@@ -1617,7 +1617,7 @@ class TestWorkspaceRoutes:
             f"/api/v1/workspaces/{ws_id}",
             json={
                 "name": "renamed",
-                "default_command": "pi",
+                "service_command": "pi",
             },
             headers=headers,
         )
@@ -1625,7 +1625,7 @@ class TestWorkspaceRoutes:
         resp = await client.get("/api/v1/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["name"] == "renamed"
-        assert match[0]["default_command"] == "pi"
+        assert match[0]["service_command"] == "pi"
 
     async def test_update_workspace_propagates_to_live_state(
         self, client, user
@@ -1676,7 +1676,7 @@ class TestWorkspaceRoutes:
         headers = await _auth_headers(client)
         resp = await client.put(
             "/api/v1/workspaces/nonexistent",
-            json={"default_command": "pi"},
+            json={"service_command": "pi"},
             headers=headers,
         )
         assert resp.status_code == 403
@@ -1695,7 +1695,7 @@ class TestWorkspaceRoutes:
         )
         resp = await client.put(
             f"/api/v1/workspaces/{fake_id}",
-            json={"default_command": "pi"},
+            json={"service_command": "pi"},
             headers=headers,
         )
         assert resp.status_code == 404
@@ -1718,7 +1718,7 @@ class TestWorkspaceRoutes:
         monkeypatch.setattr(model, "update_workspace", _delete_then_update)
         resp = await client.put(
             f"/api/v1/workspaces/{ws_id}",
-            json={"default_command": "pi"},
+            json={"service_command": "pi"},
             headers=headers,
         )
         assert resp.status_code == 404
@@ -1805,7 +1805,7 @@ class TestWorkspaceRoutes:
             json={
                 "name": "src-ws",
                 "image": "klangk-workspace",
-                "default_command": "pi",
+                "service_command": "pi",
                 "mounts": ["/tmp:/mnt/tmp"],
                 "env": {"FOO": "bar"},
             },
@@ -1821,7 +1821,7 @@ class TestWorkspaceRoutes:
         data = resp.json()
         assert data["name"] == "dup-ws"
         assert data["image"] == "klangk-workspace"
-        assert data["default_command"] == "pi"
+        assert data["service_command"] == "pi"
         assert data["mounts"] == ["/tmp:/mnt/tmp"]
         assert data["env"] == {"FOO": "bar"}
         assert data["id"] != ws_id
@@ -5362,7 +5362,7 @@ class TestWorkspaceMetadata:
         ws = {
             "name": "myws",
             "image": "ubuntu",
-            "default_command": "bash",
+            "service_command": "bash",
             "auto_start": True,
             "mounts": ["/data:/data"],
             "env": {"FOO": "bar"},
@@ -5372,7 +5372,7 @@ class TestWorkspaceMetadata:
         assert meta == {
             "name": "myws",
             "image": "ubuntu",
-            "default_command": "bash",
+            "service_command": "bash",
             "auto_start": True,
             "mounts": ["/data:/data"],
             "env": {"FOO": "bar"},
@@ -5600,7 +5600,7 @@ class TestWorkspaceExportImport:
             headers=headers,
             json={
                 "name": "import-source",
-                "default_command": "pi",
+                "service_command": "pi",
                 "env": {"FOO": "bar"},
             },
         )

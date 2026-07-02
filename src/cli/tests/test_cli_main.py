@@ -1410,7 +1410,7 @@ class TestMainCLI:
             name="my-ws",
             created_at="2025-01-01T00:00:00Z",
             image="klangk",
-            default_command="klangk-pi",
+            service_command="klangk-pi",
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
@@ -1429,7 +1429,7 @@ class TestMainCLI:
         call_args = client.put.call_args
         body = call_args[1]["json"]
         assert body["name"] == "renamed"
-        assert body["default_command"] == "pi"
+        assert body["service_command"] == "pi"
         assert "image" not in body  # not provided, not sent
 
     def test_edit_with_health_check_flag(self, logged_in_cfg, monkeypatch):
@@ -1440,7 +1440,7 @@ class TestMainCLI:
             name="my-ws",
             created_at="2025-01-01T00:00:00Z",
             image="klangk",
-            default_command="klangk-pi",
+            service_command="klangk-pi",
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
@@ -1466,7 +1466,7 @@ class TestMainCLI:
             id="ws1" + "0" * 52,
             name="my-ws",
             created_at="2025-01-01T00:00:00Z",
-            default_command="klangk-pi",
+            service_command="klangk-pi",
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
@@ -1482,7 +1482,7 @@ class TestMainCLI:
             assert result.exit_code == 0
 
         call_args = client.put.call_args
-        assert call_args[1]["json"]["default_command"] is None
+        assert call_args[1]["json"]["service_command"] is None
 
     def test_edit_interactive(self, logged_in_cfg, monkeypatch):
         from klangkc import main
@@ -1492,7 +1492,7 @@ class TestMainCLI:
             name="my-ws",
             created_at="2025-01-01T00:00:00Z",
             image="klangk",
-            default_command="klangk-pi",
+            service_command="klangk-pi",
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
@@ -1513,7 +1513,7 @@ class TestMainCLI:
         body = call_args[1]["json"]
         assert "name" not in body  # kept current
         assert "image" not in body  # kept current
-        assert body["default_command"] == "pi"
+        assert body["service_command"] == "pi"
 
     def test_edit_interactive_health_check(self, logged_in_cfg, monkeypatch):
         from klangkc import main
@@ -1523,7 +1523,7 @@ class TestMainCLI:
             name="my-ws",
             created_at="2025-01-01T00:00:00Z",
             image="klangk",
-            default_command="klangk-pi",
+            service_command="klangk-pi",
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
@@ -1543,7 +1543,7 @@ class TestMainCLI:
 
         body = client.put.call_args[1]["json"]
         assert body["health_check"] == "curl -sf http://x/h"
-        assert "default_command" not in body  # kept current
+        assert "service_command" not in body  # kept current
 
     def test_edit_interactive_change_all(self, logged_in_cfg, monkeypatch):
         from klangkc import main
@@ -1553,7 +1553,7 @@ class TestMainCLI:
             name="my-ws",
             created_at="2025-01-01T00:00:00Z",
             image="klangk",
-            default_command="klangk-pi",
+            service_command="klangk-pi",
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
@@ -1574,7 +1574,7 @@ class TestMainCLI:
         body = client.put.call_args[1]["json"]
         assert body["name"] == "renamed"
         assert body["image"] == "klangk-custom"
-        assert body["default_command"] == "pi"
+        assert body["service_command"] == "pi"
 
     def test_edit_interactive_add_mount(self, logged_in_cfg, monkeypatch):
         from klangkc import main
@@ -2978,14 +2978,14 @@ class TestSandboxSetupOnly:
                 mock_ws, config, Path("/tmp"), "admin"
             )
 
-    async def test_starts_terminal_after_setup_when_default_command(self):
+    async def test_starts_terminal_after_setup_when_service_command(self):
         from pathlib import Path
 
         from klangkc.main import _sandbox_setup_only
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
-            setup="setup.sh", default_command="openclaw gateway"
+            setup="setup.sh", service_command="openclaw gateway"
         )
 
         mock_ws = AsyncMock()
@@ -3017,7 +3017,7 @@ class TestSandboxSetupOnly:
                 mock_ws, config, Path("/tmp"), "admin"
             )
 
-        # terminal_start was sent after setup so the default command runs.
+        # terminal_start was sent after setup so the service command runs.
         sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
         assert any(m.get("cmd") == "terminal_start" for m in sent)
 
@@ -3031,7 +3031,7 @@ class TestSandboxSetupOnly:
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
-            setup="setup.sh", default_command="openclaw gateway"
+            setup="setup.sh", service_command="openclaw gateway"
         )
 
         mock_ws = AsyncMock()
@@ -3069,7 +3069,7 @@ class TestSandboxSetupOnly:
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
-            setup="setup.sh", default_command="openclaw gateway"
+            setup="setup.sh", service_command="openclaw gateway"
         )
 
         mock_ws = AsyncMock()
@@ -3115,7 +3115,7 @@ class TestSandboxSetupOnly:
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
-            setup="setup.sh", default_command="openclaw gateway"
+            setup="setup.sh", service_command="openclaw gateway"
         )
 
         mock_ws = AsyncMock()

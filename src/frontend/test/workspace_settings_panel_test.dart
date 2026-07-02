@@ -52,7 +52,7 @@ const _workspace = {
   'id': _wsId,
   'name': 'my-ws',
   'image': 'klangk-pi',
-  'default_command': 'pi',
+  'service_command': 'pi',
   'mounts': <String>['/host:/cont'],
   'env': <String, String>{'FOO': 'bar'},
 };
@@ -141,7 +141,7 @@ void main() {
       expect(find.text('Workspace Configuration'), findsOneWidget);
       // Name field is pre-filled.
       expect(find.text('my-ws'), findsOneWidget);
-      // Default command is pre-filled.
+      // Service command is pre-filled.
       expect(find.text('pi'), findsOneWidget);
       // Mounts/env from the workspace are listed.
       expect(find.text('/host:/cont'), findsOneWidget);

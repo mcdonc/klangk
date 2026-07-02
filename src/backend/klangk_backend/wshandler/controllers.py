@@ -17,7 +17,7 @@ from ..podman import ExecSession
 from ..terminal import (
     TerminalSession,
     attach_browser,
-    DEFAULT_CMD_WINDOW,
+    SERVICE_CMD_WINDOW,
     SERVICE_SESSION,
 )
 from .safe_websocket import SlowClientError, _WS_ERRORS
@@ -394,7 +394,7 @@ class TerminalController:
         windows = await terminal.list_windows(conn.container_id, sname)
         conn._sync_terminal_windows(windows)
         conn.sock.send_json({"type": "terminal_windows", "windows": windows})
-        # Discover the agent's ``service:default-cmd`` window so it shows
+        # Discover the agent's ``service:service-cmd`` window so it shows
         # up as shared (e.g. a visitor connecting after auto-start fired
         # it) -- the service session is owned by the agent, not any user
         # who has connected (#1133).
@@ -417,7 +417,7 @@ class TerminalController:
         if the workspace can't be loaded or the lookup fails. A failed
         lookup must NOT crash terminal_start -- defaulting to
         'complete' preserves the historical fire-by-default behaviour
-        rather than silently disabling default commands.
+        rather than silently disabling service commands.
         """
         try:
             ws = await model.get_workspace(self._conn.workspace_id)
@@ -428,7 +428,7 @@ class TerminalController:
         return ws.get("setup_state") or "complete"
 
     async def _fire_service_command(self) -> None:
-        """Fire the default command in the agent's ``service`` session.
+        """Fire the service command in the agent's ``service`` session.
 
         The post-setup path (#1033): a non-auto-start workspace's service
         command first fires here when a ``terminal_start`` lands after
@@ -437,8 +437,8 @@ class TerminalController:
         Idempotent via the window-exists check, so every terminal_start
         calling it is safe.
         """
-        default_command = self._conn._default_command
-        if not default_command or not self._conn.container_id:
+        service_command = self._conn._service_command
+        if not service_command or not self._conn.container_id:
             return
         # Read setup_state FRESH from the DB -- not a cached connection
         # field. The setup-owner connection caches 'pending' at connect
@@ -452,18 +452,18 @@ class TerminalController:
         await terminal.ensure_service_session(
             self._conn.container_id,
             agent_home,
-            default_command,
+            service_command,
             setup_state=setup_state,
         )
 
     async def _sync_service_windows(self, ws_session) -> bool:
         """Discover the agent's ``service`` session windows (#1133).
 
-        The default command runs in a standalone ``service`` tmux
+        The service command runs in a standalone ``service`` tmux
         session owned by the agent identity (``AGENT_USER_ID``), not in
         any user's session. ``ws_session.terminal_windows`` is only
         populated when a user connects + syncs, so without this the
-        ``service:default-cmd`` window would never appear in the shared
+        ``service:service-cmd`` window would never appear in the shared
         list. This lists the ``service`` session from tmux and merges the
         result, attributing it to the agent (whose handle is always
         resolvable via ``model.agent_handle()`` -- the agent is never
@@ -494,13 +494,13 @@ class TerminalController:
 
     @staticmethod
     def _window_shared(name: str, prev_shared: bool) -> bool:
-        """A window is shared if flagged so before, OR it is default-cmd.
+        """A window is shared if flagged so before, OR it is service-cmd.
 
-        The default-cmd window is shared by definition (#1114): it is
+        The service-cmd window is shared by definition (#1114): it is
         the workspace's singleton service terminal, owned by the agent
         and joinable by every subscriber.
         """
-        return name == DEFAULT_CMD_WINDOW or prev_shared
+        return name == SERVICE_CMD_WINDOW or prev_shared
 
     async def start(self, msg: dict) -> None:
 
@@ -544,7 +544,7 @@ class TerminalController:
         self.cols = cols
         self.rows = rows
 
-        # The default command no longer lives in any user's session --
+        # The service command no longer lives in any user's session --
         # it runs in the standalone ``service`` session owned by the agent
         # identity (#1133). ``TerminalSession`` is purely the firing user's
         # interactive shell now; the service command is fired separately
@@ -579,7 +579,7 @@ class TerminalController:
                     session.start(cols, rows),
                     timeout=30,
                 )
-                # Fire the default command in the agent's ``service``
+                # Fire the service command in the agent's ``service``
                 # session. This handles the post-setup case (#1033): a
                 # non-auto-start workspace's service command first fires
                 # here once setup is complete, not in any user's session.
@@ -730,9 +730,9 @@ class TerminalController:
 
         Unlike ``sync_terminal_windows`` (which serves the firing user and
         broadcasts/saves), this is a quiet merge used by
-        ``_sync_service_windows`` to make the ``service:default-cmd`` window
+        ``_sync_service_windows`` to make the ``service:service-cmd`` window
         discoverable as shared. Windows are attributed to the agent
-        (``AGENT_USER_ID``) and ``default-cmd`` is forced shared (#1133).
+        (``AGENT_USER_ID``) and ``service-cmd`` is forced shared (#1133).
         """
         old = ws_session.terminal_windows.get(model.AGENT_USER_ID, [])
         old_by_id = {w["id"]: w for w in old if "id" in w}
@@ -1147,7 +1147,7 @@ class SharedTerminalController:
             "user_id": owner_user_id,
             "window_id": window_id,
         }
-        # The service window (default-cmd) lives in the standalone
+        # The service window (service-cmd) lives in the standalone
         # ``service`` tmux session (#1158), not a session named after the
         # agent's user_id. Route agent-owned joins to that session so the
         # grouped attach actually finds a target. Other windows keep joining
@@ -1220,7 +1220,7 @@ class SharedTerminalController:
                 {"type": "shared_terminals", "terminals": []}
             )
             return
-        # Discover the agent's ``service:default-cmd`` window in case it
+        # Discover the agent's ``service:service-cmd`` window in case it
         # was fired (e.g. auto-start) before anyone connected to discover
         # it (#1133).
         await self._conn.terminal._sync_service_windows(ws_session)

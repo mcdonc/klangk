@@ -645,7 +645,7 @@ class TestSyncLarge:
             assert h == container_hashes[f.name], f"Hash mismatch: {f.name}"
 
 
-class TestDefaultCommand:
+class TestServiceCommand:
     @staticmethod
     def _login(cli_config):
         env = cli_config["env"]
@@ -662,10 +662,10 @@ class TestDefaultCommand:
             env=env,
         )
 
-    def test_default_command_stored_in_workspace(self, cli_config):
-        """default_command is stored in the workspace via the API."""
+    def test_service_command_stored_in_workspace(self, cli_config):
+        """service_command is stored in the workspace via the API."""
         env = cli_config["env"]
-        TestDefaultCommand._login(cli_config)
+        TestServiceCommand._login(cli_config)
         _run(["klangkc", "create", "e2e-defcmd"], env=env)
         try:
             # Set command
@@ -766,7 +766,7 @@ class TestAutoStart:
 def _poll_exec(env, workspace, shell_cmd, expect, timeout=30, interval=1.0):
     """Run ``klangkc exec`` repeatedly until *expect* appears in stdout.
 
-    The default command runs asynchronously in a tmux window, so its
+    The service command runs asynchronously in a tmux window, so its
     effect isn't visible the instant ``klangkc sandbox`` returns.  This
     polls until it is (or fails loudly on timeout).
     """
@@ -789,11 +789,11 @@ def _poll_exec(env, workspace, shell_cmd, expect, timeout=30, interval=1.0):
     )
 
 
-class TestSandboxAutoStartDefaultCommand:
-    """Auto-started workspace: default_command runs only after setup.
+class TestSandboxAutoStartServiceCommand:
+    """Auto-started workspace: service_command runs only after setup.
 
     This is the path PR #1032 guarantees: when a workspace is created
-    with ``auto_start`` the default command is *not* run eagerly at
+    with ``auto_start`` the service command is *not* run eagerly at
     container start (the software isn't installed yet).  ``klangkc
     sandbox`` runs ``setup.sh`` (which installs the command), then sends
     ``terminal_start``, which launches the command in a dedicated tmux
@@ -814,7 +814,7 @@ class TestSandboxAutoStartDefaultCommand:
         data_dir = tempfile.mkdtemp(prefix="klangk-sandbox-defcmd-")
         proc, base_url = _start_server(
             data_dir,
-            TestSandboxAutoStartDefaultCommand.PORT,
+            TestSandboxAutoStartServiceCommand.PORT,
             "sandbox-defcmd-e2e",
             extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
         )
@@ -838,11 +838,11 @@ class TestSandboxAutoStartDefaultCommand:
         yield
         _stop_server(proc, data_dir, "sandbox-defcmd-e2e")
 
-    def test_default_command_runs_only_after_setup(self, tmp_path):
-        """default_command (installed by setup.sh) runs post-setup.
+    def test_service_command_runs_only_after_setup(self, tmp_path):
+        """service_command (installed by setup.sh) runs post-setup.
 
         ``setup.sh`` sleeps ~5s to simulate installing software, then
-        creates ``/tmp/myapp``.  The workspace's default_command is
+        creates ``/tmp/myapp``.  The workspace's service_command is
         ``/tmp/myapp``, which does not exist until setup runs -- so it
         can only succeed once the sandbox setup phase has completed.
         """
@@ -855,7 +855,7 @@ class TestSandboxAutoStartDefaultCommand:
             "  mount-at: /sandbox\n"
             "  setup: setup.sh\n"
             "workspace:\n"
-            "  default-command: /tmp/myapp\n"
+            "  service-command: /tmp/myapp\n"
             "  auto-start: true\n"
         )
         # setup.sh: slow "install", then drop a marker-writing script at
@@ -869,8 +869,8 @@ class TestSandboxAutoStartDefaultCommand:
             "sleep 5\n"
             "cat > /tmp/myapp <<'APP'\n"
             "#!/bin/sh\n"
-            "date +%s > /tmp/default-cmd-when\n"
-            "echo ran > /tmp/default-cmd-ran\n"
+            "date +%s > /tmp/service-cmd-when\n"
+            "echo ran > /tmp/service-cmd-ran\n"
             "APP\n"
             "chmod +x /tmp/myapp\n"
             "date +%s > /tmp/setup-done\n"
@@ -879,7 +879,7 @@ class TestSandboxAutoStartDefaultCommand:
         try:
             # Sandbox creates the auto-start workspace, runs setup.sh
             # (sleep 5 + install), then sends terminal_start so the
-            # default command runs in the persistent default-cmd window.
+            # service command runs in the persistent service-cmd window.
             result = _run(
                 ["klangkc", "sandbox", self.WS, str(sandbox_root)],
                 env=env,
@@ -887,11 +887,11 @@ class TestSandboxAutoStartDefaultCommand:
             )
             assert result.returncode == 0, result.stderr
 
-            # (1) The default command actually ran (async in tmux).
+            # (1) The service command actually ran (async in tmux).
             _poll_exec(
                 env,
                 self.WS,
-                "cat /tmp/default-cmd-ran 2>/dev/null",
+                "cat /tmp/service-cmd-ran 2>/dev/null",
                 expect="ran",
                 timeout=30,
             )
@@ -907,11 +907,11 @@ class TestSandboxAutoStartDefaultCommand:
                 "/tmp/myapp missing or not executable; setup never installed it"
             )
 
-            # (3) The default command ran at/after setup completed.
-            # setup-done is written last in setup.sh; default-cmd-when is
-            # written by myapp when the default command runs.  Under the
-            # run_default_command=True regression myapp wouldn't exist at
-            # eager-start, so default-cmd-when would never be written.
+            # (3) The service command ran at/after setup completed.
+            # setup-done is written last in setup.sh; service-cmd-when is
+            # written by myapp when the service command runs.  Under the
+            # run_service_command=True regression myapp wouldn't exist at
+            # eager-start, so service-cmd-when would never be written.
             ordering = _run(
                 [
                     "klangkc",
@@ -920,13 +920,13 @@ class TestSandboxAutoStartDefaultCommand:
                     "bash",
                     "-c",
                     '[ "$(cat /tmp/setup-done)" -le'
-                    ' "$(cat /tmp/default-cmd-when)" ] && echo ordered',
+                    ' "$(cat /tmp/service-cmd-when)" ] && echo ordered',
                 ],
                 env=env,
                 timeout=30,
             )
             assert "ordered" in ordering.stdout, (
-                "default command ran before setup completed: "
+                "service command ran before setup completed: "
                 f"{ordering.stdout!r}"
             )
         finally:

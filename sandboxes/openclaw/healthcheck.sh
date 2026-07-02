@@ -20,5 +20,5 @@ export OPENCLAW_HOME=/openclaw
 
 # `openclaw health` connects to the running gateway over WebSocket and
 # exits non-zero if it is unreachable -- a liveness check for the
-# service the default-command (`openclaw gateway`) launches.
+# service the service-command (`openclaw gateway`) launches.
 exec /openclaw/bin/openclaw health

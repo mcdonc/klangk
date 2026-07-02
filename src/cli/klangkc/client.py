@@ -150,7 +150,7 @@ class Workspace:
     name: str
     created_at: str
     image: str | None = None
-    default_command: str | None = None
+    service_command: str | None = None
     auto_start: bool = False
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
@@ -371,7 +371,7 @@ class KlangkClient:
             name=w["name"],
             created_at=w["created_at"],
             image=w.get("image"),
-            default_command=w.get("default_command"),
+            service_command=w.get("service_command"),
             auto_start=bool(w.get("auto_start", False)),
             mounts=w.get("mounts"),
             env=w.get("env"),
@@ -383,7 +383,7 @@ class KlangkClient:
         self,
         name: str,
         image: str | None = None,
-        default_command: str | None = None,
+        service_command: str | None = None,
         auto_start: bool = False,
         mounts: list[str] | None = None,
         env: dict[str, str] | None = None,
@@ -393,8 +393,8 @@ class KlangkClient:
         body: dict = {"name": name}
         if image:
             body["image"] = image
-        if default_command:
-            body["default_command"] = default_command
+        if service_command:
+            body["service_command"] = service_command
         if auto_start:
             body["auto_start"] = True
         if mounts:

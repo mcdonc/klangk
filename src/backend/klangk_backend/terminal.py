@@ -94,10 +94,10 @@ def _build_environment(
 _WORKSPACE_STATE_FILE = ".workspace-state.json"
 
 # Name of the dedicated tmux window that runs a workspace's
-# default_command, leaving the user's interactive window 0 free.
-DEFAULT_CMD_WINDOW = "default-cmd"
+# service_command, leaving the user's interactive window 0 free.
+SERVICE_CMD_WINDOW = "service-cmd"
 
-# The standalone tmux session that runs the workspace's default command,
+# The standalone tmux session that runs the workspace's service command,
 # owned by the agent identity (not the owner). Constant name -- keyed in
 # the session map by AGENT_USER_ID, never the renameable handle -- and
 # decoupled from both the owner's interactive session and the
@@ -120,15 +120,15 @@ async def _has_tmux_session(container_id: str, session_name: str) -> bool:
     return rc == 0
 
 
-async def _default_cmd_window_exists(
+async def _service_cmd_window_exists(
     container_id: str, session_name: str
 ) -> bool:
-    """Return True if the ``default-cmd`` window exists in *session_name*.
+    """Return True if the ``service-cmd`` window exists in *session_name*.
 
-    This is the ephemeral "has the default command already fired in
+    This is the ephemeral "has the service command already fired in
     THIS container" check (#1033). Unlike ``setup_state`` it is
     per-container: it resets on container recreation, so the boot path
-    re-fires the default command for an already-``complete`` workspace.
+    re-fires the service command for an already-``complete`` workspace.
     tmux allows duplicate window names, so we must inspect the list
     rather than rely on ``new-window`` failing.
     """
@@ -150,27 +150,27 @@ async def _default_cmd_window_exists(
         return False
     if rc != 0:
         return False
-    return DEFAULT_CMD_WINDOW in {
+    return SERVICE_CMD_WINDOW in {
         line.strip() for line in stdout.splitlines() if line.strip()
     }
 
 
-def _should_fire_default_command(
-    default_command: str | None, setup_state: str
+def _should_fire_service_command(
+    service_command: str | None, setup_state: str
 ) -> bool:
     """The setup-phase half of the firing predicate (#1033).
 
-    The default command may fire iff it is configured AND setup is
+    The service command may fire iff it is configured AND setup is
     complete. ``pending`` and ``failed`` both block. ``setup_state`` is
     always one of the three lifecycle values -- the DB column is
     ``NOT NULL DEFAULT 'complete'`` and every SELECT includes it -- so
     there is no ``None`` case to handle here.
 
-    The other half -- "the default-cmd window doesn't already exist" --
-    is checked by the caller via :func:`_default_cmd_window_exists`,
+    The other half -- "the service-cmd window doesn't already exist" --
+    is checked by the caller via :func:`_service_cmd_window_exists`,
     since it is per-container and ephemeral.
     """
-    if not default_command:
+    if not service_command:
         return False
     return setup_state == SETUP_STATE_COMPLETE
 
@@ -218,7 +218,7 @@ async def _ensure_base_session(
     """Ensure the firing user's base tmux session + window 0 exist.
 
     Idempotent: returns ``True`` if the session was freshly created.
-    The default command no longer lives in any user's session -- it
+    The service command no longer lives in any user's session -- it
     runs in the standalone ``service`` session owned by the agent
     identity (see :func:`ensure_service_session`), so this is purely
     the interactive-shell session every ``terminal_start`` needs
@@ -232,30 +232,30 @@ async def _ensure_base_session(
 async def ensure_service_session(
     container_id: str,
     agent_home: str,
-    default_command: str,
+    service_command: str,
     setup_state: str = SETUP_STATE_COMPLETE,
 ) -> None:
-    """Ensure the standalone ``service`` session; maybe fire default-cmd.
+    """Ensure the standalone ``service`` session; maybe fire service-cmd.
 
-    The workspace's default command runs in a tmux session with a
+    The workspace's service command runs in a tmux session with a
     CONSTANT name ``service`` (not the owner's id), with the
-    ``default-cmd`` window inside it -> ``service:default-cmd``. The
+    ``service-cmd`` window inside it -> ``service:service-cmd``. The
     session is owned by the agent identity and decoupled from both the
     owner's interactive session and the ``pi --mode rpc`` subprocess
     lifecycle -- it survives the agent subprocess dying/restarting
     because it is just a tmux session (#1133 D6).
 
     *agent_home* (e.g. ``/home/clanker``) is the session's HOME. The
-    default command fires iff the predicate holds (configured AND setup
-    complete) AND the ``default-cmd`` window doesn't already exist
+    service command fires iff the predicate holds (configured AND setup
+    complete) AND the ``service-cmd`` window doesn't already exist
     (exactly-once-per-container). Idempotent: safe to call from every
     ``terminal_start`` (#1033) and the boot path alike -- the
     window-exists check makes it a no-op after the first fire.
     """
     await _ensure_tmux_session(container_id, SERVICE_SESSION, agent_home)
     if not (
-        _should_fire_default_command(default_command, setup_state)
-    ) or await _default_cmd_window_exists(container_id, SERVICE_SESSION):
+        _should_fire_service_command(service_command, setup_state)
+    ) or await _service_cmd_window_exists(container_id, SERVICE_SESSION):
         return
     try:
         await podman.exec_container(
@@ -267,7 +267,7 @@ async def ensure_service_session(
                 "-t",
                 SERVICE_SESSION,
                 "-n",
-                DEFAULT_CMD_WINDOW,
+                SERVICE_CMD_WINDOW,
             ],
             user=CONTAINER_USER,
             timeout=5,
@@ -275,7 +275,7 @@ async def ensure_service_session(
     except Exception:
         logger.warning(
             "Failed to create %s window in %s",
-            DEFAULT_CMD_WINDOW,
+            SERVICE_CMD_WINDOW,
             SERVICE_SESSION,
         )
         return
@@ -290,15 +290,15 @@ async def ensure_service_session(
                 "tmux",
                 "send-keys",
                 "-t",
-                f"{SERVICE_SESSION}:{DEFAULT_CMD_WINDOW}",
-                default_command,
+                f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                service_command,
                 "Enter",
             ],
             user=CONTAINER_USER,
             timeout=5,
         )
     except Exception:
-        logger.warning("Failed to send default command to %s", SERVICE_SESSION)
+        logger.warning("Failed to send service command to %s", SERVICE_SESSION)
 
 
 def _build_shell_command(

@@ -61,7 +61,7 @@ def workspace_metadata(ws: dict) -> dict:
     return {
         "name": ws["name"],
         "image": ws.get("image"),
-        "default_command": ws.get("default_command"),
+        "service_command": ws.get("service_command"),
         "auto_start": ws.get("auto_start", False),
         "mounts": ws.get("mounts"),
         "env": ws.get("env"),
@@ -231,7 +231,7 @@ async def create_workspace(
     user_id: str,
     name: str,
     image: str | None = None,
-    default_command: str | None = None,
+    service_command: str | None = None,
     auto_start: bool = False,
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
@@ -242,7 +242,7 @@ async def create_workspace(
         user_id,
         name,
         image=image,
-        default_command=default_command,
+        service_command=service_command,
         auto_start=auto_start,
         mounts=mounts,
         env=env,
@@ -398,7 +398,7 @@ async def populate_home_skel(
 
 
 async def eager_start_workspace(
-    ws: dict, *, run_default_command: bool = True
+    ws: dict, *, run_service_command: bool = True
 ) -> tuple[str, str]:
     """Start a container for a workspace immediately.
 
@@ -407,12 +407,12 @@ async def eager_start_workspace(
     There are two callers with different needs:
 
     * **Server boot** (``auto_start_workspaces``) leaves
-      *run_default_command* at its default ``True`` — the workspace's
+      *run_service_command* at its default ``True`` — the workspace's
       software is already installed in the persisted volume, so the
-      default command is safe to run now.
+      service command is safe to run now.
     * **Workspace creation** (``api/workspaces.create_workspace``)
-      passes ``run_default_command=False`` — ``setup.sh`` has not run
-      yet, so the default command would fail.  The CLI sandbox driver
+      passes ``run_service_command=False`` — ``setup.sh`` has not run
+      yet, so the service command would fail.  The CLI sandbox driver
       sends ``terminal_start`` after setup completes to trigger it.
 
     Returns ``(container_id, status)``.
@@ -449,25 +449,25 @@ async def eager_start_workspace(
     if status == "created":
         agent_home = await agent.ensure_agent_home(workspace_id, cid)
 
-    # If the workspace has a default command, fire it in the standalone
+    # If the workspace has a service command, fire it in the standalone
     # ``service`` tmux session owned by the agent identity -- not in the
     # owner's session (#1133 D5/D6).  The session is decoupled from the
     # ``pi --mode rpc`` subprocess and keyed by AGENT_USER_ID (constant
     # name ``service``), so it survives the agent process dying and is
     # always attributable.  Gated on a freshly-created container (the
-    # persisted service session survives restart) and run_default_command
+    # persisted service session survives restart) and run_service_command
     # (fresh creates defer this -- setup.sh hasn't run yet).
-    default_command = ws.get("default_command")
+    service_command = ws.get("service_command")
     if (
-        default_command
+        service_command
         and status == "created"
-        and run_default_command
+        and run_service_command
         and agent_home is not None
     ):
         await terminal.ensure_service_session(
             cid,
             agent_home,
-            default_command,
+            service_command,
             setup_state=ws.get("setup_state"),
         )
 

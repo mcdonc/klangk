@@ -67,7 +67,7 @@ class Connection:
         self.pending_status_msg: str | None = None
         self._browser_id: str | None = None
         self._user_home: str | None = None
-        self._default_command: str | None = None
+        self._service_command: str | None = None
         self._home_created: bool = False
         self._terminal_cols: int = 80
         self._terminal_rows: int = 24
@@ -321,7 +321,7 @@ class Connection:
         self.container_status = container_status
         self.workspace_id = workspace_id
         self.container_id = container_id
-        self._default_command = workspace.get("default_command")
+        self._service_command = workspace.get("service_command")
 
         session = state.get_or_create_session(workspace_id)
         await session.add_subscriber(self.sock, container_id)
@@ -454,7 +454,7 @@ class Connection:
                 "workspaceId": workspace_id,
                 "userId": self.user["id"],
                 "ports": ports,
-                "defaultCommand": workspace.get("default_command"),
+                "serviceCommand": workspace.get("service_command"),
                 "userHome": self._user_home,
             }
         )

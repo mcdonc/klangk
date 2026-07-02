@@ -41,7 +41,7 @@ class WorkspaceSession:
         # to /home/.workspace-state.json for crash recovery. The agent's
         # ``service`` session windows are keyed by AGENT_USER_ID (#1133).
         self.terminal_windows: dict[str, list[dict]] = {}
-        # Cached agent handle so the ``service:default-cmd`` window stays
+        # Cached agent handle so the ``service:service-cmd`` window stays
         # attributable (and visible in the shared list) even though the
         # agent has no active WS connection -- the agent is never
         # "offline" the way the owner could be under the old model

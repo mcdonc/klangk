@@ -318,7 +318,7 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     (
         "POST",
         f"{P}/workspaces",
-        {"name": "string", "image": "string", "default_command": "string"},
+        {"name": "string", "image": "string", "service_command": "string"},
         None,
     ),
     (
