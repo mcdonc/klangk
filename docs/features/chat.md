@@ -49,6 +49,35 @@ terminal and filesystem. It can:
 
 [![Conversation with the AI agent](../assets/chat/04-agent-conversation.png)](../assets/chat/04-agent-conversation.png)
 
+### What the agent is (and isn't)
+
+The chat agent is a **fixed, built-in assistant** scoped to a single
+workspace. It is not a coding-agent harness you configure or extend:
+
+- **No tool calling.** It has no pluggable tool interface. The
+  filesystem and terminal access above is what `pi` provides as part of
+  its standard operation, not a configurable tool set.
+- **No custom skills or prompts.** You cannot add skills, instructions,
+  or system prompts to the chat agent. Its system prompt is fixed by
+  Klangk. (For a full, extensible agent you can drive yourself with your
+  own skills and prompts, run your own agent in a terminal instead — see
+  [AI coding harnesses](ai-coding-harnesses.md).)
+
+The chat agent also has **no direct access to the chat history stored in
+Klangk's database** — it cannot read what humans have said to one another
+in the chat panel. On each `@clanker` mention it receives, at most, a
+narrow slice of context: messages from _other_ participants posted since
+the agent's last response (capped, and with no timestamps). Pi's own
+multi-turn memory covers only the back-and-forth between the mentioning
+user and the agent.
+
+The practical upshot: the agent **cannot summarize or answer questions
+about the human-to-human chat discussion** as a whole. Asking it to
+"summarize the conversation so far" or "what did everyone decide earlier"
+will not work — it simply does not have that information. It is best
+suited to direct, self-contained requests: "write a script that does X",
+"what's in this file", "run the tests".
+
 ### Follow-up Conversations
 
 After an @clanker mention, your subsequent messages automatically route to
