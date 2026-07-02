@@ -2,12 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/chat/chat_message_list.dart';
+import 'package:markdown/markdown.dart' as md;
 
 String? _findMarkdownData(WidgetTester tester) {
   final finder = find.byType(MarkdownBody);
   if (finder.evaluate().isEmpty) return null;
   final widget = tester.widget<MarkdownBody>(finder.first);
   return widget.data;
+}
+
+/// The inline syntax set the rendered [MarkdownBody] was configured with.
+/// Used to assert that bare URLs auto-link (#1200).
+List<md.InlineSyntax> _findMarkdownInlineSyntaxes(WidgetTester tester) {
+  final finder = find.byType(MarkdownBody);
+  final widget = tester.widget<MarkdownBody>(finder.first);
+  return widget.extensionSet?.inlineSyntaxes ?? const [];
 }
 
 void main() {
@@ -241,6 +250,45 @@ void main() {
 
       final data = _findMarkdownData(tester);
       expect(data, contains('**@bob**'));
+    });
+
+    testWidgets('bare http(s) URLs auto-link (#1200)', (tester) async {
+      await tester.pumpWidget(buildList(messages: [
+        {
+          'id': 'msg-url',
+          'user_email': 'alice@test.com',
+          'message': 'see https://example.com and http://foo.dev/path',
+          'created_at': '2026-01-01 00:00:00',
+        },
+      ]));
+
+      // The rendered MarkdownBody must be configured with the GFM autolink
+      // extension syntax so bare URLs become link nodes that route through
+      // onTapLink -> openUrl. Previously these syntaxes were filtered out.
+      final syntaxes = _findMarkdownInlineSyntaxes(tester);
+      expect(
+        syntaxes.any((s) => s is md.AutolinkExtensionSyntax),
+        isTrue,
+        reason: 'GFM bare-URL autolinking must be enabled',
+      );
+    });
+
+    testWidgets('hosted-app URLs auto-link (#1200)', (tester) async {
+      await tester.pumpWidget(buildList(messages: [
+        {
+          'id': 'msg-hosted',
+          'user_email': 'alice@test.com',
+          // Emits by clanker's klangk-hosted-url: a relative /hosted/... URL.
+          'message': 'app ready: https://klangk.dev/hosted/ws-1/8080/',
+          'created_at': '2026-01-01 00:00:00',
+        },
+      ]));
+
+      final syntaxes = _findMarkdownInlineSyntaxes(tester);
+      expect(
+        syntaxes.any((s) => s is md.AutolinkExtensionSyntax),
+        isTrue,
+      );
     });
 
     testWidgets('loading spinner shown when loadingOlder is true',
